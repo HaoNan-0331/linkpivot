@@ -90,6 +90,7 @@ app.whenReady().then(() => {
   // Connection IPC
   ipcMain.handle('connection:ssh', (_e, deviceId) => openTerminal(deviceId))
   ipcMain.handle('connection:telnet', (_e, deviceId) => openTerminal(deviceId))
+  ipcMain.handle('connection:rdp', (_e, deviceId) => openTerminal(deviceId))
   ipcMain.handle('connection:openWeb', (_e, url) => openWebSafe(url))
   ipcMain.handle('connection:disconnect', (_e, sessionId) => disconnectSession(sessionId))
   ipcMain.handle('connection:write', (_e, sessionId, data) => writeToSession(sessionId, data))

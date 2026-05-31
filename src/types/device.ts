@@ -1,4 +1,4 @@
-export type ConnectionType = 'ssh' | 'telnet' | 'web'
+export type ConnectionType = 'ssh' | 'telnet' | 'web' | 'rdp'
 export type DeviceType = 'router' | 'switch' | 'firewall' | 'server' | 'generic'
 
 export interface Device {

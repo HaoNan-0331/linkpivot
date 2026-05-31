@@ -26,6 +26,7 @@ const api = {
   connection: {
     sshConnect: (deviceId: string) => ipcRenderer.invoke('connection:ssh', deviceId),
     telnetConnect: (deviceId: string) => ipcRenderer.invoke('connection:telnet', deviceId),
+    rdpConnect: (deviceId: string) => ipcRenderer.invoke('connection:rdp', deviceId),
     openWeb: (url: string) => ipcRenderer.invoke('connection:openWeb', url),
     disconnect: (sessionId: string) => ipcRenderer.invoke('connection:disconnect', sessionId),
     onData: (sid: string, cb: (data: string) => void) => {

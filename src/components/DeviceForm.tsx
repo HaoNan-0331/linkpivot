@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Form, Input, Select, InputNumber, Modal } from 'antd'
 import type { Device, CreateDeviceDTO } from '../types/device'
 
@@ -12,6 +12,7 @@ interface Props {
 export default function DeviceForm({ open, device, onOk, onCancel }: Props) {
   const [form] = Form.useForm()
   const connType = Form.useWatch('connectionType', form)
+  const [confirmLoading, setConfirmLoading] = useState(false)
 
   useEffect(() => {
     if (device) {
@@ -26,9 +27,18 @@ export default function DeviceForm({ open, device, onOk, onCancel }: Props) {
     }
   }, [device, form, open])
 
+  const handleFinish = async (values: CreateDeviceDTO) => {
+    setConfirmLoading(true)
+    try {
+      await onOk(values)
+    } finally {
+      setConfirmLoading(false)
+    }
+  }
+
   return (
-    <Modal title={device ? '编辑设备' : '添加设备'} open={open} onOk={() => form.submit()} onCancel={onCancel} width={600} destroyOnHidden>
-      <Form form={form} layout="vertical" onFinish={onOk}>
+    <Modal title={device ? '编辑设备' : '添加设备'} open={open} onOk={() => form.submit()} onCancel={onCancel} width={600} destroyOnHidden confirmLoading={confirmLoading}>
+      <Form form={form} layout="vertical" onFinish={handleFinish}>
         <Form.Item name="name" label="设备名称" rules={[{ required: true, message: '请输入设备名称' }]}>
           <Input />
         </Form.Item>
@@ -60,12 +70,13 @@ export default function DeviceForm({ open, device, onOk, onCancel }: Props) {
             { value: 'ssh', label: 'SSH' },
             { value: 'telnet', label: 'Telnet' },
             { value: 'web', label: 'Web 界面' },
+            { value: 'rdp', label: 'RDP 远程桌面' },
           ]} />
         </Form.Item>
         {connType !== 'web' && (
           <>
             <Form.Item name="port" label="端口">
-              <InputNumber min={1} max={65535} style={{ width: '100%' }} placeholder={connType === 'ssh' ? '22' : '23'} />
+              <InputNumber min={1} max={65535} style={{ width: '100%' }} placeholder={connType === 'ssh' ? '22' : connType === 'rdp' ? '3389' : '23'} />
             </Form.Item>
             <div style={{ display: 'flex', gap: 16 }}>
               <Form.Item name="username" label="账号" style={{ flex: 1 }}><Input /></Form.Item>

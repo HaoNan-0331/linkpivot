@@ -210,6 +210,8 @@ export default function TopologyPage() {
         }
       } else if (connType === 'telnet') {
         await window.api.connection.telnetConnect(data.deviceId)
+      } else if (connType === 'rdp') {
+        await window.api.connection.rdpConnect(data.deviceId)
       } else {
         await window.api.connection.sshConnect(data.deviceId)
       }

@@ -1,4 +1,5 @@
 import { BrowserWindow, shell } from 'electron'
+import { exec } from 'child_process'
 import path from 'path'
 import fs from 'fs'
 import net from 'net'
@@ -40,6 +41,11 @@ export function openTerminal(deviceId: string): { sessionId: string } {
 
   if (device.connectionType === 'web') {
     if (device.webUrl) openWebSafe(device.webUrl)
+    return { sessionId: '' }
+  }
+
+  if (device.connectionType === 'rdp') {
+    openRDP(device)
     return { sessionId: '' }
   }
 
@@ -273,6 +279,8 @@ export function testDeviceConnection(deviceId: string): Promise<{ success: boole
     return testWebConnection(device.webUrl)
   } else if (device.connectionType === 'telnet') {
     return testTelnetConnection(device.ipAddress, device.port || 23)
+  } else if (device.connectionType === 'rdp') {
+    return testRDPConnection(device.ipAddress, device.port || 3389)
   } else {
     return testSSHConnection(device)
   }
@@ -375,4 +383,45 @@ async function testWebConnection(url: string): Promise<{ success: boolean; messa
   } catch {
     return { success: false, message: '无效的 URL' }
   }
+}
+
+export function openRDP(device: DeviceInfo) {
+  const host = device.ipAddress
+  const port = device.port || 3389
+  let rdpFile = `full address:s:${host}:${port}\n`
+  if (device.username) {
+    rdpFile += `username:s:${device.username}\n`
+  }
+  // mstsc on Windows accepts an .rdp file path as argument
+  const tmpPath = path.join(require('os').tmpdir(), `rdp_${device.id || Date.now()}.rdp`)
+  fs.writeFileSync(tmpPath, rdpFile, 'utf-8')
+  const cmd = `mstsc "${tmpPath}"`
+  exec(cmd, (err) => {
+    if (err) throw new Error(`启动 RDP 失败: ${err.message}`)
+  })
+}
+
+function testRDPConnection(host: string, port: number): Promise<{ success: boolean; message: string }> {
+  return new Promise((resolve) => {
+    const socket = new net.Socket()
+    const timer = setTimeout(() => {
+      socket.destroy()
+      resolve({ success: false, message: `连接超时 (${host}:${port})` })
+    }, 10000)
+
+    socket.on('connect', () => {
+      clearTimeout(timer)
+      socket.destroy()
+      resolve({ success: true, message: `RDP 端口可达 (${host}:${port})` })
+    })
+    socket.on('error', (err: Error) => {
+      clearTimeout(timer)
+      const msg = err.message.includes('ECONNREFUSED') ? '连接被拒绝'
+        : err.message.includes('ETIMEDOUT') ? '连接超时'
+        : err.message.includes('EHOSTUNREACH') ? '主机不可达'
+        : `连接失败: ${err.message}`
+      resolve({ success: false, message: msg })
+    })
+    socket.connect(port, host)
+  })
 }

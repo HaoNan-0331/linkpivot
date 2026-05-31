@@ -27,7 +27,7 @@ export function createTables() {
       version_enc TEXT,
       ip_enc TEXT,
       device_type TEXT DEFAULT 'generic' CHECK(device_type IN ('router','switch','firewall','server','generic')),
-      connection_type TEXT CHECK(connection_type IN ('ssh','telnet','web')),
+      connection_type TEXT CHECK(connection_type IN ('ssh','telnet','web','rdp')),
       port_enc TEXT,
       username_enc TEXT,
       password_enc TEXT,
@@ -221,6 +221,46 @@ export function createTables() {
   }
   if (!deviceCols.some((c) => c.name === 'last_checked')) {
     db.exec('ALTER TABLE devices ADD COLUMN last_checked TEXT')
+  }
+
+  // Migrate: expand connection_type CHECK constraint to include 'rdp'
+  // SQLite doesn't support ALTER CHECK, so recreate the table
+  const connTypeCheck = (db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='devices'").get() as any)?.sql || ''
+  if (!connTypeCheck.includes("'rdp'")) {
+    // Clean up failed previous migration attempt
+    db.exec("DROP TABLE IF EXISTS devices_new")
+    db.exec(`
+      CREATE TABLE devices_new (
+        id TEXT PRIMARY KEY,
+        topology_id TEXT,
+        name_enc TEXT NOT NULL,
+        vendor_enc TEXT,
+        model_enc TEXT,
+        version_enc TEXT,
+        ip_enc TEXT,
+        device_type TEXT DEFAULT 'generic' CHECK(device_type IN ('router','switch','firewall','server','generic')),
+        connection_type TEXT CHECK(connection_type IN ('ssh','telnet','web','rdp')),
+        port_enc TEXT,
+        username_enc TEXT,
+        password_enc TEXT,
+        ssh_key_path_enc TEXT,
+        ssh_key_content_enc TEXT,
+        web_url_enc TEXT,
+        status TEXT DEFAULT 'unknown',
+        last_checked TEXT,
+        created_at TEXT DEFAULT (datetime('now','localtime')),
+        updated_at TEXT DEFAULT (datetime('now','localtime')),
+        FOREIGN KEY (topology_id) REFERENCES topologies(id) ON DELETE SET NULL
+      );
+      INSERT INTO devices_new
+        SELECT id, topology_id, name_enc, vendor_enc, model_enc, version_enc, ip_enc,
+          COALESCE(device_type, 'generic'), connection_type, port_enc, username_enc,
+          password_enc, ssh_key_path_enc, ssh_key_content_enc, web_url_enc,
+          COALESCE(status, 'unknown'), last_checked, created_at, updated_at
+        FROM devices;
+      DROP TABLE devices;
+      ALTER TABLE devices_new RENAME TO devices;
+    `)
   }
 
   // Initialize default OUI data

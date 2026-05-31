@@ -26,16 +26,24 @@ export default function DevicesPage() {
   useEffect(() => { load() }, [])
 
   const handleCreate = async (values: CreateDeviceDTO) => {
-    await window.api.device.create(values)
-    message.success('设备添加成功')
-    setFormOpen(false); load()
+    try {
+      await window.api.device.create(values)
+      message.success('设备添加成功')
+      setFormOpen(false); load()
+    } catch (e: any) {
+      message.error(`添加失败: ${e.message}`)
+    }
   }
 
   const handleUpdate = async (values: CreateDeviceDTO) => {
     if (!editing) return
-    await window.api.device.update(editing.id, values)
-    message.success('设备更新成功')
-    setEditing(null); setFormOpen(false); load()
+    try {
+      await window.api.device.update(editing.id, values)
+      message.success('设备更新成功')
+      setEditing(null); setFormOpen(false); load()
+    } catch (e: any) {
+      message.error(`更新失败: ${e.message}`)
+    }
   }
 
   const handleDelete = async (id: string) => {
