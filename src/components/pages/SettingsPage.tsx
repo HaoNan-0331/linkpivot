@@ -115,6 +115,20 @@ export default function SettingsPage() {
           </Form.Item>
         </Form>
       </Card>
+      <Card title="多模态模型配置" size="small" style={{ marginBottom: 16 }}>
+        <p style={{ color: '#999', fontSize: 12, marginTop: 0 }}>用于资料库图片识别。未配置时，图片功能将降级（图片仅存储不生成描述）。</p>
+        <Form form={form} layout="vertical">
+          <Form.Item label="Base URL" name="visionBaseUrl">
+            <Input placeholder="留空则使用上方 AI 模型的 Base URL" />
+          </Form.Item>
+          <Form.Item label="API Key" name="visionApiKey">
+            <Input.Password placeholder="留空则使用上方 AI 模型的 API Key" />
+          </Form.Item>
+          <Form.Item label="模型名称" name="visionModel">
+            <Input placeholder="如 gpt-4o、claude-3-sonnet（需支持图片输入）" />
+          </Form.Item>
+        </Form>
+      </Card>
       <div style={{ marginBottom: 16 }}><CommandWhitelistEditor /></div>
       <div style={{ marginBottom: 16 }}><ExecModeSwitch /></div>
       <Divider />

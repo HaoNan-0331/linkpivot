@@ -48,9 +48,9 @@ export function uploadDocument(
   `).run(id, title, fileName, filePath, fileType, fileSize, category, deviceId)
 
   // Async process
-  setImmediate(() => {
+  setImmediate(async () => {
     try {
-      processDocument(id)
+      await processDocument(id)
     } catch (err: any) {
       db.prepare('UPDATE kb_documents SET status = ?, error_message = ? WHERE id = ?')
         .run('error', err.message, id)
@@ -123,9 +123,9 @@ export function reprocessDocument(docId: string): any {
 
   db.prepare('UPDATE kb_documents SET status = ?, error_message = NULL WHERE id = ?').run('pending', docId)
 
-  setImmediate(() => {
+  setImmediate(async () => {
     try {
-      processDocument(docId)
+      await processDocument(docId)
     } catch (err: any) {
       db.prepare('UPDATE kb_documents SET status = ?, error_message = ? WHERE id = ?')
         .run('error', err.message, docId)
@@ -135,9 +135,61 @@ export function reprocessDocument(docId: string): any {
   return getDocument(docId)
 }
 
+// ---------- Vision Model ----------
+
+interface VisionConfig {
+  baseUrl: string
+  apiKey: string
+  model: string
+}
+
+function getVisionConfig(): VisionConfig | null {
+  const config = getAiConfig()
+  if (!config) return null
+
+  const baseUrl = config.visionBaseUrl || config.baseUrl
+  const apiKey = config.visionApiKey || config.apiKey
+  const model = config.visionModel
+
+  if (!apiKey || !model) return null
+  return { baseUrl, apiKey, model }
+}
+
+async function describeImage(imageBuffer: Buffer, ext: string, config: VisionConfig): Promise<string> {
+  const base64 = imageBuffer.toString('base64')
+  const mimeType = ext === 'png' ? 'image/png' : ext === 'gif' ? 'image/gif' : 'image/jpeg'
+
+  const response = await fetch(`${config.baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${config.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: config.model,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: '请用中文简洁描述这张图片的内容，重点关注与网络设备、技术配置相关的信息。如果图片是纯文字截图，请转录其中的文字内容。' },
+          { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
+        ],
+      }],
+      max_tokens: 300,
+    }),
+  })
+
+  if (!response.ok) {
+    const text = await response.text()
+    throw new Error(`Vision API error (${response.status}): ${text}`)
+  }
+
+  const data = await response.json()
+  return data.choices?.[0]?.message?.content || ''
+}
+
 // ---------- Document Processing ----------
 
-function processDocument(docId: string): void {
+async function processDocument(docId: string): Promise<void> {
   const db = getDatabase()
   const doc = db.prepare('SELECT * FROM kb_documents WHERE id = ?').get(docId) as any
   if (!doc) throw new Error('文档不存在')
@@ -146,6 +198,7 @@ function processDocument(docId: string): void {
 
   const buffer = fs.readFileSync(doc.file_path)
   let chapters: Array<{ title: string; content: string; level: number }>
+  let images: Array<{ chunkIndex: number; buffer: Buffer; ext: string }> = []
 
   switch (doc.file_type) {
     case 'txt':
@@ -155,13 +208,16 @@ function processDocument(docId: string): void {
       chapters = parsePdf(buffer)
       break
     case 'docx':
-      chapters = parseDocx(buffer)
+      const docxResult = await parseDocxWithImagesAsync(buffer)
+      chapters = docxResult.chapters
+      images = docxResult.images
       break
     default:
       throw new Error(`不支持的文件类型: ${doc.file_type}`)
   }
 
   // Save chunks
+  const chunkIds: string[] = []
   const insertChunk = db.prepare(`
     INSERT INTO kb_chunks (id, document_id, chunk_index, title, content, level, char_count)
     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -169,10 +225,46 @@ function processDocument(docId: string): void {
   const insertMany = db.transaction(() => {
     for (let i = 0; i < chapters.length; i++) {
       const ch = chapters[i]
-      insertChunk.run(uuidv4(), docId, i, ch.title, ch.content, ch.level, ch.content.length)
+      const chunkId = uuidv4()
+      chunkIds.push(chunkId)
+      insertChunk.run(chunkId, docId, i, ch.title, ch.content, ch.level, ch.content.length)
     }
   })
   insertMany()
+
+  // Save images and generate descriptions
+  if (images.length > 0) {
+    const visionConfig = getVisionConfig()
+    const insertImage = db.prepare(`
+      INSERT INTO kb_images (id, document_id, chunk_id, file_path, description)
+      VALUES (?, ?, ?, ?, ?)
+    `)
+
+    for (const img of images) {
+      const imgId = uuidv4()
+      const chunkId = chunkIds[img.chunkIndex] || chunkIds[0]
+      const imgFileName = `${imgId}.${img.ext}`
+      const imgFilePath = path.join(imgDir(), imgFileName)
+      fs.writeFileSync(imgFilePath, img.buffer)
+
+      let description = ''
+      if (visionConfig) {
+        try {
+          description = await describeImage(img.buffer, img.ext, visionConfig)
+        } catch { /* description generation failed, continue without */ }
+      }
+
+      insertImage.run(imgId, docId, chunkId, imgFilePath, description)
+
+      // Update chunk's image_ids
+      if (chunkId) {
+        const chunk = db.prepare('SELECT image_ids FROM kb_chunks WHERE id = ?').get(chunkId) as any
+        const existingIds: string[] = chunk?.image_ids ? JSON.parse(chunk.image_ids) : []
+        existingIds.push(imgId)
+        db.prepare('UPDATE kb_chunks SET image_ids = ? WHERE id = ?').run(JSON.stringify(existingIds), chunkId)
+      }
+    }
+  }
 
   db.prepare('UPDATE kb_documents SET status = ?, chunk_count = ?, updated_at = datetime("now","localtime") WHERE id = ?')
     .run('ready', chapters.length, docId)
@@ -250,16 +342,54 @@ function splitByOutline(text: string, outline: PdfOutlineItem[]): Array<{ title:
 // ---------- Word Parsing ----------
 
 function parseDocx(buffer: Buffer): Array<{ title: string; content: string; level: number }> {
-  // mammoth is ESM-incompatible, use dynamic require
+  return parseDocxWithImages(buffer).chapters
+}
+
+function parseDocxWithImages(buffer: Buffer): {
+  chapters: Array<{ title: string; content: string; level: number }>
+  images: Array<{ chunkIndex: number; buffer: Buffer; ext: string }>
+} {
   const mammoth = require('mammoth')
 
-  // Extract text with style info via HTML conversion
+  // Synchronous: just extract chapters, images handled separately
   const result = mammoth.convertToHtml({ buffer })
   const html: string = result.value
 
-  if (!html || !html.trim()) return []
+  if (!html || !html.trim()) return { chapters: [], images: [] }
 
-  return splitHtmlByHeadings(html)
+  const chapters = splitHtmlByHeadings(html)
+  return { chapters, images: [] }
+}
+
+// Async version that also extracts images
+async function parseDocxWithImagesAsync(buffer: Buffer): Promise<{
+  chapters: Array<{ title: string; content: string; level: number }>
+  images: Array<{ chunkIndex: number; buffer: Buffer; ext: string }>
+}> {
+  const mammoth = require('mammoth')
+  const images: Array<{ chunkIndex: number; buffer: Buffer; ext: string }> = []
+
+  const html = await mammoth.convertToHtml({ buffer }, {
+    convertImage: mammoth.images.inline((element: any) => {
+      return element.read('base64then').then((imageBuffer: Buffer) => {
+        const ext = element.contentType?.split('/')[1] || 'png'
+        images.push({ chunkIndex: 0, buffer: imageBuffer, ext })
+        // Return a placeholder so HTML still works for chapter splitting
+        return { src: `[图片${images.length}]` }
+      })
+    })
+  }).then((r: any) => r.value as string)
+
+  if (!html || !html.trim()) return { chapters: [], images: [] }
+
+  const chapters = splitHtmlByHeadings(html)
+
+  // Distribute images across chunks
+  for (let i = 0; i < images.length; i++) {
+    images[i].chunkIndex = Math.min(i, chapters.length - 1)
+  }
+
+  return { chapters, images }
 }
 
 function splitHtmlByHeadings(html: string): Array<{ title: string; content: string; level: number }> {

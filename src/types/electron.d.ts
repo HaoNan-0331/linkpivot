@@ -3,6 +3,9 @@ export interface AIConfig {
   apiKey: string
   baseUrl: string
   modelName: string
+  visionBaseUrl?: string
+  visionApiKey?: string
+  visionModel?: string
 }
 
 export interface AIExecLog {

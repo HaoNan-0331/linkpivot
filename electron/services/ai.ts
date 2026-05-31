@@ -25,9 +25,12 @@ export function getAiConfig(): Record<string, string> | null {
   const apiKey = decField(row.api_key_enc, MK)
   return {
     provider: decField(row.provider_enc, MK),
-    apiKey,  // used internally by callAI; renderer receives masked version via IPC
+    apiKey,
     baseUrl: decField(row.base_url_enc, MK),
     modelName: decField(row.model_name_enc, MK),
+    visionBaseUrl: decField(row.vision_base_url_enc, MK),
+    visionApiKey: decField(row.vision_api_key_enc, MK),
+    visionModel: decField(row.vision_model_enc, MK),
   }
 }
 
@@ -40,6 +43,9 @@ export function getAiConfigMasked(): Record<string, string> | null {
     apiKey: config.apiKey ? `****${config.apiKey.slice(-4)}` : '',
     baseUrl: config.baseUrl,
     modelName: config.modelName,
+    visionBaseUrl: config.visionBaseUrl,
+    visionApiKey: config.visionApiKey ? `****${config.visionApiKey.slice(-4)}` : '',
+    visionModel: config.visionModel,
   }
 }
 
@@ -55,26 +61,35 @@ export function saveAiConfig(config: Record<string, string>): void {
       apiKey: config.apiKey ?? current.apiKey ?? '',
       baseUrl: config.baseUrl ?? current.baseUrl ?? '',
       modelName: config.modelName ?? current.modelName ?? '',
+      visionBaseUrl: config.visionBaseUrl ?? current.visionBaseUrl ?? '',
+      visionApiKey: config.visionApiKey ?? current.visionApiKey ?? '',
+      visionModel: config.visionModel ?? current.visionModel ?? '',
     }
     db.prepare(
-      `UPDATE ai_config SET provider_enc=?, api_key_enc=?, base_url_enc=?, model_name_enc=? WHERE id=?`
+      `UPDATE ai_config SET provider_enc=?, api_key_enc=?, base_url_enc=?, model_name_enc=?, vision_base_url_enc=?, vision_api_key_enc=?, vision_model_enc=? WHERE id=?`
     ).run(
       encField(merged.provider, MK),
       encField(merged.apiKey, MK),
       encField(merged.baseUrl, MK),
       encField(merged.modelName, MK),
+      encField(merged.visionBaseUrl, MK),
+      encField(merged.visionApiKey, MK),
+      encField(merged.visionModel, MK),
       existing.id
     )
   } else {
     const id = uuidv4()
     db.prepare(
-      `INSERT INTO ai_config (id, provider_enc, api_key_enc, base_url_enc, model_name_enc) VALUES (?,?,?,?,?)`
+      `INSERT INTO ai_config (id, provider_enc, api_key_enc, base_url_enc, model_name_enc, vision_base_url_enc, vision_api_key_enc, vision_model_enc) VALUES (?,?,?,?,?,?,?,?)`
     ).run(
       id,
       encField(config.provider ?? '', MK),
       encField(config.apiKey ?? '', MK),
       encField(config.baseUrl ?? '', MK),
-      encField(config.modelName ?? '', MK)
+      encField(config.modelName ?? '', MK),
+      encField(config.visionBaseUrl ?? '', MK),
+      encField(config.visionApiKey ?? '', MK),
+      encField(config.visionModel ?? '', MK)
     )
   }
 }
