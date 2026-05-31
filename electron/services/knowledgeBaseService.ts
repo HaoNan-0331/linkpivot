@@ -4,6 +4,7 @@ import path from 'path'
 import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../database/connection'
 import { encField, decField } from '../utils/crypto'
+import { getAiConfig, callAI } from './ai'
 
 let MK = ''
 
@@ -404,19 +405,13 @@ function splitOversizedChapters(chapters: Array<{ title: string; content: string
 
 // ---------- Search ----------
 
-export function search(query: string, deviceIds?: string[], topK = 5): any[] {
+export async function search(query: string, deviceIds?: string[], topK = 5): Promise<any[]> {
   const db = getDatabase()
 
-  const keywords = query
-    .replace(/[，。！？、；：""''（）【】《》\s]+/g, ' ')
-    .trim()
-    .split(/\s+/)
-    .filter(w => w.length > 0)
-    .map(w => `"${w}"`)
-    .join(' OR ')
-
+  const keywords = extractKeywords(query)
   if (!keywords) return []
 
+  // Stage 1: FTS5 keyword match
   const candidateLimit = topK * 3
   let ftsSql = `
     SELECT c.id, c.document_id, c.chunk_index, c.title, c.content, c.level, c.image_ids, rank
@@ -438,17 +433,93 @@ export function search(query: string, deviceIds?: string[], topK = 5): any[] {
   const candidates = db.prepare(ftsSql).all(...ftsParams) as any[]
   if (candidates.length === 0) return []
 
-  // Stage 2: LLM re-rank (Phase 3)
-  const results = candidates.slice(0, topK).map(c => ({
-    ...c,
-    document: db.prepare('SELECT id, title, file_name, category FROM kb_documents WHERE id = ?').get(c.document_id),
-  }))
+  // Attach document info
+  for (const c of candidates) {
+    c.document = db.prepare('SELECT id, title, file_name, category FROM kb_documents WHERE id = ?').get(c.document_id)
+  }
 
-  return results
+  // Stage 2: LLM re-rank
+  if (candidates.length <= topK) return candidates
+
+  try {
+    const reranked = await llmRerank(query, candidates, topK)
+    if (reranked) return reranked
+  } catch { /* fallback to FTS ranking */ }
+
+  return candidates.slice(0, topK)
 }
 
-export function ragQuery(query: string, deviceIds?: string[], topK = 5): { chunks: any[]; images: any[] } {
-  const chunks = search(query, deviceIds, topK)
+function extractKeywords(query: string): string {
+  // Chinese stop words
+  const stopWords = new Set([
+    '的', '了', '在', '是', '我', '有', '和', '就', '不', '人', '都', '一', '一个',
+    '上', '也', '很', '到', '说', '要', '去', '你', '会', '着', '没有', '看', '好',
+    '自己', '这', '他', '她', '它', '们', '那', '些', '什么', '怎么', '如何', '哪',
+    '为什么', '吗', '呢', '吧', '啊', '呀', '哦', '嗯', '能', '可以', '应该',
+    '请', '帮', '给', '让', '把', '被', '从', '对', '与', '及', '或', '但',
+  ])
+
+  const tokens = query
+    .replace(/[，。！？、；：""''（）【】《》\s]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(w => w.length > 0 && !stopWords.has(w))
+
+  if (tokens.length === 0) return ''
+
+  // For Chinese, also split by character pairs for better FTS coverage
+  const expandedTokens = new Set<string>()
+  for (const token of tokens) {
+    expandedTokens.add(token)
+    // Add bigrams for tokens > 2 chars (Chinese text)
+    if (/[\u4e00-\u9fff]/.test(token) && token.length >= 2) {
+      for (let i = 0; i < token.length - 1; i++) {
+        expandedTokens.add(token.substring(i, i + 2))
+      }
+    }
+  }
+
+  return Array.from(expandedTokens).map(w => `"${w}"`).join(' OR ')
+}
+
+async function llmRerank(query: string, candidates: any[], topK: number): Promise<any[] | null> {
+  const config = getAiConfig()
+  if (!config || !config.apiKey) return null
+
+  // Build candidate summary for LLM
+  const candidateList = candidates.map((c, i) => ({
+    index: i,
+    title: c.title || '无标题',
+    snippet: c.content?.slice(0, 300) || '',
+  }))
+
+  const prompt = `你是一个文档检索相关性判断助手。用户提出了一个问题，以下是检索到的候选文档片段。请判断每个片段与用户问题的相关性。
+
+用户问题：${query}
+
+候选片段：
+${candidateList.map(c => `[${c.index}] 标题: ${c.title}\n内容: ${c.snippet}`).join('\n\n')}
+
+请仅返回相关的片段编号，用逗号分隔，按相关性从高到低排列。最多返回${topK}个。
+格式示例：0,3,1
+如果没有相关片段，返回：none`
+
+  const response = await callAI(config, [{ role: 'user', content: prompt }])
+
+  if (!response || response.trim().toLowerCase() === 'none') return []
+
+  const indices = response.trim()
+    .split(/[,\s，、]+/)
+    .map(s => parseInt(s.trim(), 10))
+    .filter(i => !isNaN(i) && i >= 0 && i < candidates.length)
+
+  if (indices.length === 0) return null
+
+  return indices.slice(0, topK).map(i => candidates[i])
+}
+
+export async function ragQuery(query: string, deviceIds?: string[], topK = 5): Promise<{ chunks: any[]; images: any[] }> {
+  const chunks = await search(query, deviceIds, topK)
   const db = getDatabase()
 
   const images: any[] = []
