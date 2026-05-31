@@ -99,6 +99,15 @@ export interface ElectronAPI {
     updateSessionTitle: (sessionId: string, title: string) => Promise<void>
     getSystemLogs: (limit?: number) => Promise<AISystemLog[]>
   }
+  kb: {
+    uploadBuffer: (buffer: ArrayBuffer, fileName: string, fileType: string, fileSize: number, category: string, deviceId: string | null) => Promise<any>
+    listDocuments: (deviceId?: string, category?: string) => Promise<any[]>
+    deleteDocument: (docId: string) => Promise<void>
+    getDocument: (docId: string) => Promise<any>
+    getStatus: (docId: string) => Promise<any>
+    reprocess: (docId: string) => Promise<any>
+    search: (query: string, deviceIds?: string[], topK?: number) => Promise<any[]>
+  }
 }
 
 export interface TerminalAPI {

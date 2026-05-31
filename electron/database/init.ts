@@ -196,6 +196,78 @@ export function createTables() {
       last_run TEXT,
       next_run TEXT
     );
+
+    -- Knowledge Base tables
+
+    CREATE TABLE IF NOT EXISTS kb_documents (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      file_type TEXT NOT NULL,
+      file_size INTEGER,
+      category TEXT DEFAULT 'manual' CHECK(category IN ('manual','api','template','notes')),
+      device_id TEXT,
+      status TEXT DEFAULT 'pending' CHECK(status IN ('pending','processing','ready','error')),
+      error_message TEXT,
+      chunk_count INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now','localtime')),
+      updated_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS kb_chunks (
+      id TEXT PRIMARY KEY,
+      document_id TEXT NOT NULL REFERENCES kb_documents(id) ON DELETE CASCADE,
+      chunk_index INTEGER NOT NULL,
+      title TEXT,
+      content TEXT NOT NULL,
+      level INTEGER DEFAULT 1,
+      image_ids TEXT,
+      char_count INTEGER,
+      created_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_kb_chunks_doc ON kb_chunks(document_id);
+
+    CREATE TABLE IF NOT EXISTS kb_images (
+      id TEXT PRIMARY KEY,
+      document_id TEXT NOT NULL REFERENCES kb_documents(id) ON DELETE CASCADE,
+      chunk_id TEXT REFERENCES kb_chunks(id) ON DELETE CASCADE,
+      file_path TEXT NOT NULL,
+      description TEXT,
+      created_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_kb_images_doc ON kb_images(document_id);
+    CREATE INDEX IF NOT EXISTS idx_kb_images_chunk ON kb_images(chunk_id);
+
+    CREATE VIRTUAL TABLE IF NOT EXISTS kb_chunks_fts USING fts5(
+      title,
+      content,
+      image_desc,
+      content='kb_chunks',
+      content_rowid='rowid',
+      tokenize='unicode61'
+    );
+
+    CREATE TRIGGER IF NOT EXISTS kb_chunks_ai AFTER INSERT ON kb_chunks BEGIN
+      INSERT INTO kb_chunks_fts(rowid, title, content, image_desc)
+        VALUES (new.rowid, new.title, new.content,
+          (SELECT GROUP_CONCAT(description, ' ') FROM kb_images WHERE chunk_id = new.id));
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS kb_chunks_ad AFTER DELETE ON kb_chunks BEGIN
+      INSERT INTO kb_chunks_fts(kb_chunks_fts, rowid, title, content, image_desc)
+        VALUES ('delete', old.rowid, old.title, old.content,
+          (SELECT GROUP_CONCAT(description, ' ') FROM kb_images WHERE chunk_id = old.id));
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS kb_chunks_au AFTER UPDATE ON kb_chunks BEGIN
+      INSERT INTO kb_chunks_fts(kb_chunks_fts, rowid, title, content, image_desc)
+        VALUES ('delete', old.rowid, old.title, old.content,
+          (SELECT GROUP_CONCAT(description, ' ') FROM kb_images WHERE chunk_id = old.id));
+      INSERT INTO kb_chunks_fts(rowid, title, content, image_desc)
+        VALUES (new.rowid, new.title, new.content,
+          (SELECT GROUP_CONCAT(description, ' ') FROM kb_images WHERE chunk_id = new.id));
+    END;
   `)
 
   // Migrate: add session_id column to existing chat_history table
@@ -221,6 +293,18 @@ export function createTables() {
   }
   if (!deviceCols.some((c) => c.name === 'last_checked')) {
     db.exec('ALTER TABLE devices ADD COLUMN last_checked TEXT')
+  }
+
+  // Migrate: add vision model columns to ai_config table
+  const aiConfigCols = db.prepare("PRAGMA table_info(ai_config)").all() as any[]
+  if (!aiConfigCols.some((c) => c.name === 'vision_base_url_enc')) {
+    db.exec("ALTER TABLE ai_config ADD COLUMN vision_base_url_enc TEXT")
+  }
+  if (!aiConfigCols.some((c) => c.name === 'vision_api_key_enc')) {
+    db.exec("ALTER TABLE ai_config ADD COLUMN vision_api_key_enc TEXT")
+  }
+  if (!aiConfigCols.some((c) => c.name === 'vision_model_enc')) {
+    db.exec("ALTER TABLE ai_config ADD COLUMN vision_model_enc TEXT")
   }
 
   // Migrate: expand connection_type CHECK constraint to include 'rdp'

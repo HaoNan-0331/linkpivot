@@ -1,5 +1,5 @@
 import { Menu, Divider } from 'antd'
-import { ApartmentOutlined, DesktopOutlined, RobotOutlined, SettingOutlined, FileSearchOutlined, GlobalOutlined } from '@ant-design/icons'
+import { ApartmentOutlined, DesktopOutlined, RobotOutlined, SettingOutlined, FileSearchOutlined, GlobalOutlined, BookOutlined } from '@ant-design/icons'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useTopologyToolbarStore } from '@/stores/topologyToolbarStore'
 import TopologyToolbar from './topology/TopologyToolbar'
@@ -9,6 +9,7 @@ const navItems = [
   { key: '/devices', icon: <DesktopOutlined />, label: '设备管理' },
   { key: '/ip-management', icon: <GlobalOutlined />, label: 'IP 管理' },
   { key: '/ai', icon: <RobotOutlined />, label: 'AI 助手' },
+  { key: '/knowledge-base', icon: <BookOutlined />, label: '资料库' },
   { key: '/logs', icon: <FileSearchOutlined />, label: '日志审计' },
   { key: '/settings', icon: <SettingOutlined />, label: '系统设置' },
 ]
