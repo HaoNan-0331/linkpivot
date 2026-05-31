@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Select, Input, Button, Spin, Typography, message, Modal, Tag } from 'antd'
-import { SendOutlined, RobotOutlined, UserOutlined, ExclamationCircleOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons'
+import { SendOutlined, RobotOutlined, UserOutlined, ExclamationCircleOutlined, PlusOutlined, DeleteOutlined, BookOutlined } from '@ant-design/icons'
 import type { ChatSession, ChatMessage } from '@/types/electron'
 
 const { Title } = Typography
@@ -17,6 +17,7 @@ interface ChatMsg {
   role: 'user' | 'assistant'
   content: string
   createdAt?: string
+  references?: Array<{ docTitle: string; chunkTitle: string; docId: string }>
 }
 
 interface ConfirmData {
@@ -138,11 +139,16 @@ export default function AIPage() {
         setSessions((prev) => prev.map((s) => s.id === currentSessionId ? { ...s, title } : s))
       }
 
-      // Check if reply is a confirm_required response
+      // Check if reply is a confirm_required or kb_answer response
       try {
-        const parsed: ConfirmData = JSON.parse(reply)
+        const parsed = JSON.parse(reply)
         if (parsed.type === 'confirm_required') {
           setPendingConfirm(parsed)
+          setLoading(false)
+          return
+        }
+        if (parsed.type === 'kb_answer') {
+          setMessages([...newMessages, { role: 'assistant', content: parsed.content, references: parsed.references }])
           setLoading(false)
           return
         }
@@ -293,6 +299,17 @@ export default function AIPage() {
                   </span>
                 </div>
                 {msg.content}
+                {msg.role === 'assistant' && msg.references && msg.references.length > 0 && (
+                  <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed #e8e8e8' }}>
+                    <div style={{ fontSize: 12, color: '#999', marginBottom: 4 }}>参考来源：</div>
+                    {msg.references.map((ref, ri) => (
+                      <div key={ri} style={{ fontSize: 12, color: '#666', lineHeight: 1.8 }}>
+                        <BookOutlined style={{ marginRight: 4, color: '#1890ff' }} />
+                        {ref.docTitle} — {ref.chunkTitle}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           ))}
