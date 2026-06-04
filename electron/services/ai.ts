@@ -7,6 +7,7 @@ import { encField, decField } from '../utils/crypto'
 import { verifyPasswordSync } from '../utils/crypto'
 import { isCommandAllowed } from './commandSafety'
 import { createLog, updateLogStatus, appendLogAiResponse, getLogs, setAiExecLoggerMasterKey } from './aiExecLogger'
+import { search as kbSearch } from './knowledgeBaseService'
 
 let MK = ''
 export function setAiMasterKey(key: string) {
@@ -24,9 +25,12 @@ export function getAiConfig(): Record<string, string> | null {
   const apiKey = decField(row.api_key_enc, MK)
   return {
     provider: decField(row.provider_enc, MK),
-    apiKey,  // used internally by callAI; renderer receives masked version via IPC
+    apiKey,
     baseUrl: decField(row.base_url_enc, MK),
     modelName: decField(row.model_name_enc, MK),
+    visionBaseUrl: decField(row.vision_base_url_enc, MK),
+    visionApiKey: decField(row.vision_api_key_enc, MK),
+    visionModel: decField(row.vision_model_enc, MK),
   }
 }
 
@@ -39,6 +43,9 @@ export function getAiConfigMasked(): Record<string, string> | null {
     apiKey: config.apiKey ? `****${config.apiKey.slice(-4)}` : '',
     baseUrl: config.baseUrl,
     modelName: config.modelName,
+    visionBaseUrl: config.visionBaseUrl,
+    visionApiKey: config.visionApiKey ? `****${config.visionApiKey.slice(-4)}` : '',
+    visionModel: config.visionModel,
   }
 }
 
@@ -54,26 +61,35 @@ export function saveAiConfig(config: Record<string, string>): void {
       apiKey: config.apiKey ?? current.apiKey ?? '',
       baseUrl: config.baseUrl ?? current.baseUrl ?? '',
       modelName: config.modelName ?? current.modelName ?? '',
+      visionBaseUrl: config.visionBaseUrl ?? current.visionBaseUrl ?? '',
+      visionApiKey: config.visionApiKey ?? current.visionApiKey ?? '',
+      visionModel: config.visionModel ?? current.visionModel ?? '',
     }
     db.prepare(
-      `UPDATE ai_config SET provider_enc=?, api_key_enc=?, base_url_enc=?, model_name_enc=? WHERE id=?`
+      `UPDATE ai_config SET provider_enc=?, api_key_enc=?, base_url_enc=?, model_name_enc=?, vision_base_url_enc=?, vision_api_key_enc=?, vision_model_enc=? WHERE id=?`
     ).run(
       encField(merged.provider, MK),
       encField(merged.apiKey, MK),
       encField(merged.baseUrl, MK),
       encField(merged.modelName, MK),
+      encField(merged.visionBaseUrl, MK),
+      encField(merged.visionApiKey, MK),
+      encField(merged.visionModel, MK),
       existing.id
     )
   } else {
     const id = uuidv4()
     db.prepare(
-      `INSERT INTO ai_config (id, provider_enc, api_key_enc, base_url_enc, model_name_enc) VALUES (?,?,?,?,?)`
+      `INSERT INTO ai_config (id, provider_enc, api_key_enc, base_url_enc, model_name_enc, vision_base_url_enc, vision_api_key_enc, vision_model_enc) VALUES (?,?,?,?,?,?,?,?)`
     ).run(
       id,
       encField(config.provider ?? '', MK),
       encField(config.apiKey ?? '', MK),
       encField(config.baseUrl ?? '', MK),
-      encField(config.modelName ?? '', MK)
+      encField(config.modelName ?? '', MK),
+      encField(config.visionBaseUrl ?? '', MK),
+      encField(config.visionApiKey ?? '', MK),
+      encField(config.visionModel ?? '', MK)
     )
   }
 }
@@ -618,7 +634,17 @@ export async function chat(
     '[CMD:设备名]命令内容[/CMD]\n' +
     '如果只有一个设备，也可以用 [CMD]命令内容[/CMD]\n' +
     '每个命令单独一行。你可以在命令前后添加解释说明。\n' +
-    '注意：只能执行只读查询命令（如 display、show、ping、traceroute），不能执行修改配置的命令。'
+    '注意：只能执行只读查询命令（如 display、show、ping、traceroute），不能执行修改配置的命令。\n\n' +
+    '你还可以查询资料库中已上传的设备文档。\n' +
+    '**必须使用资料库搜索的场景**（优先级高于SSH命令）：\n' +
+    '- 用户询问设备的默认账号/密码、初始配置、出厂设置\n' +
+    '- 用户询问设备功能说明、配置方法、操作指南\n' +
+    '- 用户询问设备规格参数、支持的特性\n' +
+    '- 用户的问题涉及特定产品型号的专属知识\n\n' +
+    '使用格式：\n' +
+    '[KB_SEARCH]搜索关键词[/KB_SEARCH]\n' +
+    '系统会返回相关文档片段，你基于这些内容回答用户问题。' +
+    '每次最多使用一次KB_SEARCH。'
 
   // Load target devices
   const targetDevices: any[] = []
@@ -646,11 +672,71 @@ export async function chat(
 
   const aiReply = await callAI(config, fullMessages)
 
+  // Check for KB_SEARCH tool call
+  const kbSearchMatch = aiReply.match(/\[KB_SEARCH\](.*?)\[\/KB_SEARCH\]/s)
+  let kbReferences: Array<{ docTitle: string; chunkTitle: string; docId: string }> = []
+  let finalAiReply = aiReply
+
+  if (kbSearchMatch) {
+    const searchQuery = kbSearchMatch[1].trim()
+    try {
+      const searchResults = await kbSearch(searchQuery, deviceIds, 5)
+      if (searchResults.length > 0) {
+        // Build context from search results, replacing [图片N] with descriptions
+        const kbContext = searchResults.map((r: any, i: number) => {
+          let content = r.content || ''
+          if (r.images?.length > 0) {
+            const imgMarkers = [...content.matchAll(/\[图片(\d+)\]/g)]
+            for (const m of imgMarkers) {
+              const num = parseInt(m[1], 10)
+              const img = r.images[num - 1]
+              if (img?.description) {
+                content = content.replace(m[0], `[图片${num}: ${img.description}]`)
+              } else {
+                content = content.replace(m[0], `[图片${num}: 图片存在但未生成描述，请提示用户检查多模态模型配置]`)
+              }
+            }
+          }
+          return `[文档${i + 1}: ${r.document?.title || '未知'} / 章节: ${r.title || '无标题'}]\n${content}`
+        }).join('\n\n')
+
+        // Collect references
+        kbReferences = searchResults.map((r: any) => ({
+          docTitle: r.document?.title || '未知',
+          chunkTitle: r.title || '无标题',
+          docId: r.document_id,
+        }))
+
+        // Feed results back to AI for final answer
+        const followUpMessages = [
+          ...fullMessages,
+          { role: 'assistant', content: aiReply },
+          {
+            role: 'user',
+            content: `以下是资料库检索到的相关文档片段（关键词: "${searchQuery}"）：\n\n${kbContext}\n\n请基于以上文档内容回答用户的问题。如果文档中没有相关信息，请说明。回答中不要包含 [KB_SEARCH] 标记。`,
+          },
+        ]
+        finalAiReply = await callAI(config, followUpMessages)
+      } else {
+        // No results found — let AI know
+        const followUpMessages = [
+          ...fullMessages,
+          { role: 'assistant', content: aiReply },
+          { role: 'user', content: `资料库中未找到与"${searchQuery}"相关的文档。请基于你已有的知识回答，并说明资料库中暂无相关文档。回答中不要包含 [KB_SEARCH] 标记。` },
+        ]
+        finalAiReply = await callAI(config, followUpMessages)
+      }
+    } catch {
+      // KB search failed — strip the tag and use original reply
+      finalAiReply = aiReply.replace(/\[KB_SEARCH\].*?\[\/KB_SEARCH\]/gs, '').trim()
+    }
+  }
+
   // Extract [CMD:device]...[/CMD] or [CMD]...[/CMD] blocks
   const cmdRegex = /\[CMD(?::([^\]]+))?\](.*?)\[\/CMD\]/g
   const commands: Array<{ deviceName: string; cmd: string }> = []
   let match: RegExpExecArray | null
-  while ((match = cmdRegex.exec(aiReply)) !== null) {
+  while ((match = cmdRegex.exec(finalAiReply)) !== null) {
     const deviceName = (match[1] || '').trim()
     const cmd = match[2].trim()
     commands.push({ deviceName, cmd })
@@ -659,8 +745,11 @@ export async function chat(
   // No commands or no devices — just return the reply
   if (commands.length === 0 || targetDevices.length === 0) {
     saveChatMessage('user', messages[messages.length - 1]?.content || '', null, sessionId)
-    saveChatMessage('assistant', aiReply, null, sessionId)
-    return aiReply
+    saveChatMessage('assistant', finalAiReply, null, sessionId)
+    if (kbReferences.length > 0) {
+      return JSON.stringify({ type: 'kb_answer', content: finalAiReply, references: kbReferences })
+    }
+    return finalAiReply
   }
 
   // Collect all commands with safety check

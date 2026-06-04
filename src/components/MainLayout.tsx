@@ -7,6 +7,7 @@ import IpManagementPage from './pages/IpManagementPage'
 import AIPage from './pages/AIPage'
 import LogAuditPage from './pages/LogAuditPage'
 import SettingsPage from './pages/SettingsPage'
+import KnowledgeBasePage from './pages/KnowledgeBasePage'
 
 const { Sider, Content } = Layout
 
@@ -28,6 +29,7 @@ export default function MainLayout() {
               <Route path="/devices" element={<DevicesPage />} />
               <Route path="/ip-management" element={<IpManagementPage />} />
               <Route path="/ai" element={<AIPage />} />
+              <Route path="/knowledge-base" element={<KnowledgeBasePage />} />
               <Route path="/logs" element={<LogAuditPage />} />
               <Route path="/settings" element={<SettingsPage />} />
             </Routes>

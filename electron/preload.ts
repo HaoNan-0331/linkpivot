@@ -107,6 +107,20 @@ const api = {
     runNow: () => ipcRenderer.invoke('scheduler:runNow'),
     getStatus: () => ipcRenderer.invoke('scheduler:getStatus'),
   },
+  kb: {
+    uploadBuffer: (buffer: ArrayBuffer, fileName: string, fileType: string, fileSize: number, category: string, deviceId: string | null) => ipcRenderer.invoke('kb:uploadBuffer', buffer, fileName, fileType, fileSize, category, deviceId),
+    listDocuments: (deviceId?: string, category?: string) => ipcRenderer.invoke('kb:listDocuments', deviceId, category),
+    deleteDocument: (docId: string) => ipcRenderer.invoke('kb:deleteDocument', docId),
+    getDocument: (docId: string) => ipcRenderer.invoke('kb:getDocument', docId),
+    getStatus: (docId: string) => ipcRenderer.invoke('kb:getStatus', docId),
+    reprocess: (docId: string) => ipcRenderer.invoke('kb:reprocess', docId),
+    search: (query: string, deviceIds?: string[], topK?: number) => ipcRenderer.invoke('kb:search', query, deviceIds, topK),
+    updateChunk: (chunkId: string, title: string, content: string) => ipcRenderer.invoke('kb:updateChunk', chunkId, title, content),
+    deleteChunk: (chunkId: string) => ipcRenderer.invoke('kb:deleteChunk', chunkId),
+    mergeChunks: (chunkIds: string[], newTitle: string) => ipcRenderer.invoke('kb:mergeChunks', chunkIds, newTitle),
+    splitChunk: (chunkId: string, splitPosition: number, title1: string, title2: string) => ipcRenderer.invoke('kb:splitChunk', chunkId, splitPosition, title1, title2),
+    getImageData: (imagePath: string) => ipcRenderer.invoke('kb:getImageData', imagePath),
+  },
 }
 
 contextBridge.exposeInMainWorld('api', api)

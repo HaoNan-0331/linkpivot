@@ -18,6 +18,8 @@ import { registerAnomalyIpc } from './ipc/anomalyIpc'
 import { registerOuiIpc } from './ipc/ouiIpc'
 import { registerExportIpc } from './ipc/exportIpc'
 import { registerSchedulerIpc } from './ipc/schedulerIpc'
+import { setKbMasterKey } from './services/knowledgeBaseService'
+import { registerKbIpc } from './ipc/knowledgeBaseIpc'
 
 let mainWindow: BrowserWindow | null = null
 let masterKey: string
@@ -53,6 +55,7 @@ app.whenReady().then(() => {
   setConnectionMasterKey(masterKey)
   setAiMasterKey(masterKey)
   setArpMasterKey(masterKey)
+  setKbMasterKey(masterKey)
   initDatabase()
   createTables()
 
@@ -63,6 +66,7 @@ app.whenReady().then(() => {
   registerOuiIpc()
   registerExportIpc()
   registerSchedulerIpc()
+  registerKbIpc()
   SchedulerService.start()
 
   // Auth IPC

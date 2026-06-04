@@ -3,6 +3,9 @@ export interface AIConfig {
   apiKey: string
   baseUrl: string
   modelName: string
+  visionBaseUrl?: string
+  visionApiKey?: string
+  visionModel?: string
 }
 
 export interface AIExecLog {
@@ -98,6 +101,20 @@ export interface ElectronAPI {
     deleteSession: (sessionId: string) => Promise<void>
     updateSessionTitle: (sessionId: string, title: string) => Promise<void>
     getSystemLogs: (limit?: number) => Promise<AISystemLog[]>
+  }
+  kb: {
+    uploadBuffer: (buffer: ArrayBuffer, fileName: string, fileType: string, fileSize: number, category: string, deviceId: string | null) => Promise<any>
+    listDocuments: (deviceId?: string, category?: string) => Promise<any[]>
+    deleteDocument: (docId: string) => Promise<void>
+    getDocument: (docId: string) => Promise<any>
+    getStatus: (docId: string) => Promise<any>
+    reprocess: (docId: string) => Promise<any>
+    search: (query: string, deviceIds?: string[], topK?: number) => Promise<any[]>
+    updateChunk: (chunkId: string, title: string, content: string) => Promise<void>
+    deleteChunk: (chunkId: string) => Promise<void>
+    mergeChunks: (chunkIds: string[], newTitle: string) => Promise<string>
+    splitChunk: (chunkId: string, splitPosition: number, title1: string, title2: string) => Promise<string[]>
+    getImageData: (imagePath: string) => Promise<string | null>
   }
 }
 
