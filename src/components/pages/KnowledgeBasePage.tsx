@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
-import { Table, Button, Upload, Modal, message, Tag, Space, Popconfirm, Input, Select, Card } from 'antd'
-import { UploadOutlined, DeleteOutlined, ReloadOutlined, SearchOutlined, FileTextOutlined, FilePdfOutlined, FileWordOutlined } from '@ant-design/icons'
+import { Table, Button, Upload, Modal, message, Tag, Space, Popconfirm, Input, Select, Card, Checkbox, InputNumber } from 'antd'
+import { UploadOutlined, DeleteOutlined, ReloadOutlined, SearchOutlined, FileTextOutlined, FilePdfOutlined, FileWordOutlined, EditOutlined, MergeCellsOutlined, ScissorOutlined, SaveOutlined, CloseOutlined } from '@ant-design/icons'
 
 const CATEGORY_OPTIONS = [
   { value: 'manual', label: '手册' },
@@ -28,6 +28,63 @@ function formatSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+function ChunkContent({ content, images }: { content: string; images: any[] }) {
+  const [imgDataMap, setImgDataMap] = useState<Record<string, string>>({})
+  const [previewImg, setPreviewImg] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!images || images.length === 0) return
+    let cancelled = false
+    Promise.all(images.map(async (img: any) => {
+      try {
+        const data = await window.api.kb.getImageData(img.file_path)
+        if (!cancelled && data) setImgDataMap(prev => ({ ...prev, [img.id]: data }))
+      } catch { /* ignore */ }
+    }))
+    return () => { cancelled = true }
+  }, [images])
+
+  // Collect all [图片N] markers in order, map to images array index
+  const markers = [...content.matchAll(/\[图片(\d+)\]/g)]
+  const markerToImgIdx: Record<number, number> = {}
+  markers.forEach((m, i) => { markerToImgIdx[parseInt(m[1], 10)] = i })
+
+  const parts = content.split(/(\[图片\d+\])/g)
+
+  return (
+    <>
+      <div style={{ whiteSpace: 'pre-wrap', maxHeight: 300, overflow: 'auto', fontSize: 13, color: '#333', lineHeight: 1.8 }}>
+        {parts.map((part, i) => {
+          const match = part.match(/^\[图片(\d+)\]$/)
+          if (match) {
+            const imgNum = parseInt(match[1], 10)
+            const localIdx = markerToImgIdx[imgNum]
+            const img = localIdx !== undefined ? images?.[localIdx] : undefined
+            if (img && imgDataMap[img.id]) {
+              return (
+                <span key={i} style={{ display: 'inline-block', verticalAlign: 'middle', margin: '4px 2px', cursor: 'pointer' }}
+                  onClick={() => setPreviewImg(imgDataMap[img.id])}>
+                  <img src={imgDataMap[img.id]} alt={img.description || `图片${imgNum}`}
+                    style={{ maxWidth: 280, maxHeight: 180, borderRadius: 4, border: '1px solid #e8e8e8' }} />
+                </span>
+              )
+            }
+            return <span key={i} style={{ color: '#999', fontSize: 12, background: '#f5f5f5', padding: '2px 6px', borderRadius: 4 }}>{part}</span>
+          }
+          return <span key={i}>{part}</span>
+        })}
+      </div>
+      {previewImg && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+          onClick={() => setPreviewImg(null)}>
+          <img src={previewImg} alt="预览" style={{ maxWidth: '90vw', maxHeight: '90vh', borderRadius: 8, boxShadow: '0 4px 20px rgba(0,0,0,0.4)' }} />
+          <div style={{ position: 'absolute', top: 20, right: 30, color: '#fff', fontSize: 28, cursor: 'pointer' }} onClick={() => setPreviewImg(null)}>✕</div>
+        </div>
+      )}
+    </>
+  )
+}
+
 export default function KnowledgeBasePage() {
   const [documents, setDocuments] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
@@ -39,6 +96,15 @@ export default function KnowledgeBasePage() {
   const [searching, setSearching] = useState(false)
   const [detailDoc, setDetailDoc] = useState<any>(null)
   const [detailModalOpen, setDetailModalOpen] = useState(false)
+  const [editingChunkId, setEditingChunkId] = useState<string | null>(null)
+  const [editTitle, setEditTitle] = useState('')
+  const [editContent, setEditContent] = useState('')
+  const [selectedChunks, setSelectedChunks] = useState<string[]>([])
+  const [splitModalOpen, setSplitModalOpen] = useState(false)
+  const [splitChunkId, setSplitChunkId] = useState('')
+  const [splitPos, setSplitPos] = useState(0)
+  const [splitTitle1, setSplitTitle1] = useState('')
+  const [splitTitle2, setSplitTitle2] = useState('')
   const pollingRef = useRef<number | null>(null)
 
   const loadDocuments = async () => {
@@ -122,10 +188,109 @@ export default function KnowledgeBasePage() {
     try {
       const doc = await window.api.kb.getDocument(docId)
       setDetailDoc(doc)
+      setEditingChunkId(null)
+      setSelectedChunks([])
       setDetailModalOpen(true)
     } catch (err) {
       message.error('获取详情失败: ' + (err as Error).message)
     }
+  }
+
+  const reloadDetail = async () => {
+    if (!detailDoc) return
+    try {
+      const doc = await window.api.kb.getDocument(detailDoc.id)
+      setDetailDoc(doc)
+      setEditingChunkId(null)
+      setSelectedChunks([])
+    } catch (err) {
+      message.error('刷新失败: ' + (err as Error).message)
+    }
+  }
+
+  const startEdit = (chunk: any) => {
+    setEditingChunkId(chunk.id)
+    setEditTitle(chunk.title || '')
+    setEditContent(chunk.content || '')
+  }
+
+  const saveEdit = async () => {
+    if (!editingChunkId) return
+    try {
+      await window.api.kb.updateChunk(editingChunkId, editTitle, editContent)
+      message.success('保存成功')
+      setEditingChunkId(null)
+      reloadDetail()
+    } catch (err) {
+      message.error('保存失败: ' + (err as Error).message)
+    }
+  }
+
+  const handleDeleteChunk = async (chunkId: string) => {
+    try {
+      await window.api.kb.deleteChunk(chunkId)
+      message.success('章节已删除')
+      reloadDetail()
+      loadDocuments()
+    } catch (err) {
+      message.error('删除失败: ' + (err as Error).message)
+    }
+  }
+
+  const handleMerge = async () => {
+    if (selectedChunks.length < 2) {
+      message.warning('请至少选择2个章节')
+      return
+    }
+    const chunks = detailDoc.chunks.filter((c: any) => selectedChunks.includes(c.id))
+    const defaultTitle = chunks.map((c: any) => c.title).filter(Boolean).join(' + ')
+    let mergeTitle = defaultTitle
+    Modal.confirm({
+      title: '合并章节',
+      content: (
+        <div>
+          <p>将合并 {selectedChunks.length} 个章节</p>
+          <Input defaultValue={defaultTitle} placeholder="合并后的标题" onChange={e => { mergeTitle = e.target.value }} />
+        </div>
+      ),
+      onOk: async () => {
+        try {
+          await window.api.kb.mergeChunks(selectedChunks, mergeTitle)
+          message.success('合并成功')
+          setSelectedChunks([])
+          reloadDetail()
+          loadDocuments()
+        } catch (err) {
+          message.error('合并失败: ' + (err as Error).message)
+        }
+      },
+    })
+  }
+
+  const openSplitModal = (chunk: any) => {
+    setSplitChunkId(chunk.id)
+    setSplitPos(Math.floor((chunk.content || '').length / 2))
+    setSplitTitle1(chunk.title || '上半部分')
+    setSplitTitle2('下半部分')
+    setSplitModalOpen(true)
+  }
+
+  const handleSplit = async () => {
+    try {
+      await window.api.kb.splitChunk(splitChunkId, splitPos, splitTitle1, splitTitle2)
+      message.success('拆分成功')
+      setSplitModalOpen(false)
+      reloadDetail()
+      loadDocuments()
+    } catch (err) {
+      message.error('拆分失败: ' + (err as Error).message)
+    }
+  }
+
+  const toggleChunkSelect = (chunkId: string) => {
+    setSelectedChunks(prev =>
+      prev.includes(chunkId) ? prev.filter(id => id !== chunkId) : [...prev, chunkId]
+    )
   }
 
   const columns = [
@@ -158,10 +323,17 @@ export default function KnowledgeBasePage() {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      width: 100,
-      render: (status: string) => {
+      width: 200,
+      render: (status: string, record: any) => {
         const s = STATUS_MAP[status] || { color: 'default', text: status }
-        return <Tag color={s.color}>{s.text}</Tag>
+        return (
+          <div>
+            <Tag color={s.color}>{s.text}</Tag>
+            {status === 'error' && record.error_message && (
+              <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 2 }}>{record.error_message}</div>
+            )}
+          </div>
+        )
       },
     },
     { title: '上传时间', dataIndex: 'created_at', key: 'created_at', width: 170 },
@@ -171,9 +343,7 @@ export default function KnowledgeBasePage() {
       width: 150,
       render: (_: any, record: any) => (
         <Space>
-          {record.status === 'error' && (
-            <Button size="small" icon={<ReloadOutlined />} onClick={() => handleReprocess(record.id)}>重试</Button>
-          )}
+          <Button size="small" icon={<ReloadOutlined />} onClick={() => handleReprocess(record.id)}>重新解析</Button>
           <Popconfirm
             title="确认删除"
             description={`将删除文档"${record.file_name}"及其所有分块数据`}
@@ -282,34 +452,86 @@ export default function KnowledgeBasePage() {
       <Modal
         title={detailDoc ? `文档详情 - ${detailDoc.title}` : '文档详情'}
         open={detailModalOpen}
-        onCancel={() => setDetailModalOpen(false)}
+        onCancel={() => { setDetailModalOpen(false); setEditingChunkId(null); setSelectedChunks([]) }}
         footer={null}
-        width={700}
+        width={900}
       >
         {detailDoc && (
           <div>
-            <p><strong>文件名：</strong>{detailDoc.file_name}</p>
-            <p><strong>类型：</strong>{detailDoc.file_type}</p>
-            <p><strong>分类：</strong>{CATEGORY_OPTIONS.find(c => c.value === detailDoc.category)?.label}</p>
-            <p><strong>状态：</strong><Tag color={STATUS_MAP[detailDoc.status]?.color}>{STATUS_MAP[detailDoc.status]?.text}</Tag></p>
-            {detailDoc.error_message && <p><strong style={{ color: '#ff4d4f' }}>错误：</strong>{detailDoc.error_message}</p>}
-            <p><strong>分块数：</strong>{detailDoc.chunk_count}</p>
-            {detailDoc.chunks?.length > 0 && (
-              <div>
-                <strong>章节列表：</strong>
-                {detailDoc.chunks.map((c: any) => (
-                  <div key={c.id} style={{ padding: '4px 0', borderBottom: '1px solid #f0f0f0' }}>
-                    <Space>
-                      <Tag>#{c.chunk_index + 1}</Tag>
-                      <span>{c.title || '无标题'}</span>
-                      <span style={{ color: '#999' }}>{c.char_count}字</span>
-                    </Space>
-                  </div>
-                ))}
-              </div>
-            )}
+            <Space style={{ marginBottom: 12 }}>
+              <span><strong>文件名：</strong>{detailDoc.file_name}</span>
+              <span><strong>状态：</strong><Tag color={STATUS_MAP[detailDoc.status]?.color}>{STATUS_MAP[detailDoc.status]?.text}</Tag></span>
+              <span><strong>分块数：</strong>{detailDoc.chunk_count}</span>
+              {selectedChunks.length >= 2 && (
+                <Button size="small" type="primary" icon={<MergeCellsOutlined />} onClick={handleMerge}>
+                  合并选中({selectedChunks.length})
+                </Button>
+              )}
+            </Space>
+            {detailDoc.chunks?.length > 0 ? detailDoc.chunks.map((c: any) => (
+              <Card
+                key={c.id}
+                size="small"
+                style={{ marginBottom: 8 }}
+                title={
+                  <Space>
+                    <Checkbox
+                      checked={selectedChunks.includes(c.id)}
+                      onChange={() => toggleChunkSelect(c.id)}
+                    />
+                    <Tag>#{c.chunk_index + 1}</Tag>
+                    {editingChunkId === c.id ? (
+                      <Input value={editTitle} onChange={e => setEditTitle(e.target.value)} style={{ width: 200 }} />
+                    ) : (
+                      <span style={{ fontWeight: 600 }}>{c.title || '无标题'}</span>
+                    )}
+                    <span style={{ color: '#999' }}>{c.char_count}字</span>
+                  </Space>
+                }
+                extra={
+                  <Space>
+                    {editingChunkId === c.id ? (
+                      <>
+                        <Button size="small" type="primary" icon={<SaveOutlined />} onClick={saveEdit}>保存</Button>
+                        <Button size="small" icon={<CloseOutlined />} onClick={() => setEditingChunkId(null)}>取消</Button>
+                      </>
+                    ) : (
+                      <>
+                        <Button size="small" icon={<EditOutlined />} onClick={() => startEdit(c)}>编辑</Button>
+                        <Button size="small" icon={<ScissorOutlined />} onClick={() => openSplitModal(c)}>拆分</Button>
+                        <Popconfirm title="确认删除此章节？" onConfirm={() => handleDeleteChunk(c.id)} okText="删除" cancelText="取消">
+                          <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
+                        </Popconfirm>
+                      </>
+                    )}
+                  </Space>
+                }
+              >
+                {editingChunkId === c.id ? (
+                  <Input.TextArea value={editContent} onChange={e => setEditContent(e.target.value)} rows={8} />
+                ) : (
+                  <ChunkContent content={c.content || ''} images={c.images || []} />
+                )}
+              </Card>
+            )) : <p style={{ color: '#999' }}>暂无分块数据</p>}
           </div>
         )}
+      </Modal>
+
+      <Modal
+        title="拆分章节"
+        open={splitModalOpen}
+        onOk={handleSplit}
+        onCancel={() => setSplitModalOpen(false)}
+        okText="拆分"
+        width={500}
+      >
+        <div style={{ marginBottom: 12 }}>
+          <span>拆分位置（字符偏移）：</span>
+          <InputNumber min={1} value={splitPos} onChange={v => setSplitPos(v || 0)} style={{ width: 120 }} />
+        </div>
+        <Input placeholder="上半部分标题" value={splitTitle1} onChange={e => setSplitTitle1(e.target.value)} style={{ marginBottom: 8 }} />
+        <Input placeholder="下半部分标题" value={splitTitle2} onChange={e => setSplitTitle2(e.target.value)} />
       </Modal>
     </div>
   )

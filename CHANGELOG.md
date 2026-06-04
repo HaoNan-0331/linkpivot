@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 2026-06-04
+
+### 修复：资产列表修改后拓扑未同步更新
+- **device.ts**：`updateDevice()` 新增级联同步逻辑——更新 `devices` 表后遍历所有拓扑，将拓扑节点中嵌入的设备信息（name、deviceType、connectionType、ipAddress、vendor、model）同步更新，与 `deleteDevice()` 的级联策略保持一致
+
+### 修复：知识库 AI 助手无法识别图片
+- **knowledgeBaseService.ts**：PDF 解析新增图片提取——使用 pdfjs-dist 从 PDF 页面 operator list 中提取图片对象，编码为 PNG 后调用视觉模型生成描述
+- **knowledgeBaseService.ts**：搜索索引新增图片数量标记——AI 从索引中可识别哪些章节包含图片，提升图片相关问题的检索精度
+- **ai.ts**：图片描述为空时提示用户检查多模态模型配置，而非静默忽略
+
 ## 2026-05-12
 
 ### 拓扑自动发现模块重写：AI 判断厂商并生成命令

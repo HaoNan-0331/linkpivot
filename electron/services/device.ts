@@ -75,6 +75,36 @@ export function updateDevice(id: string, data: any) {
 
   vals.push(id)
   db.prepare(`UPDATE devices SET ${sets.join(', ')} WHERE id = ?`).run(...vals)
+
+  // Sync: update embedded device info in all topologies that reference this device
+  const topoFields: Record<string, string> = {
+    name: 'deviceName', deviceType: 'deviceType', connectionType: 'connectionType',
+    ipAddress: 'ipAddress', vendor: 'vendor', model: 'model',
+  }
+  const changedFields = Object.keys(topoFields).filter(k => data[k] !== undefined)
+  if (changedFields.length > 0) {
+    const topologies = db.prepare('SELECT id, data_enc FROM topologies').all() as any[]
+    for (const topo of topologies) {
+      const dataStr = dec(topo.data_enc)
+      const topoData = JSON.parse(dataStr)
+      let modified = false
+      if (topoData.nodes) {
+        for (const node of topoData.nodes) {
+          if (node.data?.deviceId === id) {
+            for (const field of changedFields) {
+              node.data[topoFields[field]] = data[field]
+            }
+            modified = true
+          }
+        }
+      }
+      if (modified) {
+        db.prepare('UPDATE topologies SET data_enc = ?, updated_at = ? WHERE id = ?')
+          .run(encField(JSON.stringify(topoData), MK), now, topo.id)
+      }
+    }
+  }
+
   return rowToDevice(db.prepare('SELECT * FROM devices WHERE id = ?').get(id))
 }
 

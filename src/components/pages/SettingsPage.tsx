@@ -19,6 +19,7 @@ export default function SettingsPage() {
   const [configLoading, setConfigLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [originalApiKey, setOriginalApiKey] = useState('')
+  const [originalVisionApiKey, setOriginalVisionApiKey] = useState('')
   const logout = useAuthStore((s) => s.logout)
 
   // Scheduler state
@@ -31,7 +32,7 @@ export default function SettingsPage() {
   const loadConfig = async () => {
     try {
       const config = await window.api.ai.getConfig()
-      if (config) { form.setFieldsValue(config); setOriginalApiKey(config.apiKey) }
+      if (config) { form.setFieldsValue(config); setOriginalApiKey(config.apiKey); setOriginalVisionApiKey(config.visionApiKey) }
     } catch (e: any) { message.error(e.message) }
     setConfigLoading(false)
   }
@@ -48,12 +49,19 @@ export default function SettingsPage() {
     try {
       const values = await form.validateFields()
       setSaving(true)
-      const payload: Partial<AIConfig> = { provider: values.provider, baseUrl: values.baseUrl, modelName: values.modelName }
+      const payload: Partial<AIConfig> = {
+        provider: values.provider,
+        baseUrl: values.baseUrl,
+        modelName: values.modelName,
+        visionBaseUrl: values.visionBaseUrl,
+        visionModel: values.visionModel,
+      }
       if (values.apiKey && values.apiKey !== originalApiKey) payload.apiKey = values.apiKey
+      if (values.visionApiKey && values.visionApiKey !== originalVisionApiKey) payload.visionApiKey = values.visionApiKey
       await window.api.ai.saveConfig(payload as AIConfig)
       message.success('AI 配置已保存')
       const config = await window.api.ai.getConfig()
-      if (config) { form.setFieldsValue(config); setOriginalApiKey(config.apiKey) }
+      if (config) { form.setFieldsValue(config); setOriginalApiKey(config.apiKey); setOriginalVisionApiKey(config.visionApiKey) }
     } catch (e: any) { if (e.errorFields) return; message.error(e.message) }
     setSaving(false)
   }
@@ -126,6 +134,9 @@ export default function SettingsPage() {
           </Form.Item>
           <Form.Item label="模型名称" name="visionModel">
             <Input placeholder="如 gpt-4o、claude-3-sonnet（需支持图片输入）" />
+          </Form.Item>
+          <Form.Item>
+            <Button type="primary" onClick={handleSaveConfig} loading={saving}>保存配置</Button>
           </Form.Item>
         </Form>
       </Card>

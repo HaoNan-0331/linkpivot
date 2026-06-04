@@ -110,6 +110,11 @@ export interface ElectronAPI {
     getStatus: (docId: string) => Promise<any>
     reprocess: (docId: string) => Promise<any>
     search: (query: string, deviceIds?: string[], topK?: number) => Promise<any[]>
+    updateChunk: (chunkId: string, title: string, content: string) => Promise<void>
+    deleteChunk: (chunkId: string) => Promise<void>
+    mergeChunks: (chunkIds: string[], newTitle: string) => Promise<string>
+    splitChunk: (chunkId: string, splitPosition: number, title1: string, title2: string) => Promise<string[]>
+    getImageData: (imagePath: string) => Promise<string | null>
   }
 }
 

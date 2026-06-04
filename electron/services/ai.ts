@@ -635,8 +635,13 @@ export async function chat(
     '如果只有一个设备，也可以用 [CMD]命令内容[/CMD]\n' +
     '每个命令单独一行。你可以在命令前后添加解释说明。\n' +
     '注意：只能执行只读查询命令（如 display、show、ping、traceroute），不能执行修改配置的命令。\n\n' +
-    '你还可以查询资料库中已上传的设备文档。当用户问题涉及设备配置方法、功能说明、操作指南等内容，' +
-    '且你无法从设备直接获取答案时，请使用以下格式搜索资料库：\n' +
+    '你还可以查询资料库中已上传的设备文档。\n' +
+    '**必须使用资料库搜索的场景**（优先级高于SSH命令）：\n' +
+    '- 用户询问设备的默认账号/密码、初始配置、出厂设置\n' +
+    '- 用户询问设备功能说明、配置方法、操作指南\n' +
+    '- 用户询问设备规格参数、支持的特性\n' +
+    '- 用户的问题涉及特定产品型号的专属知识\n\n' +
+    '使用格式：\n' +
     '[KB_SEARCH]搜索关键词[/KB_SEARCH]\n' +
     '系统会返回相关文档片段，你基于这些内容回答用户问题。' +
     '每次最多使用一次KB_SEARCH。'
@@ -677,10 +682,23 @@ export async function chat(
     try {
       const searchResults = await kbSearch(searchQuery, deviceIds, 5)
       if (searchResults.length > 0) {
-        // Build context from search results
-        const kbContext = searchResults.map((r: any, i: number) =>
-          `[文档${i + 1}: ${r.document?.title || '未知'} / 章节: ${r.title || '无标题'}]\n${r.content}`
-        ).join('\n\n')
+        // Build context from search results, replacing [图片N] with descriptions
+        const kbContext = searchResults.map((r: any, i: number) => {
+          let content = r.content || ''
+          if (r.images?.length > 0) {
+            const imgMarkers = [...content.matchAll(/\[图片(\d+)\]/g)]
+            for (const m of imgMarkers) {
+              const num = parseInt(m[1], 10)
+              const img = r.images[num - 1]
+              if (img?.description) {
+                content = content.replace(m[0], `[图片${num}: ${img.description}]`)
+              } else {
+                content = content.replace(m[0], `[图片${num}: 图片存在但未生成描述，请提示用户检查多模态模型配置]`)
+              }
+            }
+          }
+          return `[文档${i + 1}: ${r.document?.title || '未知'} / 章节: ${r.title || '无标题'}]\n${content}`
+        }).join('\n\n')
 
         // Collect references
         kbReferences = searchResults.map((r: any) => ({
