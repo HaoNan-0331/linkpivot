@@ -19,7 +19,6 @@ export default function SettingsPage() {
   const [configLoading, setConfigLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [originalApiKey, setOriginalApiKey] = useState('')
-  const [originalVisionApiKey, setOriginalVisionApiKey] = useState('')
   const logout = useAuthStore((s) => s.logout)
 
   // Scheduler state
@@ -32,7 +31,7 @@ export default function SettingsPage() {
   const loadConfig = async () => {
     try {
       const config = await window.api.ai.getConfig()
-      if (config) { form.setFieldsValue(config); setOriginalApiKey(config.apiKey); setOriginalVisionApiKey(config.visionApiKey) }
+      if (config) { form.setFieldsValue(config); setOriginalApiKey(config.apiKey) }
     } catch (e: any) { message.error(e.message) }
     setConfigLoading(false)
   }
@@ -54,14 +53,15 @@ export default function SettingsPage() {
         baseUrl: values.baseUrl,
         modelName: values.modelName,
         visionBaseUrl: values.visionBaseUrl,
+        visionApiKey: values.visionApiKey,
         visionModel: values.visionModel,
       }
       if (values.apiKey && values.apiKey !== originalApiKey) payload.apiKey = values.apiKey
-      if (values.visionApiKey && values.visionApiKey !== originalVisionApiKey) payload.visionApiKey = values.visionApiKey
+      if (values.visionApiKey && values.visionApiKey !== originalApiKey) payload.visionApiKey = values.visionApiKey
       await window.api.ai.saveConfig(payload as AIConfig)
       message.success('AI 配置已保存')
       const config = await window.api.ai.getConfig()
-      if (config) { form.setFieldsValue(config); setOriginalApiKey(config.apiKey); setOriginalVisionApiKey(config.visionApiKey) }
+      if (config) { form.setFieldsValue(config); setOriginalApiKey(config.apiKey) }
     } catch (e: any) { if (e.errorFields) return; message.error(e.message) }
     setSaving(false)
   }

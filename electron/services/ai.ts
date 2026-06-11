@@ -692,8 +692,6 @@ export async function chat(
               const img = r.images[num - 1]
               if (img?.description) {
                 content = content.replace(m[0], `[图片${num}: ${img.description}]`)
-              } else {
-                content = content.replace(m[0], `[图片${num}: 图片存在但未生成描述，请提示用户检查多模态模型配置]`)
               }
             }
           }

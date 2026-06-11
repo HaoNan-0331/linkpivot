@@ -343,7 +343,9 @@ export default function KnowledgeBasePage() {
       width: 150,
       render: (_: any, record: any) => (
         <Space>
-          <Button size="small" icon={<ReloadOutlined />} onClick={() => handleReprocess(record.id)}>重新解析</Button>
+          {record.status === 'error' && (
+            <Button size="small" icon={<ReloadOutlined />} onClick={() => handleReprocess(record.id)}>重试</Button>
+          )}
           <Popconfirm
             title="确认删除"
             description={`将删除文档"${record.file_name}"及其所有分块数据`}

@@ -84,7 +84,7 @@ export function getDocument(docId: string): any | null {
 
   const chunks = db.prepare(
     'SELECT id, chunk_index, title, content, char_count, level, image_ids FROM kb_chunks WHERE document_id = ? ORDER BY chunk_index'
-  ).all(docId)
+  ).all(docId) as any[]
 
   // Attach images for each chunk
   for (const chunk of chunks) {
@@ -107,7 +107,16 @@ export function updateChunk(chunkId: string, title: string, content: string): vo
   const db = getDatabase()
   db.prepare('UPDATE kb_chunks SET title = ?, content = ?, char_count = ? WHERE id = ?')
     .run(title, content, content.length, chunkId)
-  // FTS sync removed — search uses AI-based chunk selection, not full-text index
+  // Sync FTS5
+  try {
+    const chunk = db.prepare('SELECT rowid FROM kb_chunks WHERE id = ?').get(chunkId) as any
+    if (chunk) {
+      const images = db.prepare('SELECT description FROM kb_images WHERE chunk_id = ?').all(chunkId) as any[]
+      const imageDesc = images.map(i => i.description).filter(Boolean).join(' ')
+      db.prepare('INSERT OR REPLACE INTO kb_chunks_fts (rowid, title, content, image_desc) VALUES (?, ?, ?, ?)')
+        .run(chunk.rowid, title, content, imageDesc)
+    }
+  } catch { /* FTS sync failed, non-critical */ }
 }
 
 export function deleteChunk(chunkId: string): void {
@@ -296,19 +305,7 @@ async function processDocument(docId: string): Promise<void> {
       chapters = parseTxt(buffer.toString('utf-8'))
       break
     case 'pdf':
-      chapters = parsePdf(buffer)
-      images = (await extractPdfImages(buffer)).map((img, idx) => ({
-        chunkIndex: Math.min(idx, chapters.length - 1),
-        buffer: img.buffer,
-        ext: img.ext,
-      }))
-      // Insert [图片N] markers into chunk content for PDF
-      for (let imgIdx = 0; imgIdx < images.length; imgIdx++) {
-        const ci = images[imgIdx].chunkIndex
-        if (ci >= 0 && ci < chapters.length) {
-          chapters[ci].content += `\n[图片${imgIdx + 1}]`
-        }
-      }
+      chapters = await parsePdf(buffer)
       break
     case 'docx':
       const docxResult = await parseDocxWithImagesAsync(buffer)
@@ -359,12 +356,7 @@ async function processDocument(docId: string): Promise<void> {
       if (visionConfig) {
         try {
           description = await describeImage(imgBuffer, img.ext, visionConfig)
-          console.log(`[KB] vision describe ok: img=${imgFileName} desc_len=${description.length}`)
-        } catch (err: any) {
-          console.error(`[KB] vision describe FAILED: img=${imgFileName} error=${err.message}`)
-        }
-      } else {
-        console.warn(`[KB] vision model not configured, skipping image description for ${imgFileName}`)
+        } catch { /* description generation failed, continue without */ }
       }
 
       // Find which chunk contains [图片N] marker (1-based)
@@ -395,125 +387,23 @@ function parseTxt(text: string): Array<{ title: string; content: string; level: 
   return splitByHeadingPatterns(text)
 }
 
-// ---------- PNG Encoder ----------
-
-const CRC_TABLE = new Uint32Array(256)
-for (let n = 0; n < 256; n++) {
-  let c = n
-  for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1)
-  CRC_TABLE[n] = c
-}
-
-function crc32(buf: Buffer): number {
-  let crc = 0xFFFFFFFF
-  for (let i = 0; i < buf.length; i++) crc = CRC_TABLE[(crc ^ buf[i]) & 0xFF] ^ (crc >>> 8)
-  return (crc ^ 0xFFFFFFFF) >>> 0
-}
-
-function pngChunk(type: string, data: Buffer): Buffer {
-  const len = Buffer.alloc(4); len.writeUInt32BE(data.length)
-  const typeB = Buffer.from(type, 'ascii')
-  const crcB = Buffer.alloc(4); crcB.writeUInt32BE(crc32(Buffer.concat([typeB, data])))
-  return Buffer.concat([len, typeB, data, crcB])
-}
-
-function encodePng(width: number, height: number, rgba: Uint8Array): Buffer {
-  const zlib = require('zlib')
-  const raw = Buffer.alloc(height * (width * 4 + 1))
-  for (let y = 0; y < height; y++) {
-    const off = y * (width * 4 + 1)
-    raw[off] = 0 // filter: None
-    const src = y * width * 4
-    for (let x = 0; x < width * 4; x++) raw[off + 1 + x] = rgba[src + x]
-  }
-  const ihdr = Buffer.alloc(13)
-  ihdr.writeUInt32BE(width, 0); ihdr.writeUInt32BE(height, 4)
-  ihdr[8] = 8; ihdr[9] = 6 // 8-bit RGBA
-  return Buffer.concat([
-    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
-    pngChunk('IHDR', ihdr),
-    pngChunk('IDAT', zlib.deflateSync(raw)),
-    pngChunk('IEND', Buffer.alloc(0)),
-  ])
-}
-
 // ---------- PDF Parsing ----------
 
-function parsePdf(buffer: Buffer): Array<{ title: string; content: string; level: number }> {
-  // pdf-parse is ESM-incompatible, use dynamic require
-  const pdfParse = require('pdf-parse')
-  const data = pdfParse(buffer)
-  const text: string = data.text
-  if (!text || !text.trim()) return []
+async function parsePdf(buffer: Buffer): Promise<Array<{ title: string; content: string; level: number }>> {
+  const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs')
+  const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise
 
-  // Try to use outline (bookmarks) for chapter structure
-  const outline = data.outline || []
-  if (outline.length > 0) {
-    return splitByOutline(text, outline)
+  let fullText = ''
+  for (let i = 1; i <= doc.numPages; i++) {
+    const page = await doc.getPage(i)
+    const textContent = await page.getTextContent()
+    fullText += textContent.items.map((item: any) => item.str).join(' ') + '\n'
+    page.cleanup()
   }
+  doc.destroy()
 
-  // Fallback: detect headings by text patterns
-  return splitByHeadingPatterns(text)
-}
-
-/** Extract images from PDF using pdfjs-dist (best-effort) */
-async function extractPdfImages(buffer: Buffer): Promise<Array<{ buffer: Buffer; ext: string }>> {
-  try {
-    const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs')
-    const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise
-    const images: Array<{ buffer: Buffer; ext: string }> = []
-    const OPS = pdfjsLib.OPS
-
-    for (let pageNum = 1; pageNum <= doc.numPages; pageNum++) {
-      const page = await doc.getPage(pageNum)
-      try {
-        const opList = await page.getOperatorList()
-        for (let i = 0; i < opList.fnArray.length; i++) {
-          if (opList.fnArray[i] === OPS.paintImageXObject ||
-              opList.fnArray[i] === OPS.paintJpegXObject) {
-            const imgName = opList.argsArray[i][0]
-            try {
-              const imgData = await new Promise<any>((resolve, reject) => {
-                const timer = setTimeout(() => reject(new Error('timeout')), 5000)
-                try {
-                  page.objs.get(imgName, (data: any) => { clearTimeout(timer); resolve(data) })
-                } catch (e: any) { clearTimeout(timer); reject(e) }
-              })
-              if (imgData?.data && imgData.width > 0 && imgData.height > 0) {
-                const { width, height, kind, data: pixelData } = imgData
-                const pixels = width * height
-                let rgba: Uint8Array
-                if (kind === 1) { // Grayscale → RGBA
-                  rgba = new Uint8Array(pixels * 4)
-                  for (let j = 0; j < pixels; j++) {
-                    rgba[j * 4] = rgba[j * 4 + 1] = rgba[j * 4 + 2] = pixelData[j]; rgba[j * 4 + 3] = 255
-                  }
-                } else if (kind === 2) { // RGB → RGBA
-                  rgba = new Uint8Array(pixels * 4)
-                  for (let j = 0; j < pixels; j++) {
-                    rgba[j * 4] = pixelData[j * 3]; rgba[j * 4 + 1] = pixelData[j * 3 + 1]
-                    rgba[j * 4 + 2] = pixelData[j * 3 + 2]; rgba[j * 4 + 3] = 255
-                  }
-                } else {
-                  rgba = pixelData instanceof Uint8Array ? pixelData : new Uint8Array(pixelData)
-                }
-                // Skip tiny images (likely icons/decorations under 20x20)
-                if (width >= 20 && height >= 20) {
-                  images.push({ buffer: encodePng(width, height, rgba), ext: 'png' })
-                }
-              }
-            } catch { /* individual image extraction failure, skip */ }
-          }
-        }
-      } finally { page.cleanup() }
-    }
-    doc.destroy()
-    console.log(`[KB] extractPdfImages: found ${images.length} images`)
-    return images
-  } catch (err: any) {
-    console.log(`[KB] extractPdfImages failed: ${err.message}`)
-    return []
-  }
+  if (!fullText.trim()) return []
+  return splitByHeadingPatterns(fullText)
 }
 
 interface PdfOutlineItem {
@@ -786,13 +676,9 @@ export async function search(query: string, deviceIds?: string[], topK = 5): Pro
   if (allChunks.length === 0) return []
 
   // 2. Build virtual index (compact, like INDEX.md)
-  const indexLines = allChunks.map((c, i) => {
-    let line = `[${i}] 文档: ${c.doc_title} | 章节: ${c.title || '无标题'} | 摘要: ${(c.content || '').slice(0, 80).replace(/\n/g, ' ')}`
-    if (c.image_ids) {
-      try { line += ` | 包含${JSON.parse(c.image_ids).length}张图片` } catch { /* ignore */ }
-    }
-    return line
-  }).join('\n')
+  const indexLines = allChunks.map((c, i) =>
+    `[${i}] 文档: ${c.doc_title} | 章节: ${c.title || '无标题'} | 摘要: ${(c.content || '').slice(0, 80).replace(/\n/g, ' ')}`
+  ).join('\n')
 
   // 3. AI picks relevant chunks from the index
   const config = getAiConfig()

@@ -238,6 +238,36 @@ export function createTables() {
     );
     CREATE INDEX IF NOT EXISTS idx_kb_images_doc ON kb_images(document_id);
     CREATE INDEX IF NOT EXISTS idx_kb_images_chunk ON kb_images(chunk_id);
+
+    CREATE VIRTUAL TABLE IF NOT EXISTS kb_chunks_fts USING fts5(
+      title,
+      content,
+      image_desc,
+      content='kb_chunks',
+      content_rowid='rowid',
+      tokenize='unicode61'
+    );
+
+    CREATE TRIGGER IF NOT EXISTS kb_chunks_ai AFTER INSERT ON kb_chunks BEGIN
+      INSERT INTO kb_chunks_fts(rowid, title, content, image_desc)
+        VALUES (new.rowid, new.title, new.content,
+          (SELECT GROUP_CONCAT(description, ' ') FROM kb_images WHERE chunk_id = new.id));
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS kb_chunks_ad AFTER DELETE ON kb_chunks BEGIN
+      INSERT INTO kb_chunks_fts(kb_chunks_fts, rowid, title, content, image_desc)
+        VALUES ('delete', old.rowid, old.title, old.content,
+          (SELECT GROUP_CONCAT(description, ' ') FROM kb_images WHERE chunk_id = old.id));
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS kb_chunks_au AFTER UPDATE ON kb_chunks BEGIN
+      INSERT INTO kb_chunks_fts(kb_chunks_fts, rowid, title, content, image_desc)
+        VALUES ('delete', old.rowid, old.title, old.content,
+          (SELECT GROUP_CONCAT(description, ' ') FROM kb_images WHERE chunk_id = old.id));
+      INSERT INTO kb_chunks_fts(rowid, title, content, image_desc)
+        VALUES (new.rowid, new.title, new.content,
+          (SELECT GROUP_CONCAT(description, ' ') FROM kb_images WHERE chunk_id = new.id));
+    END;
   `)
 
   // Migrate: add session_id column to existing chat_history table

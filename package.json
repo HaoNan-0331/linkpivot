@@ -5,7 +5,7 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
-    "build:electron-main": "esbuild electron/main.ts --outfile=dist-electron/main.js --platform=node --format=cjs --bundle --external:better-sqlite3 --external:ssh2 --external:telnet-client --external:electron",
+    "build:electron-main": "esbuild electron/main.ts --outfile=dist-electron/main.js --platform=node --format=cjs --bundle --external:better-sqlite3 --external:ssh2 --external:telnet-client --external:electron --external:pdfjs-dist --external:pdf-parse",
     "build:preload": "esbuild electron/preload.ts --outfile=dist-electron/preload.js --platform=node --format=cjs --bundle --external:electron && esbuild electron/terminal-preload.ts --outfile=dist-electron/terminal-preload.js --platform=node --format=cjs --bundle --external:electron",
     "build:electron": "npm run build:electron-main && npm run build:preload && node scripts/build-electron.cjs",
     "build": "tsc -p tsconfig.web.json && vite build && npm run build:electron",
