@@ -311,40 +311,48 @@ export function createTables() {
   // SQLite doesn't support ALTER CHECK, so recreate the table
   const connTypeCheck = (db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='devices'").get() as any)?.sql || ''
   if (!connTypeCheck.includes("'rdp'")) {
-    // Clean up failed previous migration attempt
-    db.exec("DROP TABLE IF EXISTS devices_new")
-    db.exec(`
-      CREATE TABLE devices_new (
-        id TEXT PRIMARY KEY,
-        topology_id TEXT,
-        name_enc TEXT NOT NULL,
-        vendor_enc TEXT,
-        model_enc TEXT,
-        version_enc TEXT,
-        ip_enc TEXT,
-        device_type TEXT DEFAULT 'generic' CHECK(device_type IN ('router','switch','firewall','server','generic')),
-        connection_type TEXT CHECK(connection_type IN ('ssh','telnet','web','rdp')),
-        port_enc TEXT,
-        username_enc TEXT,
-        password_enc TEXT,
-        ssh_key_path_enc TEXT,
-        ssh_key_content_enc TEXT,
-        web_url_enc TEXT,
-        status TEXT DEFAULT 'unknown',
-        last_checked TEXT,
-        created_at TEXT DEFAULT (datetime('now','localtime')),
-        updated_at TEXT DEFAULT (datetime('now','localtime')),
-        FOREIGN KEY (topology_id) REFERENCES topologies(id) ON DELETE SET NULL
-      );
-      INSERT INTO devices_new
-        SELECT id, topology_id, name_enc, vendor_enc, model_enc, version_enc, ip_enc,
-          COALESCE(device_type, 'generic'), connection_type, port_enc, username_enc,
-          password_enc, ssh_key_path_enc, ssh_key_content_enc, web_url_enc,
-          COALESCE(status, 'unknown'), last_checked, created_at, updated_at
-        FROM devices;
-      DROP TABLE devices;
-      ALTER TABLE devices_new RENAME TO devices;
-    `)
+    // 重建表（SQLite 不支持 ALTER CHECK），整段包事务保证原子：
+    // 中途失败自动回滚，避免 devices 已 DROP 未 RENAME 致子表外键悬空、重启即崩。
+    const rebuildDevices = db.transaction(() => {
+      db.exec("DROP TABLE IF EXISTS devices_new")
+      db.exec(`
+        CREATE TABLE devices_new (
+          id TEXT PRIMARY KEY,
+          topology_id TEXT,
+          name_enc TEXT NOT NULL,
+          vendor_enc TEXT,
+          model_enc TEXT,
+          version_enc TEXT,
+          ip_enc TEXT,
+          device_type TEXT DEFAULT 'generic' CHECK(device_type IN ('router','switch','firewall','server','generic')),
+          connection_type TEXT CHECK(connection_type IN ('ssh','telnet','web','rdp')),
+          port_enc TEXT,
+          username_enc TEXT,
+          password_enc TEXT,
+          ssh_key_path_enc TEXT,
+          ssh_key_content_enc TEXT,
+          web_url_enc TEXT,
+          status TEXT DEFAULT 'unknown',
+          last_checked TEXT,
+          created_at TEXT DEFAULT (datetime('now','localtime')),
+          updated_at TEXT DEFAULT (datetime('now','localtime')),
+          FOREIGN KEY (topology_id) REFERENCES topologies(id) ON DELETE SET NULL
+        );
+        INSERT INTO devices_new
+          SELECT id, topology_id, name_enc, vendor_enc, model_enc, version_enc, ip_enc,
+            COALESCE(device_type, 'generic'), connection_type, port_enc, username_enc,
+            password_enc, ssh_key_path_enc, ssh_key_content_enc, web_url_enc,
+            COALESCE(status, 'unknown'), last_checked, created_at, updated_at
+          FROM devices;
+        DROP TABLE devices;
+        ALTER TABLE devices_new RENAME TO devices;
+      `)
+      const fkErrors = db.pragma('foreign_key_check') as any[]
+      if (fkErrors.length > 0) {
+        throw new Error('devices 重建后外键完整性校验失败: ' + JSON.stringify(fkErrors))
+      }
+    })
+    rebuildDevices()
   }
 
   // Initialize default OUI data

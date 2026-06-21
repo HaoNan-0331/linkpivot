@@ -6,8 +6,22 @@ const SALT_LEN = 64
 const TAG_LEN = 16
 const ITERATIONS = 100000
 
+// 派生密钥 LRU 缓存：同一 (masterKey, salt) 不重复执行 pbkdf2Sync（10 万次），
+// 显著降低列表场景（listDevices 等多行多字段解密）的主进程同步阻塞。
+const derivedKeyCache = new Map<string, Buffer>()
+const DERIVED_CACHE_MAX = 2048
+
 function deriveKey(password: string, salt: Buffer): Buffer {
-  return crypto.pbkdf2Sync(password, salt, ITERATIONS, 32, 'sha512')
+  const cacheKey = `${password}:${salt.toString('base64')}`
+  const cached = derivedKeyCache.get(cacheKey)
+  if (cached) return cached
+  const key = crypto.pbkdf2Sync(password, salt, ITERATIONS, 32, 'sha512')
+  if (derivedKeyCache.size >= DERIVED_CACHE_MAX) {
+    const firstKey = derivedKeyCache.keys().next().value
+    if (firstKey) derivedKeyCache.delete(firstKey)
+  }
+  derivedKeyCache.set(cacheKey, key)
+  return key
 }
 
 export function encrypt(plaintext: string, masterKey: string): string {

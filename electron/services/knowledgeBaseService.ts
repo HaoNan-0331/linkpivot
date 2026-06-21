@@ -18,7 +18,7 @@ function kbDir(): string {
   return dir
 }
 
-function imgDir(): string {
+export function imgDir(): string {
   const dir = path.join(app.getPath('userData'), 'kb_images')
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
   return dir

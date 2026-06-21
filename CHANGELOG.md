@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## 2026-06-21
+
+### 代码审计批1 · 安全核心修复（8 项，覆盖 critical + high）
+- **keyManager.ts**：主加密密钥改用 Electron `safeStorage`（Windows DPAPI / macOS Keychain / Linux libsecret）加密落盘，绑定机器与用户；兼容历史明文回退，masterKey 值不变不影响历史数据解密
+- **knowledgeBaseIpc.ts / knowledgeBaseService.ts**：`kb:getImageData` 修复路径遍历——imagePath 限定在 `imgDir()` 目录白名单内，MIME 改按文件头魔数探测，防止扩展名伪造
+- **commandSafety.ts**：重构命令安全校验——拒绝多命令分隔符（\r \n ; & ` $() && ||）、白名单改首词严格相等匹配、黑名单补 system-view/interface/vlan/acl/aaa 等进配置视图命令；保留 `|` 管道过滤不误杀
+- **ai.ts**：`executeCommandsOnDevice` 由交互式 `client.shell` 改为非交互 `client.exec`，杜绝换行/分号注入与 prompt 误判；函数内部强制 `isCommandAllowed` 作为执行层最后防线
+- **init.ts**：devices 表 CHECK 约束重建（DROP/CREATE/INSERT/RENAME）整段包入 `db.transaction` 并加 `foreign_key_check`，避免中途失败致表丢失/外键悬空
+- **crypto.ts**：`deriveKey` 增加 LRU 缓存，避免列表场景重复执行 pbkdf2Sync（10 万次）阻塞主进程
+- **ErrorBoundary.tsx / main.tsx**：新增全局错误边界，根渲染包裹，避免运行时异常白屏
+- **arpIpc.ts**：ARP 采集异常隔离——try/finally 保证 endCollection 配对、逐设备 try/catch 不中断整体、返回结构增加 failures 统计
+
 ## 2026-06-04
 
 ### 修复：资产列表修改后拓扑未同步更新

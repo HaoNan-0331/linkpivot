@@ -4,6 +4,21 @@ import { IPStatusService } from '../services/ipStatusService'
 import { AnomalyService } from '../services/anomalyService'
 import { getDatabase } from '../database/connection'
 
+// 写入 ARP 条目：仅忽略主键/唯一冲突，其他错误记录日志，避免静默吞掉真实写库失败。
+function insertArpEntries(db: any, deviceId: string, entries: any[], collectedAt: string): number {
+  const stmt = db.prepare('INSERT INTO arp_entries (device_id, ip, mac, vlan, interface, collected_at) VALUES (?, ?, ?, ?, ?, ?)')
+  let inserted = 0
+  for (const entry of entries) {
+    try {
+      stmt.run(deviceId, entry.ip, entry.mac, entry.vlan || null, entry.interface || null, collectedAt)
+      inserted++
+    } catch (e: any) {
+      if (!/UNIQUE|CONSTRAINT/i.test(e.message)) console.error('[arp] insert failed:', e.message)
+    }
+  }
+  return inserted
+}
+
 export function registerArpIpc() {
   ipcMain.handle('arp:collectFromDevice', async (_e, deviceId: string) => {
     const { getDeviceById } = await import('../services/device')
@@ -15,13 +30,13 @@ export function registerArpIpc() {
     if (result.entries.length > 0) {
       const db = getDatabase()
       const collectionTime = IPStatusService.beginCollection()
-      const stmt = db.prepare('INSERT INTO arp_entries (device_id, ip, mac, vlan, interface, collected_at) VALUES (?, ?, ?, ?, ?, ?)')
-      for (const entry of result.entries) {
-        try { stmt.run(result.deviceId, entry.ip, entry.mac, entry.vlan || null, entry.interface || null, result.collectedAt) } catch { /* ignore dup */ }
+      try {
+        insertArpEntries(db, result.deviceId, result.entries, result.collectedAt)
+        IPStatusService.batchUpdateIPStatus(result.entries.map((e: any) => ({ ip: e.ip, mac: e.mac })), collectionTime)
+        AnomalyService.processARPEntries(result.entries)
+      } finally {
+        IPStatusService.endCollection(collectionTime)
       }
-      IPStatusService.batchUpdateIPStatus(result.entries.map(e => ({ ip: e.ip, mac: e.mac })), collectionTime)
-      AnomalyService.processARPEntries(result.entries)
-      IPStatusService.endCollection(collectionTime)
     }
     return result
   })
@@ -30,19 +45,27 @@ export function registerArpIpc() {
     const results = await ARPCollector.collectFromAll()
     const db = getDatabase()
     const collectionTime = IPStatusService.beginCollection()
-    let totalEntries = 0, totalChanges = 0
+    const stats = { entries: 0, changes: 0, failures: 0, deprecated: 0 }
+    const okResults: any[] = []
 
-    for (const result of results) {
-      if (result.error || result.entries.length === 0) continue
-      totalEntries += result.entries.length
-      const stmt = db.prepare('INSERT INTO arp_entries (device_id, ip, mac, vlan, interface, collected_at) VALUES (?, ?, ?, ?, ?, ?)')
-      for (const entry of result.entries) {
-        try { stmt.run(result.deviceId, entry.ip, entry.mac, entry.vlan || null, entry.interface || null, result.collectedAt) } catch { /* ignore dup */ }
+    try {
+      for (const result of results) {
+        if (result.error) { stats.failures++; okResults.push(result); continue }
+        if (!result.entries || result.entries.length === 0) { okResults.push(result); continue }
+        try {
+          stats.entries += insertArpEntries(db, result.deviceId, result.entries, result.collectedAt)
+          IPStatusService.batchUpdateIPStatus(result.entries.map((e: any) => ({ ip: e.ip, mac: e.mac })), collectionTime)
+          stats.changes += AnomalyService.processARPEntries(result.entries).length
+          okResults.push(result)
+        } catch (e: any) {
+          stats.failures++
+          console.error('[arp] device collect failed:', result.deviceId, e.message)
+          okResults.push({ ...result, error: e.message })
+        }
       }
-      IPStatusService.batchUpdateIPStatus(result.entries.map(e => ({ ip: e.ip, mac: e.mac })), collectionTime)
-      totalChanges += AnomalyService.processARPEntries(result.entries).length
+    } finally {
+      stats.deprecated = IPStatusService.endCollection(collectionTime)
     }
-    const deprecatedCount = IPStatusService.endCollection(collectionTime)
-    return { results, stats: { entries: totalEntries, changes: totalChanges, deprecated: deprecatedCount } }
+    return { results: okResults, stats }
   })
 }

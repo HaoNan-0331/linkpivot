@@ -265,45 +265,8 @@ function decodeDeviceBuffer(data: Buffer): string {
   return iconv.decode(data, 'gbk')
 }
 
-function isPromptLine(line: string): boolean {
-  const t = line.trim()
-  if (!t || t.length > 80) return false
-  // <hostname>, [hostname]
-  if (/^[<\[][\w\-@.()\s]+[>\]]$/.test(t)) return true
-  // hostname#, hostname>
-  if (/^[\w\-@.]+[>#]$/.test(t)) return true
-  // user@host:~$ or root@host:~#
-  if (/^[\w\-@.:~/]+[#$]$/.test(t)) return true
-  return false
-}
-
-function detectPrompt(text: string): string {
-  const lines = text.trimEnd().split('\n')
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i].trim()
-    if (line && isPromptLine(line)) return line
-  }
-  return ''
-}
-
-function extractCommandOutput(raw: string, cmd: string, prompt: string): string {
-  const lines = raw.split('\n')
-  // Skip command echo
-  let start = 0
-  const cmdTrimmed = cmd.trim()
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].includes(cmdTrimmed)) { start = i + 1; break }
-  }
-  // Skip prompt at end
-  let end = lines.length - 1
-  while (end > start && lines[end].trim() === '') end--
-  if (end >= start && (lines[end].trim() === prompt || isPromptLine(lines[end]))) end--
-
-  return lines.slice(start, end + 1)
-    .filter(l => !/----\s*[Mm]ore\s*----|--More--/i.test(l))
-    .join('\n')
-    .trim()
-}
+// （已移除交互式 shell 的 prompt 检测/输出提取函数）
+// 命令执行改为 client.exec 非交互模式，不再需要 isPromptLine / detectPrompt / extractCommandOutput。
 
 function buildSSHConfig(device: any): ConnectConfig {
   const cfg: ConnectConfig = {
@@ -348,12 +311,21 @@ export function executeCommandsOnDevice(
 ): Promise<Array<{ command: string; output: string; success: boolean }>> {
   if (commands.length === 0) return Promise.resolve([])
 
+  // 执行层强制安全校验（最后一道防线）：不依赖调用方（chat/confirmCommand/auto）是否已校验，
+  // 任何未经 isCommandAllowed 通过的命令在此直接拒绝，杜绝新增入口漏检。
+  const whitelist = getCommandWhitelist()
+  const checked = commands.map((cmd) => {
+    const safety = isCommandAllowed(cmd, whitelist)
+    return { cmd, allowed: safety.allowed, reason: safety.reason }
+  })
+
   return new Promise((resolve, reject) => {
     const client = new Client()
     const cfg = buildSSHConfig(device)
+    const results: Array<{ command: string; output: string; success: boolean }> = new Array(commands.length)
+    let settled = false
 
     const overallTimeout = 30000 + commands.length * 15000
-    let settled = false
     const overallTimer = setTimeout(() => {
       if (!settled) {
         settled = true
@@ -362,100 +334,30 @@ export function executeCommandsOnDevice(
       }
     }, overallTimeout)
 
-    client.on('ready', () => {
-      client.shell({ term: 'vt100', cols: 200, rows: 9999 }, (err, stream) => {
-        if (err) {
-          clearTimeout(overallTimer)
-          client.end()
-          if (!settled) { settled = true; reject(err) }
-          return
-        }
-
-        let buffer = ''
-        let quietTimer: ReturnType<typeof setTimeout> | null = null
-        let state: 'WAIT_PROMPT' | 'EXECUTING' | 'DONE' = 'WAIT_PROMPT'
-        let cmdIndex = 0
-        let results: Array<{ command: string; output: string; success: boolean }> = []
-        let promptStr = ''
-
-        function resetQuietTimer(ms: number) {
-          if (quietTimer) clearTimeout(quietTimer)
-          quietTimer = setTimeout(onQuiet, ms)
-        }
-
-        function onQuiet() {
-          quietTimer = null
-          const cleanBuf = stripAnsi(buffer)
-
-          if (state === 'WAIT_PROMPT') {
-            const prompt = detectPrompt(cleanBuf)
-            if (prompt) {
-              promptStr = prompt
-              state = 'EXECUTING'
-              sendNextCommand()
-            } else {
-              resetQuietTimer(500)
-            }
-          } else if (state === 'EXECUTING') {
-            // Handle pagination
-            if (/----\s*[Mm]ore\s*----|--More--/i.test(cleanBuf)) {
-              stream.write(' ')
-              buffer = ''
-              resetQuietTimer(1000)
-              return
-            }
-            // Check if command completed (prompt at end)
-            const lines = cleanBuf.trimEnd().split('\n')
-            const lastLine = lines[lines.length - 1].trim()
-            const done = (promptStr && lastLine === promptStr) || isPromptLine(lastLine)
-            if (done) {
-              const output = extractCommandOutput(cleanBuf, commands[cmdIndex], lastLine)
-              results.push({ command: commands[cmdIndex], output, success: true })
-              cmdIndex++
-              if (cmdIndex < commands.length) {
-                buffer = ''
-                sendNextCommand()
-              } else {
-                finish()
-              }
-            } else {
-              resetQuietTimer(500)
-            }
+    client.on('ready', async () => {
+      try {
+        // 串行 exec 每条命令，结果与 commands 同序同长（调用方依赖 execResults[i] 对应 cmds[i]）
+        for (let i = 0; i < checked.length; i++) {
+          const { cmd, allowed, reason } = checked[i]
+          if (!allowed) {
+            results[i] = { command: cmd, output: `命令被安全策略拒绝: ${reason}`, success: false }
+            continue
+          }
+          try {
+            const output = await execOne(client, cmd)
+            results[i] = { command: cmd, output, success: true }
+          } catch (err: any) {
+            results[i] = { command: cmd, output: `执行失败: ${err.message}`, success: false }
           }
         }
-
-        function sendNextCommand() {
-          buffer = ''
-          stream.write(commands[cmdIndex] + '\n')
-          resetQuietTimer(800)
-        }
-
-        function finish() {
-          state = 'DONE'
-          if (quietTimer) clearTimeout(quietTimer)
-          clearTimeout(overallTimer)
-          stream.end()
-          client.end()
-          if (!settled) { settled = true; resolve(results) }
-        }
-
-        stream.on('data', (data: Buffer) => {
-          buffer += decodeDeviceBuffer(data)
-          resetQuietTimer(300)
-        })
-        stream.on('close', () => {
-          if (quietTimer) clearTimeout(quietTimer)
-          clearTimeout(overallTimer)
-          if (!settled) {
-            settled = true
-            if (state === 'EXECUTING' && buffer) {
-              const output = extractCommandOutput(stripAnsi(buffer), commands[cmdIndex], promptStr)
-              results.push({ command: commands[cmdIndex], output, success: true })
-            }
-            resolve(results)
-          }
-        })
-      })
+        clearTimeout(overallTimer)
+        client.end()
+        if (!settled) { settled = true; resolve(results) }
+      } catch (err: any) {
+        clearTimeout(overallTimer)
+        try { client.end() } catch { /* ignore */ }
+        if (!settled) { settled = true; reject(err) }
+      }
     })
 
     client.on('error', (err) => {
@@ -463,6 +365,23 @@ export function executeCommandsOnDevice(
       if (!settled) { settled = true; reject(err) }
     })
     client.connect(cfg)
+  })
+}
+
+// 单命令非交互执行（client.exec）：不分配 PTY，设备不触发分页，
+// 天然杜绝交互式 shell 的换行/分号注入与 prompt 误判。
+function execOne(client: Client, command: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    client.exec(command, (err, stream) => {
+      if (err) return reject(err)
+      let buf = ''
+      stream.on('data', (data: Buffer) => { buf += decodeDeviceBuffer(data) })
+      const stderr = (stream as any).stderr
+      if (stderr && typeof stderr.on === 'function') {
+        stderr.on('data', () => { /* 忽略 stderr，必要时再收集 */ })
+      }
+      stream.on('close', () => resolve(stripAnsi(buf).trim()))
+    })
   })
 }
 

@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron'
 import fs from 'fs'
+import path from 'path'
 import {
   uploadDocument,
   listDocuments,
@@ -11,6 +12,7 @@ import {
   deleteChunk,
   mergeChunks,
   splitChunk,
+  imgDir,
 } from '../services/knowledgeBaseService'
 
 export function registerKbIpc() {
@@ -61,10 +63,21 @@ export function registerKbIpc() {
   })
 
   ipcMain.handle('kb:getImageData', async (_e, imagePath: string) => {
-    if (!fs.existsSync(imagePath)) return null
-    const buffer = fs.readFileSync(imagePath)
-    const ext = imagePath.split('.').pop()?.toLowerCase() || 'png'
-    const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'gif' ? 'image/gif' : 'image/png'
+    if (!imagePath || typeof imagePath !== 'string') return null
+    // 限定只能读取知识库图片目录，防止路径穿越读取任意文件（.ssh/id_rsa、SQLite 等）
+    const base = path.resolve(imgDir())
+    const resolved = path.resolve(imagePath)
+    if (resolved !== base && !resolved.startsWith(base + path.sep)) return null
+    if (!fs.existsSync(resolved)) return null
+    const buffer = fs.readFileSync(resolved)
+    // 按文件头魔数探测真实图片类型，防止扩展名伪造
+    let mime: string | null = null
+    if (buffer.length >= 4) {
+      if (buffer[0] === 0xff && buffer[1] === 0xd8) mime = 'image/jpeg'
+      else if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) mime = 'image/png'
+      else if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) mime = 'image/gif'
+    }
+    if (!mime) return null
     return `data:${mime};base64,${buffer.toString('base64')}`
   })
 }
