@@ -2,6 +2,13 @@
 
 ## 2026-06-21
 
+### 代码审计批2 · Medium 安全/正确性修复（11 项）
+- **crypto.ts**：字段加密新增 `v2:` 版本前缀 + 12 字节 IV（GCM 推荐值），decrypt 兼容历史 16 字节 IV 密文（零迁移）；`verifyPasswordSync` 加结构校验/长度上限/等长保护/try-catch
+- **auth.ts**：验证码文本改用 `crypto.randomInt`（CSPRNG）；登录失败 5 次锁定 5 分钟；`initAdmin` 增加口令强度策略（≥10 位 + 字母数字）
+- **webSecurity.ts（新）+ main.ts + connection.ts**：统一 `hardenWindow` 加固（will-navigate 阻止外链跳转 + setWindowOpenHandler 转系统浏览器）；主窗口与终端窗口 `sandbox:true`；注入严格 CSP；全局 `web-contents-created` 兜底
+- **ai.ts**：pendingBatches 增加 TTL（10 分钟自动清理）与 createdAt；batchId 改独立 uuid（与 logId 解耦）；设备名匹配改为指定名未匹配则拒绝、不再回退默认设备
+- **networkSegmentService.ts + exportService.ts**：getIPUsage/getIPDetails/exportNetworkUsage 改用真实 CIDR 数值匹配（新增 ipToNumber/ipInCIDR），修正 /16 等非 /24 网段的前 3 段 LIKE 跨段误计
+
 ### 代码审计批1 · 安全核心修复（8 项，覆盖 critical + high）
 - **keyManager.ts**：主加密密钥改用 Electron `safeStorage`（Windows DPAPI / macOS Keychain / Linux libsecret）加密落盘，绑定机器与用户；兼容历史明文回退，masterKey 值不变不影响历史数据解密
 - **knowledgeBaseIpc.ts / knowledgeBaseService.ts**：`kb:getImageData` 修复路径遍历——imagePath 限定在 `imgDir()` 目录白名单内，MIME 改按文件头魔数探测，防止扩展名伪造

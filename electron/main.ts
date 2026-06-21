@@ -1,8 +1,9 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, session, shell } from 'electron'
 import path from 'path'
 import { initDatabase, closeDatabase } from './database/connection'
 import { createTables } from './database/init'
 import { getOrCreateMasterKey } from './utils/keyManager'
+import { hardenWindow } from './utils/webSecurity'
 import { generateCaptcha, login, isFirstRun, initAdmin } from './services/auth'
 import { setDeviceMasterKey, listDevices, createDevice, updateDevice, deleteDevice, getDeviceById } from './services/device'
 import { setTopologyMasterKey, listTopologies, getTopologyById, createTopology, updateTopology, deleteTopology, exportTopology, importTopology } from './services/topology'
@@ -32,10 +33,11 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
     show: false,
   })
+  hardenWindow(mainWindow)
 
   if (process.env.NODE_ENV === 'development') {
     mainWindow.loadURL('http://localhost:5173')
@@ -49,6 +51,22 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  // 注入严格 CSP（渲染层 XSS 第二道防线）；AI API 由主进程 fetch，不受此限制
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [
+          "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https:",
+        ],
+      },
+    })
+  })
+  // 全局兜底：所有新建 webContents 的弹窗（target=_blank / window.open）交给系统浏览器
+  app.on('web-contents-created', (_event, contents) => {
+    contents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' } })
+  })
+
   masterKey = getOrCreateMasterKey()
   setDeviceMasterKey(masterKey)
   setTopologyMasterKey(masterKey)
@@ -100,7 +118,8 @@ app.whenReady().then(() => {
   ipcMain.handle('connection:write', (_e, sessionId, data) => writeToSession(sessionId, data))
   ipcMain.handle('connection:test', (_e, deviceId) => testDeviceConnection(deviceId))
 
-  // Terminal window IPC (from popup terminal windows)
+  // Terminal window IPC：writeByWebContentsId 经 windowSessionMap 查 sessionId，
+  // 只有终端窗口 webContents id 在 map 中，主窗口无法注入（sender 隔离）
   ipcMain.handle('terminal:write', (e, data) => writeByWebContentsId(e.sender.id, data))
 
   // AI IPC

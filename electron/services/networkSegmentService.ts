@@ -76,10 +76,10 @@ export class NetworkSegmentService {
     if (!segment) return { networkId, total: 0, used: 0, available: 0, usagePercent: 0 }
     const db = getDatabase()
     const total = Math.pow(2, 32 - segment.cidr) - 2
-    const networkParts = segment.network.split('.')
-    const prefix = `${networkParts[0]}.${networkParts[1]}.${networkParts[2]}`
-    const usedResult = db.prepare("SELECT COUNT(*) as count FROM ip_status WHERE ip LIKE ? AND status = 'used'").get(`${prefix}.%`) as { count: number }
-    const used = usedResult.count
+    const cidr = `${segment.network}/${segment.cidr}`
+    // 真实 CIDR 匹配（替代前3段 LIKE），修正 /16 等非 /24 网段的跨段误计
+    const rows = db.prepare("SELECT ip FROM ip_status WHERE status = 'used'").all() as Array<{ ip: string }>
+    const used = rows.filter((r) => this.ipInCIDR(r.ip, cidr)).length
     const available = Math.max(0, total - used)
     const usagePercent = total > 0 ? Math.round((used / total) * 100) : 0
     return { networkId, total, used, available, usagePercent }
@@ -89,27 +89,41 @@ export class NetworkSegmentService {
     const segment = this.getById(networkId)
     if (!segment) return []
     const db = getDatabase()
-    const networkParts = segment.network.split('.')
-    const prefix = `${networkParts[0]}.${networkParts[1]}.${networkParts[2]}`
-    const conditions: string[] = ['ips.ip LIKE ?']
-    const params: any[] = [`${prefix}.%`]
-    if (searchIp) { conditions.push('ips.ip LIKE ?'); params.push(`%${searchIp}%`) }
-    if (searchMac) { conditions.push('ips.mac LIKE ?'); params.push(`%${searchMac}%`) }
-
+    const cidr = `${segment.network}/${segment.cidr}`
     const sortColumnMap: Record<string, string> = { ip: 'ips.ip', mac: 'ips.mac', lastSeen: 'ips.last_seen' }
     const safeSortBy = sortColumnMap[sortBy] || 'ips.ip'
     const safeSortOrder = sortOrder === 'desc' ? 'DESC' : 'ASC'
-
+    // 去掉前3段 LIKE 条件：SQL 返回全部 + JOIN 并排序，JS 端按真实 CIDR 过滤（保持 SQL 排序顺序）
     const query = `SELECT ips.ip, ips.mac, ips.status, ips.last_seen as collectedAt, arp.interface, arp.device_id as deviceName
       FROM ip_status ips
       LEFT JOIN (SELECT ip, interface, device_id, ROW_NUMBER() OVER (PARTITION BY ip ORDER BY collected_at DESC) as rn FROM arp_entries) arp ON arp.ip = ips.ip AND arp.rn = 1
-      WHERE ${conditions.join(' AND ')} ORDER BY ${safeSortBy} ${safeSortOrder}`
-
-    return (db.prepare(query).all(...params) as any[]).map(entry => ({
+      ORDER BY ${safeSortBy} ${safeSortOrder}`
+    let rows = (db.prepare(query).all() as any[]).filter((r) => this.ipInCIDR(r.ip, cidr))
+    if (searchIp) rows = rows.filter((r) => r.ip?.includes(searchIp))
+    if (searchMac) rows = rows.filter((r) => r.mac?.includes(searchMac))
+    return rows.map((entry) => ({
       ip: entry.ip, mac: entry.mac, status: entry.status, lastSeen: entry.collectedAt,
       interface: entry.interface, deviceName: entry.deviceName || undefined,
       macVendor: entry.mac ? (OUIService.getVendor(entry.mac) === 'Unknown' ? undefined : OUIService.getVendor(entry.mac)) : undefined,
     }))
+  }
+
+  /** IP 转数值（非法返回 null），用 >>>0 规范化为无符号 32 位。 */
+  private static ipToNumber(ip: string): number | null {
+    const parts = ip.split('.').map(Number)
+    if (parts.length !== 4 || parts.some((p) => !Number.isInteger(p) || p < 0 || p > 255)) return null
+    return ((parts[0] << 24) + (parts[1] << 16) + (parts[2] << 8) + parts[3]) >>> 0
+  }
+
+  /** 判断 ip 是否落在 cidr 网段内（替代前3段 LIKE 的跨网段误判）。 */
+  private static ipInCIDR(ip: string, cidr: string): boolean {
+    const [network, prefixStr] = cidr.split('/')
+    const prefix = parseInt(prefixStr, 10)
+    const ipNum = this.ipToNumber(ip)
+    const netNum = this.ipToNumber(network)
+    if (ipNum === null || netNum === null || isNaN(prefix) || prefix < 0 || prefix > 32) return false
+    const mask = prefix === 0 ? 0 : (0xFFFFFFFF << (32 - prefix)) >>> 0
+    return (ipNum & mask) === (netNum & mask)
   }
 
   private static maskToCIDR(mask: string): number {

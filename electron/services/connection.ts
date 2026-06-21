@@ -6,6 +6,7 @@ import net from 'net'
 import iconv from 'iconv-lite'
 import { Client, type ConnectConfig, type ClientChannel } from 'ssh2'
 import { getDeviceById, setDeviceMasterKey } from './device'
+import { hardenWindow } from '../utils/webSecurity'
 
 interface DeviceInfo {
   id: string
@@ -59,11 +60,12 @@ export function openTerminal(deviceId: string): { sessionId: string } {
       preload: path.join(__dirname, 'terminal-preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   })
 
   termWin.setMenu(null)
+  hardenWindow(termWin)
 
   const webContentsId = termWin.webContents.id
   windowSessionMap.set(webContentsId, sessionId)

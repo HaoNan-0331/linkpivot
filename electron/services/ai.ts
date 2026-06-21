@@ -437,8 +437,18 @@ const pendingBatches = new Map<
     config: Record<string, string>
     deviceNames: string[]
     sessionId: string | null
+    createdAt: number
   }
 >()
+
+// 定期清理过期待确认批次（默认 10 分钟），避免 pendingBatches 无限累积
+const PENDING_TTL_MS = 10 * 60 * 1000
+setInterval(() => {
+  const now = Date.now()
+  for (const [id, batch] of pendingBatches) {
+    if (now - batch.createdAt > PENDING_TTL_MS) pendingBatches.delete(id)
+  }
+}, 60000)
 
 export async function confirmCommand(
   batchId: string,
@@ -679,7 +689,18 @@ export async function chat(
   const rejectedCommands: Array<{ deviceName: string; cmd: string; reason: string }> = []
 
   for (const { deviceName, cmd } of commands) {
-    let targetDevice = targetDevices.find((d) => d.name === deviceName) || targetDevices[0]
+    // 指定设备名必须精确匹配（忽略大小写/trim），未匹配则拒绝而非回退默认设备；未指定时用默认设备
+    let targetDevice: any
+    if (deviceName) {
+      const trimmed = deviceName.trim().toLowerCase()
+      targetDevice = targetDevices.find((d) => d.name.trim().toLowerCase() === trimmed)
+      if (!targetDevice) {
+        rejectedCommands.push({ deviceName, cmd, reason: `未找到指定设备: ${deviceName}` })
+        continue
+      }
+    } else {
+      targetDevice = targetDevices[0]
+    }
 
     const safety = isCommandAllowed(cmd, whitelist)
     const logId = createLog({
@@ -717,7 +738,7 @@ export async function chat(
 
   // Confirm mode: store batch and wait for approval
   if (execMode === 'confirm') {
-    const batchId = allowedCommands[0].logId
+    const batchId = uuidv4()
     pendingBatches.set(batchId, {
       commands: allowedCommands,
       rejectedCommands,
@@ -726,6 +747,7 @@ export async function chat(
       config,
       deviceNames: targetDevices.map((d) => d.name),
       sessionId: sessionId || null,
+      createdAt: Date.now(),
     })
 
     const confirmResponse = JSON.stringify({

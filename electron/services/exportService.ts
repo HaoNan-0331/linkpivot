@@ -2,6 +2,22 @@ import { dialog } from 'electron'
 import { writeFile } from 'fs/promises'
 import { getDatabase } from '../database/connection'
 
+function ipToNumber(ip: string): number | null {
+  const parts = ip.split('.').map(Number)
+  if (parts.length !== 4 || parts.some((p) => !Number.isInteger(p) || p < 0 || p > 255)) return null
+  return ((parts[0] << 24) + (parts[1] << 16) + (parts[2] << 8) + parts[3]) >>> 0
+}
+
+function ipInCIDR(ip: string, cidr: string): boolean {
+  const [network, prefixStr] = cidr.split('/')
+  const prefix = parseInt(prefixStr, 10)
+  const ipNum = ipToNumber(ip)
+  const netNum = ipToNumber(network)
+  if (ipNum === null || netNum === null || isNaN(prefix) || prefix < 0 || prefix > 32) return false
+  const mask = prefix === 0 ? 0 : (0xFFFFFFFF << (32 - prefix)) >>> 0
+  return (ipNum & mask) === (netNum & mask)
+}
+
 export class ExportService {
   static async exportARPTable(): Promise<string | null> {
     const db = getDatabase()
@@ -38,10 +54,10 @@ export class ExportService {
     if (networks.length === 0) throw new Error('没有网段数据可导出')
     const csvLines: string[] = ['网段名称,网段地址,CIDR,IP地址,MAC地址,状态,最后发现时间']
     for (const network of networks) {
-      const networkParts = network.network.split('.')
-      const prefix = `${networkParts[0]}.${networkParts[1]}.${networkParts[2]}`
-      const ipRows = db.prepare(`SELECT latest.ip, latest.mac, latest.collected_at FROM (SELECT a.ip, a.mac, a.collected_at, ROW_NUMBER() OVER (PARTITION BY a.ip ORDER BY a.collected_at DESC) as rn FROM arp_entries a WHERE a.ip LIKE ? || '.%') latest WHERE latest.rn = 1 ORDER BY latest.ip`).all(prefix) as any[]
-      for (const row of ipRows) {
+      const cidr = `${network.network}/${network.cidr}`
+      // 真实 CIDR 匹配（替代前3段 LIKE），修正非 /24 网段误计
+      const ipRows = db.prepare(`SELECT latest.ip, latest.mac, latest.collected_at FROM (SELECT a.ip, a.mac, a.collected_at, ROW_NUMBER() OVER (PARTITION BY a.ip ORDER BY a.collected_at DESC) as rn FROM arp_entries a) latest WHERE latest.rn = 1 ORDER BY latest.ip`).all() as any[]
+      for (const row of ipRows.filter((r) => ipInCIDR(r.ip, cidr))) {
         csvLines.push([network.name, network.network, String(network.cidr), row.ip, row.mac || '', '已使用', row.collected_at || ''].join(','))
       }
     }
