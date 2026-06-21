@@ -3,6 +3,7 @@ import { ARPCollector } from '../services/arpCollector'
 import { IPStatusService } from '../services/ipStatusService'
 import { AnomalyService } from '../services/anomalyService'
 import { getDatabase } from '../database/connection'
+import { secure } from '../utils/authGuard'
 
 // 写入 ARP 条目：仅忽略主键/唯一冲突，其他错误记录日志，避免静默吞掉真实写库失败。
 function insertArpEntries(db: any, deviceId: string, entries: any[], collectedAt: string): number {
@@ -20,7 +21,7 @@ function insertArpEntries(db: any, deviceId: string, entries: any[], collectedAt
 }
 
 export function registerArpIpc() {
-  ipcMain.handle('arp:collectFromDevice', async (_e, deviceId: string) => {
+  ipcMain.handle('arp:collectFromDevice', secure(async (_e, deviceId: string) => {
     const { getDeviceById } = await import('../services/device')
     const device = getDeviceById(deviceId)
     if (!device) throw new Error('设备不存在')
@@ -39,9 +40,9 @@ export function registerArpIpc() {
       }
     }
     return result
-  })
+  }))
 
-  ipcMain.handle('arp:collectFromAll', async () => {
+  ipcMain.handle('arp:collectFromAll', secure(async () => {
     const results = await ARPCollector.collectFromAll()
     const db = getDatabase()
     const collectionTime = IPStatusService.beginCollection()
@@ -67,5 +68,5 @@ export function registerArpIpc() {
       stats.deprecated = IPStatusService.endCollection(collectionTime)
     }
     return { results: okResults, stats }
-  })
+  }))
 }

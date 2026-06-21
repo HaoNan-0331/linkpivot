@@ -2,6 +2,12 @@
 
 ## 2026-06-21
 
+### 代码审计批3 · 鉴权机制 + IPC 网关 + 入参校验（架构加固）
+- **authGuard.ts（新）**：`secure` 高阶函数 = 登录鉴权（未登录 reject「未登录或会话已过期」）+ 异常脱敏（`sanitizeMessage` 移除绝对路径/截断超长，不向渲染层泄露 SQL/路径等内部细节）；单机登录态 `authenticated`
+- **main.ts**：`auth:login` 成功置 `authenticated=true`；除 `auth:*` 外所有特权 handler（device/topology/connection/terminal/ai）用 `secure` 包装
+- **ipc/*.ts（7 文件）**：所有 handler `secure` 包装（鉴权 + 异常脱敏）
+- **入参校验**：network create/update（IPv4 正则 + 掩码二进制连续性）、oui addBatch/deleteBatch（上限 1000）、scheduler updateConfig（interval 1-10080、enabled 0/1/布尔）、anomaly getChanges（limit 范围）/acknowledge/deleteChange（id 正整数）/getBindingHistory（IP 正则）/addExcludedIP（非空）
+
 ### 代码审计批2 · Medium 安全/正确性修复（11 项）
 - **crypto.ts**：字段加密新增 `v2:` 版本前缀 + 12 字节 IV（GCM 推荐值），decrypt 兼容历史 16 字节 IV 密文（零迁移）；`verifyPasswordSync` 加结构校验/长度上限/等长保护/try-catch
 - **auth.ts**：验证码文本改用 `crypto.randomInt`（CSPRNG）；登录失败 5 次锁定 5 分钟；`initAdmin` 增加口令强度策略（≥10 位 + 字母数字）

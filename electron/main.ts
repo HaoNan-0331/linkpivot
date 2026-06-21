@@ -4,6 +4,7 @@ import { initDatabase, closeDatabase } from './database/connection'
 import { createTables } from './database/init'
 import { getOrCreateMasterKey } from './utils/keyManager'
 import { hardenWindow } from './utils/webSecurity'
+import { secure, setAuthenticated } from './utils/authGuard'
 import { generateCaptcha, login, isFirstRun, initAdmin } from './services/auth'
 import { setDeviceMasterKey, listDevices, createDevice, updateDevice, deleteDevice, getDeviceById } from './services/device'
 import { setTopologyMasterKey, listTopologies, getTopologyById, createTopology, updateTopology, deleteTopology, exportTopology, importTopology } from './services/topology'
@@ -87,61 +88,65 @@ app.whenReady().then(() => {
   registerKbIpc()
   SchedulerService.start()
 
-  // Auth IPC
+  // Auth IPC（登录前可用，不做鉴权；login 成功置登录态）
   ipcMain.handle('auth:getCaptcha', () => { const r = generateCaptcha(); return { svg: r.svg, key: r.key } })
-  ipcMain.handle('auth:login', (_e, u, p, ck, ci) => login(u, p, ck, ci))
+  ipcMain.handle('auth:login', async (_e, u, p, ck, ci) => {
+    const r = await login(u, p, ck, ci)
+    if (r.success) setAuthenticated(true)
+    return r
+  })
   ipcMain.handle('auth:isFirstRun', () => isFirstRun())
   ipcMain.handle('auth:initAdmin', (_e, u, p) => initAdmin(u, p))
 
-  // Device IPC
-  ipcMain.handle('device:list', () => listDevices())
-  ipcMain.handle('device:create', (_e, data) => createDevice(data))
-  ipcMain.handle('device:update', (_e, id, data) => updateDevice(id, data))
-  ipcMain.handle('device:delete', (_e, id) => deleteDevice(id))
-  ipcMain.handle('device:getById', (_e, id) => getDeviceById(id))
+  // Device IPC（secure = 登录鉴权 + 异常脱敏）
+  ipcMain.handle('device:list', secure(() => listDevices()))
+  ipcMain.handle('device:create', secure((_e, data) => createDevice(data)))
+  ipcMain.handle('device:update', secure((_e, id, data) => updateDevice(id, data)))
+  ipcMain.handle('device:delete', secure((_e, id) => deleteDevice(id)))
+  ipcMain.handle('device:getById', secure((_e, id) => getDeviceById(id)))
 
   // Topology IPC
-  ipcMain.handle('topology:list', () => listTopologies())
-  ipcMain.handle('topology:getById', (_e, id) => getTopologyById(id))
-  ipcMain.handle('topology:create', (_e, data) => createTopology(data))
-  ipcMain.handle('topology:update', (_e, id, data) => updateTopology(id, data))
-  ipcMain.handle('topology:delete', (_e, id) => deleteTopology(id))
-  ipcMain.handle('topology:exportJson', (_e, id) => exportTopology(id))
-  ipcMain.handle('topology:importJson', (_e, data) => importTopology(data))
+  ipcMain.handle('topology:list', secure(() => listTopologies()))
+  ipcMain.handle('topology:getById', secure((_e, id) => getTopologyById(id)))
+  ipcMain.handle('topology:create', secure((_e, data) => createTopology(data)))
+  ipcMain.handle('topology:update', secure((_e, id, data) => updateTopology(id, data)))
+  ipcMain.handle('topology:delete', secure((_e, id) => deleteTopology(id)))
+  ipcMain.handle('topology:exportJson', secure((_e, id) => exportTopology(id)))
+  ipcMain.handle('topology:importJson', secure((_e, data) => importTopology(data)))
 
   // Connection IPC
-  ipcMain.handle('connection:ssh', (_e, deviceId) => openTerminal(deviceId))
-  ipcMain.handle('connection:telnet', (_e, deviceId) => openTerminal(deviceId))
-  ipcMain.handle('connection:rdp', (_e, deviceId) => openTerminal(deviceId))
-  ipcMain.handle('connection:openWeb', (_e, url) => openWebSafe(url))
-  ipcMain.handle('connection:disconnect', (_e, sessionId) => disconnectSession(sessionId))
-  ipcMain.handle('connection:write', (_e, sessionId, data) => writeToSession(sessionId, data))
-  ipcMain.handle('connection:test', (_e, deviceId) => testDeviceConnection(deviceId))
+  ipcMain.handle('connection:ssh', secure((_e, deviceId) => openTerminal(deviceId)))
+  ipcMain.handle('connection:telnet', secure((_e, deviceId) => openTerminal(deviceId)))
+  ipcMain.handle('connection:rdp', secure((_e, deviceId) => openTerminal(deviceId)))
+  ipcMain.handle('connection:openWeb', secure((_e, url) => openWebSafe(url)))
+  ipcMain.handle('connection:disconnect', secure((_e, sessionId) => disconnectSession(sessionId)))
+  ipcMain.handle('connection:write', secure((_e, sessionId, data) => writeToSession(sessionId, data)))
+  ipcMain.handle('connection:test', secure((_e, deviceId) => testDeviceConnection(deviceId)))
 
   // Terminal window IPC：writeByWebContentsId 经 windowSessionMap 查 sessionId，
   // 只有终端窗口 webContents id 在 map 中，主窗口无法注入（sender 隔离）
-  ipcMain.handle('terminal:write', (e, data) => writeByWebContentsId(e.sender.id, data))
+  ipcMain.handle('terminal:write', secure((e, data) => writeByWebContentsId(e.sender.id, data)))
 
   // AI IPC
-  ipcMain.handle('ai:chat', (_e, messages, deviceIds, sessionId) => chat(messages, deviceIds, sessionId))
-  ipcMain.handle('ai:getConfig', () => getAiConfigMasked())
-  ipcMain.handle('ai:saveConfig', (_e, config) => saveAiConfig(config))
-  ipcMain.handle('ai:getCommandWhitelist', () => getCommandWhitelist())
-  ipcMain.handle('ai:saveCommandWhitelist', (_e, list) => saveCommandWhitelist(list))
-  ipcMain.handle('ai:getExecMode', () => getExecMode())
-  ipcMain.handle('ai:setExecMode', (_e, mode, password) => setExecMode(mode, password))
-  ipcMain.handle('ai:confirmCommand', (_e, execId, approved) => confirmCommand(execId, approved))
-  ipcMain.handle('ai:getLogs', (_e, limit) => getAiLogs(limit))
-  ipcMain.handle('ai:getChatHistory', () => getChatHistory())
-  ipcMain.handle('ai:saveMessage', (_e, role, content, deviceId, sessionId) => aiSaveChatMessage(role, content, deviceId, sessionId))
-  ipcMain.handle('ai:clearHistory', () => clearChatHistory())
-  ipcMain.handle('ai:createSession', (_e, title, deviceId) => createSession(title, deviceId))
-  ipcMain.handle('ai:listSessions', () => listSessions())
-  ipcMain.handle('ai:getSessionMessages', (_e, sessionId) => getSessionMessages(sessionId))
-  ipcMain.handle('ai:deleteSession', (_e, sessionId) => deleteSession(sessionId))
-  ipcMain.handle('ai:updateSessionTitle', (_e, sessionId, title) => updateSessionTitle(sessionId, title))
-  ipcMain.handle('ai:discoverTopology', (_e, deviceIds) => discoverTopology(deviceIds))
-  ipcMain.handle('ai:getSystemLogs', (_e, limit) => getSystemLogs(limit))
+  ipcMain.handle('ai:chat', secure((_e, messages, deviceIds, sessionId) => chat(messages, deviceIds, sessionId)))
+  ipcMain.handle('ai:getConfig', secure(() => getAiConfigMasked()))
+  ipcMain.handle('ai:saveConfig', secure((_e, config) => saveAiConfig(config)))
+  ipcMain.handle('ai:getCommandWhitelist', secure(() => getCommandWhitelist()))
+  ipcMain.handle('ai:saveCommandWhitelist', secure((_e, list) => saveCommandWhitelist(list)))
+  ipcMain.handle('ai:getExecMode', secure(() => getExecMode()))
+  ipcMain.handle('ai:setExecMode', secure((_e, mode, password) => setExecMode(mode, password)))
+  ipcMain.handle('ai:confirmCommand', secure((_e, execId, approved) => confirmCommand(execId, approved)))
+  ipcMain.handle('ai:getLogs', secure((_e, limit) => getAiLogs(limit)))
+  ipcMain.handle('ai:getChatHistory', secure(() => getChatHistory()))
+  ipcMain.handle('ai:saveMessage', secure((_e, role, content, deviceId, sessionId) => aiSaveChatMessage(role, content, deviceId, sessionId)))
+  ipcMain.handle('ai:clearHistory', secure(() => clearChatHistory()))
+  ipcMain.handle('ai:createSession', secure((_e, title, deviceId) => createSession(title, deviceId)))
+  ipcMain.handle('ai:listSessions', secure(() => listSessions()))
+  ipcMain.handle('ai:getSessionMessages', secure((_e, sessionId) => getSessionMessages(sessionId)))
+  ipcMain.handle('ai:deleteSession', secure((_e, sessionId) => deleteSession(sessionId)))
+  ipcMain.handle('ai:updateSessionTitle', secure((_e, sessionId, title) => updateSessionTitle(sessionId, title)))
+  ipcMain.handle('ai:discoverTopology', secure((_e, deviceIds) => discoverTopology(deviceIds)))
+  ipcMain.handle('ai:getSystemLogs', secure((_e, limit) => getSystemLogs(limit)))
 
   createWindow()
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
