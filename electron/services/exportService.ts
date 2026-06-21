@@ -18,6 +18,12 @@ function ipInCIDR(ip: string, cidr: string): boolean {
   return (ipNum & mask) === (netNum & mask)
 }
 
+/** RFC4180 CSV 字段转义：含逗号/引号/换行的字段用双引号包裹，内部引号转义为 ""。 */
+function csvEscape(field: any): string {
+  const s = String(field ?? '')
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+}
+
 export class ExportService {
   static async exportARPTable(): Promise<string | null> {
     const db = getDatabase()
@@ -25,7 +31,7 @@ export class ExportService {
     if (rows.length === 0) throw new Error('没有 ARP 数据可导出')
     const csvLines = [
       'IP地址,MAC地址,VLAN,接口,最后采集时间',
-      ...rows.map(row => [row.ip, row.mac || '', row.vlan || '', row.interface || '', row.collected_at || ''].join(','))
+      ...rows.map(row => [row.ip, row.mac || '', row.vlan || '', row.interface || '', row.collected_at || ''].map(csvEscape).join(','))
     ]
     return this.saveCSV(csvLines, 'arp-table')
   }
@@ -40,7 +46,7 @@ export class ExportService {
     const labels: Record<string, string> = { mac_changed: 'MAC变化', new_ip: '新IP', ip_reused: 'IP重用' }
     const csvLines = [
       'IP地址,原MAC,新MAC,变化类型,检测时间,已确认,确认时间,备注',
-      ...rows.map(row => [row.ip, row.old_mac || '', row.new_mac || '', labels[row.change_type] || row.change_type, row.detected_at || '', row.acknowledged ? '是' : '否', row.acknowledged_at || '', (row.notes || '').replace(/,/g, '，')].join(','))
+      ...rows.map(row => [row.ip, row.old_mac || '', row.new_mac || '', labels[row.change_type] || row.change_type, row.detected_at || '', row.acknowledged ? '是' : '否', row.acknowledged_at || '', row.notes || ''].map(csvEscape).join(','))
     ]
     return this.saveCSV(csvLines, 'ip-mac-changes')
   }
@@ -58,7 +64,7 @@ export class ExportService {
       // 真实 CIDR 匹配（替代前3段 LIKE），修正非 /24 网段误计
       const ipRows = db.prepare(`SELECT latest.ip, latest.mac, latest.collected_at FROM (SELECT a.ip, a.mac, a.collected_at, ROW_NUMBER() OVER (PARTITION BY a.ip ORDER BY a.collected_at DESC) as rn FROM arp_entries a) latest WHERE latest.rn = 1 ORDER BY latest.ip`).all() as any[]
       for (const row of ipRows.filter((r) => ipInCIDR(r.ip, cidr))) {
-        csvLines.push([network.name, network.network, String(network.cidr), row.ip, row.mac || '', '已使用', row.collected_at || ''].join(','))
+        csvLines.push([network.name, network.network, String(network.cidr), row.ip, row.mac || '', '已使用', row.collected_at || ''].map(csvEscape).join(','))
       }
     }
     return this.saveCSV(csvLines, 'network-usage')

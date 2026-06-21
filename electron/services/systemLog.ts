@@ -32,14 +32,20 @@ export function createSystemLog(log: {
     id,
     log.type,
     log.status,
-    log.deviceIds || '',
-    log.deviceNames || '',
-    log.promptText || '',
-    log.aiResponse || '',
-    log.parsedResult || '',
-    log.errorMessage || ''
+    truncate(log.deviceIds),
+    truncate(log.deviceNames),
+    truncate(log.promptText),
+    truncate(log.aiResponse),
+    truncate(log.parsedResult),
+    truncate(log.errorMessage)
   )
   return id
+}
+
+const MAX_LOG_FIELD_LEN = 16000
+function truncate(s: string | undefined): string {
+  const v = s || ''
+  return v.length > MAX_LOG_FIELD_LEN ? v.slice(0, MAX_LOG_FIELD_LEN) + '...[truncated]' : v
 }
 
 export function getSystemLogs(limit = 50): SystemLog[] {

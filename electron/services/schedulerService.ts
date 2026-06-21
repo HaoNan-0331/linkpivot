@@ -14,8 +14,8 @@ export class SchedulerService {
     if (!config.enabled) return
     const intervalMinutes = config.intervalMinutes ?? 60
     this.updateNextRun(intervalMinutes)
-    this.intervalId = setInterval(async () => { await this.runTask() }, intervalMinutes * 60 * 1000)
-    if (this.shouldRunNow(config)) this.runTask()
+    this.intervalId = setInterval(() => { this.runTask().catch((e) => console.error('[Scheduler] interval run failed:', e)) }, intervalMinutes * 60 * 1000)
+    if (this.shouldRunNow(config)) this.runTask().catch((e) => console.error('[Scheduler] initial run failed:', e))
   }
 
   static stop(): void {
@@ -58,7 +58,7 @@ export class SchedulerService {
           totalEntries += result.entries.length
           const stmt = db.prepare('INSERT INTO arp_entries (device_id, ip, mac, vlan, interface, collected_at) VALUES (?, ?, ?, ?, ?, ?)')
           for (const entry of result.entries) {
-            try { stmt.run(result.deviceId, entry.ip, entry.mac, entry.vlan || null, entry.interface || null, result.collectedAt) } catch { /* ignore dup */ }
+            try { stmt.run(result.deviceId, entry.ip, entry.mac, entry.vlan || null, entry.interface || null, result.collectedAt) } catch (e: any) { if (!/UNIQUE|CONSTRAINT/i.test(e.message)) console.error('[scheduler] arp insert failed:', e.message) }
           }
           IPStatusService.batchUpdateIPStatus(result.entries.map(e => ({ ip: e.ip, mac: e.mac })), collectionTime)
           const changes = AnomalyService.processARPEntries(result.entries)

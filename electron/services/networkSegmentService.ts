@@ -127,6 +127,10 @@ export class NetworkSegmentService {
   }
 
   private static maskToCIDR(mask: string): number {
-    return mask.split('.').reduce((cidr, p) => cidr + (parseInt(p, 10).toString(2).match(/1/g) || []).length, 0)
+    if (!/^\d+\.\d+\.\d+\.\d+$/.test(mask)) throw new Error('子网掩码格式非法')
+    const bits = mask.split('.').map((p) => parseInt(p, 10).toString(2).padStart(8, '0')).join('')
+    // 掩码二进制必须连续（^1*0*$），拒绝 255.0.255.0 这类非连续非法掩码
+    if (!/^1*0*$/.test(bits)) throw new Error('子网掩码必须连续（非法掩码）')
+    return (bits.match(/1/g) || []).length
   }
 }

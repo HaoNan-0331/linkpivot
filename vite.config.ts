@@ -26,7 +26,7 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/proxy/ai': {
-        target: 'https://ark.cn-beijing.volces.com',
+        target: process.env.VITE_AI_PROXY_TARGET || 'https://ark.cn-beijing.volces.com',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/proxy\/ai/, ''),
       },

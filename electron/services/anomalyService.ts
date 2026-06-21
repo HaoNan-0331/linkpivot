@@ -83,7 +83,7 @@ export class AnomalyService {
     try {
       const result = db.prepare('INSERT INTO ip_mac_changes (ip, old_mac, new_mac, change_type, detected_at) VALUES (?, ?, ?, ?, datetime(\'now\'))').run(ip, oldMac, newMac, changeType)
       return { id: result.lastInsertRowid as number, ip, oldMac, newMac, changeType, detectedAt: new Date().toISOString(), acknowledged: false, acknowledgedAt: null, notes: null }
-    } catch { return null }
+    } catch (e: any) { console.error('[anomaly] recordChange 插入失败:', ip, e.message); return null }
   }
 
   static getChanges(unacknowledgedOnly: boolean = false, limit: number = 100): any[] {

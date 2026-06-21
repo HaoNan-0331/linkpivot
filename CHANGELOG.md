@@ -2,6 +2,19 @@
 
 ## 2026-06-21
 
+### 代码审计批4a · 后端 low 清理（错误处理 / 数据校验 / 性能 / 依赖）
+- **crypto.ts**：`decField` try/catch，单条坏密文不再让整个列表加载失败
+- **device.ts**：update/delete 拓扑解析 try/catch，跳过坏拓扑不中断整批
+- **topology.ts**：importTopology 节点上限 5000，防超大 JSON 撑大库
+- **systemLog.ts**：createSystemLog 字段截断（16000），防大 prompt/aiResponse 撑库
+- **networkSegmentService.ts**：maskToCIDR 校验掩码格式与二进制连续性，拒绝 255.0.255.0 类非法掩码
+- **connection.ts**：`busy_timeout=5000` + `wal_autocheckpoint=1000`，降低并发锁冲突
+- **schedulerService.ts**：`runTask().catch` 防 unhandled rejection；ARP insert catch 区分 UNIQUE 记日志
+- **package.json**：移除未使用依赖 pdf-parse(21MB) + @types/pdf-parse + build 脚本 external 残留
+- **vite.config.ts**：代理 target 抽环境变量 `VITE_AI_PROXY_TARGET`
+- **exportService.ts**：csvEscape RFC4180 转义，修复逗号/引号/换行破坏 CSV 列
+- **anomalyService.ts**：recordChange catch 加日志，避免静默吞掉插入失败
+
 ### 代码审计批3 · 鉴权机制 + IPC 网关 + 入参校验（架构加固）
 - **authGuard.ts（新）**：`secure` 高阶函数 = 登录鉴权（未登录 reject「未登录或会话已过期」）+ 异常脱敏（`sanitizeMessage` 移除绝对路径/截断超长，不向渲染层泄露 SQL/路径等内部细节）；单机登录态 `authenticated`
 - **main.ts**：`auth:login` 成功置 `authenticated=true`；除 `auth:*` 外所有特权 handler（device/topology/connection/terminal/ai）用 `secure` 包装

@@ -5,7 +5,7 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
-    "build:electron-main": "esbuild electron/main.ts --outfile=dist-electron/main.js --platform=node --format=cjs --bundle --external:better-sqlite3 --external:ssh2 --external:telnet-client --external:electron --external:pdfjs-dist --external:pdf-parse",
+    "build:electron-main": "esbuild electron/main.ts --outfile=dist-electron/main.js --platform=node --format=cjs --bundle --external:better-sqlite3 --external:ssh2 --external:telnet-client --external:electron --external:pdfjs-dist",
     "build:preload": "esbuild electron/preload.ts --outfile=dist-electron/preload.js --platform=node --format=cjs --bundle --external:electron && esbuild electron/terminal-preload.ts --outfile=dist-electron/terminal-preload.js --platform=node --format=cjs --bundle --external:electron",
     "build:electron": "npm run build:electron-main && npm run build:preload && node scripts/build-electron.cjs",
     "build": "tsc -p tsconfig.web.json && vite build && npm run build:electron",
@@ -19,7 +19,6 @@
     "antd": "^6.3.7",
     "better-sqlite3": "^12.9.0",
     "mammoth": "^1.12.0",
-    "pdf-parse": "^2.4.5",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-router-dom": "^7.15.0",
@@ -34,7 +33,6 @@
   "devDependencies": {
     "@electron/rebuild": "^4.0.4",
     "@types/better-sqlite3": "^7.6.13",
-    "@types/pdf-parse": "^1.1.5",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@types/ssh2": "^1.15.5",

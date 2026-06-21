@@ -92,5 +92,11 @@ export function encField(val: string | null | undefined, key: string): string | 
 
 export function decField(val: string | null | undefined, key: string): string {
   if (!val) return ''
-  return decrypt(val, key)
+  try {
+    return decrypt(val, key)
+  } catch (e) {
+    // 单条坏密文不应让整个列表加载失败，降级返回空串并记录
+    console.error('[crypto] decField 解密失败:', e)
+    return ''
+  }
 }

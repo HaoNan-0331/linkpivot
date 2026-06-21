@@ -85,8 +85,13 @@ export function updateDevice(id: string, data: any) {
   if (changedFields.length > 0) {
     const topologies = db.prepare('SELECT id, data_enc FROM topologies').all() as any[]
     for (const topo of topologies) {
-      const dataStr = dec(topo.data_enc)
-      const topoData = JSON.parse(dataStr)
+      let topoData: any
+      try {
+        topoData = JSON.parse(dec(topo.data_enc))
+      } catch (e) {
+        console.error('[device] 拓扑数据解析失败，跳过该拓扑:', topo.id, e)
+        continue
+      }
       let modified = false
       if (topoData.nodes) {
         for (const node of topoData.nodes) {
@@ -113,8 +118,13 @@ export function deleteDevice(id: string) {
   // Cascade: remove device node from all topologies that reference this device
   const topologies = db.prepare('SELECT id, data_enc FROM topologies').all() as any[]
   for (const topo of topologies) {
-    const dataStr = dec(topo.data_enc)
-    const data = JSON.parse(dataStr)
+    let data: any
+    try {
+      data = JSON.parse(dec(topo.data_enc))
+    } catch (e) {
+      console.error('[device] 拓扑数据解析失败，跳过该拓扑:', topo.id, e)
+      continue
+    }
     if (data.nodes) {
       const filtered = data.nodes.filter((n: any) => n.id !== id && n.data?.deviceId !== id)
       if (filtered.length !== data.nodes.length) {

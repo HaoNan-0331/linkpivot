@@ -122,6 +122,10 @@ export function importTopology(jsonStr: string) {
   if (!data || typeof data !== 'object') throw new Error('JSON 必须是对象')
   if (data.nodes !== undefined && !Array.isArray(data.nodes)) throw new Error('nodes 必须是数组')
   if (data.edges !== undefined && !Array.isArray(data.edges)) throw new Error('edges 必须是数组')
+  const MAX_NODES = 5000
+  if (Array.isArray(data.nodes) && data.nodes.length > MAX_NODES) {
+    throw new Error(`节点数量超过上限 ${MAX_NODES}，请精简后导入`)
+  }
   return createTopology({
     name: data.name || 'Imported Topology',
     nodes: data.nodes || [],
