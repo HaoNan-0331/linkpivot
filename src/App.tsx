@@ -11,7 +11,9 @@ export default function App() {
   const isFirstRun = useAuthStore((s) => s.isFirstRun)
   const checkFirstRun = useAuthStore((s) => s.checkFirstRun)
 
-  useEffect(() => { checkFirstRun().finally(() => setLoading(false)) }, [])
+  useEffect(() => {
+    checkFirstRun().catch((e) => console.error('[App] checkFirstRun failed:', e)).finally(() => setLoading(false))
+  }, [checkFirstRun])
 
   if (loading) {
     return (

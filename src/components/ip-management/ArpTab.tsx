@@ -37,14 +37,15 @@ export default function ArpTab({ api }: ArpTabProps) {
     setStats(null)
     try {
       const allResults: any[] = []
-      let totalEntries = 0, totalChanges = 0, totalDeprecated = 0
+      let totalEntries = 0
       for (const deviceId of selectedDeviceIds) {
         const result = await api.arp.collectFromDevice(deviceId)
         allResults.push(result)
         if (result.entries?.length) totalEntries += result.entries.length
       }
       setResults(allResults)
-      setStats({ entries: totalEntries, changes: totalChanges, deprecated: totalDeprecated })
+      // 逐设备采集无聚合变更/弃用统计，仅设 entries（changes/deprecated 显示为 '-'）
+      setStats({ entries: totalEntries })
       message.success(`采集完成: ${allResults.length} 台设备, ${totalEntries} 条记录`)
     } catch (e: any) {
       message.error('采集失败: ' + e.message)
@@ -120,7 +121,7 @@ export default function ArpTab({ api }: ArpTabProps) {
 
       {stats && (
         <Card size="small" style={{ marginBottom: 16 }}>
-          <span>设备: {results.length} | ARP条目: {stats.entries} | 异常变更: {stats.changes || 0} | 弃用IP: {stats.deprecated || 0}</span>
+          <span>设备: {results.length} | ARP条目: {stats.entries} | 异常变更: {stats.changes ?? '-'} | 弃用IP: {stats.deprecated ?? '-'}</span>
         </Card>
       )}
 

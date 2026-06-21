@@ -75,6 +75,7 @@ export interface ElectronAPI {
   connection: {
     sshConnect: (deviceId: string) => Promise<{ sessionId: string }>
     telnetConnect: (deviceId: string) => Promise<{ sessionId: string }>
+    rdpConnect: (deviceId: string) => Promise<{ sessionId: string }>
     openWeb: (url: string) => Promise<void>
     disconnect: (sessionId: string) => Promise<void>
     onData: (sid: string, cb: (data: string) => void) => void

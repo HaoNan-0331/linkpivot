@@ -17,8 +17,6 @@ export default function AnomalyTab({ api }: AnomalyTabProps) {
   const [loading, setLoading] = useState(false)
   const [historyIp, setHistoryIp] = useState<string | null>(null)
   const [historyData, setHistoryData] = useState<any[]>([])
-  const [_notesModal, _setNotesModal] = useState<{ id: number } | null>(null)
-  const [_notes, _setNotes] = useState('')
   const [addExcludeOpen, setAddExcludeOpen] = useState(false)
   const [excludeForm, setExcludeForm] = useState({ ipOrCidr: '', description: '' })
   const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([])

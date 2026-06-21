@@ -1,4 +1,3 @@
-import React from 'react'
 import { Handle, Position, type NodeProps } from 'reactflow'
 import type { DeviceType } from '@/types/device'
 import type { TopologyNodeData } from '@/types/topology'

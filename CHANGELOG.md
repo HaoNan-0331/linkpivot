@@ -2,6 +2,13 @@
 
 ## 2026-06-21
 
+### 代码审计批4b · 前端 low 清理（死代码 / 类型 / 静默失败）
+- **ArpTab.tsx**：删除 collectSelected 中恒为 0 的 totalChanges/totalDeprecated 死代码（曾误导运维"无异常"），stats 仅设 entries，变更/弃用项显示 '-'
+- **AnomalyTab.tsx**：删除未使用的 _notesModal/_notes 死状态
+- **App.tsx**：checkFirstRun 补 .catch（失败不再静默卡 loading）+ useEffect 依赖补全
+- **DeviceNode.tsx**：删除未使用的 import React（react-jsx 无需）
+- **electron.d.ts**：connection 补 rdpConnect 声明（消除 TopologyPage 类型错误，web 端 tsc 全绿）
+
 ### 代码审计批4a · 后端 low 清理（错误处理 / 数据校验 / 性能 / 依赖）
 - **crypto.ts**：`decField` try/catch，单条坏密文不再让整个列表加载失败
 - **device.ts**：update/delete 拓扑解析 try/catch，跳过坏拓扑不中断整批
