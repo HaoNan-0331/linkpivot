@@ -25,7 +25,9 @@
   1. `package-lock.json` 中 `better-sqlite3` 与 `ssh2` 为 exact 版本（无 `^`/`~` 前缀，可 `grep` 验证）
   2. 全新 clone 后 `npm ci` 无 lock 偏差报错、构建成功（删除 `node_modules` 后 `npm ci` + 构建 exit 0）
   3. `tsc -p tsconfig.web.json` 与 electron main esbuild 打包双绿，无新增 type error
-**Plans**: TBD
+**Plans**: 1 plan
+Plans:
+- [ ] 01-01-PLAN.md — 锁定原生依赖 exact 版本（better-sqlite3/ssh2/telnet-client）+ 重新生成 lockfile + 验证可复现全量构建
 
 ### Phase 2: Architecture & DB Migration
 **Goal**: 数据库迁移可追踪可跳过，DB 文件权限收紧并具备备份机制
@@ -86,7 +88,7 @@
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Build & Dependency Foundation | 0/0 | Not started | - |
+| 1. Build & Dependency Foundation | 0/1 | Not started | - |
 | 2. Architecture & DB Migration | 0/0 | Not started | - |
 | 3. Performance Optimization | 0/0 | Not started | - |
 | 4. Data / IPC Safety | 0/0 | Not started | - |
@@ -95,4 +97,4 @@
 
 ---
 *Roadmap created: 2026-06-22*
-*Last updated: 2026-06-22 after roadmap creation*
+*Last updated: 2026-06-28 after Phase 1 planning*
