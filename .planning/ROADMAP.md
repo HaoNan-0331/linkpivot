@@ -45,7 +45,7 @@ Plans:
 - [x] 02-02-PLAN.md — BackupConfig 类型 + 跨平台 ACL helper（restrictFilePermissions）
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 02-03-PLAN.md — BackupScheduler（定时 backup 双桶轮换）+ connection.ts 集成（premigration 备份 + ACL 收紧）+ main.ts 生命周期
+- [x] 02-03-PLAN.md — BackupScheduler（定时 backup 双桶轮换）+ connection.ts 集成（premigration 备份 + ACL 收紧）+ main.ts 生命周期
 
 ### Phase 3: Performance Optimization
 **Goal**: 消除已知 N+1 与逐条提交开销，冷启动加速
