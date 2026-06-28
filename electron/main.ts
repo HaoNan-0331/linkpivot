@@ -15,6 +15,7 @@ import { getSystemLogs } from './services/systemLog'
 import { setArpMasterKey } from './services/arpCollector'
 import { SchedulerService } from './services/schedulerService'
 import { BackupScheduler } from './services/backupScheduler'
+import { OUIService } from './services/ouiService'
 import { registerArpIpc } from './ipc/arpIpc'
 import { registerNetworkIpc } from './ipc/networkIpc'
 import { registerAnomalyIpc } from './ipc/anomalyIpc'
@@ -76,9 +77,13 @@ app.whenReady().then(() => {
   setAiMasterKey(masterKey)
   setArpMasterKey(masterKey)
   setKbMasterKey(masterKey)
+  const __startupT0 = performance.now()   // PERF-04 (W1)：冷启动 DB+OUI init 计时起点
   initDatabase()
   createTables()
   migrateAndSecure()   // 迁移前备份(gated on 非空库) + runMigrations + ACL 收紧 db/wal/shm（D-06/D-12a）
+  // PERF-01 (D-P1)：启动预载 Map<macPrefix,vendor>，确保首次 getIPDetails 时 Map 就绪（消除 N+1）
+  OUIService.preload()
+  console.log('[startup] DB+OUI init', (performance.now() - __startupT0).toFixed(0), 'ms')   // PERF-04：冷启动耗时，供 before/after 证据 grep 验证
 
   // IP Management IPC
   registerArpIpc()

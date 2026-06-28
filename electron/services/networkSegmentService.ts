@@ -101,11 +101,15 @@ export class NetworkSegmentService {
     let rows = (db.prepare(query).all() as any[]).filter((r) => this.ipInCIDR(r.ip, cidr))
     if (searchIp) rows = rows.filter((r) => r.ip?.includes(searchIp))
     if (searchMac) rows = rows.filter((r) => r.mac?.includes(searchMac))
-    return rows.map((entry) => ({
-      ip: entry.ip, mac: entry.mac, status: entry.status, lastSeen: entry.collectedAt,
-      interface: entry.interface, deviceName: entry.deviceName || undefined,
-      macVendor: entry.mac ? (OUIService.getVendor(entry.mac) === 'Unknown' ? undefined : OUIService.getVendor(entry.mac)) : undefined,
-    }))
+    return rows.map((entry) => {
+      // PERF-01 (W1 双查修复)：单次调用 getVendor + 局部缓存，消除三元表达式两次求值导致的 N+1 翻倍
+      const vendor = entry.mac ? OUIService.getVendor(entry.mac) : 'Unknown'
+      return {
+        ip: entry.ip, mac: entry.mac, status: entry.status, lastSeen: entry.collectedAt,
+        interface: entry.interface, deviceName: entry.deviceName || undefined,
+        macVendor: vendor === 'Unknown' ? undefined : vendor,
+      }
+    })
   }
 
   /** IP 转数值（非法返回 null），用 >>>0 规范化为无符号 32 位。 */
