@@ -119,6 +119,7 @@ export class AnomalyService {
   }
 
   private static recordChange(ip: string, oldMac: string | null, newMac: string | null, changeType: ChangeType): IPMACChange | null {
+    // 事务边界：getDatabase() 返回模块级单例 db，processARPEntries 事务内的调用自动落入同一事务（better-sqlite3 单连接同步）
     const db = getDatabase()
     try {
       const result = db.prepare('INSERT INTO ip_mac_changes (ip, old_mac, new_mac, change_type, detected_at) VALUES (?, ?, ?, ?, datetime(\'now\'))').run(ip, oldMac, newMac, changeType)
