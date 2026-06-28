@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: ready_to_plan
-last_updated: "2026-06-28T15:47:01.843Z"
+last_updated: "2026-06-28T16:03:20.510Z"
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 10
-  completed_plans: 7
-  percent: 70
+  completed_plans: 9
+  percent: 90
 ---
 
 # STATE: network_toplogy 技术债优化
@@ -23,8 +23,9 @@ progress:
 ## Current Position
 
 Phase: 04 (Data / IPC Safety) — EXECUTING
-Plan: 1 of 3 (04-01 DONE)
+Plan: 2 of 3 (04-01 DONE, 04-02 DONE)
 
+- 04-02 (DATA-01 export:arpTable 流式分块写 CSV, D-4-5) DONE — 04-02-SUMMARY.md 已生成, commit db1d61d
 - 04-01 (DATA-01 三 list 通道 hybrid 分页契约) DONE — 04-01-SUMMARY.md 已生成, commits 2c3963f(RED) / 7b02d7d(GREEN) / 8fd1b04 / 6371820
 
 - 03-01 (PERF-02 processARPEntries 事务化) DONE — 03-01-SUMMARY.md 已生成, commits b52fc75 / dd467af / 1f9edc4
@@ -67,6 +68,7 @@ Phase 2:    [███-------] 1/3 plans (02-01 done, 02-02/02-03 pending)
 - 03-03 完成（D-P3）：kb_chunks_au UPDATE FTS trigger 加 WHEN (content/title/image_ids 未变不重索引)，v7 迁移 DROP TRIGGER IF EXISTS + 裸 CREATE TRIGGER (IF NOT EXISTS 不替换已存在定义) + D-14 sqlite_master trigger sql 含 WHEN 守卫，MIGRATION_HEAD 6→7，两处定义逐字一致，_ai/_ad 不动
 - 03-03 完成（D-P4）：init 启动幂等跳过日志加在两个真实条件跳过点（runMigrations version≥HEAD / initDefaultOUIData count>0），type 复用 migration CHECK（无需 v8 扩 CHECK），try/catch 回退 console（启动早期表未就绪）；删 createTables 装饰日志（Warning 2：无单一跳过判定）；不引入 worker thread；不改 main.ts（编辑权归 03-02，冷启动 before/after 引用其 performance.now() 日志行）
 - 04-01 完成（D-4-1~D-4-4/D-4-6）：三 list 通道 hybrid 分页契约——共享 PaginatedResult 信封 + 共享 validateLimit/validateOffset helper（超界落回默认非钳制，复用 anomalyIpc 先例）；getIPDetails JS 过滤后 slice（保留 PERF-01 getVendor 读路径不退化为逐行查库）+ oui:getAll SQL 下推 LIMIT/OFFSET（prepared statement）+ anomaly 补 OFFSET；网关层校验不信 renderer；preload 三通道签名加可选 limit/offset（向后兼容旧调用零改动）；默认 cap 2000/5000/100 + 硬上限 50000/50000/10000；Task1 TDD RED→GREEN 合规；tsc+esbuild+vitest(25) 三绿。T-04-04 accept：ip_status 无物理 purge 单调增长，D-4-6 限定 payload 不限 DB 全表读，物理清理越界 DATA-01（独立 phase），显式记录非静默假设
+- 04-02 完成（D-4-5）：exportARPTable 流式分块写 CSV——先问保存路径（dialog 内联，同 saveCSV 语义）→header+BOM 写一次→循环 SELECT DISTINCT ... GROUP BY ip,mac ORDER BY ip LIMIT ? OFFSET ? 逐批 appendFile；内存峰值 O(单批 ARP_BATCH_SIZE=1000) 非 O(全表)，满足 criteria #2「>10000 行不再一次性序列化全量」；IPC 签名/返回形态（文件 path）不变，不暴露 limit/offset（导出非 list 查询），ArpTab.tsx 零改；csvEscape/BOM 字面量/空表错误语义/saveCSV 全复用不动（saveCSV 仍供 exportChanges/exportNetworkUsage）；T-04-05 mitigate/T-04-06/T-04-07 accept；tsc+esbuild+vitest(25) 三绿
 
 ### Todos
 
@@ -94,8 +96,8 @@ Phase 2:    [███-------] 1/3 plans (02-01 done, 02-02/02-03 pending)
 
 ## Session Continuity
 
-- **Last action**: `/gsd-execute-phase 4` Plan 04-01 — 执行 04-01-PLAN.md 完成（DATA-01 三 list 通道 hybrid 分页契约，commits 2c3963f/7b02d7d/8fd1b04/6371820，3 tasks，TDD RED→GREEN，tsc+esbuild+vitest(25) 三绿，D-4-1~D-4-4/D-4-6 落地，T-04-04 ip_status 增长 accept 显式记录）
-- **Next action**: `/gsd-execute-phase 4` Plan 04-02（export:arpTable 流式分块写 CSV，D-4-5）或 04-03（渲染层 Tab 适配信封读 .rows）
+- **Last action**: `/gsd-execute-phase 4` Plan 04-02 — 执行 04-02-PLAN.md 完成（export:arpTable 流式分块写 CSV，commit db1d61d，1 task，tsc+esbuild+vitest(25) 三绿，D-4-5 落地，内存峰值 O(单批 1000 行) 非 O(全表)，IPC 签名/返回形态不变，ArpTab.tsx 零改）
+- **Next action**: `/gsd-execute-phase 4` Plan 04-03（渲染层 Tab 适配信封读 .rows）
 - **Resume command**: `/gsd-status`
 
 ## Phase → Requirement Map
@@ -111,8 +113,9 @@ Phase 2:    [███-------] 1/3 plans (02-01 done, 02-02/02-03 pending)
 
 ---
 *Initialized: 2026-06-22*
-*Last updated: 2026-06-28 after Phase 2 Plan 02-01 execution (02-01-SUMMARY.md, commits 9ac9b82/b26caaf/69524aa)*
+*Last updated: 2026-06-28 after Phase 4 Plan 04-02 execution (04-02-SUMMARY.md, commit db1d61d)*
 | Phase 01 P01 | 50min | 2 tasks | 2 files |
 | Phase 02 P01 | 5min | 2 tasks | 3 files |
 | Phase 02 P02 | 2min | 2 tasks | 2 files |
 | Phase 04 P01 | 7min | 3 tasks | 10 files |
+| Phase 04 P02 | 2min | 1 task | 1 file |
