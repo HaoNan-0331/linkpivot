@@ -56,6 +56,12 @@ function createWindow() {
 app.whenReady().then(() => {
   // 注入严格 CSP（渲染层 XSS 第二道防线）；AI API 由主进程 fetch，不受此限制
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    // dev 模式：vite + @vitejs/plugin-react 注入 inline HMR preamble，严格 CSP 'script-src self' 会阻止 → 白屏。
+    // dev 跳过 CSP 注入以兼容 HMR；production 保持严格 CSP（渲染层 XSS 第二道防线）。
+    if (process.env.NODE_ENV === 'development') {
+      callback({})
+      return
+    }
     callback({
       responseHeaders: {
         ...details.responseHeaders,
