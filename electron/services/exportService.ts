@@ -1,6 +1,9 @@
 import { dialog } from 'electron'
-import { writeFile } from 'fs/promises'
+import { appendFile, writeFile } from 'fs/promises'
 import { getDatabase } from '../database/connection'
+
+/** ARP 导出流式分批大小：单批行数，内存峰值 O(单批) 非 O(全表)。 */
+const ARP_BATCH_SIZE = 1000
 
 function ipToNumber(ip: string): number | null {
   const parts = ip.split('.').map(Number)
@@ -27,13 +30,37 @@ function csvEscape(field: any): string {
 export class ExportService {
   static async exportARPTable(): Promise<string | null> {
     const db = getDatabase()
-    const rows = db.prepare('SELECT DISTINCT ip, mac, vlan, interface, MAX(collected_at) as collected_at FROM arp_entries GROUP BY ip, mac ORDER BY ip').all() as any[]
-    if (rows.length === 0) throw new Error('没有 ARP 数据可导出')
-    const csvLines = [
-      'IP地址,MAC地址,VLAN,接口,最后采集时间',
-      ...rows.map(row => [row.ip, row.mac || '', row.vlan || '', row.interface || '', row.collected_at || ''].map(csvEscape).join(','))
-    ]
-    return this.saveCSV(csvLines, 'arp-table')
+    // 空表检查（保持原错误语义），COUNT(*) 同步、代价低
+    const { c } = db.prepare('SELECT COUNT(*) as c FROM arp_entries').get() as { c: number }
+    if (c === 0) throw new Error('没有 ARP 数据可导出')
+
+    // 先获取用户保存路径（与 saveCSV 同 dialog 语义），拿 filePath；canceled 返回 null。
+    // 流式写不能复用 saveCSV 的「拼 lines 数组」路径，故此处内联同逻辑的 dialog 询问。
+    const result = await dialog.showSaveDialog({
+      title: '保存 CSV 文件',
+      defaultPath: `arp-table-${this.getDateStr()}.csv`,
+      filters: [{ name: 'CSV 文件', extensions: ['csv'] }, { name: '所有文件', extensions: ['*'] }],
+    })
+    if (result.canceled || !result.filePath) return null
+    const filePath = result.filePath
+
+    // 写 header + UTF-8 BOM 一次（BOM 字面量与 saveCSV line 80 完全一致，Excel 正确识别中文表头）
+    await writeFile(filePath, '﻿' + 'IP地址,MAC地址,VLAN,接口,最后采集时间' + '\n', 'utf-8')
+
+    // 分批流式读 + append：SQL 必须用与原全量完全相同的 SELECT/GROUP BY/ORDER BY + LIMIT ? OFFSET ?，
+    // 才能保证分批拼接后结果集逐行等价（OFFSET 跨批边界正确）。每批 chunk 末尾加 \n 保证行分隔符一致。
+    // 旧实现: SELECT DISTINCT ip, mac, vlan, interface, MAX(collected_at) ... GROUP BY ip, mac ORDER BY ip
+    const stmt = db.prepare('SELECT DISTINCT ip, mac, vlan, interface, MAX(collected_at) as collected_at FROM arp_entries GROUP BY ip, mac ORDER BY ip LIMIT ? OFFSET ?')
+    let offset = 0
+    for (;;) {
+      const batch = stmt.all(ARP_BATCH_SIZE, offset) as any[]
+      if (batch.length === 0) break
+      const chunk = batch.map(row => [row.ip, row.mac || '', row.vlan || '', row.interface || '', row.collected_at || ''].map(csvEscape).join(',')).join('\n') + '\n'
+      await appendFile(filePath, chunk, 'utf-8')
+      offset += ARP_BATCH_SIZE
+    }
+
+    return filePath
   }
 
   static async exportChanges(unacknowledgedOnly: boolean = false): Promise<string | null> {
