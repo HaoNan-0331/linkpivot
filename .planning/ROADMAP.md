@@ -38,7 +38,11 @@ Plans:
   2. DB 文件 ACL 仅当前用户可读写（Windows ACL / chmod 0600 验证，非当前用户无访问）
   3. 定时 `.backup()` 机制存在并被注册（可 `codegraph_search` 命中 backup 调度 + 备份文件按计划生成）
   4. 旧库打开后 user_version 自动迁移到位且历史数据无丢失（向后兼容验证）
-**Plans**: TBD
+**Plans**: 3 plans
+Plans:
+- [ ] 02-01-PLAN.md — 迁移版本管理（user_version + hasColumn + 版本化注册表，重构 init.ts 散落 table_info）
+- [ ] 02-02-PLAN.md — BackupConfig 类型 + 跨平台 ACL helper（restrictFilePermissions）
+- [ ] 02-03-PLAN.md — BackupScheduler（定时 backup 双桶轮换）+ connection.ts 集成（premigration 备份 + ACL 收紧）+ main.ts 生命周期
 
 ### Phase 3: Performance Optimization
 **Goal**: 消除已知 N+1 与逐条提交开销，冷启动加速
