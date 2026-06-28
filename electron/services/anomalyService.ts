@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3'
 import { getDatabase } from '../database/connection'
+import type { PaginatedResult } from '../../src/types/pagination'
 
 export type ChangeType = 'mac_changed' | 'new_ip' | 'ip_reused'
 
@@ -144,12 +145,19 @@ export class AnomalyService {
     } catch (e: any) { console.error('[anomaly] recordChange 插入失败:', ip, e.message); return null }
   }
 
-  static getChanges(unacknowledgedOnly: boolean = false, limit: number = 100): any[] {
+  static getChanges(unacknowledgedOnly: boolean = false, limit: number = 100, offset: number = 0): PaginatedResult<any> {
     const db = getDatabase()
+    // DATA-01 / D-4-1：补 OFFSET ?（prepared statement 绑定，T-04-02 防 SQL 注入）。total 单独 COUNT（带相同 WHERE 条件）。
     let query = 'SELECT id, ip, old_mac as oldMac, new_mac as newMac, change_type as changeType, detected_at as detectedAt, acknowledged, acknowledged_at as acknowledgedAt, notes FROM ip_mac_changes'
-    if (unacknowledgedOnly) query += ' WHERE acknowledged = 0'
-    query += ' ORDER BY detected_at DESC LIMIT ?'
-    return (db.prepare(query).all(limit) as any[]).map(row => ({ ...row, acknowledged: row.acknowledged === 1 }))
+    let countQuery = 'SELECT COUNT(*) as c FROM ip_mac_changes'
+    if (unacknowledgedOnly) {
+      query += ' WHERE acknowledged = 0'
+      countQuery += ' WHERE acknowledged = 0'
+    }
+    query += ' ORDER BY detected_at DESC LIMIT ? OFFSET ?'
+    const rows = (db.prepare(query).all(limit, offset) as any[]).map(row => ({ ...row, acknowledged: row.acknowledged === 1 }))
+    const total = (db.prepare(countQuery).get() as { c: number }).c
+    return { rows, total, truncated: rows.length < total }
   }
 
   static acknowledgeChange(id: number, notes?: string): void {

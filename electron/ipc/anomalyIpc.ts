@@ -1,14 +1,9 @@
 import { ipcMain } from 'electron'
 import { AnomalyService } from '../services/anomalyService'
 import { secure } from '../utils/authGuard'
+import { validateLimit, validateOffset } from '../utils/pagination'
 
 const IPV4_RE = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/
-
-function validateLimit(limit: any): number {
-  const n = Number(limit)
-  if (!Number.isInteger(n) || n < 1 || n > 10000) return 100
-  return n
-}
 
 function validateId(id: any): number {
   const n = Number(id)
@@ -17,8 +12,9 @@ function validateId(id: any): number {
 }
 
 export function registerAnomalyIpc() {
-  ipcMain.handle('anomaly:getChanges', secure((_e, unacknowledgedOnly?: boolean, limit?: number) =>
-    AnomalyService.getChanges(unacknowledgedOnly, validateLimit(limit))))
+  ipcMain.handle('anomaly:getChanges', secure((_e, unacknowledgedOnly?: boolean, limit?: number, offset?: number) =>
+    // DATA-01 / D-4-3/D-4-4：维持默认 100、硬上限 10000。复用共享 validateLimit/validateOffset（D-4-1 补 offset）。
+    AnomalyService.getChanges(unacknowledgedOnly, validateLimit(limit, 100, 10000), validateOffset(offset))))
   ipcMain.handle('anomaly:acknowledge', secure((_e, id: number, notes?: string) => {
     validateId(id); return AnomalyService.acknowledgeChange(id, notes)
   }))

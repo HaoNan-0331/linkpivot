@@ -68,11 +68,11 @@ const api = {
     delete: (id: number) => ipcRenderer.invoke('network:delete', id),
     autoDiscover: () => ipcRenderer.invoke('network:autoDiscover'),
     getIPUsage: (networkId: number) => ipcRenderer.invoke('network:getIPUsage', networkId),
-    getIPDetails: (networkId: number, searchIp?: string, searchMac?: string, sortBy?: string, sortOrder?: string) =>
-      ipcRenderer.invoke('network:getIPDetails', networkId, searchIp, searchMac, sortBy, sortOrder),
+    getIPDetails: (networkId: number, searchIp?: string, searchMac?: string, sortBy?: string, sortOrder?: string, limit?: number, offset?: number) =>
+      ipcRenderer.invoke('network:getIPDetails', networkId, searchIp, searchMac, sortBy, sortOrder, limit, offset),
   },
   anomaly: {
-    getChanges: (unacknowledgedOnly?: boolean, limit?: number) => ipcRenderer.invoke('anomaly:getChanges', unacknowledgedOnly, limit),
+    getChanges: (unacknowledgedOnly?: boolean, limit?: number, offset?: number) => ipcRenderer.invoke('anomaly:getChanges', unacknowledgedOnly, limit, offset),
     acknowledge: (id: number, notes?: string) => ipcRenderer.invoke('anomaly:acknowledge', id, notes),
     acknowledgeAll: () => ipcRenderer.invoke('anomaly:acknowledgeAll'),
     deleteChange: (id: number) => ipcRenderer.invoke('anomaly:deleteChange', id),
@@ -84,7 +84,7 @@ const api = {
     deleteExcludedIP: (id: number) => ipcRenderer.invoke('anomaly:deleteExcludedIP', id),
   },
   oui: {
-    getAll: () => ipcRenderer.invoke('oui:getAll'),
+    getAll: (limit?: number, offset?: number) => ipcRenderer.invoke('oui:getAll', limit, offset),
     search: (keyword: string) => ipcRenderer.invoke('oui:search', keyword),
     getById: (id: number) => ipcRenderer.invoke('oui:getById', id),
     add: (data: unknown) => ipcRenderer.invoke('oui:add', data),
