@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## 2026-06-28
+
+### 项目文件审计与清理
+- **磁盘清理（.gitignore 覆盖，不入 git）**：`.playwright-mcp/`（playwright MCP 老日志，90 文件 530K）、`login-page.png`/`topology-page.png`（dev 参考截图）、`tsconfig.node.tsbuildinfo`（TS 增量缓存，tsc 自动重生）
+- **`.gitignore`**：补全 `.codegraph/`（CodeGraph 索引，local to machine，不应提交）
+- **资源跟踪**：`git add src/assets/icons/*.svg`（5 个设备图标 router/switch/firewall/server/equipment，DeviceNode.tsx 引用，之前漏跟踪）
+- **mock-api.ts**：经核实为浏览器 dev 预览模式必要文件（index.html `!window.api` 时动态注入），保留；曾误判为死代码已纠正并恢复
+
 ## 2026-06-21
 
 ### 代码审计批4b · 前端 low 清理（死代码 / 类型 / 静默失败）

@@ -8,3 +8,6 @@ release/
 .playwright-mcp/
 *.png
 *.tsbuildinfo
+
+# CodeGraph 索引（local to machine，不应提交）
+.codegraph/
