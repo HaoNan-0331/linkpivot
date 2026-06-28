@@ -13,7 +13,7 @@ import { createSystemLog } from '../services/systemLog'
  *      在 createTables() 建好基线表之后、premigration 备份之后执行（D-06）。
  *      init.ts 不直接调用 runMigrations（单一调用点原则）。
  */
-export const MIGRATION_HEAD = 5
+export const MIGRATION_HEAD = 6
 
 interface MigrationStep {
   version: number
@@ -21,9 +21,10 @@ interface MigrationStep {
   run: (db: Database.Database) => void
 }
 
-// 每个步骤 = 单个 db.transaction，DDL 与 user_version 推进在同一事务内提交（D-07 原子）
-// DDL 用 hasColumn / sqlite_master sql-content 守卫保证幂等重跑（D-14）。
-// better-sqlite3 transaction 在 throw 时自动 ROLLBACK（D-08）。
+// 每个步骤的 DDL 包在单个 db.transaction 内：throw 时 DDL 自动 ROLLBACK（D-08）。
+// 注意：不要依赖 PRAGMA user_version 与 DDL 的事务原子性（user_version 语义不保证随事务回滚）——
+// 真正的"可安全重跑"由 hasColumn / sqlite_master sql-content 幂等守卫保证（D-14）。
+// 新增迁移步骤必须自带幂等守卫，不得仅靠版本号判定是否已执行。
 const v1 = (db: Database.Database): void => {
   const step = db.transaction(() => {
     if (!hasColumn(db, 'chat_history', 'session_id')) {
@@ -126,12 +127,47 @@ const v5 = (db: Database.Database): void => {
   step()
 }
 
+const v6 = (db: Database.Database): void => {
+  // CR-01 修复：ai_system_logs 原 CHECK type IN ('discovery') / status IN ('success','failed') 过窄，
+  // Phase 2 的 acl/migration/backup + warning 日志全部触发 SQLITE_CONSTRAINT_CHECK 被吞，D-08/D-13 审计落空。
+  // 重建表放开 CHECK（镜像 v5 rebuild 模式）。幂等守卫：sqlite_master sql-content（已含 'warning' 则 no-op）。
+  const logSchema = (db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='ai_system_logs'").get() as { sql?: string } | undefined)?.sql || ''
+  if (logSchema.includes("'warning'")) {
+    return // CHECK 已放开，no-op（幂等重跑 D-14）
+  }
+  const step = db.transaction(() => {
+    db.exec("DROP TABLE IF EXISTS ai_system_logs_new")
+    db.exec(`
+      CREATE TABLE ai_system_logs_new (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL DEFAULT 'discovery' CHECK(type IN ('discovery','acl','migration','backup')),
+        status TEXT NOT NULL CHECK(status IN ('success','failed','warning')),
+        device_ids TEXT,
+        device_names TEXT,
+        prompt_text TEXT,
+        ai_response TEXT,
+        parsed_result TEXT,
+        error_message TEXT,
+        created_at TEXT DEFAULT (datetime('now','localtime'))
+      );
+      INSERT INTO ai_system_logs_new
+        SELECT id, type, status, device_ids, device_names, prompt_text, ai_response, parsed_result, error_message, created_at
+        FROM ai_system_logs;
+      DROP TABLE ai_system_logs;
+      ALTER TABLE ai_system_logs_new RENAME TO ai_system_logs;
+    `)
+    db.pragma('user_version = 6')
+  })
+  step()
+}
+
 const MIGRATIONS: MigrationStep[] = [
   { version: 1, name: 'chat_history.session_id', run: v1 },
   { version: 2, name: 'ai_exec_logs.prompt_text+ai_response', run: v2 },
   { version: 3, name: 'devices.status+last_checked', run: v3 },
   { version: 4, name: 'ai_config.vision_*', run: v4 },
   { version: 5, name: 'devices.connection_type CHECK rdp rebuild', run: v5 },
+  { version: 6, name: 'ai_system_logs CHECK widen (acl/migration/backup + warning)', run: v6 },
 ]
 
 /**
