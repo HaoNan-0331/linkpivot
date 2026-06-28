@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, session, shell } from 'electron'
 import path from 'path'
-import { initDatabase, closeDatabase } from './database/connection'
+import { initDatabase, closeDatabase, migrateAndSecure } from './database/connection'
 import { createTables } from './database/init'
 import { getOrCreateMasterKey } from './utils/keyManager'
 import { hardenWindow } from './utils/webSecurity'
@@ -14,6 +14,7 @@ import { discoverTopology } from './services/discovery'
 import { getSystemLogs } from './services/systemLog'
 import { setArpMasterKey } from './services/arpCollector'
 import { SchedulerService } from './services/schedulerService'
+import { BackupScheduler } from './services/backupScheduler'
 import { registerArpIpc } from './ipc/arpIpc'
 import { registerNetworkIpc } from './ipc/networkIpc'
 import { registerAnomalyIpc } from './ipc/anomalyIpc'
@@ -77,6 +78,7 @@ app.whenReady().then(() => {
   setKbMasterKey(masterKey)
   initDatabase()
   createTables()
+  migrateAndSecure()   // 迁移前备份(gated on 非空库) + runMigrations + ACL 收紧 db/wal/shm（D-06/D-12a）
 
   // IP Management IPC
   registerArpIpc()
@@ -87,6 +89,7 @@ app.whenReady().then(() => {
   registerSchedulerIpc()
   registerKbIpc()
   SchedulerService.start()
+  BackupScheduler.start()
 
   // Auth IPC（登录前可用，不做鉴权；login 成功置登录态）
   ipcMain.handle('auth:getCaptcha', () => { const r = generateCaptcha(); return { svg: r.svg, key: r.key } })
@@ -154,4 +157,4 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
 
-app.on('before-quit', () => closeDatabase())
+app.on('before-quit', () => { BackupScheduler.stop(); closeDatabase() })

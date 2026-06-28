@@ -197,6 +197,16 @@ export function createTables() {
       next_run TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS backup_config (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      enabled INTEGER NOT NULL DEFAULT 1,
+      interval_minutes INTEGER NOT NULL DEFAULT 1440,
+      periodic_retention INTEGER NOT NULL DEFAULT 7,
+      premigration_retention INTEGER NOT NULL DEFAULT 5,
+      last_run TEXT,
+      next_run TEXT
+    );
+
     -- Knowledge Base tables
 
     CREATE TABLE IF NOT EXISTS kb_documents (
@@ -270,93 +280,14 @@ export function createTables() {
     END;
   `)
 
-  // Migrate: add session_id column to existing chat_history table
-  const db = getDatabase()
-  const cols = db.prepare("PRAGMA table_info(chat_history)").all() as any[]
-  if (!cols.some((c) => c.name === 'session_id')) {
-    db.exec('ALTER TABLE chat_history ADD COLUMN session_id TEXT')
-  }
-
-  // Migrate: add prompt_text and ai_response columns to ai_exec_logs
-  const execLogCols = db.prepare("PRAGMA table_info(ai_exec_logs)").all() as any[]
-  if (!execLogCols.some((c) => c.name === 'prompt_text')) {
-    db.exec("ALTER TABLE ai_exec_logs ADD COLUMN prompt_text TEXT DEFAULT ''")
-  }
-  if (!execLogCols.some((c) => c.name === 'ai_response')) {
-    db.exec("ALTER TABLE ai_exec_logs ADD COLUMN ai_response TEXT DEFAULT ''")
-  }
-
-  // Migrate: add status and last_checked columns to devices table
-  const deviceCols = db.prepare("PRAGMA table_info(devices)").all() as any[]
-  if (!deviceCols.some((c) => c.name === 'status')) {
-    db.exec("ALTER TABLE devices ADD COLUMN status TEXT DEFAULT 'unknown' CHECK(status IN ('online','offline','unknown'))")
-  }
-  if (!deviceCols.some((c) => c.name === 'last_checked')) {
-    db.exec('ALTER TABLE devices ADD COLUMN last_checked TEXT')
-  }
-
-  // Migrate: add vision model columns to ai_config table
-  const aiConfigCols = db.prepare("PRAGMA table_info(ai_config)").all() as any[]
-  if (!aiConfigCols.some((c) => c.name === 'vision_base_url_enc')) {
-    db.exec("ALTER TABLE ai_config ADD COLUMN vision_base_url_enc TEXT")
-  }
-  if (!aiConfigCols.some((c) => c.name === 'vision_api_key_enc')) {
-    db.exec("ALTER TABLE ai_config ADD COLUMN vision_api_key_enc TEXT")
-  }
-  if (!aiConfigCols.some((c) => c.name === 'vision_model_enc')) {
-    db.exec("ALTER TABLE ai_config ADD COLUMN vision_model_enc TEXT")
-  }
-
-  // Migrate: expand connection_type CHECK constraint to include 'rdp'
-  // SQLite doesn't support ALTER CHECK, so recreate the table
-  const connTypeCheck = (db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='devices'").get() as any)?.sql || ''
-  if (!connTypeCheck.includes("'rdp'")) {
-    // 重建表（SQLite 不支持 ALTER CHECK），整段包事务保证原子：
-    // 中途失败自动回滚，避免 devices 已 DROP 未 RENAME 致子表外键悬空、重启即崩。
-    const rebuildDevices = db.transaction(() => {
-      db.exec("DROP TABLE IF EXISTS devices_new")
-      db.exec(`
-        CREATE TABLE devices_new (
-          id TEXT PRIMARY KEY,
-          topology_id TEXT,
-          name_enc TEXT NOT NULL,
-          vendor_enc TEXT,
-          model_enc TEXT,
-          version_enc TEXT,
-          ip_enc TEXT,
-          device_type TEXT DEFAULT 'generic' CHECK(device_type IN ('router','switch','firewall','server','generic')),
-          connection_type TEXT CHECK(connection_type IN ('ssh','telnet','web','rdp')),
-          port_enc TEXT,
-          username_enc TEXT,
-          password_enc TEXT,
-          ssh_key_path_enc TEXT,
-          ssh_key_content_enc TEXT,
-          web_url_enc TEXT,
-          status TEXT DEFAULT 'unknown',
-          last_checked TEXT,
-          created_at TEXT DEFAULT (datetime('now','localtime')),
-          updated_at TEXT DEFAULT (datetime('now','localtime')),
-          FOREIGN KEY (topology_id) REFERENCES topologies(id) ON DELETE SET NULL
-        );
-        INSERT INTO devices_new
-          SELECT id, topology_id, name_enc, vendor_enc, model_enc, version_enc, ip_enc,
-            COALESCE(device_type, 'generic'), connection_type, port_enc, username_enc,
-            password_enc, ssh_key_path_enc, ssh_key_content_enc, web_url_enc,
-            COALESCE(status, 'unknown'), last_checked, created_at, updated_at
-          FROM devices;
-        DROP TABLE devices;
-        ALTER TABLE devices_new RENAME TO devices;
-      `)
-      const fkErrors = db.pragma('foreign_key_check') as any[]
-      if (fkErrors.length > 0) {
-        throw new Error('devices 重建后外键完整性校验失败: ' + JSON.stringify(fkErrors))
-      }
-    })
-    rebuildDevices()
-  }
+  // 散落迁移块（chat_history.session_id / ai_exec_logs.prompt_text+ai_response /
+  // devices.status+last_checked / ai_config.vision_* / devices.connection_type 'rdp' 重建）
+  // 已由 Plan 01 迁入 electron/database/migrations.ts 注册表（v1-v5），
+  // 由 connection.ts migrateAndSecure() 在 createTables 之后统一调用迁移入口执行。
+  // 本文件不再持有任何迁移逻辑（单一真相收敛，ARCH-01）。
 
   // Initialize default OUI data
-  initDefaultOUIData(db)
+  initDefaultOUIData(getDatabase())
 }
 
 function initDefaultOUIData(db: any) {
