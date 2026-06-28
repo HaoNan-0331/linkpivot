@@ -16,7 +16,7 @@
 
 ### Architecture
 
-- [ ] **ARCH-01**: 迁移版本管理 —— 引入 `PRAGMA user_version` + `hasColumn` helper，替代散落的 `PRAGMA table_info` 检查，迁移可追踪可跳过
+- [ ] **ARCH-01**: 迁移版本管理 —— 引入 `PRAGMA user_version` + `hasColumn` helper，替代散落的 `PRAGMA table_info` 检查，迁移可追踪可跳过 _(02-01 落地注册表+hasColumn；init.ts 散落块删除+runMigrations 接入归 02-03，完成后整体交付)_
 - [ ] **ARCH-02**: 数据库文件 ACL 收紧（仅当前用户可读写）+ 定时 `.backup()` 机制
 
 ### Data
@@ -57,7 +57,7 @@
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | BUILD-01 | Phase 1 | Complete |
-| ARCH-01 | Phase 2 | Pending |
+| ARCH-01 | Phase 2 | In Progress (02-01 done, 02-03 pending) |
 | ARCH-02 | Phase 2 | Pending |
 | PERF-01 | Phase 3 | Pending |
 | PERF-02 | Phase 3 | Pending |

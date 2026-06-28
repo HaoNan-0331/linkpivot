@@ -41,7 +41,7 @@ Plans:
 **Plans**: 3 plans
 Plans:
 **Wave 1**
-- [ ] 02-01-PLAN.md — 迁移版本管理（user_version + hasColumn + 版本化注册表，重构 init.ts 散落 table_info）
+- [x] 02-01-PLAN.md — 迁移版本管理（user_version + hasColumn + 版本化注册表，重构 init.ts 散落 table_info）
 - [ ] 02-02-PLAN.md — BackupConfig 类型 + 跨平台 ACL helper（restrictFilePermissions）
 
 **Wave 2** *(blocked on Wave 1 completion)*

@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: ready_to_plan
-last_updated: "2026-06-28T04:10:44.408Z"
+last_updated: "2026-06-28T04:39:33.145Z"
 progress:
   total_phases: 6
   completed_phases: 1
   total_plans: 4
-  completed_plans: 1
-  percent: 25
+  completed_plans: 2
+  percent: 50
 ---
 
 # STATE: network_toplogy 技术债优化
@@ -22,8 +22,8 @@ progress:
 
 ## Current Position
 
-Phase: 2
-Plan: Not started
+Phase: 02 (Architecture & DB Migration) — EXECUTING
+Plan: 2 of 3
 
 - **Phase**: 1 (Build & Dependency Foundation)
 - **Plan**: 01-PLAN.md（1 plan · 1 wave · autonomous）— 已执行完成
@@ -31,16 +31,18 @@ Plan: Not started
 - **Progress**:
 
 ```
-Milestone: [█---------] 1/6 phases
+Milestone: [███--------] 1/6 phases
 Phase 1:    [██████████] 1/1 plans (executed, 1/1 done)
+Phase 2:    [███-------] 1/3 plans (02-01 done, 02-02/02-03 pending)
 ```
 
 ## Performance Metrics
 
 - **Phases completed**: 1/6
-- **Requirements delivered**: 1/14 (BUILD-01)
+- **Requirements delivered**: 1/14 (BUILD-01；ARCH-01 部分落地，待 02-03 整体交付)
 - **REQ coverage mapped**: 14/14 ✓
 - **Current velocity**: 1 phase / 1 plan（BUILD-01，~50min，含原生编译 npm ci）
+- **Phase 2 velocity**: 02-01 ~5min / 2 tasks（迁移注册表 + hasColumn，tsc+esbuild+vitest 三绿）
 
 ## Accumulated Context
 
@@ -55,11 +57,16 @@ Phase 1:    [██████████] 1/1 plans (executed, 1/1 done)
 - Phase 1 BUILD-01 完成：better-sqlite3/ssh2/telnet-client 锁 exact（12.9.0/1.17.0/2.2.13），可复现构建基线建立，tsc+esbuild 双绿，commit 940aa7c
 - telnet-client 一并锁 exact（原生编译依赖，与 better-sqlite3 同类漂移面），plan 主动加固项
 - cpu-features 传递原生编译失败视为 scope 外既存问题（ssh2 可选加速器，缺失不影响功能），用 --types node 规避不阻塞 ABI 验证
+- 02-01 完成：迁移注册表（MIGRATION_HEAD=5，5 原子版本步骤 DDL+user_version 同事务 D-07，失败回滚+system log+中止 D-08）+ hasColumn helper 落地；init.ts 散落块物理删除 + runMigrations 调用接入归 02-03（单一编辑权）
+- 02-01 hasColumn 测试用 typed db mock 规避 better-sqlite3 的 Node(137)/Electron(145) NODE_MODULE_VERSION 冲突（与 crypto/auth 测试惯例一致，不重打包 native binding）
 
 ### Todos
 
 - [x] `/gsd-plan-phase 1` — Build & Dependency Foundation (BUILD-01) ✓ planned (01-PLAN.md, 2 tasks)
 - [x] `/gsd-execute-phase 1` — 锁 better-sqlite3/ssh2/telnet-client exact + 可复现构建验证 ✓ executed (01-01-SUMMARY.md, commit 940aa7c)
+- [x] `/gsd-execute-phase 2` Plan 02-01 — 迁移注册表 + hasColumn ✓ executed (02-01-SUMMARY.md, commits 9ac9b82/b26caaf/69524aa)
+- [ ] `/gsd-execute-phase 2` Plan 02-02 — ACL 收紧 + 定时 backup（BackupScheduler）
+- [ ] `/gsd-execute-phase 2` Plan 02-03 — connection.ts migrateAndSecure + init.ts 散落块删除 + runMigrations 接入
 
 ### Blockers
 
@@ -73,8 +80,8 @@ Phase 1:    [██████████] 1/1 plans (executed, 1/1 done)
 
 ## Session Continuity
 
-- **Last action**: `/gsd-execute-phase 1` — 执行 01-PLAN.md 完成（commit 940aa7c，2 tasks，原生依赖 exact 锁定 + 全量构建双绿）
-- **Next action**: `/gsd-verify-phase 1` 或 `/gsd-transition` 进入 Phase 2
+- **Last action**: `/gsd-execute-phase 2` Plan 02-01 — 执行 02-01-PLAN.md 完成（commits 9ac9b82/b26caaf/69524aa，2 tasks，迁移注册表 MIGRATION_HEAD=5 + hasColumn helper，tsc+esbuild+vitest 三绿，init.ts 未动）
+- **Next action**: `/gsd-execute-phase 2` Plan 02-02（ACL 收紧 + 定时 backup）或 02-03（init.ts 散落块删除 + runMigrations 接入）
 - **Resume command**: `/gsd-status`
 
 ## Phase → Requirement Map
@@ -90,5 +97,6 @@ Phase 1:    [██████████] 1/1 plans (executed, 1/1 done)
 
 ---
 *Initialized: 2026-06-22*
-*Last updated: 2026-06-28 after Phase 1 execution (01-01-SUMMARY.md, commit 940aa7c)*
+*Last updated: 2026-06-28 after Phase 2 Plan 02-01 execution (02-01-SUMMARY.md, commits 9ac9b82/b26caaf/69524aa)*
 | Phase 01 P01 | 50min | 2 tasks | 2 files |
+| Phase 02 P01 | 5min | 2 tasks | 3 files |
