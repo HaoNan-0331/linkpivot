@@ -1,4 +1,5 @@
 import { getDatabase } from './connection'
+import { createSystemLog } from '../services/systemLog'
 
 export function createTables() {
   getDatabase().exec(`
@@ -294,7 +295,13 @@ export function createTables() {
 
 function initDefaultOUIData(db: any) {
   const count = (db.prepare('SELECT COUNT(*) as cnt FROM oui_database').get() as any).cnt
-  if (count > 0) return
+  if (count > 0) {
+    // PERF-04：OUI seed 已存在跳过（可观测日志，二次启动可见）
+    try {
+      createSystemLog({ type: 'migration', status: 'success', errorMessage: `[startup] initDefaultOUIData 跳过：oui_database 已有 ${count} 行 seed，不重复插入` })
+    } catch { console.log(`[startup] initDefaultOUIData 跳过：oui_database 已有 ${count} 行（system_logs 未就绪回退 console）`) }
+    return
+  }
 
   const stmt = db.prepare('INSERT OR IGNORE INTO oui_database (oui_prefix, vendor_name) VALUES (?, ?)')
   const entries = [

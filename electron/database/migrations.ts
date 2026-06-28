@@ -214,7 +214,13 @@ export function runMigrations(): void {
   const currentRow = db.pragma('user_version') as Array<{ user_version: number }>
   const current = currentRow[0]?.user_version ?? 0
 
-  if (current >= MIGRATION_HEAD) return
+  if (current >= MIGRATION_HEAD) {
+    // PERF-04：迁移已最新跳过（可观测日志，二次启动可见）
+    try {
+      createSystemLog({ type: 'migration', status: 'success', errorMessage: `[startup] runMigrations 跳过：user_version=${current} 已达 HEAD=${MIGRATION_HEAD}，无待执行迁移` })
+    } catch { console.log(`[startup] runMigrations 跳过：user_version=${current} 已达 HEAD=${MIGRATION_HEAD}（system_logs 未就绪回退 console）`) }
+    return
+  }
 
   for (const step of MIGRATIONS) {
     if (step.version <= current) continue
