@@ -20,7 +20,7 @@ export default function OuiTab({ api }: OuiTabProps) {
     setLoading(true)
     try {
       const [e, s] = await Promise.all([api.oui.getAll(), api.oui.getStats()])
-      setEntries(e)
+      setEntries(e.rows)
       setStats(s)
     } finally { setLoading(false) }
   }

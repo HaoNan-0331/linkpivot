@@ -31,7 +31,7 @@ export default function NetworkTab({ api }: NetworkTabProps) {
         api.network.getIPDetails(id, searchIp, searchMac),
       ])
       setIpUsage(usage)
-      setIpDetails(details)
+      setIpDetails(details.rows)
     } catch (e: any) {
       console.error('Failed to load segment details:', e)
       message.error('加载网段详情失败: ' + e.message)
@@ -40,7 +40,7 @@ export default function NetworkTab({ api }: NetworkTabProps) {
 
   const searchIPs = async () => {
     if (selectedId) {
-      setIpDetails(await api.network.getIPDetails(selectedId, searchIp, searchMac))
+      setIpDetails((await api.network.getIPDetails(selectedId, searchIp, searchMac)).rows)
     }
   }
 

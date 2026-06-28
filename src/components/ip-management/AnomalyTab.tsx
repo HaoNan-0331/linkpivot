@@ -30,7 +30,7 @@ export default function AnomalyTab({ api }: AnomalyTabProps) {
         api.anomaly.getExcludedIPs(),
       ])
       setStats(s)
-      setChanges(c)
+      setChanges(c.rows)
       setExcludedIPs(e)
     } finally { setLoading(false) }
   }
