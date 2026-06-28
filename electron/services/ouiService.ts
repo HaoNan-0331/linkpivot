@@ -112,8 +112,12 @@ export class OUIService {
     db.prepare(`UPDATE oui_database SET ${updates.join(', ')} WHERE id = ?`).run(...values)
     const newRow = this.getById(input.id) as { oui_prefix?: string; vendor_name?: string } | undefined
     // 增量同步：set 新 key（prefix+vendorName 取自 UPDATE 后的最新行），旧 prefix 不同则 delete
+    // WR-03：仅当 newRow.vendor_name 有值（非 null/undefined/空串）时同步 Map，避免向 Map 注入空 vendor 脏值。
+    // （DB 层 vendor_name NOT NULL，此处防御性守卫与 DB 行为对齐。）
     if (newRow) {
-      this.vendorMap?.set(this.normalizeMac(newRow.oui_prefix ?? ''), newRow.vendor_name ?? '')
+      if (newRow.vendor_name) {
+        this.vendorMap?.set(this.normalizeMac(newRow.oui_prefix ?? ''), newRow.vendor_name)
+      }
       if (oldRow?.oui_prefix && oldRow.oui_prefix !== newRow.oui_prefix) {
         this.vendorMap?.delete(this.normalizeMac(oldRow.oui_prefix))
       }

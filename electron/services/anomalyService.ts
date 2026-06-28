@@ -36,24 +36,33 @@ export class AnomalyService {
     if (excluded.ips.has(ip)) return true
     if (excluded.cidrs.some(c => this.ipInCIDR(ip, c))) return true
     for (const w of excluded.wildcards) {
-      const regex = new RegExp('^' + w.replace(/\./g, '\\.').replace(/\*/g, '.*') + '$')
+      // WR-02：先转义全部正则元字符，再把通配符 '*' 还原为 '.*'。否则用户输入含 `(`/`[`/`+` 等字符的规则
+      // 会让 new RegExp 抛 SyntaxError（被外层吞错 → 该 IP 静默跳过丢数据）或静默误配（字符集等语义偏差）。
+      const escaped = w.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')
+      const regex = new RegExp('^' + escaped + '$')
       if (regex.test(ip)) return true
     }
     return false
   }
 
+  // WR-04：镜像 networkSegmentService.ipInCIDR（line 123-131）的健壮实现——畸形 CIDR/IP 返回 false，
+  // 避免一条畸形 cidr 规则（如 `192.168.1.0/` 或 `notacidr/8`）让 (NaN & mask)===(NaN & mask) 恒为 true，
+  // 误判所有 IP 已排除 → processARPEntries 对所有 IP continue → ARP 处理整体失效。
   private static ipInCIDR(ip: string, cidr: string): boolean {
-    const [network, prefixLength] = cidr.split('/')
-    const prefix = parseInt(prefixLength, 10)
+    const [network, prefixStr] = cidr.split('/')
+    const prefix = parseInt(prefixStr, 10)
     const ipNum = this.ipToNumber(ip)
     const networkNum = this.ipToNumber(network)
-    const mask = (0xFFFFFFFF << (32 - prefix)) >>> 0
+    if (ipNum === null || networkNum === null || isNaN(prefix) || prefix < 0 || prefix > 32) return false
+    const mask = prefix === 0 ? 0 : (0xFFFFFFFF << (32 - prefix)) >>> 0
     return (ipNum & mask) === (networkNum & mask)
   }
 
-  private static ipToNumber(ip: string): number {
+  // WR-04：非法 IP（非 4 段 / 段值非 0-255 整数）返回 null，供 ipInCIDR 判定。>>>0 规范化为无符号 32 位。
+  private static ipToNumber(ip: string): number | null {
     const parts = ip.split('.').map(Number)
-    return (parts[0] << 24) + (parts[1] << 16) + (parts[2] << 8) + parts[3]
+    if (parts.length !== 4 || parts.some((p) => !Number.isInteger(p) || p < 0 || p > 255)) return null
+    return ((parts[0] << 24) + (parts[1] << 16) + (parts[2] << 8) + parts[3]) >>> 0
   }
 
   static processARPEntries(entries: Array<{ ip: string; mac: string }>): IPMACChange[] {
@@ -71,37 +80,45 @@ export class AnomalyService {
     const stmtOldBinding = db.prepare('SELECT mac FROM ip_mac_bindings WHERE ip = ? ORDER BY last_seen DESC LIMIT 1')
 
     // 整批单事务：一次 COMMIT 替代逐条 autocommit（D-P2 / init.ts:346 先例）
+    // WR-01：每条目的写逻辑用嵌套事务（better-sqlite3 的 db.transaction 嵌套自动用 SAVEPOINT 实现）包裹。
+    // 这样单条目中途失败（例：UPDATE is_active=0 已执行但 createBinding 因 UNIQUE 冲突 + fallback UPDATE 失败而抛错）
+    // 会被 entryTx 自动 ROLLBACK TO savepoint 回滚到该条起点（含已执行的 is_active=0），由外层 try/catch 捕获后 continue。
+    // —— 修正原实现"单条部分写入被整批 COMMIT 静默持久化"的数据完整性 bug（MAC 变更场景：旧 binding 停用但新 binding 未建，
+    // 后续扫描持续走 ip_reused 误报路径）。条目级 try/catch 保留 = D-P2 红线（单条失败不 ROLLBACK 整批）。
+    const entryTx = db.transaction((entry: { ip: string; mac: string }) => {
+      const { ip, mac } = entry
+      if (this.isIPExcludedCached(ip, excluded)) return
+
+      const currentBinding = stmtCurrentBinding.get(ip) as { id: number; mac: string } | undefined
+
+      if (currentBinding) {
+        if (currentBinding.mac !== mac) {
+          const change = this.recordChange(ip, currentBinding.mac, mac, 'mac_changed')
+          if (change) changes.push(change)
+          stmtDeactivate.run(currentBinding.id)
+          this.createBinding(db, ip, mac, now)
+        } else {
+          stmtUpdateLastSeen.run(now, currentBinding.id)
+        }
+      } else {
+        const oldBinding = stmtOldBinding.get(ip) as { mac: string } | undefined
+        if (oldBinding) {
+          const change = this.recordChange(ip, null, mac, 'ip_reused')
+          if (change) changes.push(change)
+        }
+        this.createBinding(db, ip, mac, now)
+      }
+    })
+
     const runBatch = db.transaction(() => {
       for (const entry of entries) {
-        const { ip, mac } = entry
-        // 条目级 try/catch（D-P2 红线）：单条失败捕获后 continue，不让 throw 冒泡到 transaction 回调触发整批 ROLLBACK
-        // —— 与改造前 recordChange/createBinding 吞错"尽力而为"语义一致（PROJECT.md 向后兼容红线）
+        // 条目级 try/catch（D-P2 红线）：entryTx 抛错 → better-sqlite3 自动 ROLLBACK TO savepoint（该条目整体回滚）→
+        // 被捕获后 continue，不让 throw 冒泡到 transaction 回调触发整批 ROLLBACK（与改造前"尽力而为"语义一致）
         try {
-          if (this.isIPExcludedCached(ip, excluded)) continue
-
-          const currentBinding = stmtCurrentBinding.get(ip) as { id: number; mac: string } | undefined
-
-          if (currentBinding) {
-            if (currentBinding.mac !== mac) {
-              const change = this.recordChange(ip, currentBinding.mac, mac, 'mac_changed')
-              if (change) changes.push(change)
-              stmtDeactivate.run(currentBinding.id)
-              this.createBinding(db, ip, mac, now)
-            } else {
-              stmtUpdateLastSeen.run(now, currentBinding.id)
-            }
-          } else {
-            const oldBinding = stmtOldBinding.get(ip) as { mac: string } | undefined
-            if (oldBinding) {
-              const change = this.recordChange(ip, null, mac, 'ip_reused')
-              if (change) changes.push(change)
-            }
-            this.createBinding(db, ip, mac, now)
-          }
+          entryTx(entry)
         } catch (e: any) {
-          // T-03-02：失败 ip 与原因记录，不静默吞错
-          console.error('[anomaly] processARPEntries 条目处理失败:', ip, e.message)
-          continue
+          // T-03-02：失败 ip 与原因记录，不静默吞错。savepoint 已回滚该条全部写入，整批继续。
+          console.error('[anomaly] processARPEntries 条目处理失败:', entry.ip, e.message)
         }
       }
     })
