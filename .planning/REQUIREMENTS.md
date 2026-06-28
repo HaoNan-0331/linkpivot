@@ -11,8 +11,8 @@
 
 - [ ] **PERF-01**: OUI 厂商查询消除 N+1 —— 启动时全量预载入 `Map<macPrefix, vendor>`，`getIPDetails` 等批量场景不再逐行查 OUI
 - [ ] **PERF-02**: `processARPEntries` 写库包入事务 + 复用 prepared statement，降低逐条提交开销
-- [ ] **PERF-03**: FTS 搜索触发器加 `WHEN` 条件，content 未变时不重索引
-- [ ] **PERF-04**: `init` 中 OUI 初始化/DDL 移出主线程（或按 `user_version` 跳过已完成初始化），加速冷启动
+- [x] **PERF-03**: FTS 搜索触发器加 `WHEN` 条件，content 未变时不重索引
+- [x] **PERF-04**: `init` 中 OUI 初始化/DDL 移出主线程（或按 `user_version` 跳过已完成初始化），加速冷启动
 
 ### Architecture
 
@@ -61,8 +61,8 @@
 | ARCH-02 | Phase 2 | Complete |
 | PERF-01 | Phase 3 | Pending |
 | PERF-02 | Phase 3 | Pending |
-| PERF-03 | Phase 3 | Pending |
-| PERF-04 | Phase 3 | Pending |
+| PERF-03 | Phase 3 | Complete |
+| PERF-04 | Phase 3 | Complete |
 | DATA-01 | Phase 4 | Pending |
 | FE-01 | Phase 5 | Pending |
 | FE-02 | Phase 5 | Pending |

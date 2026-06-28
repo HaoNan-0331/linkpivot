@@ -121,3 +121,10 @@ None - plan 执行忠实于 D-P3 + D-P4（含 W2 修订）。两处 trigger 定�
 
 - `4f764a6` — feat(03-03): kb_chunks_au UPDATE trigger add WHEN (PERF-03) — init.ts DDL 加 WHEN + migrations.ts v7 迁移（DROP+CREATE + D-14 守卫 + HEAD=7）
 - `a67374d` — feat(03-04): init startup idempotent-skip observability logs (PERF-04) — runMigrations/initDefaultOUIData 两跳过日志 + console 回退 + 删 createTables 装饰日志
+
+## Self-Check: PASSED
+
+- Files: electron/database/init.ts FOUND, electron/database/migrations.ts FOUND, 03-03-SUMMARY.md FOUND
+- Commits: 4f764a6 FOUND, a67374d FOUND, e8bf24f FOUND
+- tsc + esbuild 双绿, 两处 WHEN 定义逐字一致, HEAD=7, 无 v8, main.ts 未改
+

@@ -61,7 +61,7 @@ Plans:
 **Wave 1**（3 plans 并行，files_modified 零重叠）
 - [x] 03-01-PLAN.md — PERF-02 processARPEntries 事务化 + prepared statement 复用 + isIPExcluded 预载 Set（anomalyService.ts，条目级 try/catch 保留）
 - [x] 03-02-PLAN.md — PERF-01 OUIService vendorMap 预载 + getVendor 读 Map 优雅降级 + 5 写方法增量同步 + getIPDetails 双查 bug 修复 + main.ts 启动序列插 preload
-- [ ] 03-03-PLAN.md — PERF-03 FTS kb_chunks_au trigger 加 WHEN（init.ts DDL + migrations.ts v7 迁移，MIGRATION_HEAD 6→7）+ PERF-04 三个幂等跳过点可观测日志
+- [x] 03-03-PLAN.md — PERF-03 FTS kb_chunks_au trigger 加 WHEN（init.ts DDL + migrations.ts v7 迁移，MIGRATION_HEAD 6→7）+ PERF-04 三个幂等跳过点可观测日志
 
 ### Phase 4: Data / IPC Safety
 **Goal**: 大数据 IPC 不再一次性传超大结果集，主进程与渲染层数据交换有界

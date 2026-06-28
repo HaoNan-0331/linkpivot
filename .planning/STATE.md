@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: ready_to_plan
-last_updated: "2026-06-28T09:50:00.508Z"
+last_updated: "2026-06-28T10:27:58.571Z"
 progress:
   total_phases: 6
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 7
-  completed_plans: 4
-  percent: 57
+  completed_plans: 7
+  percent: 100
 ---
 
 # STATE: network_toplogy 技术债优化
@@ -23,8 +23,10 @@ progress:
 ## Current Position
 
 Phase: 03 (performance-optimization) — EXECUTING
-Plan: 1 of 3
+Plan: 3 of 3
+
 - 03-01 (PERF-02 processARPEntries 事务化) DONE — 03-01-SUMMARY.md 已生成, commits b52fc75 / dd467af / 1f9edc4
+- 03-03 (PERF-03 FTS WHEN + PERF-04 init skip-log) DONE — 03-03-SUMMARY.md 已生成, commits 4f764a6 / a67374d / e8bf24f
 
 - **Phase**: 1 (Build & Dependency Foundation)
 - **Plan**: 01-PLAN.md（1 plan · 1 wave · autonomous）— 已执行完成
@@ -60,6 +62,8 @@ Phase 2:    [███-------] 1/3 plans (02-01 done, 02-02/02-03 pending)
 - cpu-features 传递原生编译失败视为 scope 外既存问题（ssh2 可选加速器，缺失不影响功能），用 --types node 规避不阻塞 ABI 验证
 - 02-01 完成：迁移注册表（MIGRATION_HEAD=5，5 原子版本步骤 DDL+user_version 同事务 D-07，失败回滚+system log+中止 D-08）+ hasColumn helper 落地；init.ts 散落块物理删除 + runMigrations 调用接入归 02-03（单一编辑权）
 - 02-01 hasColumn 测试用 typed db mock 规避 better-sqlite3 的 Node(137)/Electron(145) NODE_MODULE_VERSION 冲突（与 crypto/auth 测试惯例一致，不重打包 native binding）
+- 03-03 完成（D-P3）：kb_chunks_au UPDATE FTS trigger 加 WHEN (content/title/image_ids 未变不重索引)，v7 迁移 DROP TRIGGER IF EXISTS + 裸 CREATE TRIGGER (IF NOT EXISTS 不替换已存在定义) + D-14 sqlite_master trigger sql 含 WHEN 守卫，MIGRATION_HEAD 6→7，两处定义逐字一致，_ai/_ad 不动
+- 03-03 完成（D-P4）：init 启动幂等跳过日志加在两个真实条件跳过点（runMigrations version≥HEAD / initDefaultOUIData count>0），type 复用 migration CHECK（无需 v8 扩 CHECK），try/catch 回退 console（启动早期表未就绪）；删 createTables 装饰日志（Warning 2：无单一跳过判定）；不引入 worker thread；不改 main.ts（编辑权归 03-02，冷启动 before/after 引用其 performance.now() 日志行）
 
 ### Todos
 
@@ -81,7 +85,7 @@ Phase 2:    [███-------] 1/3 plans (02-01 done, 02-02/02-03 pending)
 
 ## Session Continuity
 
-- **Last action**: `/gsd-execute-phase 2` Plan 02-01 — 执行 02-01-PLAN.md 完成（commits 9ac9b82/b26caaf/69524aa，2 tasks，迁移注册表 MIGRATION_HEAD=5 + hasColumn helper，tsc+esbuild+vitest 三绿，init.ts 未动）
+- **Last action**: `/gsd-execute-phase 3` Plan 03-03 — 执行 03-03-PLAN.md 完成（PERF-03+PERF-04 合并 plan，commits 4f764a6/a67374d/e8bf24f，2 tasks，kb_chunks_au FTS WHEN + v7 迁移 HEAD=7 + init 跳过可观测日志，tsc+esbuild 双绿，init.ts/migrations.ts 改，main.ts 未动）
 - **Next action**: `/gsd-execute-phase 2` Plan 02-02（ACL 收紧 + 定时 backup）或 02-03（init.ts 散落块删除 + runMigrations 接入）
 - **Resume command**: `/gsd-status`
 
