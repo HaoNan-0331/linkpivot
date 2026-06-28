@@ -27,7 +27,7 @@
   3. `tsc -p tsconfig.web.json` 与 electron main esbuild 打包双绿，无新增 type error
 **Plans**: 1 plan
 Plans:
-- [ ] 01-01-PLAN.md — 锁定原生依赖 exact 版本（better-sqlite3/ssh2/telnet-client）+ 重新生成 lockfile + 验证可复现全量构建
+- [x] 01-01-PLAN.md — 锁定原生依赖 exact 版本（better-sqlite3/ssh2/telnet-client）+ 重新生成 lockfile + 验证可复现全量构建
 
 ### Phase 2: Architecture & DB Migration
 **Goal**: 数据库迁移可追踪可跳过，DB 文件权限收紧并具备备份机制

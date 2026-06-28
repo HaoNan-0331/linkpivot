@@ -37,7 +37,7 @@
 
 ### Build
 
-- [ ] **BUILD-01**: 原生依赖（better-sqlite3 / ssh2）锁 exact 版本 + 打包用 `npm ci`，保证可复现构建
+- [x] **BUILD-01**: 原生依赖（better-sqlite3 / ssh2）锁 exact 版本 + 打包用 `npm ci`，保证可复现构建
 
 ## v2 Requirements
 
@@ -56,7 +56,7 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| BUILD-01 | Phase 1 | Pending |
+| BUILD-01 | Phase 1 | Complete |
 | ARCH-01 | Phase 2 | Pending |
 | ARCH-02 | Phase 2 | Pending |
 | PERF-01 | Phase 3 | Pending |
