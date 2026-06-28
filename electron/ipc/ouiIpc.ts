@@ -1,11 +1,14 @@
 import { ipcMain } from 'electron'
 import { OUIService } from '../services/ouiService'
 import { secure } from '../utils/authGuard'
+import { validateLimit, validateOffset } from '../utils/pagination'
 
 const MAX_BATCH = 1000
 
 export function registerOuiIpc() {
-  ipcMain.handle('oui:getAll', secure(() => OUIService.getAll()))
+  ipcMain.handle('oui:getAll', secure((_e, limit?: number, offset?: number) =>
+    // DATA-01 / D-4-3/D-4-4：默认 5000、硬上限 50000。网关层校验后下推 SQL LIMIT/OFFSET。
+    OUIService.getAll(validateLimit(limit, 5000, 50000), validateOffset(offset))))
   ipcMain.handle('oui:search', secure((_e, keyword: string) => OUIService.search(keyword)))
   ipcMain.handle('oui:getById', secure((_e, id: number) => OUIService.getById(id)))
   ipcMain.handle('oui:add', secure((_e, data: any) => {

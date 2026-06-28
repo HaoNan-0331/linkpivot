@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
 import { NetworkSegmentService } from '../services/networkSegmentService'
 import { secure } from '../utils/authGuard'
+import { validateLimit, validateOffset } from '../utils/pagination'
 
 const IPV4_RE = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/
 
@@ -35,6 +36,10 @@ export function registerNetworkIpc() {
   ipcMain.handle('network:delete', secure((_e, id: number) => NetworkSegmentService.delete(id)))
   ipcMain.handle('network:autoDiscover', secure(() => NetworkSegmentService.autoDiscover()))
   ipcMain.handle('network:getIPUsage', secure((_e, networkId: number) => NetworkSegmentService.getIPUsage(networkId)))
-  ipcMain.handle('network:getIPDetails', secure((_e, networkId: number, searchIp?: string, searchMac?: string, sortBy?: string, sortOrder?: string) =>
-    NetworkSegmentService.getIPDetails(networkId, searchIp, searchMac, sortBy, sortOrder)))
+  ipcMain.handle('network:getIPDetails', secure((_e, networkId: number, searchIp?: string, searchMac?: string, sortBy?: string, sortOrder?: string, limit?: number, offset?: number) => {
+    // DATA-01 / D-4-3/D-4-4：网关层校验 limit/offset，默认 2000、硬上限 50000。service 层只接收安全值。
+    const safeLimit = validateLimit(limit, 2000, 50000)
+    const safeOffset = validateOffset(offset)
+    return NetworkSegmentService.getIPDetails(networkId, searchIp, searchMac, sortBy, sortOrder, safeLimit, safeOffset)
+  }))
 }

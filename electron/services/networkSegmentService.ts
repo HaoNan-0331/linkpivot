@@ -1,5 +1,6 @@
 import { getDatabase } from '../database/connection'
 import { OUIService } from './ouiService'
+import type { PaginatedResult } from '../../src/types/pagination'
 
 export class NetworkSegmentService {
   static getAll(): any[] {
@@ -85,15 +86,24 @@ export class NetworkSegmentService {
     return { networkId, total, used, available, usagePercent }
   }
 
-  static getIPDetails(networkId: number, searchIp?: string, searchMac?: string, sortBy: string = 'ip', sortOrder: string = 'asc'): any[] {
+  static getIPDetails(
+    networkId: number,
+    searchIp?: string,
+    searchMac?: string,
+    sortBy: string = 'ip',
+    sortOrder: string = 'asc',
+    limit: number = 2000,
+    offset: number = 0,
+  ): PaginatedResult<any> {
     const segment = this.getById(networkId)
-    if (!segment) return []
+    if (!segment) return { rows: [], total: 0, truncated: false }
     const db = getDatabase()
     const cidr = `${segment.network}/${segment.cidr}`
     const sortColumnMap: Record<string, string> = { ip: 'ips.ip', mac: 'ips.mac', lastSeen: 'ips.last_seen' }
     const safeSortBy = sortColumnMap[sortBy] || 'ips.ip'
     const safeSortOrder = sortOrder === 'desc' ? 'DESC' : 'ASC'
-    // 去掉前3段 LIKE 条件：SQL 返回全部 + JOIN 并排序，JS 端按真实 CIDR 过滤（保持 SQL 排序顺序）
+    // D-4-6：去掉前3段 LIKE 条件，SQL 返回全部 + JOIN 并排序，JS 端按真实 CIDR 过滤（保持 SQL 排序顺序）。
+    // 不把 ipInCIDR 下推 SQL（需 schema/查询大改 + 畸形 CIDR 健壮语义对齐，风险高收益低）。
     const query = `SELECT ips.ip, ips.mac, ips.status, ips.last_seen as collectedAt, arp.interface, arp.device_id as deviceName
       FROM ip_status ips
       LEFT JOIN (SELECT ip, interface, device_id, ROW_NUMBER() OVER (PARTITION BY ip ORDER BY collected_at DESC) as rn FROM arp_entries) arp ON arp.ip = ips.ip AND arp.rn = 1
@@ -101,7 +111,9 @@ export class NetworkSegmentService {
     let rows = (db.prepare(query).all() as any[]).filter((r) => this.ipInCIDR(r.ip, cidr))
     if (searchIp) rows = rows.filter((r) => r.ip?.includes(searchIp))
     if (searchMac) rows = rows.filter((r) => r.mac?.includes(searchMac))
-    return rows.map((entry) => {
+    // PERF-01 红线：保留 OUIService.getVendor 读路径（vendorMap 预载 O(1)），不得退化为逐行查库。
+    // 先 map 出完整对象数组，再在 map 后数组上分页（D-4-6：分页在过滤后数组）。
+    const mapped = rows.map((entry) => {
       // PERF-01 (W1 双查修复)：单次调用 getVendor + 局部缓存，消除三元表达式两次求值导致的 N+1 翻倍
       const vendor = entry.mac ? OUIService.getVendor(entry.mac) : 'Unknown'
       return {
@@ -110,6 +122,10 @@ export class NetworkSegmentService {
         macVendor: vendor === 'Unknown' ? undefined : vendor,
       }
     })
+    // DATA-01 / D-4-1/D-4-2：JS 过滤后数组分页（slice）+ 信封包裹。total = 过滤后应用 limit 前的总数。
+    const total = mapped.length
+    const pageRows = mapped.slice(offset, offset + limit)
+    return { rows: pageRows, total, truncated: pageRows.length < total }
   }
 
   /** IP 转数值（非法返回 null），用 >>>0 规范化为无符号 32 位。 */

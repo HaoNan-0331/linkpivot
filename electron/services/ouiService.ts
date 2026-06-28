@@ -1,4 +1,5 @@
 import { getDatabase } from '../database/connection'
+import type { PaginatedResult } from '../../src/types/pagination'
 
 export class OUIService {
   // PERF-01 (D-P1)：模块级 vendorMap 懒加载缓存。null = 未预载（启动时 preload() 全量载入）。
@@ -54,9 +55,14 @@ export class OUIService {
     return row?.vendor_name || 'Unknown'
   }
 
-  static getAll(): any[] {
+  static getAll(limit: number = 5000, offset: number = 0): PaginatedResult<any> {
     const db = getDatabase()
-    return db.prepare('SELECT id, oui_prefix, vendor_name, is_custom, created_at, updated_at FROM oui_database ORDER BY vendor_name, oui_prefix').all()
+    // DATA-01 / D-4-1~D-4-3：SQL 下推分页（prepared statement 绑定 limit/offset，D-4-2/T-04-02 防 SQL 注入）。
+    // total = 未应用 limit 的全表计数（单独 COUNT 查询）。
+    const rows = db.prepare('SELECT id, oui_prefix, vendor_name, is_custom, created_at, updated_at FROM oui_database ORDER BY vendor_name, oui_prefix LIMIT ? OFFSET ?')
+      .all(limit, offset) as any[]
+    const total = (db.prepare('SELECT COUNT(*) as c FROM oui_database').get() as { c: number }).c
+    return { rows, total, truncated: rows.length < total }
   }
 
   static search(keyword: string): any[] {
