@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: ready_to_plan
-last_updated: "2026-06-28T15:42:11.273Z"
+last_updated: "2026-06-28T15:47:01.843Z"
 progress:
   total_phases: 6
   completed_phases: 3
@@ -22,8 +22,10 @@ progress:
 
 ## Current Position
 
-Phase: 4
-Plan: Not started
+Phase: 04 (Data / IPC Safety) — EXECUTING
+Plan: 1 of 3 (04-01 DONE)
+
+- 04-01 (DATA-01 三 list 通道 hybrid 分页契约) DONE — 04-01-SUMMARY.md 已生成, commits 2c3963f(RED) / 7b02d7d(GREEN) / 8fd1b04 / 6371820
 
 - 03-01 (PERF-02 processARPEntries 事务化) DONE — 03-01-SUMMARY.md 已生成, commits b52fc75 / dd467af / 1f9edc4
 - 03-03 (PERF-03 FTS WHEN + PERF-04 init skip-log) DONE — 03-03-SUMMARY.md 已生成, commits 4f764a6 / a67374d / e8bf24f
@@ -64,6 +66,7 @@ Phase 2:    [███-------] 1/3 plans (02-01 done, 02-02/02-03 pending)
 - 02-01 hasColumn 测试用 typed db mock 规避 better-sqlite3 的 Node(137)/Electron(145) NODE_MODULE_VERSION 冲突（与 crypto/auth 测试惯例一致，不重打包 native binding）
 - 03-03 完成（D-P3）：kb_chunks_au UPDATE FTS trigger 加 WHEN (content/title/image_ids 未变不重索引)，v7 迁移 DROP TRIGGER IF EXISTS + 裸 CREATE TRIGGER (IF NOT EXISTS 不替换已存在定义) + D-14 sqlite_master trigger sql 含 WHEN 守卫，MIGRATION_HEAD 6→7，两处定义逐字一致，_ai/_ad 不动
 - 03-03 完成（D-P4）：init 启动幂等跳过日志加在两个真实条件跳过点（runMigrations version≥HEAD / initDefaultOUIData count>0），type 复用 migration CHECK（无需 v8 扩 CHECK），try/catch 回退 console（启动早期表未就绪）；删 createTables 装饰日志（Warning 2：无单一跳过判定）；不引入 worker thread；不改 main.ts（编辑权归 03-02，冷启动 before/after 引用其 performance.now() 日志行）
+- 04-01 完成（D-4-1~D-4-4/D-4-6）：三 list 通道 hybrid 分页契约——共享 PaginatedResult 信封 + 共享 validateLimit/validateOffset helper（超界落回默认非钳制，复用 anomalyIpc 先例）；getIPDetails JS 过滤后 slice（保留 PERF-01 getVendor 读路径不退化为逐行查库）+ oui:getAll SQL 下推 LIMIT/OFFSET（prepared statement）+ anomaly 补 OFFSET；网关层校验不信 renderer；preload 三通道签名加可选 limit/offset（向后兼容旧调用零改动）；默认 cap 2000/5000/100 + 硬上限 50000/50000/10000；Task1 TDD RED→GREEN 合规；tsc+esbuild+vitest(25) 三绿。T-04-04 accept：ip_status 无物理 purge 单调增长，D-4-6 限定 payload 不限 DB 全表读，物理清理越界 DATA-01（独立 phase），显式记录非静默假设
 
 ### Todos
 
@@ -91,8 +94,8 @@ Phase 2:    [███-------] 1/3 plans (02-01 done, 02-02/02-03 pending)
 
 ## Session Continuity
 
-- **Last action**: `/gsd-execute-phase 3` Plan 03-03 — 执行 03-03-PLAN.md 完成（PERF-03+PERF-04 合并 plan，commits 4f764a6/a67374d/e8bf24f，2 tasks，kb_chunks_au FTS WHEN + v7 迁移 HEAD=7 + init 跳过可观测日志，tsc+esbuild 双绿，init.ts/migrations.ts 改，main.ts 未动）
-- **Next action**: `/gsd-execute-phase 2` Plan 02-02（ACL 收紧 + 定时 backup）或 02-03（init.ts 散落块删除 + runMigrations 接入）
+- **Last action**: `/gsd-execute-phase 4` Plan 04-01 — 执行 04-01-PLAN.md 完成（DATA-01 三 list 通道 hybrid 分页契约，commits 2c3963f/7b02d7d/8fd1b04/6371820，3 tasks，TDD RED→GREEN，tsc+esbuild+vitest(25) 三绿，D-4-1~D-4-4/D-4-6 落地，T-04-04 ip_status 增长 accept 显式记录）
+- **Next action**: `/gsd-execute-phase 4` Plan 04-02（export:arpTable 流式分块写 CSV，D-4-5）或 04-03（渲染层 Tab 适配信封读 .rows）
 - **Resume command**: `/gsd-status`
 
 ## Phase → Requirement Map
@@ -112,3 +115,4 @@ Phase 2:    [███-------] 1/3 plans (02-01 done, 02-02/02-03 pending)
 | Phase 01 P01 | 50min | 2 tasks | 2 files |
 | Phase 02 P01 | 5min | 2 tasks | 3 files |
 | Phase 02 P02 | 2min | 2 tasks | 2 files |
+| Phase 04 P01 | 7min | 3 tasks | 10 files |

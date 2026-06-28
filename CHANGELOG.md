@@ -2,6 +2,20 @@
 
 ## 2026-06-28
 
+### Phase 4 Plan 01 · DATA-01 三 list 通道 hybrid 分页契约（D-4-1~D-4-4, D-4-6）
+- **新增 `src/types/pagination.ts`**：`PaginatedResult<T>` 信封类型（rows/total/truncated），renderer+main 共用
+- **新增 `electron/utils/pagination.ts`**：共享 `validateLimit`/`validateOffset` helper（Number.isInteger + 范围校验，超界落回默认非钳制，复用 anomalyIpc 先例）
+- **新增 `tests/unit/pagination.test.ts`**：13 个单测覆盖校验 behavior
+- **`networkSegmentService.getIPDetails`**：加 `limit=2000, offset=0`，返回信封；JS CIDR 过滤后 slice 分页（D-4-6 不下推 SQL）；保留 PERF-01 `OUIService.getVendor` 读路径不退化为逐行查库
+- **`ouiService.getAll`**：加 `limit=5000, offset=0`，SQL 下推 `LIMIT ? OFFSET ?`（prepared statement 防 SQL 注入）+ COUNT(*) total + 信封
+- **`anomalyService.getChanges`**：补 `offset=0` + `OFFSET ?` + COUNT(*) total + 信封（维持默认 100/硬上限 10000）
+- **3 个 IPC handler**：网关层 `validateLimit/validateOffset` 校验后转发 service（不信 renderer）；`anomalyIpc` 删本地 validateLimit 改 import 共享
+- **`preload.ts`**：三通道签名加可选 `limit?/offset?`（向后兼容，旧调用零改动）
+- **trade-off（T-04-04 accept）**：ip_status 无物理 purge 单调增长，D-4-6 限定 IPC payload 不限 DB 全表读；物理清理越界 DATA-01（独立 phase）
+- 验证：tsc + esbuild + vitest(25) 三绿；Task1 TDD RED→GREEN 合规
+
+## 2026-06-28
+
 ### 项目文件审计与清理
 - **磁盘清理（.gitignore 覆盖，不入 git）**：`.playwright-mcp/`（playwright MCP 老日志，90 文件 530K）、`login-page.png`/`topology-page.png`（dev 参考截图）、`tsconfig.node.tsbuildinfo`（TS 增量缓存，tsc 自动重生）
 - **`.gitignore`**：补全 `.codegraph/`（CodeGraph 索引，local to machine，不应提交）
