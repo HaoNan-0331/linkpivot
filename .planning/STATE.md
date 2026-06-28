@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: ready_to_plan
-last_updated: "2026-06-28T03:33:40.563Z"
+last_updated: "2026-06-28T04:10:44.408Z"
 progress:
   total_phases: 6
   completed_phases: 1
-  total_plans: 1
+  total_plans: 4
   completed_plans: 1
-  percent: 100
+  percent: 25
 ---
 
 # STATE: network_toplogy 技术债优化

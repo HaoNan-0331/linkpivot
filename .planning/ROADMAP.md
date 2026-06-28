@@ -40,8 +40,11 @@ Plans:
   4. 旧库打开后 user_version 自动迁移到位且历史数据无丢失（向后兼容验证）
 **Plans**: 3 plans
 Plans:
+**Wave 1**
 - [ ] 02-01-PLAN.md — 迁移版本管理（user_version + hasColumn + 版本化注册表，重构 init.ts 散落 table_info）
 - [ ] 02-02-PLAN.md — BackupConfig 类型 + 跨平台 ACL helper（restrictFilePermissions）
+
+**Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 02-03-PLAN.md — BackupScheduler（定时 backup 双桶轮换）+ connection.ts 集成（premigration 备份 + ACL 收紧）+ main.ts 生命周期
 
 ### Phase 3: Performance Optimization
