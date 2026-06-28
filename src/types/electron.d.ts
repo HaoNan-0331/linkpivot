@@ -49,6 +49,8 @@ export interface ChatSession {
   createdAt: string
 }
 
+import type { PaginatedResult } from './pagination'
+
 export interface ElectronAPI {
   auth: {
     login: (u: string, p: string, ck: string, ci: string) => Promise<{ success: boolean; token?: string; error?: string }>
@@ -116,6 +118,44 @@ export interface ElectronAPI {
     mergeChunks: (chunkIds: string[], newTitle: string) => Promise<string>
     splitChunk: (chunkId: string, splitPosition: number, title1: string, title2: string) => Promise<string[]>
     getImageData: (imagePath: string) => Promise<string | null>
+  }
+  network: {
+    getAll: () => Promise<any[]>
+    getById: (id: number) => Promise<any>
+    create: (data: any) => Promise<any>
+    update: (data: any) => Promise<any>
+    delete: (id: number) => Promise<void>
+    autoDiscover: () => Promise<any[]>
+    getIPUsage: (networkId: number) => Promise<any>
+    // DATA-01 / D-4-2: list 通道返回信封 { rows, total, truncated }，渲染层读 .rows
+    getIPDetails: (networkId: number, searchIp?: string, searchMac?: string, sortBy?: string, sortOrder?: string, limit?: number, offset?: number) => Promise<PaginatedResult<any>>
+  }
+  anomaly: {
+    // DATA-01 / D-4-2: list 通道返回信封 { rows, total, truncated }，渲染层读 .rows
+    getChanges: (unacknowledgedOnly?: boolean, limit?: number, offset?: number) => Promise<PaginatedResult<any>>
+    acknowledge: (id: number, notes?: string) => Promise<void>
+    acknowledgeAll: () => Promise<number>
+    deleteChange: (id: number) => Promise<void>
+    deleteChanges: (ids: number[]) => Promise<void>
+    getStats: () => Promise<any>
+    getBindingHistory: (ip: string) => Promise<any[]>
+    getExcludedIPs: () => Promise<any[]>
+    addExcludedIP: (data: any) => Promise<any>
+    deleteExcludedIP: (id: number) => Promise<void>
+  }
+  oui: {
+    // DATA-01 / D-4-2: list 通道返回信封 { rows, total, truncated }，渲染层读 .rows
+    getAll: (limit?: number, offset?: number) => Promise<PaginatedResult<any>>
+    search: (keyword: string) => Promise<any[]>
+    getById: (id: number) => Promise<any>
+    add: (data: any) => Promise<any>
+    addBatch: (entries: any[]) => Promise<number>
+    update: (data: any) => Promise<any>
+    delete: (id: number) => Promise<void>
+    deleteBatch: (ids: number[]) => Promise<void>
+    getVendor: (mac: string) => Promise<string | null>
+    getAllVendors: () => Promise<any[]>
+    getStats: () => Promise<any>
   }
 }
 
