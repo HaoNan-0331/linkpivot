@@ -112,4 +112,12 @@ completed: 2026-06-28
 *Phase: 03-performance-optimization*
 *Completed: 2026-06-28*
 
-## Self-Check: PENDING
+## Self-Check: PASSED
+
+- FOUND `.planning/phases/03-performance-optimization/03-01-SUMMARY.md`
+- FOUND `electron/services/anomalyService.ts`
+- FOUND commit `b52fc75` (Task 1)
+- FOUND commit `dd467af` (Task 2)
+- FOUND commit `1f9edc4` (SUMMARY)
+- grep 9 项断言全 PASS（db.transaction / preloadExcludedSet / isIPExcludedCached / 无循环内裸 isIPExcluded(ip) / continue / console.error / 签名不变 / invariant 注释 / createBinding 签名）
+- tsc + esbuild 双绿（exit 0）
