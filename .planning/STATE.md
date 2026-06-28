@@ -77,6 +77,12 @@ Phase 2:    [███-------] 1/3 plans (02-01 done, 02-02/02-03 pending)
 
 - 无
 
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260628-trt | 修审计新发现 pdfjs-dist 缺失依赖 + backupScheduler retention=0 删备份 | 2026-06-28 | ba06854 | [260628-trt-pdfjs-dist-backupscheduler-retention-0](./quick/260628-trt-pdfjs-dist-backupscheduler-retention-0/) |
+
 ### Risk Watch
 
 - 加密/迁移改动必须向后兼容历史数据（v1/v2 IV 兼容、user_version 迁移不丢数据）
