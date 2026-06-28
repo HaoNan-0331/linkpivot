@@ -94,7 +94,8 @@ export class BackupScheduler {
         .filter((f) => f.startsWith(prefix) && f.endsWith('.db.bak'))
         .map((f) => ({ name: f, mtime: fs.statSync(path.join(dir, f)).mtimeMs }))
         .sort((a, b) => b.mtime - a.mtime) // 新→旧
-      const toDelete = files.slice(retention) // 超出 retention 的旧文件
+      const safeRetention = Math.max(1, retention) // BUG-2: 防 retention=0 时 slice(0) 删光全部，至少保留最新 1 份
+      const toDelete = files.slice(safeRetention) // 超出 retention 的旧文件
       for (const f of toDelete) {
         try { fs.unlinkSync(path.join(dir, f.name)) } catch { /* 单文件删除失败跳过 */ }
       }
