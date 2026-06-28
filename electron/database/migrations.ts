@@ -13,7 +13,7 @@ import { createSystemLog } from '../services/systemLog'
  *      在 createTables() 建好基线表之后、premigration 备份之后执行（D-06）。
  *      init.ts 不直接调用 runMigrations（单一调用点原则）。
  */
-export const MIGRATION_HEAD = 6
+export const MIGRATION_HEAD = 7
 
 interface MigrationStep {
   version: number
@@ -161,6 +161,35 @@ const v6 = (db: Database.Database): void => {
   step()
 }
 
+const v7 = (db: Database.Database): void => {
+  // PERF-03：kb_chunks_au UPDATE trigger 加 WHEN（content/title/image_ids 未变时不删+插重索引）。
+  // 幂等守卫 D-14 第二形式：sqlite_master 查 trigger sql 是否已含 WHEN（与 v5 查 'rdp'、v6 查 'warning' 同构）。
+  const triggerSql = (db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type='trigger' AND name='kb_chunks_au'"
+  ).get() as { sql?: string } | undefined)?.sql || ''
+  if (triggerSql.includes('WHEN')) {
+    return // trigger 已带 WHEN，no-op（幂等重跑 D-14）
+  }
+  const step = db.transaction(() => {
+    // CREATE TRIGGER IF NOT EXISTS 对"已存在但定义不同"的 trigger 不会替换，
+    // 故现有库必须先 DROP 再 CREATE（PATTERNS caveat）。fresh-install 由 init.ts DDL 建带 WHEN 版本，此 v7 no-op。
+    db.exec('DROP TRIGGER IF EXISTS kb_chunks_au')
+    // 以下 CREATE TRIGGER DDL 必须与 init.ts fresh-install DDL 逐字一致（同一 WHEN + 两条 INSERT）。
+    db.exec(`CREATE TRIGGER kb_chunks_au AFTER UPDATE ON kb_chunks
+WHEN OLD.content IS NOT NEW.content OR OLD.title IS NOT NEW.title OR OLD.image_ids IS NOT NEW.image_ids
+BEGIN
+  INSERT INTO kb_chunks_fts(kb_chunks_fts, rowid, title, content, image_desc)
+    VALUES ('delete', old.rowid, old.title, old.content,
+      (SELECT GROUP_CONCAT(description, ' ') FROM kb_images WHERE chunk_id = old.id));
+  INSERT INTO kb_chunks_fts(rowid, title, content, image_desc)
+    VALUES (new.rowid, new.title, new.content,
+      (SELECT GROUP_CONCAT(description, ' ') FROM kb_images WHERE chunk_id = new.id));
+END`)
+    db.pragma('user_version = 7')
+  })
+  step()
+}
+
 const MIGRATIONS: MigrationStep[] = [
   { version: 1, name: 'chat_history.session_id', run: v1 },
   { version: 2, name: 'ai_exec_logs.prompt_text+ai_response', run: v2 },
@@ -168,6 +197,7 @@ const MIGRATIONS: MigrationStep[] = [
   { version: 4, name: 'ai_config.vision_*', run: v4 },
   { version: 5, name: 'devices.connection_type CHECK rdp rebuild', run: v5 },
   { version: 6, name: 'ai_system_logs CHECK widen (acl/migration/backup + warning)', run: v6 },
+  { version: 7, name: 'kb_chunks_au FTS UPDATE trigger add WHEN (skip non-FTS-field updates)', run: v7 },
 ]
 
 /**

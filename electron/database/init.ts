@@ -270,7 +270,9 @@ export function createTables() {
           (SELECT GROUP_CONCAT(description, ' ') FROM kb_images WHERE chunk_id = old.id));
     END;
 
-    CREATE TRIGGER IF NOT EXISTS kb_chunks_au AFTER UPDATE ON kb_chunks BEGIN
+    CREATE TRIGGER IF NOT EXISTS kb_chunks_au AFTER UPDATE ON kb_chunks
+      WHEN OLD.content IS NOT NEW.content OR OLD.title IS NOT NEW.title OR OLD.image_ids IS NOT NEW.image_ids
+    BEGIN
       INSERT INTO kb_chunks_fts(kb_chunks_fts, rowid, title, content, image_desc)
         VALUES ('delete', old.rowid, old.title, old.content,
           (SELECT GROUP_CONCAT(description, ' ') FROM kb_images WHERE chunk_id = old.id));
