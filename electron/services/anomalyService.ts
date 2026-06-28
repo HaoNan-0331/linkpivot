@@ -1,3 +1,4 @@
+import type Database from 'better-sqlite3'
 import { getDatabase } from '../database/connection'
 
 export type ChangeType = 'mac_changed' | 'new_ip' | 'ip_reused'
@@ -8,18 +9,35 @@ export interface IPMACChange {
   acknowledgedAt: string | null; notes: string | null
 }
 
+// excluded_ips 预载结构：普通 IP 入 Set（O(1) 命中），CIDR/通配分别入数组（数量少，线性 some 判定）
+type ExcludedRules = { ips: Set<string>; cidrs: string[]; wildcards: string[] }
+
 export class AnomalyService {
   private static isIPExcluded(ip: string): boolean {
-    const db = getDatabase()
-    const excluded = db.prepare('SELECT ip_or_cidr FROM excluded_ips').all() as Array<{ ip_or_cidr: string }>
-    for (const rule of excluded) {
+    // 单次调用点：预载 + 内存判定（checkIPExcluded 走此路径，不再每行全表扫）
+    return this.isIPExcludedCached(ip, this.preloadExcludedSet(getDatabase()))
+  }
+
+  // 事务前一次性预载 excluded_ips 为内存结构，消除 processARPEntries 循环内 N+1 全表扫（D-P2）
+  private static preloadExcludedSet(db: Database.Database): ExcludedRules {
+    const rules = db.prepare('SELECT ip_or_cidr FROM excluded_ips').all() as Array<{ ip_or_cidr: string }>
+    const excluded: ExcludedRules = { ips: new Set<string>(), cidrs: [], wildcards: [] }
+    for (const rule of rules) {
       const pattern = rule.ip_or_cidr
-      if (pattern.includes('/')) { if (this.ipInCIDR(ip, pattern)) return true }
-      else if (pattern.includes('*')) {
-        const regex = new RegExp('^' + pattern.replace(/\./g, '\\.').replace(/\*/g, '.*') + '$')
-        if (regex.test(ip)) return true
-      }
-      else if (pattern === ip) return true
+      if (pattern.includes('/')) excluded.cidrs.push(pattern)
+      else if (pattern.includes('*')) excluded.wildcards.push(pattern)
+      else excluded.ips.add(pattern)
+    }
+    return excluded
+  }
+
+  // 循环内纯内存判定：Set O(1) 命中 + CIDR/通配数组线性 some（规则数通常很少）
+  private static isIPExcludedCached(ip: string, excluded: ExcludedRules): boolean {
+    if (excluded.ips.has(ip)) return true
+    if (excluded.cidrs.some(c => this.ipInCIDR(ip, c))) return true
+    for (const w of excluded.wildcards) {
+      const regex = new RegExp('^' + w.replace(/\./g, '\\.').replace(/\*/g, '.*') + '$')
+      if (regex.test(ip)) return true
     }
     return false
   }
@@ -43,30 +61,52 @@ export class AnomalyService {
     const changes: IPMACChange[] = []
     const now = new Date().toISOString()
 
-    for (const entry of entries) {
-      const { ip, mac } = entry
-      if (this.isIPExcluded(ip)) continue
+    // excluded 预载放事务外（D-P2 / T-03-04：避免预载 SELECT 与写混在同一事务增加锁持有时间）
+    const excluded = this.preloadExcludedSet(db)
 
-      const currentBinding = db.prepare('SELECT id, mac FROM ip_mac_bindings WHERE ip = ? AND is_active = 1').get(ip) as { id: number; mac: string } | undefined
+    // 4 个 prepared statement 提到循环外复用（D-P2：消除循环内重复解析）
+    const stmtCurrentBinding = db.prepare('SELECT id, mac FROM ip_mac_bindings WHERE ip = ? AND is_active = 1')
+    const stmtDeactivate = db.prepare('UPDATE ip_mac_bindings SET is_active = 0 WHERE id = ?')
+    const stmtUpdateLastSeen = db.prepare('UPDATE ip_mac_bindings SET last_seen = ? WHERE id = ?')
+    const stmtOldBinding = db.prepare('SELECT mac FROM ip_mac_bindings WHERE ip = ? ORDER BY last_seen DESC LIMIT 1')
 
-      if (currentBinding) {
-        if (currentBinding.mac !== mac) {
-          const change = this.recordChange(ip, currentBinding.mac, mac, 'mac_changed')
-          if (change) changes.push(change)
-          db.prepare('UPDATE ip_mac_bindings SET is_active = 0 WHERE id = ?').run(currentBinding.id)
-          this.createBinding(db, ip, mac, now)
-        } else {
-          db.prepare('UPDATE ip_mac_bindings SET last_seen = ? WHERE id = ?').run(now, currentBinding.id)
+    // 整批单事务：一次 COMMIT 替代逐条 autocommit（D-P2 / init.ts:346 先例）
+    const runBatch = db.transaction(() => {
+      for (const entry of entries) {
+        const { ip, mac } = entry
+        // 条目级 try/catch（D-P2 红线）：单条失败捕获后 continue，不让 throw 冒泡到 transaction 回调触发整批 ROLLBACK
+        // —— 与改造前 recordChange/createBinding 吞错"尽力而为"语义一致（PROJECT.md 向后兼容红线）
+        try {
+          if (this.isIPExcludedCached(ip, excluded)) continue
+
+          const currentBinding = stmtCurrentBinding.get(ip) as { id: number; mac: string } | undefined
+
+          if (currentBinding) {
+            if (currentBinding.mac !== mac) {
+              const change = this.recordChange(ip, currentBinding.mac, mac, 'mac_changed')
+              if (change) changes.push(change)
+              stmtDeactivate.run(currentBinding.id)
+              this.createBinding(db, ip, mac, now)
+            } else {
+              stmtUpdateLastSeen.run(now, currentBinding.id)
+            }
+          } else {
+            const oldBinding = stmtOldBinding.get(ip) as { mac: string } | undefined
+            if (oldBinding) {
+              const change = this.recordChange(ip, null, mac, 'ip_reused')
+              if (change) changes.push(change)
+            }
+            this.createBinding(db, ip, mac, now)
+          }
+        } catch (e: any) {
+          // T-03-02：失败 ip 与原因记录，不静默吞错
+          console.error('[anomaly] processARPEntries 条目处理失败:', ip, e.message)
+          continue
         }
-      } else {
-        const oldBinding = db.prepare('SELECT mac FROM ip_mac_bindings WHERE ip = ? ORDER BY last_seen DESC LIMIT 1').get(ip) as { mac: string } | undefined
-        if (oldBinding) {
-          const change = this.recordChange(ip, null, mac, 'ip_reused')
-          if (change) changes.push(change)
-        }
-        this.createBinding(db, ip, mac, now)
       }
-    }
+    })
+    runBatch()
+
     return changes
   }
 
