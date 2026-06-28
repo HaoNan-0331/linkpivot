@@ -71,7 +71,14 @@ Plans:
   1. `network:getIPDetails` / `oui:getAll` / `anomaly:getChanges` / `export:arpTable` 支持分页参数或默认行数上限（4 个通道均可 grep 到 limit/offset 或 maxRows 参数）
   2. 超大结果集（如 >10000 行 ARP 表）请求不再一次性序列化全量，单次 IPC payload 有界
   3. 现有调用方适配新签名，无回归（分页/上限默认值保证旧调用行为不变）
-**Plans**: TBD
+**Plans**: 3 plans
+Plans:
+**Wave 1**（2 plans 并行，files_modified 零重叠）
+- [ ] 04-01-PLAN.md — 3 list 通道（getIPDetails/oui:getAll/anomaly:getChanges）hybrid 分页契约：共享类型 + 共享 validateLimit/validateOffset + 网关校验 + service 信封 {rows,total,truncated} + 默认 cap(2000/5000/100)/硬上限(50000/50000/10000) + preload 签名（D-4-1~D-4-4, D-4-6）
+- [ ] 04-02-PLAN.md — export:arpTable 流式分块写 CSV（D-4-5）：分批 LIMIT/OFFSET + append 写，消除一次性全量读+巨型字符串，签名/返回形态不变
+
+**Wave 2** *(blocked on Wave 1 / 04-01 completion)*
+- [ ] 04-03-PLAN.md — 渲染层 3 Tab 适配信封（读 .rows）+ electron.d.ts 类型标注（success criteria #3 无回归）
 
 ### Phase 5: Frontend Refactor & Types
 **Goal**: 前端结构清晰、类型严格、无 stale closure 与在途请求泄漏
@@ -109,4 +116,4 @@ Plans:
 
 ---
 *Roadmap created: 2026-06-22*
-*Last updated: 2026-06-28 after Phase 1 planning*
+*Last updated: 2026-06-28 after Phase 4 planning*
