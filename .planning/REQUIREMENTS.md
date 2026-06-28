@@ -21,7 +21,7 @@
 
 ### Data
 
-- [ ] **DATA-01**: 大数据 IPC 加分页/默认上限 —— `network:getIPDetails` / `oui:getAll` / `anomaly:getChanges` / `export:arpTable` 避免一次性传超大结果集
+- [x] **DATA-01**: 大数据 IPC 加分页/默认上限 —— `network:getIPDetails` / `oui:getAll` / `anomaly:getChanges` / `export:arpTable` 避免一次性传超大结果集
 
 ### Frontend
 
@@ -63,7 +63,7 @@
 | PERF-02 | Phase 3 | Complete |
 | PERF-03 | Phase 3 | Complete |
 | PERF-04 | Phase 3 | Complete |
-| DATA-01 | Phase 4 | Pending |
+| DATA-01 | Phase 4 | Complete |
 | FE-01 | Phase 5 | Pending |
 | FE-02 | Phase 5 | Pending |
 | FE-03 | Phase 5 | Pending |
