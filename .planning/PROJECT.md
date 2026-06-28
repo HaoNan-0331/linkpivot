@@ -22,6 +22,7 @@ network_toplogy 是面向运维人员的网络拓扑管理桌面工具（Electro
 - ✓ IP/MAC 监控（ARP 采集 + 异常检测 + 网段管理 + OUI 厂商识别）— 现有
 - ✓ 认证与安全（登录 + 验证码 + 口令策略 + IPC 鉴权网关 + CSP/sandbox）— 现有
 - ✓ 定时调度（ARP 定时采集）— 现有
+- ✓ 构建/依赖：原生依赖（better-sqlite3/ssh2/telnet-client）exact 版本锁定 + npm ci 可复现构建基线 — Validated in Phase 1: Build & Dependency Foundation
 
 ### Active
 
@@ -32,7 +33,6 @@ network_toplogy 是面向运维人员的网络拓扑管理桌面工具（Electro
 - [ ] IPC/数据：大数据 IPC 分页/上限（getIPDetails/oui:getAll/anomaly:getChanges/export:arpTable）
 - [ ] 前端重构：AIPage 拆分 4 子组件、前端 any 类型替换为 src/types、TopologyPage store getState 防 stale closure、ChunkContent 图片 AbortController
 - [ ] 健壮性：arpCollector/discovery 句柄 try/finally + 错误上下文
-- [ ] 构建/依赖：原生依赖（better-sqlite3/ssh2）exact 版本锁定 + npm ci
 
 ### Out of Scope
 
@@ -47,6 +47,7 @@ network_toplogy 是面向运维人员的网络拓扑管理桌面工具（Electro
 - 项目已有 CodeGraph 全符号索引（tree-sitter），结构查询优先用 `codegraph_*` 工具
 - 技术栈：Electron 主进程（esbuild 打包）+ React 渲染层（Vite）+ TypeScript（严格模式 + noUnusedLocals）+ better-sqlite3（WAL）+ ssh2 + xterm.js + React Flow + Ant Design
 - 加密：AES-256-GCM + 版本前缀 `v2:`（12 字节 IV）兼容历史 v1（16 字节 IV），零迁移
+- **Phase 1 complete (2026-06-28)**：原生依赖 exact 锁定 + npm ci 可复现构建基线（BUILD-01，commit 940aa7c），为 Phase 2-6 重构提供稳定回归参照
 
 ## Constraints
 
@@ -82,4 +83,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-21 after initialization*
+*Last updated: 2026-06-28 after Phase 1 completion (BUILD-01)*
