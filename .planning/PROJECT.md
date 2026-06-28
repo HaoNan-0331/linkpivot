@@ -23,13 +23,13 @@ network_toplogy 是面向运维人员的网络拓扑管理桌面工具（Electro
 - ✓ 认证与安全（登录 + 验证码 + 口令策略 + IPC 鉴权网关 + CSP/sandbox）— 现有
 - ✓ 定时调度（ARP 定时采集）— 现有
 - ✓ 构建/依赖：原生依赖（better-sqlite3/ssh2/telnet-client）exact 版本锁定 + npm ci 可复现构建基线 — Validated in Phase 1: Build & Dependency Foundation
+- ✓ 架构/迁移：迁移版本管理（PRAGMA user_version + hasColumn + 版本化注册表，散落 table_info 收敛）+ DB 文件 ACL 收紧（db/wal/shm/backups，跨平台 icacls/chmod）+ 定时 .backup() 双桶轮换 + 迁移前安全网 — Validated in Phase 2: Architecture & DB Migration（ARCH-01, ARCH-02）
 
 ### Active
 
 <!-- 本轮 milestone：代码审计延后的深度优化技术债（详细 REQ-IDs 见 REQUIREMENTS.md） -->
 
 - [ ] 性能/资源：OUI N+1 查询消除（启动预载入 Map）、processARPEntries 事务化、FTS 触发器 WHEN 优化、init OUI/DDL 移出主线程
-- [ ] 架构/迁移：迁移版本管理（PRAGMA user_version + hasColumn）、DB 文件 ACL 收紧 + 定时 backup
 - [ ] IPC/数据：大数据 IPC 分页/上限（getIPDetails/oui:getAll/anomaly:getChanges/export:arpTable）
 - [ ] 前端重构：AIPage 拆分 4 子组件、前端 any 类型替换为 src/types、TopologyPage store getState 防 stale closure、ChunkContent 图片 AbortController
 - [ ] 健壮性：arpCollector/discovery 句柄 try/finally + 错误上下文
@@ -48,6 +48,7 @@ network_toplogy 是面向运维人员的网络拓扑管理桌面工具（Electro
 - 技术栈：Electron 主进程（esbuild 打包）+ React 渲染层（Vite）+ TypeScript（严格模式 + noUnusedLocals）+ better-sqlite3（WAL）+ ssh2 + xterm.js + React Flow + Ant Design
 - 加密：AES-256-GCM + 版本前缀 `v2:`（12 字节 IV）兼容历史 v1（16 字节 IV），零迁移
 - **Phase 1 complete (2026-06-28)**：原生依赖 exact 锁定 + npm ci 可复现构建基线（BUILD-01，commit 940aa7c），为 Phase 2-6 重构提供稳定回归参照
+- **Phase 2 complete (2026-06-28)**：架构/迁移层交付（ARCH-01/02）—— user_version + hasColumn + 版本化迁移注册表（v1-v6，含 ai_system_logs CHECK 放宽 v6）替换散落 table_info；DB 文件 ACL 跨平台收紧（db/wal/shm/backups，非致命）；BackupScheduler 定时 db.backup() 双桶轮换（周期 7/迁移 5）+ 迁移前备份安全网（dbPreExisted 门控）。3 plans / 验证 4/4 通过（CR-01/02/03 gap 已闭），4 项 Electron 运行时验证待人工
 
 ## Constraints
 
@@ -83,4 +84,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-28 after Phase 1 completion (BUILD-01)*
+*Last updated: 2026-06-28 after Phase 2 completion (ARCH-01, ARCH-02)*

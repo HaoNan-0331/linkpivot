@@ -57,7 +57,7 @@
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | BUILD-01 | Phase 1 | Complete |
-| ARCH-01 | Phase 2 | In Progress (02-01 done, 02-03 pending) |
+| ARCH-01 | Phase 2 | Complete |
 | ARCH-02 | Phase 2 | Complete |
 | PERF-01 | Phase 3 | Pending |
 | PERF-02 | Phase 3 | Pending |
@@ -78,4 +78,4 @@
 
 ---
 *Requirements defined: 2026-06-21*
-*Last updated: 2026-06-22 after roadmap creation (traceability filled)*
+*Last updated: 2026-06-28 after Phase 2 completion (ARCH-01, ARCH-02 Complete)*
