@@ -1,20 +1,22 @@
 import { useState, useEffect, useRef } from 'react'
 import { Button, Table, Card, Row, Col, Statistic, Input, Modal, Form, Tag, Popconfirm, message } from 'antd'
 import { PlusOutlined, EditOutlined, DeleteOutlined, ImportOutlined, SearchOutlined } from '@ant-design/icons'
+import type { ElectronAPI } from '@/types/electron'
+import type { OUIRow, OUIStats, CreateOUIInput } from '@/types/oui'
 
-interface OuiTabProps { api: any }
+interface OuiTabProps { api: ElectronAPI }
 
 export default function OuiTab({ api }: OuiTabProps) {
-  const [entries, setEntries] = useState<any[]>([])
-  const [stats, setStats] = useState<any>({})
+  const [entries, setEntries] = useState<OUIRow[]>([])
+  const [stats, setStats] = useState<OUIStats>({} as OUIStats)
   const [loading, setLoading] = useState(false)
   const [keyword, setKeyword] = useState('')
   const [modalOpen, setModalOpen] = useState(false)
-  const [editing, setEditing] = useState<any>(null)
+  const [editing, setEditing] = useState<OUIRow | null>(null)
   const [form] = Form.useForm()
   const [importOpen, setImportOpen] = useState(false)
   const [importText, setImportText] = useState('')
-  const searchTimer = useRef<any>(null)
+  const searchTimer = useRef<number | null>(null)
 
   const loadAll = async () => {
     setLoading(true)
@@ -35,11 +37,11 @@ export default function OuiTab({ api }: OuiTabProps) {
 
   const onSearchChange = (value: string) => {
     setKeyword(value)
-    clearTimeout(searchTimer.current)
+    if (searchTimer.current !== null) clearTimeout(searchTimer.current)
     searchTimer.current = setTimeout(() => search(value), 300)
   }
 
-  const openModal = (record?: any) => {
+  const openModal = (record?: OUIRow) => {
     setEditing(record || null)
     if (record) form.setFieldsValue({ ouiPrefix: record.oui_prefix, vendorName: record.vendor_name })
     else form.resetFields()
@@ -66,25 +68,25 @@ export default function OuiTab({ api }: OuiTabProps) {
       await api.oui.delete(id)
       message.success('删除成功')
       loadAll()
-    } catch (e: any) { message.error(e.message) }
+    } catch (e: unknown) { message.error(e instanceof Error ? e.message : String(e)) }
   }
 
   const batchImport = async () => {
     const lines = importText.trim().split('\n').filter(Boolean)
-    const entries = lines.map(line => {
+    const importEntries: CreateOUIInput[] = lines.map(line => {
       const parts = line.split(',')
-      return { ouiPrefix: parts[0]?.trim(), vendorName: parts[1]?.trim() }
+      return { ouiPrefix: parts[0]?.trim() || '', vendorName: parts[1]?.trim() || '' }
     }).filter(e => e.ouiPrefix && e.vendorName)
 
-    if (entries.length === 0) { message.warning('无有效数据'); return }
+    if (importEntries.length === 0) { message.warning('无有效数据'); return }
 
     try {
-      const count = await api.oui.addBatch(entries)
+      const count = await api.oui.addBatch(importEntries)
       message.success(`成功导入 ${count} 条`)
       setImportOpen(false)
       setImportText('')
       loadAll()
-    } catch (e: any) { message.error(e.message) }
+    } catch (e: unknown) { message.error(e instanceof Error ? e.message : String(e)) }
   }
 
   const columns = [
@@ -102,7 +104,7 @@ export default function OuiTab({ api }: OuiTabProps) {
     },
     {
       title: '操作', key: 'actions',
-      render: (_: any, record: any) => (
+      render: (_: unknown, record: OUIRow) => (
         <>
           <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openModal(record)} />
           {record.is_custom ? (

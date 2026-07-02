@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react'
 import { Button, Table, Card, Row, Col, Statistic, Tag, Modal, Input, Popconfirm, message, Tabs } from 'antd'
 import { DeleteOutlined, PlusOutlined, HistoryOutlined } from '@ant-design/icons'
+import type { ElectronAPI } from '@/types/electron'
+import type { IPMACChange, ChangeStats, ExcludedIP, IPMACBinding, CreateExcludedIPInput } from '@/types/anomaly'
 
-interface AnomalyTabProps { api: any }
+interface AnomalyTabProps { api: ElectronAPI }
 
 const changeTypeMap: Record<string, { label: string; color: string }> = {
   mac_changed: { label: 'MAC变化', color: 'orange' },
@@ -11,14 +13,14 @@ const changeTypeMap: Record<string, { label: string; color: string }> = {
 }
 
 export default function AnomalyTab({ api }: AnomalyTabProps) {
-  const [stats, setStats] = useState<any>({})
-  const [changes, setChanges] = useState<any[]>([])
-  const [excludedIPs, setExcludedIPs] = useState<any[]>([])
+  const [stats, setStats] = useState<ChangeStats>({} as ChangeStats)
+  const [changes, setChanges] = useState<IPMACChange[]>([])
+  const [excludedIPs, setExcludedIPs] = useState<ExcludedIP[]>([])
   const [loading, setLoading] = useState(false)
   const [historyIp, setHistoryIp] = useState<string | null>(null)
-  const [historyData, setHistoryData] = useState<any[]>([])
+  const [historyData, setHistoryData] = useState<IPMACBinding[]>([])
   const [addExcludeOpen, setAddExcludeOpen] = useState(false)
-  const [excludeForm, setExcludeForm] = useState({ ipOrCidr: '', description: '' })
+  const [excludeForm, setExcludeForm] = useState<CreateExcludedIPInput>({ ipOrCidr: '', description: '' })
   const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([])
 
   const loadData = async () => {
@@ -62,6 +64,7 @@ export default function AnomalyTab({ api }: AnomalyTabProps) {
       return change?.ip
     }).filter(Boolean)
     for (const ip of ips) {
+      if (!ip) continue
       await api.anomaly.addExcludedIP({ ipOrCidr: ip })
     }
     message.success(`已排除 ${ips.length} 个 IP`)
@@ -91,7 +94,7 @@ export default function AnomalyTab({ api }: AnomalyTabProps) {
     try {
       const path = await api.export.changes(unackOnly)
       if (path) message.success('导出成功: ' + path)
-    } catch (e: any) { message.error(e.message) }
+    } catch (e: unknown) { message.error(e instanceof Error ? e.message : String(e)) }
   }
 
   const changeColumns = [
@@ -109,7 +112,7 @@ export default function AnomalyTab({ api }: AnomalyTabProps) {
     },
     {
       title: '操作', key: 'actions',
-      render: (_: any, record: any) => (
+      render: (_: unknown, record: IPMACChange) => (
         <>
           {!record.acknowledged && <Button type="link" size="small" onClick={() => acknowledge(record.id)}>确认</Button>}
           <Button type="link" size="small" icon={<HistoryOutlined />} onClick={() => showHistory(record.ip)} />
@@ -123,7 +126,7 @@ export default function AnomalyTab({ api }: AnomalyTabProps) {
     { title: '描述', dataIndex: 'description', key: 'description' },
     {
       title: '操作', key: 'actions',
-      render: (_: any, record: any) => (
+      render: (_: unknown, record: ExcludedIP) => (
         <Popconfirm title="确定删除?" onConfirm={() => deleteExclude(record.id)}>
           <Button type="link" size="small" danger icon={<DeleteOutlined />} />
         </Popconfirm>

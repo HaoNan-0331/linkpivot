@@ -1,20 +1,28 @@
 import { useState, useEffect } from 'react'
 import { Button, Table, Card, Collapse, Tag, message, Progress } from 'antd'
 import { ReloadOutlined, ExportOutlined, CheckOutlined } from '@ant-design/icons'
+import type { ElectronAPI, ARPBatchStats } from '@/types/electron'
+import type { Device } from '@/types/device'
+import type { ARPEntry, ARPCollectionResult } from '@/types/arp'
 
-interface ArpTabProps { api: any }
+interface ArpTabProps { api: ElectronAPI }
+
+// collectSelected 自建的聚合统计（仅 entries，无 changes/deprecated）
+interface SelectedStats {
+  entries: number
+}
 
 export default function ArpTab({ api }: ArpTabProps) {
   const [loading, setLoading] = useState(false)
-  const [results, setResults] = useState<any[]>([])
-  const [stats, setStats] = useState<any>(null)
-  const [devices, setDevices] = useState<any[]>([])
+  const [results, setResults] = useState<ARPCollectionResult[]>([])
+  const [stats, setStats] = useState<ARPBatchStats | SelectedStats | null>(null)
+  const [devices, setDevices] = useState<Device[]>([])
   const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>([])
   const [selectOpen, setSelectOpen] = useState(false)
 
   useEffect(() => {
-    api.device.list().then((list: any[]) => {
-      setDevices(list.filter((d: any) => d.connectionType === 'ssh' || d.connectionType === 'telnet'))
+    api.device.list().then((list) => {
+      setDevices(list.filter((d) => d.connectionType === 'ssh' || d.connectionType === 'telnet'))
     })
   }, [])
 
@@ -25,8 +33,8 @@ export default function ArpTab({ api }: ArpTabProps) {
       setResults(res.results || [])
       setStats(res.stats || null)
       message.success(`采集完成: ${res.results?.length || 0} 台设备, ${res.stats?.entries || 0} 条记录`)
-    } catch (e: any) {
-      message.error('采集失败: ' + e.message)
+    } catch (e: unknown) {
+      message.error('采集失败: ' + (e instanceof Error ? e.message : String(e)))
     } finally { setLoading(false) }
   }
 
@@ -36,7 +44,7 @@ export default function ArpTab({ api }: ArpTabProps) {
     setResults([])
     setStats(null)
     try {
-      const allResults: any[] = []
+      const allResults: ARPCollectionResult[] = []
       let totalEntries = 0
       for (const deviceId of selectedDeviceIds) {
         const result = await api.arp.collectFromDevice(deviceId)
@@ -47,8 +55,8 @@ export default function ArpTab({ api }: ArpTabProps) {
       // 逐设备采集无聚合变更/弃用统计，仅设 entries（changes/deprecated 显示为 '-'）
       setStats({ entries: totalEntries })
       message.success(`采集完成: ${allResults.length} 台设备, ${totalEntries} 条记录`)
-    } catch (e: any) {
-      message.error('采集失败: ' + e.message)
+    } catch (e: unknown) {
+      message.error('采集失败: ' + (e instanceof Error ? e.message : String(e)))
     } finally { setLoading(false) }
   }
 
@@ -56,7 +64,7 @@ export default function ArpTab({ api }: ArpTabProps) {
     try {
       const path = await api.export.arpTable()
       if (path) message.success('导出成功: ' + path)
-    } catch (e: any) { message.error(e.message) }
+    } catch (e: unknown) { message.error(e instanceof Error ? e.message : String(e)) }
   }
 
   const toggleDevice = (id: string) => {
@@ -65,7 +73,7 @@ export default function ArpTab({ api }: ArpTabProps) {
     )
   }
 
-  const selectAll = () => setSelectedDeviceIds(devices.map((d: any) => d.id))
+  const selectAll = () => setSelectedDeviceIds(devices.map((d) => d.id))
   const clearSelection = () => setSelectedDeviceIds([])
 
   const columns = [
@@ -78,7 +86,7 @@ export default function ArpTab({ api }: ArpTabProps) {
   const deviceColumns = [
     {
       title: '', key: 'select', width: 40,
-      render: (_: any, record: any) => (
+      render: (_: unknown, record: Device) => (
         <input type="checkbox" checked={selectedDeviceIds.includes(record.id)}
           onChange={() => toggleDevice(record.id)} />
       ),
@@ -121,11 +129,11 @@ export default function ArpTab({ api }: ArpTabProps) {
 
       {stats && (
         <Card size="small" style={{ marginBottom: 16 }}>
-          <span>设备: {results.length} | ARP条目: {stats.entries} | 异常变更: {stats.changes ?? '-'} | 弃用IP: {stats.deprecated ?? '-'}</span>
+          <span>设备: {results.length} | ARP条目: {stats.entries} | 异常变更: {'changes' in stats ? stats.changes : '-'} | 弃用IP: {'deprecated' in stats ? stats.deprecated : '-'}</span>
         </Card>
       )}
 
-      <Collapse items={results.map((r: any, idx: number) => ({
+      <Collapse items={results.map((r, idx: number) => ({
         key: idx,
         label: (
           <span>
@@ -138,7 +146,7 @@ export default function ArpTab({ api }: ArpTabProps) {
           <Tag color="red">{r.error}</Tag>
         ) : (
           <Table dataSource={r.entries || []} columns={columns}
-            rowKey={(row: any) => `${row.ip}-${row.mac}`} size="small" pagination={false} />
+            rowKey={(row: ARPEntry) => `${row.ip}-${row.mac}`} size="small" pagination={false} />
         ),
       }))} />
     </div>

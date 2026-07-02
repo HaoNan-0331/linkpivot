@@ -5,14 +5,13 @@ import { useAuthStore } from '../../stores/authStore'
 import CommandWhitelistEditor from '../settings/CommandWhitelistEditor'
 import ExecModeSwitch from '../settings/ExecModeSwitch'
 import type { AIConfig } from '../../types/electron'
+import type { ScheduleConfig, SchedulerStatus } from '../../types/oui'
 
 const providerOptions = [
   { value: 'openai', label: 'OpenAI' },
   { value: 'anthropic', label: 'Anthropic' },
   { value: 'custom', label: '自定义' },
 ]
-
-const api = (window as any).api
 
 export default function SettingsPage() {
   const [form] = Form.useForm()
@@ -22,8 +21,8 @@ export default function SettingsPage() {
   const logout = useAuthStore((s) => s.logout)
 
   // Scheduler state
-  const [schedulerConfig, setSchedulerConfig] = useState<any>({})
-  const [schedulerStatus, setSchedulerStatus] = useState<any>({})
+  const [schedulerConfig, setSchedulerConfig] = useState<ScheduleConfig>({} as ScheduleConfig)
+  const [schedulerStatus, setSchedulerStatus] = useState<SchedulerStatus>({} as SchedulerStatus)
   const [schedulerLoading, setSchedulerLoading] = useState(false)
 
   useEffect(() => { loadConfig(); loadScheduler() }, [])
@@ -32,13 +31,13 @@ export default function SettingsPage() {
     try {
       const config = await window.api.ai.getConfig()
       if (config) { form.setFieldsValue(config); setOriginalApiKey(config.apiKey) }
-    } catch (e: any) { message.error(e.message) }
+    } catch (e: unknown) { message.error(e instanceof Error ? e.message : String(e)) }
     setConfigLoading(false)
   }
 
   const loadScheduler = async () => {
     try {
-      const [config, status] = await Promise.all([api.scheduler.getConfig(), api.scheduler.getStatus()])
+      const [config, status] = await Promise.all([window.api.scheduler.getConfig(), window.api.scheduler.getStatus()])
       setSchedulerConfig(config)
       setSchedulerStatus(status)
     } catch { /* ignore */ }
@@ -62,18 +61,22 @@ export default function SettingsPage() {
       message.success('AI 配置已保存')
       const config = await window.api.ai.getConfig()
       if (config) { form.setFieldsValue(config); setOriginalApiKey(config.apiKey) }
-    } catch (e: any) { if (e.errorFields) return; message.error(e.message) }
+    } catch (e: unknown) {
+      // antd Form validateFields reject 返回 { errorFields } 对象
+      if (e && typeof e === 'object' && 'errorFields' in e) return
+      message.error(e instanceof Error ? e.message : String(e))
+    }
     setSaving(false)
   }
 
   const handleToggleScheduler = async (enabled: boolean) => {
     setSchedulerLoading(true)
     try {
-      const config = await api.scheduler.updateConfig({ enabled, intervalMinutes: schedulerConfig.intervalMinutes })
+      const config = await window.api.scheduler.updateConfig({ enabled, intervalMinutes: schedulerConfig.intervalMinutes })
       setSchedulerConfig(config)
       message.success(enabled ? '已启用定时采集' : '已禁用定时采集')
       loadScheduler()
-    } catch (e: any) { message.error(e.message) }
+    } catch (e: unknown) { message.error(e instanceof Error ? e.message : String(e)) }
     setSchedulerLoading(false)
   }
 
@@ -81,19 +84,19 @@ export default function SettingsPage() {
     if (!value) return
     setSchedulerLoading(true)
     try {
-      const config = await api.scheduler.updateConfig({ intervalMinutes: value })
+      const config = await window.api.scheduler.updateConfig({ intervalMinutes: value })
       setSchedulerConfig(config)
-    } catch (e: any) { message.error(e.message) }
+    } catch (e: unknown) { message.error(e instanceof Error ? e.message : String(e)) }
     setSchedulerLoading(false)
   }
 
   const handleRunNow = async () => {
     setSchedulerLoading(true)
     try {
-      const result = await api.scheduler.runNow()
+      const result = await window.api.scheduler.runNow()
       if (result.success) message.success(result.message)
       else message.warning(result.message)
-    } catch (e: any) { message.error(e.message) }
+    } catch (e: unknown) { message.error(e instanceof Error ? e.message : String(e)) }
     setSchedulerLoading(false)
     loadScheduler()
   }

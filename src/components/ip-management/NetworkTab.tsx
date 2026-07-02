@@ -1,19 +1,21 @@
 import { useState, useEffect } from 'react'
 import { Button, Table, Card, Modal, Form, Input, Row, Col, Statistic, message, Popconfirm } from 'antd'
 import { PlusOutlined, SearchOutlined, ThunderboltOutlined, ExportOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons'
+import type { ElectronAPI } from '@/types/electron'
+import type { NetworkSegment, IPUsage, IPDetail } from '@/types/network'
 
-interface NetworkTabProps { api: any }
+interface NetworkTabProps { api: ElectronAPI }
 
 export default function NetworkTab({ api }: NetworkTabProps) {
-  const [segments, setSegments] = useState<any[]>([])
+  const [segments, setSegments] = useState<NetworkSegment[]>([])
   const [loading, setLoading] = useState(false)
   const [selectedId, setSelectedId] = useState<number | null>(null)
-  const [ipUsage, setIpUsage] = useState<any>(null)
-  const [ipDetails, setIpDetails] = useState<any[]>([])
+  const [ipUsage, setIpUsage] = useState<IPUsage | null>(null)
+  const [ipDetails, setIpDetails] = useState<IPDetail[]>([])
   const [searchIp, setSearchIp] = useState('')
   const [searchMac, setSearchMac] = useState('')
   const [modalOpen, setModalOpen] = useState(false)
-  const [editing, setEditing] = useState<any>(null)
+  const [editing, setEditing] = useState<NetworkSegment | null>(null)
   const [form] = Form.useForm()
 
   const loadSegments = async () => {
@@ -32,9 +34,9 @@ export default function NetworkTab({ api }: NetworkTabProps) {
       ])
       setIpUsage(usage)
       setIpDetails(details.rows)
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error('Failed to load segment details:', e)
-      message.error('加载网段详情失败: ' + e.message)
+      message.error('加载网段详情失败: ' + (e instanceof Error ? e.message : String(e)))
     }
   }
 
@@ -51,17 +53,17 @@ export default function NetworkTab({ api }: NetworkTabProps) {
         message.success(`发现 ${discovered.length} 个新网段`)
         loadSegments()
       } else { message.info('未发现新网段') }
-    } catch (e: any) { message.error(e.message) }
+    } catch (e: unknown) { message.error(e instanceof Error ? e.message : String(e)) }
   }
 
   const exportUsage = async () => {
     try {
       const path = await api.export.networkUsage(selectedId || undefined)
       if (path) message.success('导出成功: ' + path)
-    } catch (e: any) { message.error(e.message) }
+    } catch (e: unknown) { message.error(e instanceof Error ? e.message : String(e)) }
   }
 
-  const openModal = (record?: any) => {
+  const openModal = (record?: NetworkSegment) => {
     setEditing(record || null)
     if (record) form.setFieldsValue(record)
     else form.resetFields()
@@ -102,7 +104,7 @@ export default function NetworkTab({ api }: NetworkTabProps) {
     },
     {
       title: '操作', key: 'actions',
-      render: (_: any, record: any) => (
+      render: (_: unknown, record: NetworkSegment) => (
         <>
           <Button type="link" size="small" onClick={() => selectSegment(record.id)}>查看</Button>
           <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openModal(record)} />

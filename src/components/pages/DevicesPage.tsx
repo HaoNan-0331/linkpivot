@@ -19,7 +19,7 @@ export default function DevicesPage() {
 
   const load = async () => {
     setLoading(true)
-    try { setDevices(await window.api.device.list()) } catch (e: any) { message.error(e.message) }
+    try { setDevices(await window.api.device.list()) } catch (e: unknown) { message.error(e instanceof Error ? e.message : String(e)) }
     setLoading(false)
   }
 
@@ -30,8 +30,8 @@ export default function DevicesPage() {
       await window.api.device.create(values)
       message.success('设备添加成功')
       setFormOpen(false); load()
-    } catch (e: any) {
-      message.error(`添加失败: ${e.message}`)
+    } catch (e: unknown) {
+      message.error(`添加失败: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
@@ -41,8 +41,8 @@ export default function DevicesPage() {
       await window.api.device.update(editing.id, values)
       message.success('设备更新成功')
       setEditing(null); setFormOpen(false); load()
-    } catch (e: any) {
-      message.error(`更新失败: ${e.message}`)
+    } catch (e: unknown) {
+      message.error(`更新失败: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
@@ -61,8 +61,8 @@ export default function DevicesPage() {
       } else {
         message.error(`${device.name}: ${result.message}`)
       }
-    } catch (e: any) {
-      message.error(`${device.name}: 测试失败 - ${e.message}`)
+    } catch (e: unknown) {
+      message.error(`${device.name}: 测试失败 - ${e instanceof Error ? e.message : String(e)}`)
     }
     setTestingId(null)
   }
