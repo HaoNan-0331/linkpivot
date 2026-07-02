@@ -6,6 +6,7 @@ import type { ARPEntry, ARPCollectionResult, ARPScanProgress } from './arp'
 import type { IPMACBinding, IPMACChange, ChangeStats, ExcludedIP, CreateExcludedIPInput } from './anomaly'
 import type { OUIRow, CreateOUIInput, UpdateOUIInput, OUIStats, ScheduleConfig, SchedulerStatus, UpdateScheduleInput } from './oui'
 import type { ChatMessage, ChatSession, DiscoverResult } from './ai'
+import type { KbDocument, KbStatus, KbSearchResult } from './kb'
 // FE-02：ChatMessage/ChatSession 迁至 ./ai（role 收联合类型）。
 // re-export 维持既有 `import { ChatMessage } from '@/types/electron'` 调用面
 // 不中断（AIPage.tsx 等，FE-01 Wave 2 将迁移导入路径至 @/types/ai）。
@@ -140,15 +141,15 @@ export interface ElectronAPI {
     runNow: () => Promise<SchedulerRunResult>
     getStatus: () => Promise<SchedulerStatus>
   }
-  // kb.* 通道归 05-04 建模（KB DTO 下沉 05-04 就近定义，本 plan 不碰 kb）
+  // FE-02 (05-04)：kb.* 通道收类型（05-01 保留 Promise<any>，本 plan 接力，DTO 见 src/types/kb.ts）
   kb: {
-    uploadBuffer: (buffer: ArrayBuffer, fileName: string, fileType: string, fileSize: number, category: string, deviceId: string | null) => Promise<any>
-    listDocuments: (deviceId?: string, category?: string) => Promise<any[]>
+    uploadBuffer: (buffer: ArrayBuffer, fileName: string, fileType: string, fileSize: number, category: string, deviceId: string | null) => Promise<{ id: string }>
+    listDocuments: (deviceId?: string, category?: string) => Promise<KbDocument[]>
     deleteDocument: (docId: string) => Promise<void>
-    getDocument: (docId: string) => Promise<any>
-    getStatus: (docId: string) => Promise<any>
-    reprocess: (docId: string) => Promise<any>
-    search: (query: string, deviceIds?: string[], topK?: number) => Promise<any[]>
+    getDocument: (docId: string) => Promise<KbDocument | null>
+    getStatus: (docId: string) => Promise<KbStatus>
+    reprocess: (docId: string) => Promise<{ id: string }>
+    search: (query: string, deviceIds?: string[], topK?: number) => Promise<KbSearchResult[]>
     updateChunk: (chunkId: string, title: string, content: string) => Promise<void>
     deleteChunk: (chunkId: string) => Promise<void>
     mergeChunks: (chunkIds: string[], newTitle: string) => Promise<string>

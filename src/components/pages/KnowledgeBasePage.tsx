@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { Table, Button, Upload, Modal, message, Tag, Space, Popconfirm, Input, Select, Card, Checkbox, InputNumber } from 'antd'
 import { UploadOutlined, DeleteOutlined, ReloadOutlined, SearchOutlined, FileTextOutlined, FilePdfOutlined, FileWordOutlined, EditOutlined, MergeCellsOutlined, ScissorOutlined, SaveOutlined, CloseOutlined } from '@ant-design/icons'
+import type { KbDocument, KbChunk, KbImage, KbSearchResult } from '@/types/kb'
+import type { Device } from '@/types/device'
 
 const CATEGORY_OPTIONS = [
   { value: 'manual', label: '手册' },
@@ -28,14 +30,14 @@ function formatSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-function ChunkContent({ content, images }: { content: string; images: any[] }) {
+function ChunkContent({ content, images }: { content: string; images: KbImage[] }) {
   const [imgDataMap, setImgDataMap] = useState<Record<string, string>>({})
   const [previewImg, setPreviewImg] = useState<string | null>(null)
 
   useEffect(() => {
     if (!images || images.length === 0) return
     let cancelled = false
-    Promise.all(images.map(async (img: any) => {
+    Promise.all(images.map(async (img: KbImage) => {
       try {
         const data = await window.api.kb.getImageData(img.file_path)
         if (!cancelled && data) setImgDataMap(prev => ({ ...prev, [img.id]: data }))
@@ -86,15 +88,15 @@ function ChunkContent({ content, images }: { content: string; images: any[] }) {
 }
 
 export default function KnowledgeBasePage() {
-  const [documents, setDocuments] = useState<any[]>([])
+  const [documents, setDocuments] = useState<KbDocument[]>([])
   const [loading, setLoading] = useState(false)
-  const [devices, setDevices] = useState<any[]>([])
+  const [devices, setDevices] = useState<Device[]>([])
   const [filterDevice, setFilterDevice] = useState<string | undefined>()
   const [filterCategory, setFilterCategory] = useState<string | undefined>()
   const [searchQuery, setSearchQuery] = useState('')
-  const [searchResults, setSearchResults] = useState<any[]>([])
+  const [searchResults, setSearchResults] = useState<KbSearchResult[]>([])
   const [searching, setSearching] = useState(false)
-  const [detailDoc, setDetailDoc] = useState<any>(null)
+  const [detailDoc, setDetailDoc] = useState<KbDocument | null>(null)
   const [detailModalOpen, setDetailModalOpen] = useState(false)
   const [editingChunkId, setEditingChunkId] = useState<string | null>(null)
   const [editTitle, setEditTitle] = useState('')
@@ -111,7 +113,7 @@ export default function KnowledgeBasePage() {
     setLoading(true)
     try {
       const list = await window.api.kb.listDocuments(filterDevice, filterCategory)
-      setDocuments(list as any[])
+      setDocuments(list)
     } catch (err) {
       message.error('加载文档列表失败: ' + (err as Error).message)
     } finally {
@@ -120,7 +122,7 @@ export default function KnowledgeBasePage() {
   }
 
   useEffect(() => {
-    window.api.device.list().then(list => setDevices(list as any[])).catch(() => {})
+    window.api.device.list().then(list => setDevices(list)).catch(() => {})
   }, [])
 
   useEffect(() => { loadDocuments() }, [filterDevice, filterCategory])
@@ -176,7 +178,7 @@ export default function KnowledgeBasePage() {
     setSearching(true)
     try {
       const results = await window.api.kb.search(searchQuery)
-      setSearchResults(results as any[])
+      setSearchResults(results)
     } catch (err) {
       message.error('检索失败: ' + (err as Error).message)
     } finally {
@@ -208,7 +210,7 @@ export default function KnowledgeBasePage() {
     }
   }
 
-  const startEdit = (chunk: any) => {
+  const startEdit = (chunk: KbChunk) => {
     setEditingChunkId(chunk.id)
     setEditTitle(chunk.title || '')
     setEditContent(chunk.content || '')
@@ -242,8 +244,9 @@ export default function KnowledgeBasePage() {
       message.warning('请至少选择2个章节')
       return
     }
-    const chunks = detailDoc.chunks.filter((c: any) => selectedChunks.includes(c.id))
-    const defaultTitle = chunks.map((c: any) => c.title).filter(Boolean).join(' + ')
+    if (!detailDoc || !detailDoc.chunks) return
+    const chunks = detailDoc.chunks.filter((c: KbChunk) => selectedChunks.includes(c.id))
+    const defaultTitle = chunks.map((c: KbChunk) => c.title).filter(Boolean).join(' + ')
     let mergeTitle = defaultTitle
     Modal.confirm({
       title: '合并章节',
@@ -267,7 +270,7 @@ export default function KnowledgeBasePage() {
     })
   }
 
-  const openSplitModal = (chunk: any) => {
+  const openSplitModal = (chunk: KbChunk) => {
     setSplitChunkId(chunk.id)
     setSplitPos(Math.floor((chunk.content || '').length / 2))
     setSplitTitle1(chunk.title || '上半部分')
@@ -298,9 +301,9 @@ export default function KnowledgeBasePage() {
       title: '文件名',
       dataIndex: 'file_name',
       key: 'file_name',
-      render: (name: string, record: any) => (
+      render: (name: string, record: KbDocument) => (
         <Space>
-          {FILE_TYPE_ICONS[record.file_type] || <FileTextOutlined />}
+          {FILE_TYPE_ICONS[record.file_type ?? ''] || <FileTextOutlined />}
           <a onClick={() => showDetail(record.id)}>{name}</a>
         </Space>
       ),
@@ -324,7 +327,7 @@ export default function KnowledgeBasePage() {
       dataIndex: 'status',
       key: 'status',
       width: 200,
-      render: (status: string, record: any) => {
+      render: (status: string, record: KbDocument) => {
         const s = STATUS_MAP[status] || { color: 'default', text: status }
         return (
           <div>
@@ -341,7 +344,7 @@ export default function KnowledgeBasePage() {
       title: '操作',
       key: 'action',
       width: 150,
-      render: (_: any, record: any) => (
+      render: (_: unknown, record: KbDocument) => (
         <Space>
           {record.status === 'error' && (
             <Button size="small" icon={<ReloadOutlined />} onClick={() => handleReprocess(record.id)}>重试</Button>
@@ -382,7 +385,7 @@ export default function KnowledgeBasePage() {
                     <p>{file.name} ({formatSize(file.size)})</p>
                     <Select defaultValue="manual" style={{ width: '100%', marginTop: 8 }} options={CATEGORY_OPTIONS} onChange={v => { uploadCategory = v }} />
                     <Select placeholder="关联设备（可选）" allowClear style={{ width: '100%', marginTop: 8 }}
-                      options={[{ value: '', label: '全局文档' }, ...devices.map((d: any) => ({ value: d.id, label: d.name }))]}
+                      options={[{ value: '', label: '全局文档' }, ...devices.map((d) => ({ value: d.id, label: d.name }))]}
                       onChange={v => { uploadDeviceId = v || null }}
                     />
                   </div>
@@ -400,7 +403,7 @@ export default function KnowledgeBasePage() {
             style={{ width: 160 }}
             value={filterDevice}
             onChange={setFilterDevice}
-            options={devices.map((d: any) => ({ value: d.id, label: d.name }))}
+            options={devices.map((d) => ({ value: d.id, label: d.name }))}
           />
           <Select
             placeholder="筛选分类"
@@ -434,7 +437,7 @@ export default function KnowledgeBasePage() {
         </Space.Compact>
         {searchResults.length > 0 && (
           <div>
-            {searchResults.map((r: any, i: number) => (
+            {searchResults.map((r: KbSearchResult, i: number) => (
               <Card key={r.id} size="small" style={{ marginBottom: 8 }} title={
                 <Space>
                   <Tag color="blue">#{i + 1}</Tag>
@@ -443,7 +446,7 @@ export default function KnowledgeBasePage() {
                 </Space>
               }>
                 <div style={{ maxHeight: 80, overflow: 'hidden' }}>
-                  {r.content?.slice(0, 300)}{r.content?.length > 300 ? '...' : ''}
+                  {r.content?.slice(0, 300)}{(r.content?.length ?? 0) > 300 ? '...' : ''}
                 </div>
               </Card>
             ))}
@@ -462,7 +465,7 @@ export default function KnowledgeBasePage() {
           <div>
             <Space style={{ marginBottom: 12 }}>
               <span><strong>文件名：</strong>{detailDoc.file_name}</span>
-              <span><strong>状态：</strong><Tag color={STATUS_MAP[detailDoc.status]?.color}>{STATUS_MAP[detailDoc.status]?.text}</Tag></span>
+              <span><strong>状态：</strong><Tag color={STATUS_MAP[detailDoc.status ?? '']?.color}>{STATUS_MAP[detailDoc.status ?? '']?.text}</Tag></span>
               <span><strong>分块数：</strong>{detailDoc.chunk_count}</span>
               {selectedChunks.length >= 2 && (
                 <Button size="small" type="primary" icon={<MergeCellsOutlined />} onClick={handleMerge}>
@@ -470,7 +473,7 @@ export default function KnowledgeBasePage() {
                 </Button>
               )}
             </Space>
-            {detailDoc.chunks?.length > 0 ? detailDoc.chunks.map((c: any) => (
+            {(detailDoc.chunks?.length ?? 0) > 0 ? detailDoc.chunks!.map((c: KbChunk) => (
               <Card
                 key={c.id}
                 size="small"
