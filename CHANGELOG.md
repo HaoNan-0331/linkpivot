@@ -1,5 +1,22 @@
 # CHANGELOG
 
+## 2026-07-02
+
+### Phase 5 Plan 01 · FE-02 类型契约 foundation（D-5-2/D-5-3）
+- **重写 `src/types/electron.d.ts`**：非 kb 通道全部 `any` 替换为 src/types DTO（Device/Topology/NetworkSegment/IPDetail/IPMACChange/IPMACBinding/ExcludedIP/ChangeStats 等）；`PaginatedResult<any>` 泛型收为 IPDetail/IPMACChange/OUIRow；3 list 通道（network/anomaly/oui）信封类型化
+- **新建 `src/types/ai.ts`**：ChatMessage（role 收 `'user'|'assistant'`）/ ChatSession / DiscoverResult（复用 TopologyNode/TopologyEdge）
+- **`src/types/oui.ts` 补 `OUIRow`**：snake_case DB 行（ouiService 未做 camelCase 映射，旧 OUIEntry camelCase 与 IPC 真实返回不符，D-5-3 缺 DTO 就近补，Rule 1 bug 修复）
+- **`electron.d.ts` 新增通道**：`scheduler`（getConfig/updateConfig/runNow/getStatus，对齐 preload.ts:104-109 + schedulerIpc.ts 真实签名，无臆造 saveConfig/start/stop）、`arp`（collectFromDevice/collectFromAll）、`export`（arpTable/changes/networkUsage）—— 三组 preload 已暴露但旧 electron.d.ts 漏标
+- **`electron.d.ts` re-export ChatMessage/ChatSession**：维持 AIPage.tsx 既有 import 不中断（FE-01 Wave 2 迁移导入路径）
+- **4 个 IP Tab + SettingsPage + DevicesPage 清 any**（6 文件 any after 全 0，issue 4 绝对值验收）：
+  - props `api:any` → `ElectronAPI`；useState `any` → 真实 DTO（ARPEntry/IPMACChange/NetworkSegment/OUIRow/Device）
+  - SettingsPage 删 `(window as any).api` 绕过，scheduler 走 `window.api.scheduler.*`；schedulerConfig/Status 收为 `ScheduleConfig`/`SchedulerStatus`
+  - 全部 `catch (e:any)` → `catch (e:unknown)` + `instanceof Error` 窄化（统一错误处理模式）
+  - Phase 4 信封 `.rows` 读路径保留无回退
+- **kb.* 通道保留 `Promise<any>`**：归 05-04 建模（KB DTO 下沉 05-04 就近定义，避免跨 wave 依赖）
+- **不在本 plan**：AIPage（FE-01 独占）、KnowledgeBasePage（05-04）、后端 services any（milestone 外）、mock-api.ts（dev-only）
+- 验证：tsc web strict + noUnusedLocals 全绿；vitest 25 测试不回归；esbuild 主进程打包不回归
+
 ## 2026-06-28
 
 ### Phase 4 Plan 01 · DATA-01 三 list 通道 hybrid 分页契约（D-4-1~D-4-4, D-4-6）

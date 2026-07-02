@@ -10,7 +10,7 @@
 **Plans**: 4 plans
 Plans:
 **Wave 1**（2 plans 并行，files_modified 零重叠）
-- [ ] 05-01-PLAN.md — FE-02 类型契约 foundation：electron.d.ts 全建模（含新增 scheduler 通道）+ 新建 src/types/{kb,ai}.ts 补缺 DTO + 4 IP Tab + SettingsPage + DevicesPage 清 any（D-5-2/D-5-3）
+- [x] 05-01-PLAN.md — FE-02 类型契约 foundation：electron.d.ts 全建模（含新增 scheduler 通道）+ 新建 src/types/{kb,ai}.ts 补缺 DTO + 4 IP Tab + SettingsPage + DevicesPage 清 any（D-5-2/D-5-3）
 - [ ] 05-02-PLAN.md — FE-03 TopologyPage ref-mirror（nodesRef/edgesRef）：debouncedSave/saveTopology/toolbar 注册/handleDiscoveryConfirm 读 ref.current，useCallback deps 去 nodes/edges，不迁 store（D-5-4）+ 人工 HV
 
 **Wave 2** *(blocked on Wave 1 / 05-01 完成)*（2 plans 并行，files_modified 零重叠）
