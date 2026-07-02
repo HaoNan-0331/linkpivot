@@ -23,7 +23,19 @@ export default function TopologyPage() {
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<Set<string>>(new Set())
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isLoadingRef = useRef(false)
+  // FE-03 (D-5-4): ref-mirror 同步最新 nodes/edges，供注册一次但需读最新拓扑的回调读取，消除 stale closure。
+  // 不迁 useNodesState/useEdgesState 到 store（红线）——仅回调读取路径从闭包变量改为 ref.current。
+  const nodesRef = useRef<TopologyNode[]>([])
+  const edgesRef = useRef<TopologyEdge[]>([])
   const setToolbarState = useTopologyToolbarStore((s) => s.setToolbar)
+
+  // FE-03: ref 同步 effect（O(1) 赋值，与既有 isLoadingRef/saveTimerRef 同模式，无性能影响）
+  useEffect(() => {
+    nodesRef.current = nodes
+  }, [nodes])
+  useEffect(() => {
+    edgesRef.current = edges
+  }, [edges])
 
   const loadTopology = useCallback(async (id: string) => {
     isLoadingRef.current = true
@@ -63,22 +75,22 @@ export default function TopologyPage() {
     if (!currentTopologyId) return
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     await window.api.topology.update(currentTopologyId, {
-      nodes: nodes.map((n) => ({ ...n })),
-      edges: edges.map((e) => ({ ...e })),
+      nodes: nodesRef.current.map((n) => ({ ...n })),
+      edges: edgesRef.current.map((e) => ({ ...e })),
     })
     message.success('保存成功')
-  }, [currentTopologyId, nodes, edges])
+  }, [currentTopologyId])
 
   const debouncedSave = useCallback(() => {
     if (!currentTopologyId) return
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(() => {
       window.api.topology.update(currentTopologyId, {
-        nodes: nodes.map((n) => ({ ...n })),
-        edges: edges.map((e) => ({ ...e })),
+        nodes: nodesRef.current.map((n) => ({ ...n })),
+        edges: edgesRef.current.map((e) => ({ ...e })),
       })
     }, 1000)
-  }, [currentTopologyId, nodes, edges])
+  }, [currentTopologyId])
 
   useEffect(() => {
     if (isLoadingRef.current) return
@@ -172,14 +184,13 @@ export default function TopologyPage() {
 
   const handleDiscoveryConfirm = useCallback(
     (discoveredNodes: TopologyNode[], discoveredEdges: TopologyEdge[]) => {
-      // Merge discovered nodes (skip duplicates by deviceId)
-      const existingIds = new Set(nodes.map((n) => n.data.deviceId))
+      // FE-03: 读 ref.current 取最新拓扑（消除 stale closure），合并去重语义不变
+      const existingIds = new Set(nodesRef.current.map((n) => n.data.deviceId))
       const newNodes = discoveredNodes.filter((n) => !existingIds.has(n.data.deviceId))
       setNodes((nds) => [...nds, ...newNodes])
 
-      // Merge discovered edges (skip duplicates by source+target)
       const existingEdgeKeys = new Set(
-        edges.map((e) => `${e.source}->${e.target}`)
+        edgesRef.current.map((e) => `${e.source}->${e.target}`)
       )
       const newEdges = discoveredEdges.filter(
         (e) => !existingEdgeKeys.has(`${e.source}->${e.target}`)
@@ -195,7 +206,7 @@ export default function TopologyPage() {
         message.info('所有节点和连线已存在，无需导入')
       }
     },
-    [nodes, edges, setNodes, setEdges]
+    [setNodes, setEdges]
   )
 
   const handleNodeDoubleClick = useCallback(async (_nodeId: string, data: TopologyNodeData) => {
@@ -230,11 +241,12 @@ export default function TopologyPage() {
   const handleEditSelectedNode = useCallback(() => {
     const nodeId = [...selectedNodeIds][0]
     if (!nodeId) return
-    const node = nodes.find((n) => n.id === nodeId)
+    // FE-03: 读 ref.current 取最新 nodes（消除 stale closure）
+    const node = nodesRef.current.find((n) => n.id === nodeId)
     if (!node) return
     setEditingNodeData(node.data)
     setEditModalOpen(true)
-  }, [selectedNodeIds, nodes])
+  }, [selectedNodeIds])
 
   const handleCanvasSelectionChange = useCallback((nodeIds: string[], edgeIds: string[]) => {
     setSelectedNodeIds(new Set(nodeIds))

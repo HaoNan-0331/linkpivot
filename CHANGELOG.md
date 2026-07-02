@@ -2,6 +2,14 @@
 
 ## 2026-07-02
 
+### Phase 5 Plan 02 · FE-03 TopologyPage stale closure ref-mirror（D-5-4）
+- **`src/components/pages/TopologyPage.tsx` ref-mirror 落地**：新增 `nodesRef`/`edgesRef`（紧邻既有 `saveTimerRef`/`isLoadingRef` 同模式），两个同步 effect `nodesRef.current = nodes` / `edgesRef.current = edges`（O(1) 赋值，无性能影响）
+- **全 stale closure 点改读 ref.current**：`saveTopology`、`debouncedSave`（setTimeout 闭包）、`handleDiscoveryConfirm`、`handleEditSelectedNode` —— 体内读 `nodesRef.current`/`edgesRef.current` 取最新拓扑，`useCallback` deps 去掉裸 `nodes`/`edges`，回调注册稳定（消除「注册与调用间窗口」stale 风险，D-5-4 意图）
+- **拓扑持久化语义 byte-for-byte 不变**：保存触发时机（debouncedSave effect 仍依赖 nodes/edges 触发）、保存内容（nodes/edges 浅拷贝）、保存 API（topology.update）全部不动；仅读取路径从闭包变量改为 ref.current
+- **D-5-4 红线守住**：`useNodesState`/`useEdgesState` 契约不变，**未迁 nodes/edges 到 zustand store**（外迁触及核心价值「拓扑准确呈现」最高优先级面，风险不抵收益）
+- 函数式更新 `setNodes(nds => ...)` / `setEdges(eds => ...)` 本就读最新，无 stale 风险，不改（handleConnect/handleAddDevices/handleDeleteSelected/handleEditConfirm/handleNew/handleDelete/handleImport）
+- 验证：tsc web strict + noUnusedLocals 全绿；vitest 25 测试不回归；esbuild 主进程打包不回归；grep `nodesRef\|edgesRef` 命中 11；待人工 HV（DEP-1 限制无前端自动化运行时测试）
+
 ### Phase 5 Plan 01 · FE-02 类型契约 foundation（D-5-2/D-5-3）
 - **重写 `src/types/electron.d.ts`**：非 kb 通道全部 `any` 替换为 src/types DTO（Device/Topology/NetworkSegment/IPDetail/IPMACChange/IPMACBinding/ExcludedIP/ChangeStats 等）；`PaginatedResult<any>` 泛型收为 IPDetail/IPMACChange/OUIRow；3 list 通道（network/anomaly/oui）信封类型化
 - **新建 `src/types/ai.ts`**：ChatMessage（role 收 `'user'|'assistant'`）/ ChatSession / DiscoverResult（复用 TopologyNode/TopologyEdge）
