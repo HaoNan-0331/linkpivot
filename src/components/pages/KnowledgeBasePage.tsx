@@ -3,6 +3,7 @@ import { Table, Button, Upload, Modal, message, Tag, Space, Popconfirm, Input, S
 import { UploadOutlined, DeleteOutlined, ReloadOutlined, SearchOutlined, FileTextOutlined, FilePdfOutlined, FileWordOutlined, EditOutlined, MergeCellsOutlined, ScissorOutlined, SaveOutlined, CloseOutlined } from '@ant-design/icons'
 import type { KbDocument, KbChunk, KbImage, KbSearchResult } from '@/types/kb'
 import type { Device } from '@/types/device'
+import { getImage } from './kb/imageCache'
 
 const CATEGORY_OPTIONS = [
   { value: 'manual', label: '手册' },
@@ -36,14 +37,22 @@ function ChunkContent({ content, images }: { content: string; images: KbImage[] 
 
   useEffect(() => {
     if (!images || images.length === 0) return
-    let cancelled = false
+    // FE-04 (D-5-5): AbortController 替代 cancelled 标志位，结构化取消
+    const controller = new AbortController()
+    const signal = controller.signal
     Promise.all(images.map(async (img: KbImage) => {
       try {
-        const data = await window.api.kb.getImageData(img.file_path)
-        if (!cancelled && data) setImgDataMap(prev => ({ ...prev, [img.id]: data }))
-      } catch { /* ignore */ }
+        const data = await getImage(img.file_path, signal)
+        // 卸载/切换后 abort → 不 setState
+        if (!signal.aborted && data) {
+          setImgDataMap(prev => ({ ...prev, [img.id]: data }))
+        }
+      } catch {
+        // FRAG-2 顺带：图片失败不再完全静默，console.warn 提供反馈（UI 不崩）
+        console.warn('[kb] 图片加载失败:', img.file_path)
+      }
     }))
-    return () => { cancelled = true }
+    return () => { controller.abort() } // 卸载/切换取消在途（结构化）
   }, [images])
 
   // Collect all [图片N] markers in order, map to images array index
