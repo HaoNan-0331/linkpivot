@@ -27,7 +27,7 @@
 
 - [ ] **FE-01**: `AIPage` 拆分为 `ChatSessionList` / `ChatMessageList` / `ChatInput` / `CommandConfirmModal` 4 子组件
 - [x] **FE-02**: 前端 `any` 类型替换为 `src/types` interface（ArpTab / AnomalyTab / NetworkTab / OuiTab / SettingsPage / KnowledgeBasePage 等 `api:any` 与组件 props）
-- [ ] **FE-03**: `TopologyPage` store 回调改用 `getState()` 读最新值，消除 stale closure
+- [x] **FE-03**: `TopologyPage` store 回调改用 `getState()` 读最新值，消除 stale closure
 - [ ] **FE-04**: `ChunkContent` 图片加载加 `AbortController` + ref 缓存，卸载/切换时取消在途请求
 
 ### Robustness
@@ -66,7 +66,7 @@
 | DATA-01 | Phase 4 | Complete |
 | FE-01 | Phase 5 | Pending |
 | FE-02 | Phase 5 | Complete |
-| FE-03 | Phase 5 | Pending |
+| FE-03 | Phase 5 | Complete |
 | FE-04 | Phase 5 | Pending |
 | ROBUST-01 | Phase 6 | Pending |
 | ROBUST-02 | Phase 6 | Pending |
