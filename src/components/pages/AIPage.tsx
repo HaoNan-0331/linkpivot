@@ -40,7 +40,11 @@ export default function AIPage() {
       }
     })()
     return () => { cancelled = true }
-  }, [chat])
+    // CR-01 fix：mount-only 初始化（恢复原 AIPage useEffect(loadData, []) 语义）。
+    // [chat] 会因 useAIChat 每渲染返回新对象字面量触发无限重渲染（getConfig→loadData→setState→再渲染→IPC 风暴）。
+    // chat.loadData 为 first-render 闭包，捕获初始 currentSessionId=null，mount 加载语义正确。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   if (configLoading) {
     return <div style={{ textAlign: 'center', paddingTop: 100 }}><Spin size="large" /></div>
