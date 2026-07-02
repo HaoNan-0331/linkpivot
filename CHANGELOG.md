@@ -2,6 +2,21 @@
 
 ## 2026-07-02
 
+### Phase 5 Plan 03 · FE-01 AIPage 拆分 4 子组件 + useAIChat hook（D-5-1/D-5-2）
+- **拆分结构落地**：`src/components/pages/AIPage.tsx`（399 行）拆为 4 独立子组件文件 + 1 个 useAIChat 自定义 hook + 本地 types.ts，AIPage 退化为 ~95 行薄编排层
+- **新建 `src/components/pages/ai/` 目录**（6 文件）：
+  - `types.ts`：DeviceOption/ChatMsg/ConfirmData/UseAIChatReturn（迁移自 AIPage 本地 interface）
+  - `useAIChat.ts`：page-local 会话态自定义 hook（8 state + 7 handler，typed contract 返回）
+  - `ChatSessionList.tsx`：会话列表子组件（render-only）
+  - `ChatMessageList.tsx`：消息列表子组件（含 chatEndRef 滚动 effect）
+  - `ChatInput.tsx`：输入框子组件（event-driven）
+  - `CommandConfirmModal.tsx`：命令确认弹窗子组件
+- **D-5-1 红线守住**：useAIChat 是**自定义 hook**（非 zustand store、非 prop drilling）；设备多选 `<Select mode="multiple">` **留 AIPage 编排层 header**（经 `chat.selectedDevices/setSelectedDevices` 消费，非子组件职责）；未引入 `aiChatStore` 全局单例
+- **FE-02 顺带收敛（D-5-2，AIPage 由 FE-01 独占）**：原 line 60/61 `(d: any)` → Device[] 强类型 filter 去标注；原 line 101 `m.role as 'user'|'assistant'` → role 已联合类型去 cast；原 line 160/175 `catch (e: any)` → `catch (e: unknown)` + `instanceof Error` 窄化。AIPage any 清零（before 4 → 0）
+- **configLoading/hasConfig 留编排层**（page 守卫，非 hook 契约）；hook 暴露 `loadData(hasConfig)` 供守卫通过后调用
+- **导入路径迁移**：`@/types/electron` → `@/types/ai`（ChatMessage/ChatSession）；electron.d.ts 的 re-export 兼容层保留（无回退需求，但保留不阻塞）
+- 验证：tsc web strict + noUnusedLocals 全绿；vitest 25 测试不回归；esbuild 主进程打包不回归；AIPage 4 处 any 清零；header Select 多选保留；待人工 HV（DEP-1 无前端自动化运行时测试，推迟 phase 末批量 HV）
+
 ### Phase 5 Plan 02 · FE-03 TopologyPage stale closure ref-mirror（D-5-4）
 - **`src/components/pages/TopologyPage.tsx` ref-mirror 落地**：新增 `nodesRef`/`edgesRef`（紧邻既有 `saveTimerRef`/`isLoadingRef` 同模式），两个同步 effect `nodesRef.current = nodes` / `edgesRef.current = edges`（O(1) 赋值，无性能影响）
 - **全 stale closure 点改读 ref.current**：`saveTopology`、`debouncedSave`（setTimeout 闭包）、`handleDiscoveryConfirm`、`handleEditSelectedNode` —— 体内读 `nodesRef.current`/`edgesRef.current` 取最新拓扑，`useCallback` deps 去掉裸 `nodes`/`edges`，回调注册稳定（消除「注册与调用间窗口」stale 风险，D-5-4 意图）
