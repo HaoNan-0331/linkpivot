@@ -1,3 +1,16 @@
+import type { PaginatedResult } from './pagination'
+import type { Device, CreateDeviceDTO, UpdateDeviceDTO } from './device'
+import type { Topology } from './topology'
+import type { NetworkSegment, IPUsage, IPDetail, CreateNetworkInput, UpdateNetworkInput } from './network'
+import type { ARPEntry, ARPCollectionResult, ARPScanProgress } from './arp'
+import type { IPMACBinding, IPMACChange, ChangeStats, ExcludedIP, CreateExcludedIPInput } from './anomaly'
+import type { OUIRow, CreateOUIInput, UpdateOUIInput, OUIStats, ScheduleConfig, SchedulerStatus, UpdateScheduleInput } from './oui'
+import type { ChatMessage, ChatSession, DiscoverResult } from './ai'
+// FE-02：ChatMessage/ChatSession 迁至 ./ai（role 收联合类型）。
+// re-export 维持既有 `import { ChatMessage } from '@/types/electron'` 调用面
+// 不中断（AIPage.tsx 等，FE-01 Wave 2 将迁移导入路径至 @/types/ai）。
+export type { ChatMessage, ChatSession }
+
 export interface AIConfig {
   provider: string
   apiKey: string
@@ -34,22 +47,25 @@ export interface AISystemLog {
   createdAt: string
 }
 
-export interface ChatMessage {
-  id: string
-  role: string
-  content: string
-  deviceId: string | null
-  createdAt: string
+// ARPCollector / schedulerService 共用的批量采集统计结构
+// （arpIpc.ts:49-70 / schedulerService.ts:71 的 entries/changes/failures/deprecated）
+export interface ARPBatchStats {
+  entries: number
+  changes: number
+  failures: number
+  deprecated: number
 }
 
-export interface ChatSession {
-  id: string
-  title: string
-  deviceId: string | null
-  createdAt: string
+export interface ARPBatchResult {
+  results: ARPCollectionResult[]
+  stats: ARPBatchStats
 }
 
-import type { PaginatedResult } from './pagination'
+export interface SchedulerRunResult {
+  success: boolean
+  message: string
+  stats?: { devices: number; entries: number; changes: number }
+}
 
 export interface ElectronAPI {
   auth: {
@@ -59,20 +75,20 @@ export interface ElectronAPI {
     initAdmin: (u: string, p: string) => Promise<{ success: boolean; error?: string }>
   }
   device: {
-    list: () => Promise<any[]>
-    create: (data: any) => Promise<any>
-    update: (id: string, data: any) => Promise<any>
+    list: () => Promise<Device[]>
+    create: (data: CreateDeviceDTO) => Promise<Device>
+    update: (id: string, data: UpdateDeviceDTO) => Promise<Device>
     delete: (id: string) => Promise<void>
-    getById: (id: string) => Promise<any>
+    getById: (id: string) => Promise<Device | null>
   }
   topology: {
-    list: () => Promise<any[]>
-    getById: (id: string) => Promise<any>
-    create: (data: any) => Promise<any>
-    update: (id: string, data: any) => Promise<void>
+    list: () => Promise<Topology[]>
+    getById: (id: string) => Promise<Topology | null>
+    create: (data: Partial<Topology>) => Promise<Topology>
+    update: (id: string, data: Partial<Pick<Topology, 'nodes' | 'edges'>>) => Promise<void>
     delete: (id: string) => Promise<void>
     exportJson: (id: string) => Promise<string>
-    importJson: (json: string) => Promise<any>
+    importJson: (json: string) => Promise<Topology>
   }
   connection: {
     sshConnect: (deviceId: string) => Promise<{ sessionId: string }>
@@ -85,8 +101,8 @@ export interface ElectronAPI {
     test: (deviceId: string) => Promise<{ success: boolean; message: string }>
   }
   ai: {
-    chat: (messages: Array<{ role: string; content: string }>, deviceIds?: string[], sessionId?: string) => Promise<string>
-    discoverTopology: (deviceIds: string[]) => Promise<{ nodes: any[]; edges: any[]; failedDevices: Array<{ deviceId: string; deviceName: string; error: string }> }>
+    chat: (messages: Array<{ role: 'user' | 'assistant'; content: string }>, deviceIds?: string[], sessionId?: string) => Promise<string>
+    discoverTopology: (deviceIds: string[]) => Promise<DiscoverResult>
     getConfig: () => Promise<AIConfig | null>
     saveConfig: (config: AIConfig) => Promise<void>
     getCommandWhitelist: () => Promise<string[]>
@@ -96,7 +112,7 @@ export interface ElectronAPI {
     confirmCommand: (execId: string, approved: boolean) => Promise<string>
     getLogs: (limit?: number) => Promise<AIExecLog[]>
     getChatHistory: () => Promise<ChatMessage[]>
-    saveMessage: (role: string, content: string, deviceId?: string | null, sessionId?: string | null) => Promise<void>
+    saveMessage: (role: 'user' | 'assistant', content: string, deviceId?: string | null, sessionId?: string | null) => Promise<void>
     clearHistory: () => Promise<void>
     createSession: (title: string, deviceId?: string) => Promise<ChatSession>
     listSessions: () => Promise<ChatSession[]>
@@ -105,6 +121,26 @@ export interface ElectronAPI {
     updateSessionTitle: (sessionId: string, title: string) => Promise<void>
     getSystemLogs: (limit?: number) => Promise<AISystemLog[]>
   }
+  // FE-02：补 arp 通道（preload.ts:59-62 已暴露，旧 electron.d.ts 漏标致 ArpTab 用 api:any 绕过）
+  arp: {
+    collectFromDevice: (deviceId: string) => Promise<ARPCollectionResult>
+    collectFromAll: () => Promise<ARPBatchResult>
+  }
+  // FE-02：补 export 通道（preload.ts:99-103 已暴露，ArpTab/NetworkTab/AnomalyTab 用）
+  export: {
+    arpTable: () => Promise<string | null>
+    changes: (unacknowledgedOnly?: boolean) => Promise<string | null>
+    networkUsage: (networkId?: number) => Promise<string | null>
+  }
+  // FE-02：补 scheduler 通道（preload.ts:104-109 + schedulerIpc.ts:6-19 真实 4 通道，
+  // 对齐 SettingsPage.tsx 调用面 getConfig/updateConfig/runNow/getStatus）
+  scheduler: {
+    getConfig: () => Promise<ScheduleConfig>
+    updateConfig: (data: UpdateScheduleInput) => Promise<ScheduleConfig>
+    runNow: () => Promise<SchedulerRunResult>
+    getStatus: () => Promise<SchedulerStatus>
+  }
+  // kb.* 通道归 05-04 建模（KB DTO 下沉 05-04 就近定义，本 plan 不碰 kb）
   kb: {
     uploadBuffer: (buffer: ArrayBuffer, fileName: string, fileType: string, fileSize: number, category: string, deviceId: string | null) => Promise<any>
     listDocuments: (deviceId?: string, category?: string) => Promise<any[]>
@@ -120,42 +156,44 @@ export interface ElectronAPI {
     getImageData: (imagePath: string) => Promise<string | null>
   }
   network: {
-    getAll: () => Promise<any[]>
-    getById: (id: number) => Promise<any>
-    create: (data: any) => Promise<any>
-    update: (data: any) => Promise<any>
+    getAll: () => Promise<NetworkSegment[]>
+    getById: (id: number) => Promise<NetworkSegment | null>
+    create: (data: CreateNetworkInput) => Promise<NetworkSegment>
+    update: (data: UpdateNetworkInput) => Promise<NetworkSegment>
     delete: (id: number) => Promise<void>
-    autoDiscover: () => Promise<any[]>
-    getIPUsage: (networkId: number) => Promise<any>
+    autoDiscover: () => Promise<NetworkSegment[]>
+    getIPUsage: (networkId: number) => Promise<IPUsage>
     // DATA-01 / D-4-2: list 通道返回信封 { rows, total, truncated }，渲染层读 .rows
-    getIPDetails: (networkId: number, searchIp?: string, searchMac?: string, sortBy?: string, sortOrder?: string, limit?: number, offset?: number) => Promise<PaginatedResult<any>>
+    getIPDetails: (networkId: number, searchIp?: string, searchMac?: string, sortBy?: string, sortOrder?: string, limit?: number, offset?: number) => Promise<PaginatedResult<IPDetail>>
   }
   anomaly: {
     // DATA-01 / D-4-2: list 通道返回信封 { rows, total, truncated }，渲染层读 .rows
-    getChanges: (unacknowledgedOnly?: boolean, limit?: number, offset?: number) => Promise<PaginatedResult<any>>
+    getChanges: (unacknowledgedOnly?: boolean, limit?: number, offset?: number) => Promise<PaginatedResult<IPMACChange>>
     acknowledge: (id: number, notes?: string) => Promise<void>
     acknowledgeAll: () => Promise<number>
     deleteChange: (id: number) => Promise<void>
     deleteChanges: (ids: number[]) => Promise<void>
-    getStats: () => Promise<any>
-    getBindingHistory: (ip: string) => Promise<any[]>
-    getExcludedIPs: () => Promise<any[]>
-    addExcludedIP: (data: any) => Promise<any>
+    getStats: () => Promise<ChangeStats>
+    getBindingHistory: (ip: string) => Promise<IPMACBinding[]>
+    getExcludedIPs: () => Promise<ExcludedIP[]>
+    addExcludedIP: (data: CreateExcludedIPInput) => Promise<ExcludedIP>
     deleteExcludedIP: (id: number) => Promise<void>
   }
   oui: {
     // DATA-01 / D-4-2: list 通道返回信封 { rows, total, truncated }，渲染层读 .rows
-    getAll: (limit?: number, offset?: number) => Promise<PaginatedResult<any>>
-    search: (keyword: string) => Promise<any[]>
-    getById: (id: number) => Promise<any>
-    add: (data: any) => Promise<any>
-    addBatch: (entries: any[]) => Promise<number>
-    update: (data: any) => Promise<any>
+    // 泛型用 OUIRow（snake_case DB 行，ouiService 未做 camelCase 映射）
+    getAll: (limit?: number, offset?: number) => Promise<PaginatedResult<OUIRow>>
+    search: (keyword: string) => Promise<OUIRow[]>
+    getById: (id: number) => Promise<OUIRow | null>
+    add: (data: CreateOUIInput) => Promise<OUIRow>
+    addBatch: (entries: CreateOUIInput[]) => Promise<number>
+    update: (data: UpdateOUIInput) => Promise<OUIRow>
     delete: (id: number) => Promise<void>
     deleteBatch: (ids: number[]) => Promise<void>
     getVendor: (mac: string) => Promise<string | null>
-    getAllVendors: () => Promise<any[]>
-    getStats: () => Promise<any>
+    // ouiService.getAllVendors 返回 string[]（vendor_name 列，未包对象）
+    getAllVendors: () => Promise<string[]>
+    getStats: () => Promise<OUIStats>
   }
 }
 
