@@ -14,6 +14,6 @@ Plans:
 - [x] 05-02-PLAN.md — FE-03 TopologyPage ref-mirror（nodesRef/edgesRef）：debouncedSave/saveTopology/toolbar 注册/handleDiscoveryConfirm 读 ref.current，useCallback deps 去 nodes/edges，不迁 store（D-5-4）+ 人工 HV
 
 **Wave 2** *(blocked on Wave 1 / 05-01 完成)*（2 plans 并行，files_modified 零重叠）
-- [ ] 05-03-PLAN.md — FE-01 AIPage 拆分：useAIChat hook（page-local，不用 zustand/prop drilling）+ 4 子组件（ChatSessionList/ChatMessageList/ChatInput/CommandConfirmModal）+ types.ts，AIPage 退化为薄编排层，顺带收 AIPage 4 处 any（D-5-1）+ 人工 HV
+- [x] 05-03-PLAN.md — FE-01 AIPage 拆分：useAIChat hook（page-local，不用 zustand/prop drilling）+ 4 子组件（ChatSessionList/ChatMessageList/ChatInput/CommandConfirmModal）+ types.ts，AIPage 退化为薄编排层，顺带收 AIPage 4 处 any（D-5-1）+ 人工 HV
 - [ ] 05-04-PLAN.md — FE-02 KB 类型化（17 处 any，含 ChunkContent images→KbImage[]）串行接 FE-04 新建 kb/imageCache.ts（模块级 LRU + in-flight 去重 + AbortSignal）+ ChunkContent 改 AbortController（D-5-5/D-5-6）+ 人工 HV
 **UI hint**: yes
