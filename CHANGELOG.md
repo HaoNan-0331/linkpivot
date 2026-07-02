@@ -2,6 +2,18 @@
 
 ## 2026-07-02
 
+### Phase 5 Plan 04 · FE-02 KB 类型化 + FE-04 ChunkContent 取消与缓存（D-5-2/D-5-3/D-5-5/D-5-6）
+- **新建 `src/types/kb.ts`**：KbDocument / KbChunk / KbImage / KbStatus / KbSearchResult，字段**严格反推自 KnowledgeBasePage.tsx 真实消费面**（issue 1 修正：`file_name` 非 filename、`images` 图片对象数组非 image_ids 字符串、`document?: { title: string }` 嵌套非 docId/docTitle；DB 行原生下划线 `device_id`/`error_message`/`created_at`/`chunk_index`/`char_count` 保留）
+- **`src/types/electron.d.ts` kb.* 通道收类型**（05-01 保留 Promise<any>，本 plan 接力）：listDocuments→`Promise<KbDocument[]>`、getDocument→`Promise<KbDocument|null>`、getStatus→`Promise<KbStatus>`、search→`Promise<KbSearchResult[]>`、uploadBuffer/reprocess→`Promise<{id:string}>`
+- **`KnowledgeBasePage.tsx` 17 处 any 全收敛**：ChunkContent `images: any[]` → `KbImage[]`、`img: any` → `KbImage`；documents/devices/searchResults/detailDoc 状态用 DTO；Table 列 render（file_name/status/操作）+ Select options（upload/filter）+ chunk map 全用强类型；nullable 字段窄化（`file_type??''`、`content?.length??0`、`status??''`、`chunks?.length??0`、handleMerge 前置 null 守卫、`chunks!` 断言）
+- **新建 `src/components/pages/kb/imageCache.ts`**：模块级 LRU 缓存 Map（`CACHE_MAX_ENTRIES=100`，按 count 有界，Map 插入顺序淘汰最老，O(1)）+ in-flight 去重 Map（同 file_path 并发复用 Promise，finally 清除允许重试）+ `getImage(path, signal)` 封装「缓存命中 → in-flight 复用 → 否则 IPC 并入缓存」+ `clearImageCache()` 手动清
+- **`ChunkContent` effect 改造**：`let cancelled = false` → `AbortController`（cleanup 调 `controller.abort()`，D-5-5 结构化取消）；`window.api.kb.getImageData` 直调 → `getImage(file_path, signal)` 走缓存层；FRAG-2 顺带：图片失败 `console.warn('[kb] 图片加载失败')` 提供反馈（不再完全静默，UI 不崩）
+- **D-5-5 红线守住**：`kb.getImageData` IPC 通道签名不动（preload.ts 未改）—— better-sqlite3 同步读不可真中断，AbortController 落地为「结构化取消标志 + 卸载防 setState + 配合 in-flight 去重」客户端语义，非真中断主进程 IO
+- **D-5-6 红线守住**：缓存**模块级**（非 per-instance，ChunkContent 频繁 re-mount 跨实例复用、存活卸载）
+- FE-02 类型化先于 FE-04 缓存（同文件串行，Task1 → Task2，FE-04 用 FE-02 的 KbImage 类型）
+- 验证：tsc web strict + noUnusedLocals 全绿；vitest 25 测试不回归；esbuild 主进程打包不回归；KB any after 绝对值 = 0（grep `:\s*any|as any|<any>` = 0）；preload.ts 无 kb 通道改动
+- 待人工 HV（DEP-1 限制无前端自动化运行时测试，推迟 phase 末批量 HV）
+
 ### Phase 5 Plan 03 · FE-01 AIPage 拆分 4 子组件 + useAIChat hook（D-5-1/D-5-2）
 - **拆分结构落地**：`src/components/pages/AIPage.tsx`（399 行）拆为 4 独立子组件文件 + 1 个 useAIChat 自定义 hook + 本地 types.ts，AIPage 退化为 ~95 行薄编排层
 - **新建 `src/components/pages/ai/` 目录**（6 文件）：

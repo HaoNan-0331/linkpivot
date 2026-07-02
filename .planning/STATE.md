@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: ready_to_plan
-last_updated: "2026-07-02T14:45:02.371Z"
+last_updated: "2026-07-02T14:56:45.140Z"
 progress:
   total_phases: 1
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 4
-  completed_plans: 3
-  percent: 75
+  completed_plans: 4
+  percent: 100
 ---
 
 # STATE: network_toplogy 技术债优化
@@ -25,6 +25,10 @@ progress:
 Phase: 05 (frontend-refactor-types) — EXECUTING
 Plan: 4 of 4
 
+- 05-04 (FE-02 KB 类型化 + FE-04 ChunkContent 取消与缓存, D-5-5/D-5-6) DONE — 05-04-SUMMARY.md 已生成, commits 7db81f2 (FE-02) / 5ce3483 (FE-04)
+- 05-03 (FE-01 AIPage 拆分 + useAIChat hook, D-5-1) DONE
+- 05-02 (FE-03 TopologyPage ref-mirror, D-5-4) DONE
+- 05-01 (FE-02 electron.d.ts foundation, D-5-2/D-5-3) DONE
 - 04-02 (DATA-01 export:arpTable 流式分块写 CSV, D-4-5) DONE — 04-02-SUMMARY.md 已生成, commit db1d61d
 - 04-01 (DATA-01 三 list 通道 hybrid 分页契约) DONE — 04-01-SUMMARY.md 已生成, commits 2c3963f(RED) / 7b02d7d(GREEN) / 8fd1b04 / 6371820
 
