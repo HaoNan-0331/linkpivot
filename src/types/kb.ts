@@ -45,4 +45,5 @@ export interface KbSearchResult {
   content?: string              // line 446 r.content slice 300
   document?: { title: string }  // line 442 r.document?.title（嵌套，非 docId/docTitle）
   score?: number
+  images?: KbImage[]            // FE-04 defer：检索结果 attach 图片，供 ChunkContent 渲染 [图片N]
 }

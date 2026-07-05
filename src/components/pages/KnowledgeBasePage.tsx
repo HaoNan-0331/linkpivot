@@ -454,9 +454,7 @@ export default function KnowledgeBasePage() {
                   <span style={{ color: '#999' }}>来自: {r.document?.title}</span>
                 </Space>
               }>
-                <div style={{ maxHeight: 80, overflow: 'hidden' }}>
-                  {r.content?.slice(0, 300)}{(r.content?.length ?? 0) > 300 ? '...' : ''}
-                </div>
+                <ChunkContent content={r.content || ''} images={r.images || []} />
               </Card>
             ))}
           </div>
