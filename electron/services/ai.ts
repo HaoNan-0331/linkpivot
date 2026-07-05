@@ -400,6 +400,10 @@ function execOne(client: Client, command: string): Promise<string> {
       if (stderr && typeof stderr.on === 'function') {
         stderr.on('data', () => { /* 忽略 stderr，必要时再收集 */ })
       }
+      // CR-01: stream error 兜底——对端 RST / 网络中断 / ssh2 channel 失败时 stream emit 'error'
+      // 而不 emit 'close'，不 listen 则 Promise 永不 settle，stream 句柄泄漏。
+      // 与 arpCollector.executeSSH line 61 同模式（finish(()=>reject(e))）。
+      stream.on('error', (e: Error) => reject(e))
       stream.on('close', () => resolve(stripAnsi(buf).trim()))
     })
   })
