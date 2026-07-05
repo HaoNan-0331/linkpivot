@@ -33,7 +33,7 @@
 ### Robustness
 
 - [x] **ROBUST-01**: `arpCollector` 的 `executeSSH`/`executeTelnet` 加 try/finally 保证 `client.end()`/`destroy()`，error 路径 `clearTimeout`，杜绝句柄泄漏 — Phase 6 Plan 06-01 完成（D-6-1 扩展含 ai.executeCommandsOnDevice，commits eef3004/2389bd8）
-- [x] **ROBUST-02**: `discovery` JSON parse 失败带错误上下文 + `createSystemLog` 调用 try/catch，避免静默吞错
+- [x] **ROBUST-02**: `discovery` JSON parse 失败带错误上下文 + `createSystemLog` 调用 try/catch，避免静默吞错 — Phase 6 Plan 06-02 完成（safeLog helper console.warn 兜底 + enrichParseError enriched Error 含原始片段 slice 0,200，commits 16cf9a4/9ad4040）
 
 ### Build
 
@@ -78,4 +78,4 @@
 
 ---
 *Requirements defined: 2026-06-21*
-*Last updated: 2026-06-28 after Phase 2 completion (ARCH-01, ARCH-02 Complete)*
+*Last updated: 2026-07-05 after Phase 6 completion (ROBUST-01, ROBUST-02 Complete — v1.0 milestone 全 14 REQ 交付)*
