@@ -113,7 +113,7 @@ Plans:
 Plans:
 **Wave 1**（2 plans 并行，files_modified 零重叠）
 - [x] 06-01-PLAN.md — ROBUST-01 arpCollector.executeSSH/executeTelnet try/finally 化 + executeTelnet 补自有 setTimeout + ai.executeCommandsOnDevice try/finally 统一回收（SC#1 + SC#4 闭环，D-6-1/D-6-2）— DONE 06-01-SUMMARY.md, commits eef3004/2389bd8, tsc+esbuild+vitest(25) 三绿
-- [ ] 06-02-PLAN.md — ROBUST-02 discovery 两处 JSON parse enriched Error（原始片段 slice(0,200)）+ command parse 补 safeLog + 5 处 createSystemLog 经 safeLog 非致命包裹（SC#2/SC#3，D-6-3/D-6-4）
+- [x] 06-02-PLAN.md — ROBUST-02 discovery 两处 JSON parse enriched Error（原始片段 slice(0,200)）+ command parse 补 safeLog + 5 处 createSystemLog 经 safeLog 非致命包裹（SC#2/SC#3，D-6-3/D-6-4）
 
 ## Progress
 
