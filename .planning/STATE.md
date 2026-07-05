@@ -91,6 +91,7 @@ v1.0 milestone close 时 acknowledged 的 deferred items（2026-07-05，DEP-1 na
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260628-trt | 修审计新发现 pdfjs-dist 缺失依赖 + backupScheduler retention=0 删备份 | 2026-06-28 | ba06854 | [260628-trt-pdfjs-dist-backupscheduler-retention-0](./quick/260628-trt-pdfjs-dist-backupscheduler-retention-0/) |
+| 260705-sj1 | KB 检索 snippet [图片N] → 图片渲染（search 4 路径 attachImages + ChunkContent 复用，Phase 5 FE-04 defer 闭环） | 2026-07-05 | a49b495/68c6ea3 | [260705-sj1-kb-snippet](./quick/260705-sj1-kb-snippet/) |
 | Phase 04 P03 | ~2min | 2 tasks | 4 files |
 | Phase 05 P01 | 30m | 2 tasks | 9 files |
 | Phase 05 P03 | ~12min | 2 auto + 1 HV(deferred) tasks | 6 created + 2 modified files |
