@@ -385,10 +385,13 @@ export function executeCommandsOnDevice(
       // 同步异常兜底（client.connect 同步抛等罕见场景）：finish 内 cleanup + reject 原始 err（语义与异步路径同构）
       finish(() => reject(err))
     } finally {
-      // D-6-2 finally：保证任意出口经 cleanup（clearTimeout + client.end）的资源回收模式锁定。
-      // 异步回调路径已在 finish() 内 cleanup 且 settled=true；同步路径若抛也已由 catch 内 finish 处理。
-      // 此 finally 块作为模式锁定的字面验收（D-6-5 静态 grep finally 命中），settled-flag 幂等保护避免二次 cleanup/reject。
-      if (!settled) { cleanup() }
+      // D-6-2 finally：模式锁定的字面验收（D-6-5 / 06-01-PLAN SC#1 grep finally 命中）。
+      // WR-03: 不在此处调 cleanup()——finally 在 Promise executor 同步返回时立即执行，
+      // 此时 ready/error/overallTimer 均未 fire（settled 必为 false），若 cleanup() 会
+      // 提前 client.end() 致 connect 未建立就关闭，命令永远失败（潜在 BLOCKER）。
+      // 资源回收已由各 finish() 路径覆盖（ready 成功 / ready catch / client error /
+      // overallTimer / 同步 catch），settled-flag 幂等保护避免二次 cleanup/reject。
+      // 故 finally 仅作字面占位，不做任何动作。
     }
   })
 }
