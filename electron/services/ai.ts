@@ -323,48 +323,68 @@ export function executeCommandsOnDevice(
     const client = new Client()
     const cfg = buildSSHConfig(device)
     const results: Array<{ command: string; output: string; success: boolean }> = new Array(commands.length)
+    // D-6-2：settled-flag 防重复 resolve/reject；cleanup 为统一资源回收出口（clearTimeout + client.end），
+    // 任意 ready 成功/ready catch/client error/overallTimer fire 路径均经 finish() → cleanup() 回收，杜绝 stray timer 与残留 socket。
     let settled = false
 
     const overallTimeout = 30000 + commands.length * 15000
-    const overallTimer = setTimeout(() => {
-      if (!settled) {
-        settled = true
-        client.end()
+    let overallTimer: NodeJS.Timeout | undefined
+
+    const cleanup = (): void => {
+      if (overallTimer) { clearTimeout(overallTimer); overallTimer = undefined }
+      // client.end() 优雅发 EOF；client 已 end/destroy 后再 end 可能抛，幂等忽略（D-6-2/T-06-01-02）
+      try { client.end() } catch { /* ignore */ }
+    }
+
+    const finish = (fn: () => void): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      fn()
+    }
+
+    overallTimer = setTimeout(() => {
+      // timeout 兜底路径：cleanup 内已 end，再追加 destroy 强制销毁 socket（D-6-2：end+destroy 双调用）
+      finish(() => {
+        try { client.destroy() } catch { /* ignore */ }
         reject(new Error(`命令执行超时 (${Math.round(overallTimeout / 1000)}s)`))
-      }
+      })
     }, overallTimeout)
 
-    client.on('ready', async () => {
-      try {
-        // 串行 exec 每条命令，结果与 commands 同序同长（调用方依赖 execResults[i] 对应 cmds[i]）
-        for (let i = 0; i < checked.length; i++) {
-          const { cmd, allowed, reason } = checked[i]
-          if (!allowed) {
-            results[i] = { command: cmd, output: `命令被安全策略拒绝: ${reason}`, success: false }
-            continue
+    try {
+      client.on('ready', async () => {
+        try {
+          // 串行 exec 每条命令，结果与 commands 同序同长（调用方依赖 execResults[i] 对应 cmds[i]）
+          for (let i = 0; i < checked.length; i++) {
+            const { cmd, allowed, reason } = checked[i]
+            if (!allowed) {
+              results[i] = { command: cmd, output: `命令被安全策略拒绝: ${reason}`, success: false }
+              continue
+            }
+            try {
+              const output = await execOne(client, cmd)
+              results[i] = { command: cmd, output, success: true }
+            } catch (err: any) {
+              results[i] = { command: cmd, output: `执行失败: ${err.message}`, success: false }
+            }
           }
-          try {
-            const output = await execOne(client, cmd)
-            results[i] = { command: cmd, output, success: true }
-          } catch (err: any) {
-            results[i] = { command: cmd, output: `执行失败: ${err.message}`, success: false }
-          }
+          finish(() => resolve(results))
+        } catch (err: any) {
+          finish(() => reject(err))
         }
-        clearTimeout(overallTimer)
-        client.end()
-        if (!settled) { settled = true; resolve(results) }
-      } catch (err: any) {
-        clearTimeout(overallTimer)
-        try { client.end() } catch { /* ignore */ }
-        if (!settled) { settled = true; reject(err) }
-      }
-    })
+      })
 
-    client.on('error', (err) => {
-      clearTimeout(overallTimer)
-      if (!settled) { settled = true; reject(err) }
-    })
-    client.connect(cfg)
+      client.on('error', (err) => { finish(() => reject(err)) })
+      client.connect(cfg)
+    } catch (err) {
+      // 同步异常兜底（client.connect 同步抛等罕见场景）：finish 内 cleanup + reject 原始 err（语义与异步路径同构）
+      finish(() => reject(err))
+    } finally {
+      // D-6-2 finally：保证任意出口经 cleanup（clearTimeout + client.end）的资源回收模式锁定。
+      // 异步回调路径已在 finish() 内 cleanup 且 settled=true；同步路径若抛也已由 catch 内 finish 处理。
+      // 此 finally 块作为模式锁定的字面验收（D-6-5 静态 grep finally 命中），settled-flag 幂等保护避免二次 cleanup/reject。
+      if (!settled) { cleanup() }
+    }
   })
 }
 
