@@ -167,14 +167,16 @@ async function discoverTopologyInner(deviceIds: string[]): Promise<DiscoveryResu
     deviceCommands = parsed.devices || []
   } catch (err: any) {
     // D-6-3：补 safeLog 与 topology parse 对齐（两处 parse 失败均落审计日志，运维可追溯）
+    // WR-02: 复用 enriched.message，杜绝 safeLog 落库与抛出错误 message 双源不一致
+    const enriched = enrichParseError('AI 命令结果解析失败', commandRaw, err)
     safeLog({
       type: 'discovery', status: 'failed',
       deviceIds: deviceIdsStr, deviceNames: deviceNamesStr,
       promptText: commandPromptText,
       aiResponse: commandRaw,
-      errorMessage: `AI 命令结果解析失败: ${err.message} | 原始片段: ${(commandRaw || '').slice(0, 200)}`,
+      errorMessage: enriched.message,
     })
-    throw enrichParseError('AI 命令结果解析失败', commandRaw, err)
+    throw enriched
   }
 
   // Phase 3: Execute commands on each device
@@ -298,14 +300,16 @@ async function discoverTopologyInner(deviceIds: string[]): Promise<DiscoveryResu
     })
   } catch (err: any) {
     // D-6-3：errorMessage 补原始片段 slice(0,200)（现状仅 ${err.message}）
+    // WR-02: 复用 enriched.message，杜绝 safeLog 落库与抛出错误 message 双源不一致
+    const enriched = enrichParseError('AI 分析结果解析失败', aiResponse, err)
     safeLog({
       type: 'discovery', status: 'failed',
       deviceIds: deviceIdsStr, deviceNames: deviceNamesStr,
       promptText: topologyPromptText,
       aiResponse,
-      errorMessage: `JSON 解析失败: ${err.message} | 原始片段: ${(aiResponse || '').slice(0, 200)}`,
+      errorMessage: enriched.message,
     })
-    throw enrichParseError('AI 分析结果解析失败', aiResponse, err)
+    throw enriched
   }
 
   // Convert to topology format
