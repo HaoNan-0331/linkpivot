@@ -18,6 +18,17 @@ function safeLog(entry: Parameters<typeof createSystemLog>[0]): string | undefin
   }
 }
 
+/**
+ * 包装 JSON.parse 失败为带原始片段的 enriched Error（D-6-3，SC#2）。
+ * SyntaxError 自带 position（"Unexpected token ... in JSON at position N"），
+ * 但不含原始内容——补 slice(0,200) 让运维定位 AI 漂移/截断/转义错误。
+ * 局限于 discovery.ts（两处 parse 同模式去重）。
+ */
+function enrichParseError(prefix: string, raw: string, err: unknown): Error {
+  const errMessage = err instanceof Error ? err.message : String(err)
+  return new Error(`${prefix}: ${errMessage} | 原始片段: ${(raw || '').slice(0, 200)}`)
+}
+
 export interface DiscoveryFailedDevice {
   deviceId: string
   deviceName: string
@@ -147,6 +158,7 @@ async function discoverTopologyInner(deviceIds: string[]): Promise<DiscoveryResu
 
   // Parse AI response for commands
   let deviceCommands: Array<{ deviceId: string; deviceName: string; vendor: string; commands: string[] }>
+  const commandRaw = commandAiResponse
   try {
     let jsonStr = commandAiResponse.trim()
     const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/)
@@ -154,7 +166,15 @@ async function discoverTopologyInner(deviceIds: string[]): Promise<DiscoveryResu
     const parsed = JSON.parse(jsonStr)
     deviceCommands = parsed.devices || []
   } catch (err: any) {
-    throw new Error(`AI 命令结果解析失败: ${err.message}`)
+    // D-6-3：补 safeLog 与 topology parse 对齐（两处 parse 失败均落审计日志，运维可追溯）
+    safeLog({
+      type: 'discovery', status: 'failed',
+      deviceIds: deviceIdsStr, deviceNames: deviceNamesStr,
+      promptText: commandPromptText,
+      aiResponse: commandRaw,
+      errorMessage: `AI 命令结果解析失败: ${err.message} | 原始片段: ${(commandRaw || '').slice(0, 200)}`,
+    })
+    throw enrichParseError('AI 命令结果解析失败', commandRaw, err)
   }
 
   // Phase 3: Execute commands on each device
@@ -277,14 +297,15 @@ async function discoverTopologyInner(deviceIds: string[]): Promise<DiscoveryResu
       parsedResult: JSON.stringify(parsed, null, 2),
     })
   } catch (err: any) {
+    // D-6-3：errorMessage 补原始片段 slice(0,200)（现状仅 ${err.message}）
     safeLog({
       type: 'discovery', status: 'failed',
       deviceIds: deviceIdsStr, deviceNames: deviceNamesStr,
       promptText: topologyPromptText,
       aiResponse,
-      errorMessage: `JSON 解析失败: ${err.message}`,
+      errorMessage: `JSON 解析失败: ${err.message} | 原始片段: ${(aiResponse || '').slice(0, 200)}`,
     })
-    throw new Error(`AI 分析结果解析失败: ${err.message}`)
+    throw enrichParseError('AI 分析结果解析失败', aiResponse, err)
   }
 
   // Convert to topology format
