@@ -1,9 +1,10 @@
 ---
-status: partial
+status: passed
 phase: 05-frontend-refactor-types
 source: [05-VERIFICATION.md]
 started: 2026-07-02
 updated: 2026-07-02
+approved_by: user-HV-2026-07-02
 ---
 
 # Phase 5 人工验证（HUMAN-UAT）
@@ -59,11 +60,15 @@ expected: 17 处 any 类型化后 KB 列表/搜索/详情保功能；imageCache 
 
 ## Summary
 total: 25
-passed: 0
+passed: 25
 issues: 0
-pending: 25
+pending: 0
 skipped: 0
 blocked: 0
 
 ## Gaps
-（人工实测后，失败项填入此处触发 gap closure）
+（无 — 25 项全过，用户 2026-07-02 实测 approved）
+
+## Deferred（预存 UX，非 Phase 5 引入）
+- **搜索结果 `[图片N]` 以文本呈现**：搜索后端返回文本 snippet（无 images），`KbSearchResult` 无 images 字段，搜索卡用 `r.content.slice(0,300)` 纯文本渲染（`15d60f1` 5-31 起即如此）。Phase 5（05-04）仅加 `?.` 空安全未改渲染。未来增强二选一：(a) snippet strip `[图片\d+]` 标记；(b) 搜索卡用 ChunkContent + 后端返 images。均超 Phase 5 scope。
+- **设备连接问题（HV 期间观测，非 Phase 5 回归）**：自动发现 `ECONNREFUSED:22` / `命令执行超时 (105s)` / 双击登录 `000`→`ECONNRESET` —— 后端 `connection.ts`/`ai.ts`/`discovery`/`arpCollector` Phase 5 未触碰（git log 空），属 Phase 6 ROBUST-01/02 + 设备/凭据侧。
