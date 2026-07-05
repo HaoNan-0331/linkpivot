@@ -2,14 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: milestone_complete
-last_updated: "2026-07-05T07:59:37.203Z"
+status: Awaiting next milestone
+last_updated: "2026-07-05T09:42:04.977Z"
+last_activity: 2026-07-05 — Milestone v1.0 completed and archived
 progress:
   total_phases: 6
-  completed_phases: 7
+  completed_phases: 6
   total_plans: 16
   completed_plans: 16
-  percent: 117
+  percent: 100
 ---
 
 # STATE: network_toplogy 技术债优化
@@ -17,44 +18,39 @@ progress:
 ## Project Reference
 
 - **Core Value**: 让运维人员在一个桌面工具内安全地掌握网络拓扑、远程操控设备并获得 AI 辅助分析。拓扑准确呈现与设备安全可控为最高优先级。
-- **Current Focus**: Brownfield 技术债优化 milestone（代码审计延后的深度优化，14 项 REQ）
+- **Current Focus**: v1.0 技术债优化已归档（6 phase / 16 plan / 14 REQ 全交付）— Awaiting next milestone
 - **Mode**: Horizontal Layers（按技术层分 phase，非端到端功能切片）
 
 ## Current Position
 
-Phase: 06
-Plan: Not started
-
-- **06-02 (ROBUST-02 discovery JSON parse 错误上下文 + createSystemLog safeLog, D-6-3/D-6-4) DONE** — 06-02-SUMMARY.md 已生成, commits 16cf9a4 (safeLog helper + 5 处替换) / 9ad4040 (enrichParseError + 两处 parse enriched)，tsc+esbuild+vitest(25) 三绿
-- **06-01 (ROBUST-01 arpCollector+ai try/finally, D-6-1/D-6-2) DONE** — 06-01-SUMMARY.md 已生成, commits eef3004 (arpCollector executeSSH/executeTelnet) / 2389bd8 (ai.executeCommandsOnDevice)，tsc+esbuild+vitest(25) 三绿
-- 05-04 (FE-02 KB 类型化 + FE-04 ChunkContent 取消与缓存, D-5-5/D-5-6) DONE — 05-04-SUMMARY.md 已生成, commits 7db81f2 (FE-02) / 5ce3483 (FE-04)
-- 05-03 (FE-01 AIPage 拆分 + useAIChat hook, D-5-1) DONE
-- 05-02 (FE-03 TopologyPage ref-mirror, D-5-4) DONE
-- 05-01 (FE-02 electron.d.ts foundation, D-5-2/D-5-3) DONE
-- 04-02 (DATA-01 export:arpTable 流式分块写 CSV, D-4-5) DONE — 04-02-SUMMARY.md 已生成, commit db1d61d
-- 04-01 (DATA-01 三 list 通道 hybrid 分页契约) DONE — 04-01-SUMMARY.md 已生成, commits 2c3963f(RED) / 7b02d7d(GREEN) / 8fd1b04 / 6371820
-
-- 03-01 (PERF-02 processARPEntries 事务化) DONE — 03-01-SUMMARY.md 已生成, commits b52fc75 / dd467af / 1f9edc4
-- 03-03 (PERF-03 FTS WHEN + PERF-04 init skip-log) DONE — 03-03-SUMMARY.md 已生成, commits 4f764a6 / a67374d / e8bf24f
-
-- **Phase**: 1 (Build & Dependency Foundation)
-- **Plan**: 01-PLAN.md（1 plan · 1 wave · autonomous）— 已执行完成
-- **Status**: Phase 1 EXECUTED — 01-01-SUMMARY.md 已生成，ready_for_verification
-- **Progress**:
-
-```
-Milestone: [███--------] 1/6 phases
-Phase 1:    [██████████] 1/1 plans (executed, 1/1 done)
-Phase 2:    [███-------] 1/3 plans (02-01 done, 02-02/02-03 pending)
-```
+Phase: Milestone v1.0 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-07-05 — Milestone v1.0 completed and archived
 
 ## Performance Metrics
 
-- **Phases completed**: 1/6
-- **Requirements delivered**: 1/14 (BUILD-01；ARCH-01 部分落地，待 02-03 整体交付)
+- **Phases completed**: 6/6（v1.0 全交付）
+- **Requirements delivered**: 14/14（BUILD-01, ARCH-01/02, PERF-01~04, DATA-01, FE-01~04, ROBUST-01/02）
 - **REQ coverage mapped**: 14/14 ✓
-- **Current velocity**: 1 phase / 1 plan（BUILD-01，~50min，含原生编译 npm ci）
-- **Phase 2 velocity**: 02-01 ~5min / 2 tasks（迁移注册表 + hasColumn，tsc+esbuild+vitest 三绿）
+- **Plans executed**: 16/16（af12dc0 → d906cab，163 commits）
+- **Velocity**: Phase 6 两 plan ~7min + ~5min（串行，三绿门禁全绿）
+
+## Deferred Items
+
+v1.0 milestone close 时 acknowledged 的 deferred items（2026-07-05，DEP-1 native binding 限制下的人工 HV/验证项 + 1 artifact 残留）：
+
+| Category | Item | Status |
+|----------|------|--------|
+| uat_gap | Phase 03-HUMAN-UAT.md | partial（5 scenarios 未回填，PERF HV） |
+| uat_gap | Phase 05-HUMAN-UAT.md | passed（用户 approved，audit 计数 25 scenarios） |
+| uat_gap | Phase 06-HUMAN-UAT.md | unknown（SC#4 句柄快照 4 项 HV defer） |
+| verification_gap | Phase 03-VERIFICATION.md | human_needed |
+| verification_gap | Phase 05-VERIFICATION.md | human_needed |
+| verification_gap | Phase 06-VERIFICATION.md | human_needed |
+| quick_task | 260628-trt-pdfjs-dist-backupscheduler-retention-0 | missing（artifact 残留） |
+
+后续：`/gsd-verify-work` 在真实 Electron + SSH/Telnet/DB 设备回填 HV；`/gsd-audit-uat` 审计累积 defer 项。
 
 ## Accumulated Context
 
@@ -109,8 +105,8 @@ Phase 2:    [███-------] 1/3 plans (02-01 done, 02-02/02-03 pending)
 
 ## Session Continuity
 
-- **Last action**: `/gsd-execute-phase 6` Plan 06-02 — ROBUST-02 discovery.ts safeLog helper + enrichParseError helper 完成（D-6-3/D-6-4，commits 16cf9a4/9ad4040，三绿）。06-02-SUMMARY.md 已生成。**Phase 6 全部 2 plans 完成，里程碑 16/16 plans 100%**
-- **Next action**: `/gsd-verify-phase 6`（人工 HV：句柄快照 SC#4 + discovery parse 失败 SC#2/SC#3，归 06-HUMAN-UAT.md）或 `/gsd-status`
+- **Last action**: `/gsd-complete-milestone` — v1.0 技术债优化归档（milestones/v1.0-ROADMAP.md + v1.0-REQUIREMENTS.md，6 phase / 16 plan / 14 REQ，7 deferred items acknowledged）
+- **Next action**: `/gsd-new-milestone` 启动下一 milestone（questioning → research → requirements → roadmap）；或 `/gsd-verify-work` 回填 deferred HV
 - **Resume command**: `/gsd-status`
 
 ## Phase → Requirement Map
@@ -132,3 +128,7 @@ Phase 2:    [███-------] 1/3 plans (02-01 done, 02-02/02-03 pending)
 | Phase 02 P02 | 2min | 2 tasks | 2 files |
 | Phase 04 P01 | 7min | 3 tasks | 10 files |
 | Phase 04 P02 | 2min | 1 task | 1 file |
+
+## Operator Next Steps
+
+- Start the next milestone with /gsd-new-milestone

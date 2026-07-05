@@ -56,6 +56,26 @@ network_toplogy 是面向运维人员的网络拓扑管理桌面工具（Electro
 - **Phase 5 complete (2026-07-05)**：前端重构与类型交付（FE-01~04）—— AIPage 拆 4 子组件 + useAIChat 自定义 hook（D-5-1，非 zustand/prop drilling）；前端 any→src/types（electron.d.ts 26 处建模 + 新建 ai/kb DTO + oui OUIRow，6 REQ 组件+DevicesPage any 清零，D-5-2/3）；TopologyPage ref-mirror 消 stale closure（D-5-4，不迁 store）；ChunkContent 客户端 AbortController + 模块级 LRU + in-flight 去重（D-5-5/6，不改 IPC）。4 plans / 4 SC 静态全过 + 25 项 Electron 人工 HV approved / code review 1 blocker（CR-01 无限重渲染）已修 + 9 warning/4 info advisory 未修。Deferred：搜索 snippet `[图片N]` 文本呈现（预存 UX）、设备连接观测（Phase 6 范畴）。
 - **Phase 6 complete (2026-07-05)**：健壮性/资源安全交付（ROBUST-01/02）—— arpCollector.executeSSH/executeTelnet + ai.executeCommandsOnDevice + execOne 全 try/finally 化（cleanup 统一出口 clearTimeout+end，timeout 路径 destroy，executeTelnet 补自有 setTimeout，execOne 补 stream.on('error') 兜底，D-6-1/D-6-2）；discovery safeLog helper（5 处 createSystemLog 非致命包裹 + console.warn 兜底，line 258 嵌套陷阱切断）+ enrichParseError（enriched Error 含原始片段 slice 0,200，D-6-3/D-6-4）。2 plans / 4 SC 静态全过 + code review 2 critical（句柄泄漏 CR-01 execOne stream error / CR-02 use-after-destroy race）+ 3 warning 全修复 / SC#4 句柄快照 4 项 HV defer（DEP-1 native binding 无法 plain node 实测，06-HUMAN-UAT.md）。**v1.0 milestone 全 6 phase / 14 REQ 交付完成。**
 
+## Current State
+
+**Shipped:** v1.0 技术债优化（2026-07-05）— 6 phases / 16 plans / 14 REQ 全交付。
+代码审计延后的深度优化技术债全部清偿：构建基线（Phase 1）+ 架构/迁移（Phase 2）+ 性能（Phase 3）+ 数据/IPC 安全（Phase 4）+ 前端重构（Phase 5）+ 健壮性（Phase 6）。三绿门禁（tsc + esbuild + vitest 25）全绿，6 phase code review 全 Critical 修复。
+
+**已知技术债（defer 到下一 milestone）：**
+- DEP-1 native binding 限制下的人工 HV 项（Phase 3/5/6 句柄/性能/前端 HV，需真实设备）— 见 STATE.md §Deferred Items
+- FRAG-2 全局静默吞错收敛（KnowledgeBasePage/backupScheduler/keyManager/arpIpc）— 跨模块 safeLog util 重构
+- FRAG-3 telnet shellPrompt 正则过宽（`/[>#]/`）— 厂商特定 prompt
+- 后端 any 清理 + ai.ts/kbService 拆分（TD-1/TD-2）
+- BUG-3 before-quit 不等 in-flight backup（backupScheduler/main.ts 备份退出健壮性）
+
+## Next Milestone Goals
+
+待 `/gsd-new-milestone` 启动。候选方向（用户「新增功能后面再说」）：
+- 新功能开发（用户明确延后到此 milestone 后）
+- IPv6 支持（现有 ipToNumber/CIDR 仅 IPv4）
+- DEP-1 缓解（@electron/rebuild + electron-vite 集成 vitest 跑 Electron 内测试，补句柄回归测试自动化）
+- FRAG-2/3 + TD-1/TD-2 后端 cleanup milestone
+
 ## Constraints
 
 - **Tech stack**: Electron + React + TS + better-sqlite3 — 不更换核心栈
@@ -90,4 +110,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-05 after Phase 6 completion (ROBUST-01, ROBUST-02) — v1.0 milestone 全 14 REQ 交付*
+*Last updated: 2026-07-05 after v1.0 milestone archived（技术债优化 6 phase / 14 REQ 全交付）*
