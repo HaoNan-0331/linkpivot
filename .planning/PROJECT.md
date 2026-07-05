@@ -24,14 +24,15 @@ network_toplogy 是面向运维人员的网络拓扑管理桌面工具（Electro
 - ✓ 定时调度（ARP 定时采集）— 现有
 - ✓ 构建/依赖：原生依赖（better-sqlite3/ssh2/telnet-client）exact 版本锁定 + npm ci 可复现构建基线 — Validated in Phase 1: Build & Dependency Foundation
 - ✓ 架构/迁移：迁移版本管理（PRAGMA user_version + hasColumn + 版本化注册表，散落 table_info 收敛）+ DB 文件 ACL 收紧（db/wal/shm/backups，跨平台 icacls/chmod）+ 定时 .backup() 双桶轮换 + 迁移前安全网 — Validated in Phase 2: Architecture & DB Migration（ARCH-01, ARCH-02）
+- ✓ IPC/数据安全：大数据 IPC 分页/上限 + 截断信封（getIPDetails/oui:getAll/anomaly:getChanges 默认 cap + limit/offset + {rows,total,truncated}；export:arpTable 流式分块写 CSV 消除一次性全量读）— Validated in Phase 4: Data / IPC Safety（DATA-01）
+- ✓ 前端重构与类型：AIPage 399→95 行拆 4 子组件（ChatSessionList/ChatMessageList/ChatInput/CommandConfirmModal）+ useAIChat 自定义 hook；前端 any→src/types（electron.d.ts 全建模 + ai/kb/oui DTO，6 REQ 组件+DevicesPage 清零）；TopologyPage ref-mirror（nodesRef/edgesRef）消 stale closure；ChunkContent 客户端 AbortController + 模块级 LRU + in-flight 去重图片缓存 — Validated in Phase 5: Frontend Refactor & Types（FE-01, FE-02, FE-03, FE-04）
 
 ### Active
 
 <!-- 本轮 milestone：代码审计延后的深度优化技术债（详细 REQ-IDs 见 REQUIREMENTS.md） -->
 
 - [x] 性能/资源：OUI N+1 查询消除（启动预载入 Map）、processARPEntries 事务化、FTS 触发器 WHEN 优化、init OUI/DDL 移出主线程 — Validated in Phase 3: Performance Optimization
-- [ ] IPC/数据：大数据 IPC 分页/上限（getIPDetails/oui:getAll/anomaly:getChanges/export:arpTable）
-- [ ] 前端重构：AIPage 拆分 4 子组件、前端 any 类型替换为 src/types、TopologyPage store getState 防 stale closure、ChunkContent 图片 AbortController
+- [x] IPC/数据：大数据 IPC 分页/上限（getIPDetails/oui:getAll/anomaly:getChanges/export:arpTable）— Validated in Phase 4: Data / IPC Safety（DATA-01）
 - [ ] 健壮性：arpCollector/discovery 句柄 try/finally + 错误上下文
 
 ### Out of Scope
@@ -50,6 +51,8 @@ network_toplogy 是面向运维人员的网络拓扑管理桌面工具（Electro
 - **Phase 1 complete (2026-06-28)**：原生依赖 exact 锁定 + npm ci 可复现构建基线（BUILD-01，commit 940aa7c），为 Phase 2-6 重构提供稳定回归参照
 - **Phase 2 complete (2026-06-28)**：架构/迁移层交付（ARCH-01/02）—— user_version + hasColumn + 版本化迁移注册表（v1-v6，含 ai_system_logs CHECK 放宽 v6）替换散落 table_info；DB 文件 ACL 跨平台收紧（db/wal/shm/backups，非致命）；BackupScheduler 定时 db.backup() 双桶轮换（周期 7/迁移 5）+ 迁移前备份安全网（dbPreExisted 门控）。3 plans / 验证 4/4 通过（CR-01/02/03 gap 已闭），4 项 Electron 运行时验证待人工
 - **Phase 3 complete (2026-06-28)**：性能优化交付（PERF-01/02/03/04）—— OUI vendorMap 内存缓存消除 N+1 + getIPDetails 双查修复；processARPEntries 整批单事务 + prepared statement 复用 + isIPExcluded 预载 + WR-01 savepoint 条目级回滚；kb_chunks_au FTS trigger 加 WHEN（v7 迁移 HEAD=7）；init 幂等跳过可观测日志 + 冷启动 performance.now 计时。3 plans / 代码级验证 4/4 SC + code review 0 critical（4 warnings 已修）/ 5 项 Electron 运行时验证已人工 approved。另：codebase 全面审计 7 文档 + 修审计新发现 pdfjs-dist 缺失依赖 + BUG-2 retention clamp（quick 260628-trt）
+- **Phase 4 complete (2026-06-28)**：数据/IPC 安全交付（DATA-01）—— 3 list 通道（getIPDetails/oui:getAll/anomaly:getChanges）hybrid 分页契约（默认 cap 2000/5000/100 + 硬上限 + validateLimit 钳制）+ 截断信封 {rows,total,truncated}（不静默藏数据）；export:arpTable 流式分块写 CSV（分批 LIMIT/OFFSET + append，内存峰值 O(单批) 非 O(全表)，签名/返回形态不变）。3 plans / 验证通过。
+- **Phase 5 complete (2026-07-05)**：前端重构与类型交付（FE-01~04）—— AIPage 拆 4 子组件 + useAIChat 自定义 hook（D-5-1，非 zustand/prop drilling）；前端 any→src/types（electron.d.ts 26 处建模 + 新建 ai/kb DTO + oui OUIRow，6 REQ 组件+DevicesPage any 清零，D-5-2/3）；TopologyPage ref-mirror 消 stale closure（D-5-4，不迁 store）；ChunkContent 客户端 AbortController + 模块级 LRU + in-flight 去重（D-5-5/6，不改 IPC）。4 plans / 4 SC 静态全过 + 25 项 Electron 人工 HV approved / code review 1 blocker（CR-01 无限重渲染）已修 + 9 warning/4 info advisory 未修。Deferred：搜索 snippet `[图片N]` 文本呈现（预存 UX）、设备连接观测（Phase 6 范畴）。
 
 ## Constraints
 
@@ -85,4 +88,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-28 after Phase 2 completion (ARCH-01, ARCH-02)*
+*Last updated: 2026-07-05 after Phase 5 completion (FE-01, FE-02, FE-03, FE-04)*
