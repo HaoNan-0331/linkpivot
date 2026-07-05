@@ -656,6 +656,22 @@ function splitOversizedChapters(chapters: Array<{ title: string; content: string
 
 // ---------- Search ----------
 
+// search 局部 helper：复刻 getDocument(line 86-94) 的 attach 模式，但 SELECT 含 file_path（ChunkContent 渲染必需）。
+// ids.length=0 守卫：跳过 `IN ()` 语法错。T-sj1-02 mitigate：try/catch 守 JSON.parse 异常 fallback images=[]。
+function attachImages(db: ReturnType<typeof getDatabase>, chunk: any) {
+  if (chunk.image_ids) {
+    try {
+      const ids = JSON.parse(chunk.image_ids) as string[]
+      chunk.images = ids.length
+        ? db.prepare('SELECT id, file_path, description FROM kb_images WHERE id IN (' + ids.map(() => '?').join(',') + ')').all(...ids)
+        : []
+    } catch { chunk.images = [] }
+  } else {
+    chunk.images = []
+  }
+  return chunk
+}
+
 export async function search(query: string, deviceIds?: string[], topK = 5): Promise<any[]> {
   const db = getDatabase()
 
@@ -686,7 +702,7 @@ export async function search(query: string, deviceIds?: string[], topK = 5): Pro
     // Fallback: return first topK chunks
     return allChunks.slice(0, topK).map(c => {
       c.document = { id: c.document_id, title: c.doc_title, file_name: c.file_name }
-      return c
+      return attachImages(db, c)
     })
   }
 
@@ -712,7 +728,7 @@ ${indexLines}
 
     if (indices.length === 0) return allChunks.slice(0, topK).map(c => {
       c.document = { id: c.document_id, title: c.doc_title, file_name: c.file_name }
-      return c
+      return attachImages(db, c)
     })
 
     // 4. Return selected chunks with document info and image descriptions
@@ -720,20 +736,13 @@ ${indexLines}
     return indices.slice(0, topK).map((i: number) => {
       const chunk = allChunks[i]
       chunk.document = { id: chunk.document_id, title: chunk.doc_title, file_name: chunk.file_name }
-      // Attach image descriptions for AI context
-      if (chunk.image_ids) {
-        try {
-          const ids = JSON.parse(chunk.image_ids) as string[]
-          chunk.images = db2.prepare('SELECT id, description FROM kb_images WHERE id IN (' + ids.map(() => '?').join(',') + ')').all(...ids)
-        } catch { chunk.images = [] }
-      } else { chunk.images = [] }
-      return chunk
+      // Attach images（含 file_path，供 ChunkContent 渲染 [图片N]）
+      return attachImages(db2, chunk)
     })
   } catch {
     return allChunks.slice(0, topK).map(c => {
       c.document = { id: c.document_id, title: c.doc_title, file_name: c.file_name }
-      c.images = []
-      return c
+      return attachImages(db, c)
     })
   }
 }
