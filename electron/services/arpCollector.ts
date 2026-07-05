@@ -4,6 +4,7 @@ import { getDatabase } from '../database/connection'
 import { ARPParser } from './arpParser'
 import { encField, decField } from '../utils/crypto'
 import { listDevices } from './device'
+import { SSH_READY_TIMEOUT_MS, SSH_ALGORITHMS } from '../utils/sshConfig'
 
 let MK = ''
 export function setArpMasterKey(key: string) { MK = key }
@@ -21,7 +22,7 @@ function getARPCommand(vendor: string): string {
   }
 }
 
-async function executeSSH(host: string, port: number, username: string, password: string, command: string, timeout: number = 30000): Promise<string> {
+async function executeSSH(host: string, port: number, username: string, password: string, command: string, timeout: number = SSH_READY_TIMEOUT_MS): Promise<string> {
   return new Promise((resolve, reject) => {
     const client = new Client()
     // D-6-2：settled-flag 防重复 resolve/reject；cleanup 为统一资源回收出口（clearTimeout + client.end），
@@ -64,11 +65,7 @@ async function executeSSH(host: string, port: number, username: string, password
       client.on('error', (err) => { finish(() => reject(err)) })
       client.connect({
         host, port, username, password, readyTimeout: timeout,
-        algorithms: {
-          kex: ['curve25519-sha256', 'ecdh-sha2-nistp256', 'ecdh-sha2-nistp384', 'ecdh-sha2-nistp521', 'diffie-hellman-group-exchange-sha256', 'diffie-hellman-group14-sha256', 'diffie-hellman-group14-sha1', 'diffie-hellman-group1-sha1'],
-          cipher: ['aes128-gcm', 'aes256-gcm', 'aes128-ctr', 'aes192-ctr', 'aes256-ctr', 'aes128-cbc', 'aes256-cbc', '3des-cbc'],
-          serverHostKey: ['ssh-ed25519', 'ecdsa-sha2-nistp256', 'rsa-sha2-512', 'rsa-sha2-256', 'ssh-rsa'],
-        },
+        algorithms: SSH_ALGORITHMS,
       })
     } catch (err) {
       // 同步异常兜底（client.connect 同步抛等罕见场景）：cleanup + reject，与异步回调路径同构
