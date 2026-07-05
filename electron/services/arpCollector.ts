@@ -24,43 +24,94 @@ function getARPCommand(vendor: string): string {
 async function executeSSH(host: string, port: number, username: string, password: string, command: string, timeout: number = 30000): Promise<string> {
   return new Promise((resolve, reject) => {
     const client = new Client()
-    const timeoutId = setTimeout(() => { client.destroy(); reject(new Error(`SSH timeout after ${timeout}ms`)) }, timeout)
+    // D-6-2：settled-flag 防重复 resolve/reject；cleanup 为统一资源回收出口（clearTimeout + client.end），
+    // 任意 ready/exec stream/error/client error/timeout 路径均经 finish() → cleanup()，杜绝 stray timer 与残留 socket。
+    let settled = false
+    let timer: NodeJS.Timeout | undefined
 
-    client.on('ready', () => {
-      clearTimeout(timeoutId)
-      client.exec(command, (err, stream) => {
-        if (err) { client.end(); reject(err); return }
-        let output = ''
-        stream.on('data', (data: Buffer) => { output += data.toString() })
-        stream.stderr.on('data', (data: Buffer) => { output += data.toString() })
-        stream.on('close', () => { client.end(); resolve(output) })
-        stream.on('error', (e: Error) => { client.end(); reject(e) })
+    const cleanup = (): void => {
+      if (timer) { clearTimeout(timer); timer = undefined }
+      // client.end() 优雅发 EOF；client 已 end/destroy 后再 end 可能抛，幂等忽略（D-6-2/T-06-01-02）
+      try { client.end() } catch { /* ignore */ }
+    }
+
+    const finish = (fn: () => void): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      fn()
+    }
+
+    timer = setTimeout(() => {
+      // timeout 兜底路径：对端可能不响应 EOF，cleanup 的 end() 之外追加 destroy() 强制销毁 socket（D-6-2）
+      finish(() => {
+        try { client.destroy() } catch { /* ignore */ }
+        reject(new Error(`SSH timeout after ${timeout}ms`))
       })
-    })
-    client.on('error', (err) => { clearTimeout(timeoutId); reject(err) })
-    client.connect({
-      host, port, username, password, readyTimeout: timeout,
-      algorithms: {
-        kex: ['curve25519-sha256', 'ecdh-sha2-nistp256', 'ecdh-sha2-nistp384', 'ecdh-sha2-nistp521', 'diffie-hellman-group-exchange-sha256', 'diffie-hellman-group14-sha256', 'diffie-hellman-group14-sha1', 'diffie-hellman-group1-sha1'],
-        cipher: ['aes128-gcm', 'aes256-gcm', 'aes128-ctr', 'aes192-ctr', 'aes256-ctr', 'aes128-cbc', 'aes256-cbc', '3des-cbc'],
-        serverHostKey: ['ssh-ed25519', 'ecdsa-sha2-nistp256', 'rsa-sha2-512', 'rsa-sha2-256', 'ssh-rsa'],
-      },
-    })
+    }, timeout)
+
+    try {
+      client.on('ready', () => {
+        client.exec(command, (err, stream) => {
+          if (err) { finish(() => reject(err)); return }
+          let output = ''
+          stream.on('data', (data: Buffer) => { output += data.toString() })
+          stream.stderr.on('data', (data: Buffer) => { output += data.toString() })
+          stream.on('close', () => { finish(() => resolve(output)) })
+          stream.on('error', (e: Error) => { finish(() => reject(e)) })
+        })
+      })
+      client.on('error', (err) => { finish(() => reject(err)) })
+      client.connect({
+        host, port, username, password, readyTimeout: timeout,
+        algorithms: {
+          kex: ['curve25519-sha256', 'ecdh-sha2-nistp256', 'ecdh-sha2-nistp384', 'ecdh-sha2-nistp521', 'diffie-hellman-group-exchange-sha256', 'diffie-hellman-group14-sha256', 'diffie-hellman-group14-sha1', 'diffie-hellman-group1-sha1'],
+          cipher: ['aes128-gcm', 'aes256-gcm', 'aes128-ctr', 'aes192-ctr', 'aes256-ctr', 'aes128-cbc', 'aes256-cbc', '3des-cbc'],
+          serverHostKey: ['ssh-ed25519', 'ecdsa-sha2-nistp256', 'rsa-sha2-512', 'rsa-sha2-256', 'ssh-rsa'],
+        },
+      })
+    } catch (err) {
+      // 同步异常兜底（client.connect 同步抛等罕见场景）：cleanup + reject，与异步回调路径同构
+      finish(() => reject(err))
+    }
   })
 }
 
 async function executeTelnet(host: string, port: number, username: string, password: string, command: string, timeout: number = 30000): Promise<string> {
   const connection = new Telnet()
-  await connection.connect({
-    host, port, timeout, username, password,
-    loginPrompt: /Username:|login:/i,
-    passwordPrompt: /Password:/i,
-    shellPrompt: /[>#]/,
-    echoLines: 0, stripShellPrompt: true, execTimeout: timeout, newlineReplace: true,
+  // D-6-1：补自有 setTimeout 包 connect+exec 整体（telnet-client 库级 connect.timeout/execTimeout 在网络层挂起时不完全可靠，
+  // 与 executeSSH 外层兜底对齐，使两协议同构）。
+  let timer: NodeJS.Timeout | undefined
+  let timedOut = false
+  const result = await new Promise<string>((resolve, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true
+      // timeout 兜底：destroy 强制销毁 socket（telnet-client end 优雅，destroy 强制）
+      try { connection.destroy() } catch { /* ignore */ }
+      reject(new Error(`Telnet timeout after ${timeout}ms`))
+    }, timeout)
+
+    ;(async () => {
+      try {
+        await connection.connect({
+          host, port, timeout, username, password,
+          loginPrompt: /Username:|login:/i,
+          passwordPrompt: /Password:/i,
+          shellPrompt: /[>#]/,
+          echoLines: 0, stripShellPrompt: true, execTimeout: timeout, newlineReplace: true,
+        })
+        const out = await connection.exec(command)
+        resolve(out)
+      } catch (err) {
+        reject(err)
+      }
+    })()
+  }).finally(() => {
+    // D-6-2 finally：清 timer + end（优雅），timeout 路径已 destroy 则幂等（destroy 之后再 end/destroy 无害）
+    if (timer) clearTimeout(timer)
+    try { connection.end() } catch { /* ignore */ }
+    if (timedOut) { try { connection.destroy() } catch { /* ignore */ } }
   })
-  const result = await connection.exec(command)
-  await connection.end()
-  await connection.destroy()
   return result
 }
 
