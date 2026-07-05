@@ -356,6 +356,11 @@ export function executeCommandsOnDevice(
         try {
           // 串行 exec 每条命令，结果与 commands 同序同长（调用方依赖 execResults[i] 对应 cmds[i]）
           for (let i = 0; i < checked.length; i++) {
+            // CR-02: 每轮 await 前检查 settled——若 overallTimer 已 fire 触发 cleanup()，
+            // client 已 end/destroy，继续操作会触发 use-after-destroy（ssh2 行为未定义）。
+            // if(settled) return 切断对已销毁 client 的后续访问，不改变对外 reject 语义
+            // （timeout 路径已 finish(()=>reject(...))）。
+            if (settled) return
             const { cmd, allowed, reason } = checked[i]
             if (!allowed) {
               results[i] = { command: cmd, output: `命令被安全策略拒绝: ${reason}`, success: false }
