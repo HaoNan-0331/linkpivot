@@ -4,6 +4,20 @@ import { getCommandWhitelist } from './ai'
 import { isCommandAllowed } from './commandSafety'
 import { createSystemLog } from './systemLog'
 
+/**
+ * discovery 模块局部非致命日志 helper（D-6-4）。
+ * DB 写库失败时 console.warn 兜底（可观测，非纯静默，遵循 Phase 3 D-P4 可观测性原则），
+ * 不中断发现主流程（SC#3）。局限于 discovery.ts，不跨模块（跨模块统一 safeLog defer）。
+ */
+function safeLog(entry: Parameters<typeof createSystemLog>[0]): string | undefined {
+  try {
+    return createSystemLog(entry)
+  } catch (e: any) {
+    console.warn('[safeLog] discovery 日志写库失败', e?.message)
+    return undefined
+  }
+}
+
 export interface DiscoveryFailedDevice {
   deviceId: string
   deviceName: string
@@ -113,7 +127,7 @@ async function discoverTopologyInner(deviceIds: string[]): Promise<DiscoveryResu
   try {
     commandAiResponse = await callAI(config, commandMessages)
   } catch (err: any) {
-    createSystemLog({
+    safeLog({
       type: 'discovery', status: 'failed',
       deviceIds: deviceIdsStr, deviceNames: deviceNamesStr,
       promptText: commandPromptText,
@@ -123,7 +137,7 @@ async function discoverTopologyInner(deviceIds: string[]): Promise<DiscoveryResu
   }
 
   // Log first AI call
-  createSystemLog({
+  safeLog({
     type: 'discovery', status: 'success',
     deviceIds: deviceIdsStr, deviceNames: deviceNamesStr,
     promptText: commandPromptText,
@@ -237,7 +251,7 @@ async function discoverTopologyInner(deviceIds: string[]): Promise<DiscoveryResu
   try {
     aiResponse = await callAI(config, topologyMessages)
   } catch (err: any) {
-    createSystemLog({
+    safeLog({
       type: 'discovery', status: 'failed',
       deviceIds: deviceIdsStr, deviceNames: deviceNamesStr,
       promptText: topologyPromptText,
@@ -255,7 +269,7 @@ async function discoverTopologyInner(deviceIds: string[]): Promise<DiscoveryResu
     parsed = JSON.parse(jsonStr)
 
     // Log second AI call - topology analysis
-    createSystemLog({
+    safeLog({
       type: 'discovery', status: 'success',
       deviceIds: deviceIdsStr, deviceNames: deviceNamesStr,
       promptText: topologyPromptText,
@@ -263,7 +277,7 @@ async function discoverTopologyInner(deviceIds: string[]): Promise<DiscoveryResu
       parsedResult: JSON.stringify(parsed, null, 2),
     })
   } catch (err: any) {
-    createSystemLog({
+    safeLog({
       type: 'discovery', status: 'failed',
       deviceIds: deviceIdsStr, deviceNames: deviceNamesStr,
       promptText: topologyPromptText,
