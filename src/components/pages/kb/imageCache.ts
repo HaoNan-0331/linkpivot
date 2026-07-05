@@ -19,6 +19,7 @@ const inFlight = new Map<string, Promise<string>>()
  */
 export async function getImage(path: string, _signal: AbortSignal): Promise<string> {
   // 1. 缓存命中
+  // 1. 缓存命中
   const cached = cache.get(path)
   if (cached !== undefined) return cached
 
