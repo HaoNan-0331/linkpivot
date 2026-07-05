@@ -106,10 +106,12 @@ async function executeTelnet(host: string, port: number, username: string, passw
         reject(err)
       }
     })()
-  }).finally(() => {
+  }).finally(async () => {
     // D-6-2 finally：清 timer + end（优雅），timeout 路径已 destroy 则幂等（destroy 之后再 end/destroy 无害）
+    // WR-01: telnet-client end() 是 async（发 EOF 包），未 await 即返回则紧接 destroy 可能让 EOF 写入失败；
+    // 与 D-6-2 line 43 决策语义对齐——finally 回调改 async，外层 await 会等待 Promise.prototype.finally 的 async 回调。
     if (timer) clearTimeout(timer)
-    try { connection.end() } catch { /* ignore */ }
+    try { await connection.end() } catch { /* ignore */ }
     if (timedOut) { try { connection.destroy() } catch { /* ignore */ } }
   })
   return result
