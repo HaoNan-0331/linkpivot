@@ -32,7 +32,7 @@
 
 ### Robustness
 
-- [ ] **ROBUST-01**: `arpCollector` 的 `executeSSH`/`executeTelnet` 加 try/finally 保证 `client.end()`/`destroy()`，error 路径 `clearTimeout`，杜绝句柄泄漏
+- [x] **ROBUST-01**: `arpCollector` 的 `executeSSH`/`executeTelnet` 加 try/finally 保证 `client.end()`/`destroy()`，error 路径 `clearTimeout`，杜绝句柄泄漏 — Phase 6 Plan 06-01 完成（D-6-1 扩展含 ai.executeCommandsOnDevice，commits eef3004/2389bd8）
 - [ ] **ROBUST-02**: `discovery` JSON parse 失败带错误上下文 + `createSystemLog` 调用 try/catch，避免静默吞错
 
 ### Build
@@ -68,7 +68,7 @@
 | FE-02 | Phase 5 | Complete |
 | FE-03 | Phase 5 | Complete |
 | FE-04 | Phase 5 | Complete |
-| ROBUST-01 | Phase 6 | Pending |
+| ROBUST-01 | Phase 6 | Complete (06-01) |
 | ROBUST-02 | Phase 6 | Pending |
 
 **Coverage:**

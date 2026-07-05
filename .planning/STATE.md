@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: milestone_complete
-last_updated: "2026-07-05T04:11:51.878Z"
+last_updated: "2026-07-05T07:48:34Z"
 progress:
   total_phases: 6
   completed_phases: 5
@@ -22,9 +22,10 @@ progress:
 
 ## Current Position
 
-Phase: 06 (planned)
-Plan: 06-01 + 06-02 (2 plans, 1 wave, ready to execute)
+Phase: 06 (robustness-resource-safety) — EXECUTING
+Plan: 1 of 2
 
+- **06-01 (ROBUST-01 arpCollector+ai try/finally, D-6-1/D-6-2) DONE** — 06-01-SUMMARY.md 已生成, commits eef3004 (arpCollector executeSSH/executeTelnet) / 2389bd8 (ai.executeCommandsOnDevice)，tsc+esbuild+vitest(25) 三绿
 - 05-04 (FE-02 KB 类型化 + FE-04 ChunkContent 取消与缓存, D-5-5/D-5-6) DONE — 05-04-SUMMARY.md 已生成, commits 7db81f2 (FE-02) / 5ce3483 (FE-04)
 - 05-03 (FE-01 AIPage 拆分 + useAIChat hook, D-5-1) DONE
 - 05-02 (FE-03 TopologyPage ref-mirror, D-5-4) DONE
@@ -73,6 +74,7 @@ Phase 2:    [███-------] 1/3 plans (02-01 done, 02-02/02-03 pending)
 - 03-03 完成（D-P4）：init 启动幂等跳过日志加在两个真实条件跳过点（runMigrations version≥HEAD / initDefaultOUIData count>0），type 复用 migration CHECK（无需 v8 扩 CHECK），try/catch 回退 console（启动早期表未就绪）；删 createTables 装饰日志（Warning 2：无单一跳过判定）；不引入 worker thread；不改 main.ts（编辑权归 03-02，冷启动 before/after 引用其 performance.now() 日志行）
 - 04-01 完成（D-4-1~D-4-4/D-4-6）：三 list 通道 hybrid 分页契约——共享 PaginatedResult 信封 + 共享 validateLimit/validateOffset helper（超界落回默认非钳制，复用 anomalyIpc 先例）；getIPDetails JS 过滤后 slice（保留 PERF-01 getVendor 读路径不退化为逐行查库）+ oui:getAll SQL 下推 LIMIT/OFFSET（prepared statement）+ anomaly 补 OFFSET；网关层校验不信 renderer；preload 三通道签名加可选 limit/offset（向后兼容旧调用零改动）；默认 cap 2000/5000/100 + 硬上限 50000/50000/10000；Task1 TDD RED→GREEN 合规；tsc+esbuild+vitest(25) 三绿。T-04-04 accept：ip_status 无物理 purge 单调增长，D-4-6 限定 payload 不限 DB 全表读，物理清理越界 DATA-01（独立 phase），显式记录非静默假设
 - 04-02 完成（D-4-5）：exportARPTable 流式分块写 CSV——先问保存路径（dialog 内联，同 saveCSV 语义）→header+BOM 写一次→循环 SELECT DISTINCT ... GROUP BY ip,mac ORDER BY ip LIMIT ? OFFSET ? 逐批 appendFile；内存峰值 O(单批 ARP_BATCH_SIZE=1000) 非 O(全表)，满足 criteria #2「>10000 行不再一次性序列化全量」；IPC 签名/返回形态（文件 path）不变，不暴露 limit/offset（导出非 list 查询），ArpTab.tsx 零改；csvEscape/BOM 字面量/空表错误语义/saveCSV 全复用不动（saveCSV 仍供 exportChanges/exportNetworkUsage）；T-04-05 mitigate/T-04-06/T-04-07 accept；tsc+esbuild+vitest(25) 三绿
+- 06-01 完成（D-6-1/D-6-2）：arpCollector.executeSSH/executeTelnet + ai.executeCommandsOnDevice 三函数统一 try/finally + cleanup 资源回收模式——executeSSH 形态 a（executor 内 cleanup 统一出口 clearTimeout + try client.end，timeout 路径额外 destroy），executeTelnet 补自有 setTimeout 包 connect+exec 整体 + .finally 清 timer + end（timedOut 标记下追加 destroy），executeCommandsOnDevice 收敛四处散落 clearTimeout/client.end 到 cleanup + try/catch/finally 同步兜底；签名/返回/reject 语义零改（collectFromDevice / discovery.ts:166 调用方零改）；overallTimeout 公式/isCommandAllowed 强制校验/per-command 失败不阻断保留；T-06-01-01~04 全 mitigate/accept；tsc+esbuild+vitest(25) 三绿；SC#1/SC#4 代码级闭环达成（HV 句柄快照归 06-HUMAN-UAT.md）
 
 ### Todos
 
@@ -94,6 +96,7 @@ Phase 2:    [███-------] 1/3 plans (02-01 done, 02-02/02-03 pending)
 | Phase 04 P03 | ~2min | 2 tasks | 4 files |
 | Phase 05 P01 | 30m | 2 tasks | 9 files |
 | Phase 05 P03 | ~12min | 2 auto + 1 HV(deferred) tasks | 6 created + 2 modified files |
+| Phase 06 P01 | ~7min | 2 tasks | 2 modified files |
 
 ### Risk Watch
 
@@ -103,8 +106,8 @@ Phase 2:    [███-------] 1/3 plans (02-01 done, 02-02/02-03 pending)
 
 ## Session Continuity
 
-- **Last action**: `/gsd-plan-phase 6` — Phase 6 规划完成（06-01 ROBUST-01 arpCollector+ai try/finally / 06-02 ROBUST-02 discovery safeLog+enriched parse error，1 wave 零文件重叠并行 + 06-HUMAN-UAT.md D-6-5 句柄快照 HV）。planner commit fd89651；plan-checker 全维度 PASSED（无 BLOCKER/WARNING）；ROBUST-01/02 + D-6-1~D-6-5 全覆盖
-- **Next action**: `/gsd-execute-phase 6` — 执行 Wave 1 两 plan（06-01 arpCollector.ts+ai.ts / 06-02 discovery.ts 零重叠，可并行）
+- **Last action**: `/gsd-execute-phase 6` Plan 06-01 — ROBUST-01 三函数 try/finally 加固完成（arpCollector executeSSH/executeTelnet + ai.executeCommandsOnDevice，D-6-1/D-6-2，commits eef3004/2389bd8，三绿）。06-01-SUMMARY.md 已生成
+- **Next action**: `/gsd-execute-phase 6` Plan 06-02 — ROBUST-02 discovery.ts（两处 JSON parse 错误上下文 D-6-3 + 5 处 createSystemLog safeLog 包裹 D-6-4），与 06-01 零文件重叠
 - **Resume command**: `/gsd-status`
 
 ## Phase → Requirement Map

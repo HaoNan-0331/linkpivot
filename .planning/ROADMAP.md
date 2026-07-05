@@ -112,7 +112,7 @@ Plans:
 **Plans**: 2 plans
 Plans:
 **Wave 1**（2 plans 并行，files_modified 零重叠）
-- [ ] 06-01-PLAN.md — ROBUST-01 arpCollector.executeSSH/executeTelnet try/finally 化 + executeTelnet 补自有 setTimeout + ai.executeCommandsOnDevice try/finally 统一回收（SC#1 + SC#4 闭环，D-6-1/D-6-2）
+- [x] 06-01-PLAN.md — ROBUST-01 arpCollector.executeSSH/executeTelnet try/finally 化 + executeTelnet 补自有 setTimeout + ai.executeCommandsOnDevice try/finally 统一回收（SC#1 + SC#4 闭环，D-6-1/D-6-2）— DONE 06-01-SUMMARY.md, commits eef3004/2389bd8, tsc+esbuild+vitest(25) 三绿
 - [ ] 06-02-PLAN.md — ROBUST-02 discovery 两处 JSON parse enriched Error（原始片段 slice(0,200)）+ command parse 补 safeLog + 5 处 createSystemLog 经 safeLog 非致命包裹（SC#2/SC#3，D-6-3/D-6-4）
 
 ## Progress
@@ -124,8 +124,8 @@ Plans:
 | 3. Performance Optimization | 3/3 | Complete | ✓ |
 | 4. Data / IPC Safety | 3/3 | Complete | ✓ |
 | 5. Frontend Refactor & Types | 4/4 | Complete | ✓ |
-| 6. Robustness & Resource Safety | 0/2 | In Progress (planned) | - |
+| 6. Robustness & Resource Safety | 1/2 | In Progress (06-01 done) | - |
 
 ---
 *Roadmap created: 2026-06-22*
-*Last updated: 2026-07-05 — Phase 6 planned (2 plans, Wave 1 parallel, D-6-1~D-6-5); Phases 1-5 complete.*
+*Last updated: 2026-07-05 — Phase 6 plan 06-01 DONE (ROBUST-01 三函数 try/finally, commits eef3004/2389bd8); 06-02 pending.*
