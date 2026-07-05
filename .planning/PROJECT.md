@@ -26,6 +26,7 @@ network_toplogy 是面向运维人员的网络拓扑管理桌面工具（Electro
 - ✓ 架构/迁移：迁移版本管理（PRAGMA user_version + hasColumn + 版本化注册表，散落 table_info 收敛）+ DB 文件 ACL 收紧（db/wal/shm/backups，跨平台 icacls/chmod）+ 定时 .backup() 双桶轮换 + 迁移前安全网 — Validated in Phase 2: Architecture & DB Migration（ARCH-01, ARCH-02）
 - ✓ IPC/数据安全：大数据 IPC 分页/上限 + 截断信封（getIPDetails/oui:getAll/anomaly:getChanges 默认 cap + limit/offset + {rows,total,truncated}；export:arpTable 流式分块写 CSV 消除一次性全量读）— Validated in Phase 4: Data / IPC Safety（DATA-01）
 - ✓ 前端重构与类型：AIPage 399→95 行拆 4 子组件（ChatSessionList/ChatMessageList/ChatInput/CommandConfirmModal）+ useAIChat 自定义 hook；前端 any→src/types（electron.d.ts 全建模 + ai/kb/oui DTO，6 REQ 组件+DevicesPage 清零）；TopologyPage ref-mirror（nodesRef/edgesRef）消 stale closure；ChunkContent 客户端 AbortController + 模块级 LRU + in-flight 去重图片缓存 — Validated in Phase 5: Frontend Refactor & Types（FE-01, FE-02, FE-03, FE-04）
+- ✓ 健壮性/资源安全：arpCollector.executeSSH/executeTelnet + ai.executeCommandsOnDevice + execOne 句柄 try/finally 统一回收（cleanup 统一出口 clearTimeout+end，timeout 路径 destroy，executeTelnet 补自有 setTimeout，execOne 补 stream.on('error') 兜底）；discovery 两处 JSON parse enriched Error（原始片段 slice 0,200 + err.message）+ 5 处 createSystemLog 经 safeLog 非致命包裹（console.warn 兜底，line 258 嵌套陷阱切断）— Validated in Phase 6: Robustness & Resource Safety（ROBUST-01, ROBUST-02）
 
 ### Active
 
@@ -33,7 +34,7 @@ network_toplogy 是面向运维人员的网络拓扑管理桌面工具（Electro
 
 - [x] 性能/资源：OUI N+1 查询消除（启动预载入 Map）、processARPEntries 事务化、FTS 触发器 WHEN 优化、init OUI/DDL 移出主线程 — Validated in Phase 3: Performance Optimization
 - [x] IPC/数据：大数据 IPC 分页/上限（getIPDetails/oui:getAll/anomaly:getChanges/export:arpTable）— Validated in Phase 4: Data / IPC Safety（DATA-01）
-- [ ] 健壮性：arpCollector/discovery 句柄 try/finally + 错误上下文
+- [x] 健壮性/资源安全：arpCollector.executeSSH/executeTelnet + ai.executeCommandsOnDevice + execOne 句柄 try/finally 统一回收（cleanup 统一出口 clearTimeout+end，timeout 路径 destroy，executeTelnet 补自有 setTimeout，execOne 补 stream.on('error') 兜底）；discovery 两处 JSON parse enriched Error（原始片段 slice 0,200）+ 5 处 createSystemLog 经 safeLog 非致命包裹（console.warn 兜底，line 258 嵌套陷阱切断）— Validated in Phase 6: Robustness & Resource Safety（ROBUST-01, ROBUST-02）
 
 ### Out of Scope
 
@@ -53,6 +54,7 @@ network_toplogy 是面向运维人员的网络拓扑管理桌面工具（Electro
 - **Phase 3 complete (2026-06-28)**：性能优化交付（PERF-01/02/03/04）—— OUI vendorMap 内存缓存消除 N+1 + getIPDetails 双查修复；processARPEntries 整批单事务 + prepared statement 复用 + isIPExcluded 预载 + WR-01 savepoint 条目级回滚；kb_chunks_au FTS trigger 加 WHEN（v7 迁移 HEAD=7）；init 幂等跳过可观测日志 + 冷启动 performance.now 计时。3 plans / 代码级验证 4/4 SC + code review 0 critical（4 warnings 已修）/ 5 项 Electron 运行时验证已人工 approved。另：codebase 全面审计 7 文档 + 修审计新发现 pdfjs-dist 缺失依赖 + BUG-2 retention clamp（quick 260628-trt）
 - **Phase 4 complete (2026-06-28)**：数据/IPC 安全交付（DATA-01）—— 3 list 通道（getIPDetails/oui:getAll/anomaly:getChanges）hybrid 分页契约（默认 cap 2000/5000/100 + 硬上限 + validateLimit 钳制）+ 截断信封 {rows,total,truncated}（不静默藏数据）；export:arpTable 流式分块写 CSV（分批 LIMIT/OFFSET + append，内存峰值 O(单批) 非 O(全表)，签名/返回形态不变）。3 plans / 验证通过。
 - **Phase 5 complete (2026-07-05)**：前端重构与类型交付（FE-01~04）—— AIPage 拆 4 子组件 + useAIChat 自定义 hook（D-5-1，非 zustand/prop drilling）；前端 any→src/types（electron.d.ts 26 处建模 + 新建 ai/kb DTO + oui OUIRow，6 REQ 组件+DevicesPage any 清零，D-5-2/3）；TopologyPage ref-mirror 消 stale closure（D-5-4，不迁 store）；ChunkContent 客户端 AbortController + 模块级 LRU + in-flight 去重（D-5-5/6，不改 IPC）。4 plans / 4 SC 静态全过 + 25 项 Electron 人工 HV approved / code review 1 blocker（CR-01 无限重渲染）已修 + 9 warning/4 info advisory 未修。Deferred：搜索 snippet `[图片N]` 文本呈现（预存 UX）、设备连接观测（Phase 6 范畴）。
+- **Phase 6 complete (2026-07-05)**：健壮性/资源安全交付（ROBUST-01/02）—— arpCollector.executeSSH/executeTelnet + ai.executeCommandsOnDevice + execOne 全 try/finally 化（cleanup 统一出口 clearTimeout+end，timeout 路径 destroy，executeTelnet 补自有 setTimeout，execOne 补 stream.on('error') 兜底，D-6-1/D-6-2）；discovery safeLog helper（5 处 createSystemLog 非致命包裹 + console.warn 兜底，line 258 嵌套陷阱切断）+ enrichParseError（enriched Error 含原始片段 slice 0,200，D-6-3/D-6-4）。2 plans / 4 SC 静态全过 + code review 2 critical（句柄泄漏 CR-01 execOne stream error / CR-02 use-after-destroy race）+ 3 warning 全修复 / SC#4 句柄快照 4 项 HV defer（DEP-1 native binding 无法 plain node 实测，06-HUMAN-UAT.md）。**v1.0 milestone 全 6 phase / 14 REQ 交付完成。**
 
 ## Constraints
 
@@ -88,4 +90,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-05 after Phase 5 completion (FE-01, FE-02, FE-03, FE-04)*
+*Last updated: 2026-07-05 after Phase 6 completion (ROBUST-01, ROBUST-02) — v1.0 milestone 全 14 REQ 交付*
