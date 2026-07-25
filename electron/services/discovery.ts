@@ -203,8 +203,23 @@ async function discoverTopologyInner(deviceIds: string[]): Promise<DiscoveryResu
         for (const r of results) {
           outputs[r.command] = r.success ? r.output : `执行失败: ${r.output}`
         }
+        // Phase 3 日志：每设备命令执行结果（成功摘要 / 失败原因），运维可追溯 channel failure 等
+        const summary = results.map(r =>
+          `${r.command}: ${r.success ? `OK(${r.output.length} chars)` : `FAIL(${r.output.slice(0, 80)})`}`
+        ).join(' | ')
+        safeLog({
+          type: 'discovery', status: 'success',
+          deviceIds: dc.deviceId, deviceNames: dc.deviceName,
+          promptText: `阶段3: 命令执行 (${safeCommands.join(', ')})`,
+          parsedResult: summary,
+        })
       } catch (err: any) {
         // Connection failed entirely — skip this device
+        safeLog({
+          type: 'discovery', status: 'failed',
+          deviceIds: dc.deviceId, deviceNames: dc.deviceName,
+          errorMessage: `连接失败: ${err.message}`,
+        })
         failedDevices.push({ deviceId: dc.deviceId, deviceName: dc.deviceName, error: `连接失败: ${err.message}` })
         continue
       }

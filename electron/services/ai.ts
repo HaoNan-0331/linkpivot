@@ -301,101 +301,151 @@ export function executeCommandsOnDevice(
     return { cmd, allowed: safety.allowed, reason: safety.reason }
   })
 
-  return new Promise((resolve, reject) => {
-    const client = new Client()
-    const cfg = buildSSHConfig(device)
-    const results: Array<{ command: string; output: string; success: boolean }> = new Array(commands.length)
-    // D-6-2：settled-flag 防重复 resolve/reject；cleanup 为统一资源回收出口（clearTimeout + client.end），
-    // 任意 ready 成功/ready catch/client error/overallTimer fire 路径均经 finish() → cleanup() 回收，杜绝 stray timer 与残留 socket。
-    let settled = false
+  // exec-cmd-concat 修复：H3C SSH server 把 exec request 的命令通过 vty 逐字符注入 console，
+  // 历史实现在【单个 SSH 连接（同一 client）上串行 client.exec 多条命令】，前一条命令字符串尾部字符
+  // 尚未被设备 console 消费完毕，下一条 exec 即追加注入，致命令字符串粘连（display arp → display arpp neighbor-information list）。
+  // 改为【每条命令独立 SSH 连接】：不同 session = 不同 vty，物理隔离，彻底杜绝粘连。
+  // 仍用 exec（非 PTY），不引入注入面，不改白名单 / 安全模型；execOne 的 stream silence/retry/timeout 逻辑保持不变。
+  // 代价：握手次数 = 命令数（单设备 5 条约 10s，远好于历史卡顿）。
+  const cfg = buildSSHConfig(device)
+  const overallTimeout = 30000 + checked.length * (SSH_READY_TIMEOUT_MS + 15000)
 
-    const overallTimeout = 30000 + commands.length * 15000
-    let overallTimer: NodeJS.Timeout | undefined
+  // runOne：单命令独立 SSH 连接 —— new Client → connect → ready 后 execOne → end 回收。
+  // 返回该命令结果；连接失败/超时抛出由调用方决定（首条抛出 → reject 整批；后续抛出 → 填充 success:false 不中断）。
+  const runOne = (idx: number): Promise<{ command: string; output: string; success: boolean }> => {
+    return new Promise((resolve, reject) => {
+      const { cmd, allowed, reason } = checked[idx]
+      if (!allowed) {
+        resolve({ command: cmd, output: `命令被安全策略拒绝: ${reason}`, success: false })
+        return
+      }
+      const client = new Client()
+      let settled = false
+      let perCmdTimer: NodeJS.Timeout | undefined
 
-    const cleanup = (): void => {
-      if (overallTimer) { clearTimeout(overallTimer); overallTimer = undefined }
-      // client.end() 优雅发 EOF；client 已 end/destroy 后再 end 可能抛，幂等忽略（D-6-2/T-06-01-02）
-      try { client.end() } catch { /* ignore */ }
-    }
+      const cleanup = (): void => {
+        if (perCmdTimer) { clearTimeout(perCmdTimer); perCmdTimer = undefined }
+        // client.end() 优雅发 EOF；已 end/destroy 后再 end 可能抛，幂等忽略（与 Phase 6 cleanup 同构）
+        try { client.end() } catch { /* ignore */ }
+      }
+      const finish = (fn: () => void): void => {
+        if (settled) return
+        settled = true
+        cleanup()
+        fn()
+      }
 
-    const finish = (fn: () => void): void => {
-      if (settled) return
-      settled = true
-      cleanup()
-      fn()
-    }
+      // 单命令兜底超时 = readyTimeout + exec silence/timeout 余量
+      perCmdTimer = setTimeout(() => {
+        finish(() => {
+          try { client.destroy() } catch { /* ignore */ }
+          reject(new Error(`命令执行超时 (${cmd}, ${Math.round(overallTimeout / 1000)}s)`))
+        })
+      }, overallTimeout)
 
-    overallTimer = setTimeout(() => {
-      // timeout 兜底路径：cleanup 内已 end，再追加 destroy 强制销毁 socket（D-6-2：end+destroy 双调用）
-      finish(() => {
-        try { client.destroy() } catch { /* ignore */ }
-        reject(new Error(`命令执行超时 (${Math.round(overallTimeout / 1000)}s)`))
-      })
-    }, overallTimeout)
-
-    try {
-      client.on('ready', async () => {
-        try {
-          // 串行 exec 每条命令，结果与 commands 同序同长（调用方依赖 execResults[i] 对应 cmds[i]）
-          for (let i = 0; i < checked.length; i++) {
-            // CR-02: 每轮 await 前检查 settled——若 overallTimer 已 fire 触发 cleanup()，
-            // client 已 end/destroy，继续操作会触发 use-after-destroy（ssh2 行为未定义）。
-            // if(settled) return 切断对已销毁 client 的后续访问，不改变对外 reject 语义
-            // （timeout 路径已 finish(()=>reject(...))）。
-            if (settled) return
-            const { cmd, allowed, reason } = checked[i]
-            if (!allowed) {
-              results[i] = { command: cmd, output: `命令被安全策略拒绝: ${reason}`, success: false }
-              continue
-            }
-            try {
-              const output = await execOne(client, cmd)
-              results[i] = { command: cmd, output, success: true }
-            } catch (err: any) {
-              results[i] = { command: cmd, output: `执行失败: ${err.message}`, success: false }
-            }
+      try {
+        client.on('ready', async () => {
+          try {
+            const output = await execOne(client, cmd)
+            finish(() => resolve({ command: cmd, output, success: true }))
+          } catch (err: any) {
+            // execOne 失败（stream timeout/error 等）：按索引填 success:false，不 reject 整批（保结果同长）
+            finish(() => resolve({ command: cmd, output: `执行失败: ${err.message}`, success: false }))
           }
-          finish(() => resolve(results))
-        } catch (err: any) {
+        })
+        client.on('error', (err) => {
+          // 连接失败抛出 —— 首条命令触发外层 reject（语义同旧 ready 不达 → 设备不可达 → discovery 跳过）
           finish(() => reject(err))
-        }
-      })
+        })
+        client.connect(cfg)
+      } catch (err) {
+        // 同步异常兜底（client.connect 同步抛等罕见场景）
+        finish(() => reject(err))
+      }
+    })
+  }
 
-      client.on('error', (err) => { finish(() => reject(err)) })
-      client.connect(cfg)
-    } catch (err) {
-      // 同步异常兜底（client.connect 同步抛等罕见场景）：finish 内 cleanup + reject 原始 err（语义与异步路径同构）
-      finish(() => reject(err))
-    } finally {
-      // D-6-2 finally：模式锁定的字面验收（D-6-5 / 06-01-PLAN SC#1 grep finally 命中）。
-      // WR-03: 不在此处调 cleanup()——finally 在 Promise executor 同步返回时立即执行，
-      // 此时 ready/error/overallTimer 均未 fire（settled 必为 false），若 cleanup() 会
-      // 提前 client.end() 致 connect 未建立就关闭，命令永远失败（潜在 BLOCKER）。
-      // 资源回收已由各 finish() 路径覆盖（ready 成功 / ready catch / client error /
-      // overallTimer / 同步 catch），settled-flag 幂等保护避免二次 cleanup/reject。
-      // 故 finally 仅作字面占位，不做任何动作。
+  return (async () => {
+    const results: Array<{ command: string; output: string; success: boolean }> = new Array(checked.length)
+    for (let i = 0; i < checked.length; i++) {
+      try {
+        results[i] = await runOne(i)
+      } catch (err: any) {
+        // 首条命令连接失败 → reject 整批（与旧实现 client.on('error') reject 同语义，调用方按连接失败处理）
+        if (i === 0) throw err
+        // 后续命令连接失败：填充 success:false（设备中途抖动），保持结果数组同长同序
+        results[i] = { command: checked[i].cmd, output: `执行失败: ${err.message}`, success: false }
+      }
     }
-  })
+    return results
+  })()
 }
 
 // 单命令非交互执行（client.exec）：不分配 PTY，设备不触发分页，
 // 天然杜绝交互式 shell 的换行/分号注入与 prompt 误判。
-function execOne(client: Client, command: string): Promise<string> {
+function execOne(client: Client, command: string, perCmdTimeoutMs = 15000, silenceMs = 2000): Promise<string> {
   return new Promise((resolve, reject) => {
-    client.exec(command, (err, stream) => {
-      if (err) return reject(err)
-      let buf = ''
-      stream.on('data', (data: Buffer) => { buf += decodeDeviceBuffer(data) })
-      const stderr = (stream as any).stderr
-      if (stderr && typeof stderr.on === 'function') {
-        stderr.on('data', () => { /* 忽略 stderr，必要时再收集 */ })
-      }
-      // CR-01: stream error 兜底——对端 RST / 网络中断 / ssh2 channel 失败时 stream emit 'error'
-      // 而不 emit 'close'，不 listen 则 Promise 永不 settle，stream 句柄泄漏。
-      // 与 arpCollector.executeSSH line 61 同模式（finish(()=>reject(e))）。
-      stream.on('error', (e: Error) => reject(e))
-      stream.on('close', () => resolve(stripAnsi(buf).trim()))
-    })
+    let stream: any
+    let timer: NodeJS.Timeout | undefined
+    let silenceTimer: NodeJS.Timeout | undefined
+    let settled = false
+    let retried = false
+    let buf = ''
+    const finish = (fn: () => void): void => {
+      if (settled) return
+      settled = true
+      if (timer) { clearTimeout(timer); timer = undefined }
+      if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = undefined }
+      fn()
+    }
+    // A: 静默检测——设备输出完不 close channel（H3C display version 行为）时，data 静默 silenceMs 后
+    // 主动 resolve + close，快速释放 channel 避免后续命令撞 MaxSessions（比 perCmdTimeout 更早触发）。
+    const triggerSilence = (): void => {
+      if (silenceTimer) clearTimeout(silenceTimer)
+      silenceTimer = setTimeout(() => {
+        finish(() => {
+          try { stream?.close() } catch { /* ignore */ }
+          resolve(stripAnsi(buf).trim())
+        })
+      }, silenceMs)
+    }
+    // per-command 兜底：极端情况（持续有 data 但永不静默 + 不 close）的最终超时
+    timer = setTimeout(() => {
+      finish(() => {
+        try { stream?.close() } catch { /* ignore */ }
+        try { stream?.destroy() } catch { /* ignore */ }
+        reject(new Error(`命令执行无响应 (${perCmdTimeoutMs}ms 未收到 stream close)`))
+      })
+    }, perCmdTimeoutMs)
+    const doExec = (): void => {
+      client.exec(command, (err, s) => {
+        if (err) {
+          // C: channel open failure 重试一次（前序 channel session 释放延迟致 open 被拒）
+          if (/channel open failure|open failed/i.test(err.message) && !retried) {
+            retried = true
+            setTimeout(doExec, 500)
+            return
+          }
+          finish(() => reject(err))
+          return
+        }
+        stream = s
+        s.on('data', (data: Buffer) => { buf += decodeDeviceBuffer(data); triggerSilence() })
+        const stderr = (s as any).stderr
+        if (stderr && typeof stderr.on === 'function') {
+          stderr.on('data', () => { /* 忽略 stderr */ })
+        }
+        // CR-01: stream error 兜底——对端 RST / 网络中断 / ssh2 channel 失败时 stream emit 'error'
+        s.on('error', (e: Error) => {
+          finish(() => reject(e))
+        })
+        s.on('close', () => {
+          finish(() => resolve(stripAnsi(buf).trim()))
+        })
+        triggerSilence() // 启动初始静默计时（无 data 也计时，避免空输出卡满 timeout）
+      })
+    }
+    doExec()
   })
 }
 

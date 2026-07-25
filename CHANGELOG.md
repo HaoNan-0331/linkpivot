@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## 2026-07-25
+
+### debug exec-cmd-concat · H3C 多命令 exec 字符串粘连修复（每命令独立 SSH 连接）
+
+- **根因（DB 日志铁证）**：discovery Phase 3 `executeCommandsOnDevice` 在【单个 SSH 连接（同一 client）上串行 `client.exec` 多条命令】。H3C SSH server 把 exec request 的命令通过 vty 逐字符注入 console，前一条命令字符串尾部字符尚未被设备 console 消费完毕，下一条 exec 即追加注入，致命令字符串粘连（`display arp` → `display arpp neighbor-information list`）。叠加 `execOne` silence 2s 提前 resolve（H3C exec 不主动 close channel），下一条发送过快加剧粘连。仅第 1 条 LLDP 有数据，ARP/version/routing/interface 全报 `% Unrecognized/Wrong command` → AI 拓扑分析素材残缺 → `edges: []`。
+- **修复（方案 A）**：`electron/services/ai.ts` `executeCommandsOnDevice` 重构为【每条命令独立 SSH 连接】—— `runOne(idx)` 内 `new Client → connect(buildSSHConfig) → ready 后 execOne → end 回收`。不同 SSH session = 不同 vty，物理隔离彻底杜绝粘连。仍用 exec（非 PTY），不引入注入面，不改白名单 / 安全模型；复用 `sshConfig.ts` 的 `SSH_READY_TIMEOUT_MS` / `SSH_ALGORITHMS`；`execOne` 签名 / stream silence / retry / timeout 逻辑完全不变。
+- **对外契约零改**：`executeCommandsOnDevice(device, commands[]): Promise<结果[]>` 签名不变；结果数组与 `commands` 同序同长（`results[i]` ↔ `cmds[i]`）；首条命令连接失败 reject 整批（与旧 `client.on('error')` 同语义，discovery `catch` 按连接失败跳过设备）；后续命令连接失败填 `success:false` 不中断（保结果同长同序）。
+- **代价**：握手次数 = 命令数（单设备 5 条约 10s，远好于历史卡顿，可接受）。
+- **改动范围**：仅 `electron/services/ai.ts` `executeCommandsOnDevice`（line 291-386），`execOne`/`buildSSHConfig`/`executeCommandOnDevice` 不动。
+- 验证：tsc web strict + noUnusedLocals 全绿；esbuild 主进程打包不回归；vitest 25/25 全绿；待人工 HV（对 H3C 设备跑自动发现，查 `ai_system_logs` collectionText 确认第 2 条起命令回显干净、edges 非空）。
+
 ## 2026-07-02
 
 ### Phase 5 Plan 04 · FE-02 KB 类型化 + FE-04 ChunkContent 取消与缓存（D-5-2/D-5-3/D-5-5/D-5-6）
