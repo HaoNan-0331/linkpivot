@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, session, shell } from 'electron'
 import path from 'path'
-import { initDatabase, closeDatabase, migrateAndSecure } from './database/connection'
+import { initDatabase, closeDatabase, migrateAndSecure, getDatabase } from './database/connection'
 import { createTables } from './database/init'
 import { getOrCreateMasterKey } from './utils/keyManager'
 import { hardenWindow } from './utils/webSecurity'
@@ -87,6 +87,24 @@ app.whenReady().then(() => {
   initDatabase()
   createTables()
   migrateAndSecure()   // 迁移前备份(gated on 非空库) + runMigrations + ACL 收紧 db/wal/shm（D-06/D-12a）
+  // kb-db-malformed：启动 FTS5 自愈——把"被动 malformed"转成"主动自愈"。
+  // taskkill/Stop-Process -Force = SIGKILL 不触发 before-quit → closeDatabase，WAL 未 checkpoint 可致
+  // FTS5 shadow（docsize/data/idx）半途中断写入不一致 → 用户态报 database disk image is malformed。
+  // 启动早期表已就绪：先 integrity-check（OK 即过），失败即 rebuild（从 kb_chunks 重建 shadow，保留主库数据）。
+  // try/catch + 日志兜底，不阻塞 init 主流程（与 discovery safeLog / 启动日志惯例一致）。
+  try {
+    getDatabase().prepare("INSERT INTO kb_chunks_fts(kb_chunks_fts) VALUES('integrity-check')").run()
+    console.log('[startup] kb_chunks_fts integrity-check: OK')
+  } catch (e1) {
+    console.warn('[startup] kb_chunks_fts integrity-check failed, attempting rebuild:', (e1 && e1.message) || e1)
+    try {
+      getDatabase().prepare("INSERT INTO kb_chunks_fts(kb_chunks_fts) VALUES('rebuild')").run()
+      console.log('[startup] kb_chunks_fts rebuild: OK (FTS shadow 重建完成)')
+    } catch (e2) {
+      // rebuild 仍失败不阻塞启动（主库未坏，搜索功能降级；用户可手动从 backups 恢复）
+      console.warn('[startup] kb_chunks_fts rebuild failed (search may be degraded):', (e2 && e2.message) || e2)
+    }
+  }
   // PERF-01 (D-P1)：启动预载 Map<macPrefix,vendor>，确保首次 getIPDetails 时 Map 就绪（消除 N+1）
   OUIService.preload()
   console.log('[startup] DB+OUI init', (performance.now() - __startupT0).toFixed(0), 'ms')   // PERF-04：冷启动耗时，供 before/after 证据 grep 验证

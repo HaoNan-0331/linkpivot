@@ -2,6 +2,18 @@
 
 ## 2026-07-25
 
+### debug kb-db-malformed · 资料库 FTS5 shadow 损坏致 malformed（事务化 + shadow 重灌 + 启动自愈）
+
+- **症状**：资料库文档详情删除章节 `kb:deleteChunk` / 编辑保存 `kb:editChunk` 报 `database disk image is malformed`（SQLite SQLITE_CORRUPT/26）。
+- **根因**：FTS5 虚拟表 `kb_chunks_fts` 的影子表（shadow tables）损坏——主库 `topology.db` 本身完好（`PRAGMA integrity_check`=ok，`kb_chunks` 193 行可读）。证据：`kb_chunks_fts_docsize`=0 行（与 193 行主表不一致），shadow 上任何 `DELETE`/`UPDATE` 触发器路径（`kb_chunks_ad`/`_au`）抛 malformed，而 `MATCH` 读路径正常；历史多次 `taskkill //F`/`Stop-Process -Force`（=SIGKILL）不触发 Electron `before-quit`→`closeDatabase()`，better-sqlite3 句柄被强杀、WAL 未 checkpoint，FTS5 多行触发器（_ad/_au 含 1 delete + 1 insert + GROUP_CONCAT 子查询）半途中断写入累积在 WAL → shadow（尤其 docsize）落不一致状态。better-sqlite3 对 FTS5 shadow 损坏统一抛 `database disk image is malformed`（误导性措辞，非主库坏）。
+- **修复（数据层）**：停应用 → 备份当前 `topology.db`(+wal/+shm) 到 `backups/topology-pre-rebuild-20260725-143933.db.bak*` → DROP+CREATE `kb_chunks_fts` + 按触发器计算逻辑（`image_desc`=GROUP_CONCAT(`kb_images.description`)）从 kb_chunks 193 行重灌 shadow → 重建 `kb_chunks_ai/_ad/_au` 触发器 → `wal_checkpoint(TRUNCATE)`。结果：`_docsize` 0→193、MATCH 命中正常（配置=13 hits）、integrity_check=ok、三触发器路径全绿。
+- **关键决策**：标准 `INSERT INTO kb_chunks_fts VALUES('rebuild')` 因 FTS5 external-content 含计算列 `image_desc`（不在 content 表 kb_chunks 内）抛 `no such column: T.image_desc`，故改用 DROP+重灌；11:13 干净备份经核对与当前库 kb_chunks 完全同字节（shadow 同为坏状态），证实"shadow 自 11:13 起即坏"，整库替换无价值。
+- **修复（代码层）**：`electron/services/knowledgeBaseService.ts` 的 `updateChunk`/`deleteChunk`/`mergeChunks`/`splitChunk`/`deleteDocument` 多语句显式包进 `db.transaction()` 保证原子（防 FTS shadow 半途中断写入）；`deleteChunk` 的文件 unlink 移事务外（避免 DB 回滚后文件已删不一致）；`updateChunk` 的 FTS sync 仍 try/catch 不回滚主数据。
+- **修复（自愈）**：`electron/main.ts` 启动序列（`migrateAndSecure` 之后）新增 FTS5 `integrity-check` → 失败即 `rebuild` → 仍失败仅 `console.warn` 不阻塞 init（与 safeLog/启动日志惯例一致），把"被动 malformed"转"主动自愈"。
+- **改动范围**：`electron/services/knowledgeBaseService.ts`（5 函数事务化）、`electron/main.ts`（启动自愈块 + getDatabase 导入）。不改表结构/触发器语义/IPC 契约。
+- 验证：tsc -p tsconfig.web.json(strict+noUnusedLocals) 全绿；esbuild main+preload 全绿；vitest 25/25 全绿；DB 级 readonly 复检 integrity_check=ok、shadow 健康、三触发器路径全绿。备份：11:13 periodic + 14:39 pre-rebuild 双备份在 `backups/`，可回滚。应用当前已停，待人工 HV（资料库文档详情删章节/编辑保存不再报 malformed）。
+
+
 ### debug exec-cmd-concat · H3C 多命令 exec 字符串粘连修复（每命令独立 SSH 连接）
 
 - **根因（DB 日志铁证）**：discovery Phase 3 `executeCommandsOnDevice` 在【单个 SSH 连接（同一 client）上串行 `client.exec` 多条命令】。H3C SSH server 把 exec request 的命令通过 vty 逐字符注入 console，前一条命令字符串尾部字符尚未被设备 console 消费完毕，下一条 exec 即追加注入，致命令字符串粘连（`display arp` → `display arpp neighbor-information list`）。叠加 `execOne` silence 2s 提前 resolve（H3C exec 不主动 close channel），下一条发送过快加剧粘连。仅第 1 条 LLDP 有数据，ARP/version/routing/interface 全报 `% Unrecognized/Wrong command` → AI 拓扑分析素材残缺 → `edges: []`。

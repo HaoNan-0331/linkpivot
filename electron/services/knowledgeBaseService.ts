@@ -105,38 +105,46 @@ export function getDocument(docId: string): any | null {
 
 export function updateChunk(chunkId: string, title: string, content: string): void {
   const db = getDatabase()
-  db.prepare('UPDATE kb_chunks SET title = ?, content = ?, char_count = ? WHERE id = ?')
-    .run(title, content, content.length, chunkId)
-  // Sync FTS5
-  try {
-    const chunk = db.prepare('SELECT rowid FROM kb_chunks WHERE id = ?').get(chunkId) as any
-    if (chunk) {
-      const images = db.prepare('SELECT description FROM kb_images WHERE chunk_id = ?').all(chunkId) as any[]
-      const imageDesc = images.map(i => i.description).filter(Boolean).join(' ')
-      db.prepare('INSERT OR REPLACE INTO kb_chunks_fts (rowid, title, content, image_desc) VALUES (?, ?, ?, ?)')
-        .run(chunk.rowid, title, content, imageDesc)
-    }
-  } catch { /* FTS sync failed, non-critical */ }
+  // kb-db-malformed：UPDATE + FTS sync 显式包进单事务，保证原子（防 taskkill 致 FTS shadow 半途中断写入）。
+  // FTS sync 仍 try/catch（FTS 损坏不应回滚 chunk 主数据）。
+  const tx = db.transaction(() => {
+    db.prepare('UPDATE kb_chunks SET title = ?, content = ?, char_count = ? WHERE id = ?')
+      .run(title, content, content.length, chunkId)
+    try {
+      const chunk = db.prepare('SELECT rowid FROM kb_chunks WHERE id = ?').get(chunkId) as any
+      if (chunk) {
+        const images = db.prepare('SELECT description FROM kb_images WHERE chunk_id = ?').all(chunkId) as any[]
+        const imageDesc = images.map(i => i.description).filter(Boolean).join(' ')
+        db.prepare('INSERT OR REPLACE INTO kb_chunks_fts (rowid, title, content, image_desc) VALUES (?, ?, ?, ?)')
+          .run(chunk.rowid, title, content, imageDesc)
+      }
+    } catch { /* FTS sync failed, non-critical */ }
+  })
+  tx()
 }
 
 export function deleteChunk(chunkId: string): void {
   const db = getDatabase()
   const chunk = db.prepare('SELECT document_id FROM kb_chunks WHERE id = ?').get(chunkId) as any
   if (!chunk) return
-  // Delete associated images
+  // Delete associated image files (filesystem, 事务外：DB 已提交后再删，避免 DB 回滚后文件已删的不一致)
   const images = db.prepare('SELECT file_path FROM kb_images WHERE chunk_id = ?').all(chunkId) as any[]
+  // kb-db-malformed：DELETE images + chunk + reindex + chunk_count 显式包进单事务，保证原子。
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM kb_images WHERE chunk_id = ?').run(chunkId)
+    db.prepare('DELETE FROM kb_chunks WHERE id = ?').run(chunkId)
+    // Reindex remaining chunks
+    const remaining = db.prepare('SELECT id FROM kb_chunks WHERE document_id = ? ORDER BY chunk_index').all(chunk.document_id) as any[]
+    const reindex = db.prepare('UPDATE kb_chunks SET chunk_index = ? WHERE id = ?')
+    for (let i = 0; i < remaining.length; i++) {
+      reindex.run(i, remaining[i].id)
+    }
+    db.prepare('UPDATE kb_documents SET chunk_count = ? WHERE id = ?').run(remaining.length, chunk.document_id)
+  })
+  tx()
   for (const img of images) {
     try { fs.unlinkSync(img.file_path) } catch { /* ignore */ }
   }
-  db.prepare('DELETE FROM kb_images WHERE chunk_id = ?').run(chunkId)
-  db.prepare('DELETE FROM kb_chunks WHERE id = ?').run(chunkId)
-  // Reindex remaining chunks
-  const remaining = db.prepare('SELECT id FROM kb_chunks WHERE document_id = ? ORDER BY chunk_index').all(chunk.document_id) as any[]
-  const reindex = db.prepare('UPDATE kb_chunks SET chunk_index = ? WHERE id = ?')
-  for (let i = 0; i < remaining.length; i++) {
-    reindex.run(i, remaining[i].id)
-  }
-  db.prepare('UPDATE kb_documents SET chunk_count = ? WHERE id = ?').run(remaining.length, chunk.document_id)
 }
 
 export function mergeChunks(chunkIds: string[], newTitle: string): string {
@@ -148,17 +156,21 @@ export function mergeChunks(chunkIds: string[], newTitle: string): string {
   const mergedId = uuidv4()
   const minIndex = Math.min(...chunks.map(c => c.chunk_index))
 
-  for (const c of chunks) {
-    db.prepare('DELETE FROM kb_chunks WHERE id = ?').run(c.id)
-  }
-  db.prepare('INSERT INTO kb_chunks (id, document_id, chunk_index, title, content, level, char_count) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run(mergedId, docId, minIndex, newTitle, mergedContent, 1, mergedContent.length)
-  const remaining = db.prepare('SELECT id FROM kb_chunks WHERE document_id = ? ORDER BY chunk_index').all(docId) as any[]
-  const reindex = db.prepare('UPDATE kb_chunks SET chunk_index = ? WHERE id = ?')
-  for (let i = 0; i < remaining.length; i++) {
-    reindex.run(i, remaining[i].id)
-  }
-  db.prepare('UPDATE kb_documents SET chunk_count = ? WHERE id = ?').run(remaining.length, docId)
+  // kb-db-malformed：多 DELETE + INSERT + reindex + chunk_count 包进单事务，保证原子。
+  const tx = db.transaction(() => {
+    for (const c of chunks) {
+      db.prepare('DELETE FROM kb_chunks WHERE id = ?').run(c.id)
+    }
+    db.prepare('INSERT INTO kb_chunks (id, document_id, chunk_index, title, content, level, char_count) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(mergedId, docId, minIndex, newTitle, mergedContent, 1, mergedContent.length)
+    const remaining = db.prepare('SELECT id FROM kb_chunks WHERE document_id = ? ORDER BY chunk_index').all(docId) as any[]
+    const reindex = db.prepare('UPDATE kb_chunks SET chunk_index = ? WHERE id = ?')
+    for (let i = 0; i < remaining.length; i++) {
+      reindex.run(i, remaining[i].id)
+    }
+    db.prepare('UPDATE kb_documents SET chunk_count = ? WHERE id = ?').run(remaining.length, docId)
+  })
+  tx()
   return mergedId
 }
 
@@ -173,19 +185,23 @@ export function splitChunk(chunkId: string, splitPosition: number, title1: strin
   const id1 = uuidv4()
   const id2 = uuidv4()
 
-  db.prepare('DELETE FROM kb_chunks WHERE id = ?').run(chunkId)
+  // kb-db-malformed：DELETE + 2 INSERT + reindex + chunk_count 包进单事务，保证原子。
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM kb_chunks WHERE id = ?').run(chunkId)
 
-  db.prepare('INSERT INTO kb_chunks (id, document_id, chunk_index, title, content, level, char_count) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run(id1, chunk.document_id, chunk.chunk_index, title1, content1, chunk.level, content1.length)
-  db.prepare('INSERT INTO kb_chunks (id, document_id, chunk_index, title, content, level, char_count) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run(id2, chunk.document_id, chunk.chunk_index + 1, title2, content2, chunk.level, content2.length)
+    db.prepare('INSERT INTO kb_chunks (id, document_id, chunk_index, title, content, level, char_count) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(id1, chunk.document_id, chunk.chunk_index, title1, content1, chunk.level, content1.length)
+    db.prepare('INSERT INTO kb_chunks (id, document_id, chunk_index, title, content, level, char_count) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(id2, chunk.document_id, chunk.chunk_index + 1, title2, content2, chunk.level, content2.length)
 
-  const remaining = db.prepare('SELECT id FROM kb_chunks WHERE document_id = ? ORDER BY chunk_index').all(chunk.document_id) as any[]
-  const reindex = db.prepare('UPDATE kb_chunks SET chunk_index = ? WHERE id = ?')
-  for (let i = 0; i < remaining.length; i++) {
-    reindex.run(i, remaining[i].id)
-  }
-  db.prepare('UPDATE kb_documents SET chunk_count = ? WHERE id = ?').run(remaining.length, chunk.document_id)
+    const remaining = db.prepare('SELECT id FROM kb_chunks WHERE document_id = ? ORDER BY chunk_index').all(chunk.document_id) as any[]
+    const reindex = db.prepare('UPDATE kb_chunks SET chunk_index = ? WHERE id = ?')
+    for (let i = 0; i < remaining.length; i++) {
+      reindex.run(i, remaining[i].id)
+    }
+    db.prepare('UPDATE kb_documents SET chunk_count = ? WHERE id = ?').run(remaining.length, chunk.document_id)
+  })
+  tx()
   return [id1, id2]
 }
 
@@ -204,9 +220,13 @@ export function deleteDocument(docId: string): void {
   try { fs.unlinkSync(doc.file_path) } catch { /* ignore */ }
 
   // Delete DB records (chunks first to trigger FTS cleanup)
-  db.prepare('DELETE FROM kb_chunks WHERE document_id = ?').run(docId)
-  db.prepare('DELETE FROM kb_images WHERE document_id = ?').run(docId)
-  db.prepare('DELETE FROM kb_documents WHERE id = ?').run(docId)
+  // kb-db-malformed：3 DELETE 包进单事务，保证原子（FTS 触发器随 chunks DELETE 同步清理）。
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM kb_chunks WHERE document_id = ?').run(docId)
+    db.prepare('DELETE FROM kb_images WHERE document_id = ?').run(docId)
+    db.prepare('DELETE FROM kb_documents WHERE id = ?').run(docId)
+  })
+  tx()
 }
 
 export function reprocessDocument(docId: string): any {
