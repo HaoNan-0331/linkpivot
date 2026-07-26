@@ -1,6 +1,6 @@
 # Technology Stack
 
-**Analysis Date:** 2026-06-28
+**Analysis Date:** 2026-07-26
 
 ## Languages
 
@@ -59,13 +59,11 @@
 - `antd` `^6.3.7` + `@ant-design/icons` — UI 组件
 - `xterm` `^5.3.0` + `xterm-addon-fit` `^0.8.0` — 终端模拟器前端（终端窗口 `src/terminal-main.tsx`）
 - `mammoth` `^1.12.0` — 知识库 `.docx` → HTML 解析 (`electron/services/knowledgeBaseService.ts`)
+- `pdfjs-dist` `^6.1.200` — 知识库 PDF 解析，`electron/services/knowledgeBaseService.ts:413` 动态 `import('pdfjs-dist/legacy/build/pdf.mjs')`（在 `parsePdf` 内，`getDocument` 抽取文本）。已显式声明于 `package.json` `dependencies`，esbuild main 打包脚本 `--external:pdfjs-dist` 保留运行时动态 import，PDF 解析路径可正常工作。
 
 **Infrastructure (运行时工具):**
 - `uuid` `^14.0.0` — 主键/批次 ID 生成 (`v4 as uuidv4`)
 - `iconv-lite` (transitive, present in `node_modules`) — 设备输出 GBK↔UTF-8 解码 (`decodeDeviceBuffer`/`decodeBuffer` in `electron/services/ai.ts`, `connection.ts`)。**未在 package.json 显式声明，属隐式依赖。**
-
-**⚠️ 缺失/未声明依赖:**
-- `pdfjs-dist` — `electron/services/knowledgeBaseService.ts:393` 动态 `import('pdfjs-dist/legacy/build/pdf.mjs')` 用于 PDF 解析，且 `package.json` build script 将其标为 `--external:pdfjs-dist`，但该包**不在 `dependencies`/`devDependencies`，也不在 `package-lock.json`，`node_modules/pdfjs-dist` 不存在**。PDF 知识库解析路径在当前依赖树下会运行时失败。
 
 ## Configuration
 
@@ -100,4 +98,4 @@
 
 ---
 
-*Stack analysis: 2026-06-28*
+*Stack analysis: 2026-07-26*

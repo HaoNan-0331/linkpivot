@@ -89,7 +89,7 @@ network_toplogy 是面向运维人员的网络拓扑管理桌面工具（Electro
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
 | 采用 GSD 流程管理技术债优化 | CLAUDE.md 规范要求中大型项目用 /gsd；技术债需结构化分批 | — Pending |
-| 跳过 map-codebase + domain research | 已有 CodeGraph 索引 + 84-agent 全量审计，架构充分掌握；外部搜索工具不可用 | — Pending |
+| map-codebase 后续已补执行 + 跳过 domain research | map-codebase 初轮以「已有 CodeGraph 索引 + 84-agent 全量审计」为由跳过，但后续已补执行（commit 64a28fb），产出 `.planning/codebase/` 7 文档（ARCHITECTURE/CONCERNS/CONVENTIONS/INTEGRATIONS/STACK/STRUCTURE/TESTING）并随 phase 演进持续维护；domain research 因外部搜索工具不可用仍跳过 | — map-codebase 已交付 / domain research 跳过 |
 | 本轮仅技术债，不含新功能 | 用户明确延后新功能 | — Pending |
 
 ## Evolution

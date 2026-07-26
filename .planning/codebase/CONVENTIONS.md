@@ -1,6 +1,6 @@
 # Coding Conventions
 
-**Analysis Date:** 2026-06-28
+**Analysis Date:** 2026-07-26
 
 > 适用范围：`network_toplogy`（Electron + React + TS + better-sqlite3）。本文档描述当前实际编码规范，新增代码必须遵循。语言：中文叙述 + 英文技术术语/代码标识符。
 
@@ -22,6 +22,7 @@
 **Variables / Constants:**
 - 局部变量：`camelCase`（如 `normalizedPrefix`、`derivedKeyCache`）
 - 模块级常量：`UPPER_SNAKE_CASE`（如 `ALGORITHM`、`V2_IV_LEN`、`ITERATIONS`、`MAX_BATCH`、`MIGRATION_HEAD`、`LOCK_MS`）
+- 模块级可变密钥持有例外：函数式 service 用小写 `let MK = ''`（masterKey，由 `setXxxMasterKey` 注入，见下文 Pattern 1）
 - migration step 内部函数例外：`v1`…`v7` 小写（版本号语义，见 `electron/database/migrations.ts`）
 
 **Types / Interfaces:**
@@ -57,13 +58,32 @@
 
 ## 核心模式（Core Patterns）
 
-### 1. 静态类 Service（无状态 facade，DB 读写集中）
+### 1. Service 风格（两种合法形态并存，按是否持有加密字段选择）
 
-- **模式**：service 导出一个 `class`，全部方法 `static`，内部调 `getDatabase()` 取连接，不持有实例状态（缓存除外）。
-- **范例**：`electron/services/ouiService.ts`（`class OUIService`）、`electron/services/anomalyService.ts`（`class AnomalyService`）。
+仓库实际存在 **两种等价合法** 的 service 形态，**不是**只允许静态类。选择标准：service 内是否需要读写加密列（`<col>_enc`）。
+
+#### 1a. 函数式 + 模块级 masterKey（含加密字段的 service）
+
+- **模式**：模块级 `let MK = ''` 持有 masterKey，`export function setXxxMasterKey(key)` 由启动流程（`main.ts` 拿到 safeStorage 解出的 masterKey 后）注入；模块内私有 `enc`/`dec` 包 `encField`/`decField` 绑定该 MK；CRUD 全部以 `export function` 形式导出，`rowToXxx(row)` 做解密映射。
+- **范例**：`electron/services/device.ts`（`setDeviceMasterKey` + `enc`/`dec` + `rowToDevice` + `listDevices`/`createDevice`/...）、`electron/services/topology.ts`（`setTopologyMasterKey` + `rowToTopology`）、`electron/services/ai.ts`、`electron/services/aiExecLogger.ts`、`electron/services/knowledgeBaseService.ts`、`electron/services/connection.ts`、`electron/services/arpCollector.ts`。
+  ```ts
+  // electron/services/device.ts
+  let MK = ''
+  export function setDeviceMasterKey(key: string) { MK = key }
+  function enc(val: string | null | undefined): string | null { return encField(val, MK) }
+  function dec(val: string | null | undefined): string { return decField(val, MK) }
+  function rowToDevice(row: any): any { return { name: dec(row.name_enc), ipAddress: dec(row.ip_enc), ... } }
+  export function listDevices() { return (getDatabase().prepare('SELECT * FROM devices ...').all() as any[]).map(rowToDevice) }
+  ```
+- **为何不用静态类**：masterKey 是运行期注入的可变状态，函数式 + 闭包绑 MK 比挂在 `static` 字段更直观；且 `rowToXxx` 需在 `enc`/`dec` 闭包内反复调用，模块级 helper 比 `this.` 更省事。
+
+#### 1b. 静态类 facade（无状态 service，DB 读写集中）
+
+- **模式**：service 导出一个 `class`，全部方法 `static`，内部调 `getDatabase()` 取连接，不持有可变实例状态（缓存除外）。
+- **范例**：`electron/services/ouiService.ts`（`class OUIService`）、`electron/services/anomalyService.ts`（`class AnomalyService`）、`electron/services/backupScheduler.ts`（`class BackupScheduler`）、`electron/services/exportService.ts`、`electron/services/ipStatusService.ts`、`electron/services/networkSegmentService.ts`、`electron/services/schedulerService.ts`。
 - **私有静态 helper**：`private static normalizeMac(...)`、`private static preloadExcludedSet(...)` —— 命名清晰、与 static 方法同 `this.` 调用。
-- **缓存例外**：模块级懒加载缓存允许挂在 `private static`（如 `OUIService.vendorMap: Map | null`、`auth.ts` 的 `captchaStore`/`failedAttempts`），null = 未预载，失败优雅降级回退查库。
-- **新建 service 一律沿用此模式**，不要写成 `new` 出来的实例类。
+- **缓存例外**：模块级懒加载缓存允许挂在 `private static`（如 `OUIService.vendorMap: Map | null`），null = 未预载，失败优雅降级回退查库。函数式 service 的运行期状态则直接用模块级 `let`/`const`（如 `auth.ts` 的 `const captchaStore`/`const failedAttempts` 是模块级 Map，非 class 字段）。
+- **选择原则**：service 读写加密列 → 用 1a 函数式；service 纯 DB CRUD / 无加密列 → 用 1b 静态类。**两者都不要写成 `new` 出来的实例类。**
 
 ### 2. IPC secure 高阶函数鉴权（红线，不可回退）
 
@@ -75,8 +95,12 @@
 - **脱敏**：`sanitizeMessage` 移除绝对路径（`[A-Za-z]:\\...`、`/usr|home|...`）、截断 > 200 字符 —— 不向渲染层泄露 SQL/路径等内部细节。
 - **注册范例**（`electron/ipc/ouiIpc.ts`）：
   ```ts
+  import { validateLimit, validateOffset } from '../utils/pagination'
+  const MAX_BATCH = 1000
   export function registerOuiIpc() {
-    ipcMain.handle('oui:getAll', secure(() => OUIService.getAll()))
+    // DATA-01：分页参数经网关校验后下推 SQL LIMIT/OFFSET（默认 5000、硬上限 50000）
+    ipcMain.handle('oui:getAll', secure((_e, limit?: number, offset?: number) =>
+      OUIService.getAll(validateLimit(limit, 5000, 50000), validateOffset(offset))))
     ipcMain.handle('oui:add', secure((_e, data: any) => {
       if (!data || typeof data !== 'object') throw new Error('参数无效')
       return OUIService.add(data)
@@ -88,6 +112,7 @@
   }
   ```
 - **IPC channel 命名**：`<domain>:<action>`（如 `oui:getAll`、`oui:addBatch`、`anomaly:check`、`kb:search`、`scheduler:start`、`export:topology`、`network:list`）。
+- **分页通道**：列表类 handler（`oui:getAll` 等）接收 renderer 传入的 `limit?`/`offset?`，统一经 `electron/utils/pagination.ts` 的 `validateLimit(limit, default, ceiling)` / `validateOffset(offset)` 在网关层校验（非整数/超界 → 落回默认值，非钳到 ceiling），service 层只接收安全值（不信 renderer）。
 - **批量上限**：IPC 层用模块常量 `MAX_BATCH = 1000` 拦截超大数组（如 `ouiIpc.ts`）。
 
 ### 3. AES-256-GCM 字段加密（enc/decField + 向后兼容）
@@ -96,10 +121,10 @@
   - `encrypt(plaintext, masterKey)` / `decrypt(ciphertext, masterKey)` —— AES-256-GCM，PBKDF2（100000 次 sha512）派生密钥。
   - **版本前缀**：新密文 `v2:` 前缀 + 12 字节 IV（GCM 推荐 96 位）；历史无前缀密文用 16 字节 IV —— `decrypt` 自动识别兼容。
   - `encField(val, key)` / `decField(val, key)` —— **字段级包装**，是 service 读写加密列的唯一入口（`null`/空 → `null`/`''`）。
-  - `decField` 降级：单条坏密文 try/catch → `console.error('[crypto] decField 解密失败')` + 返回 `''`，不让整列表加载失败。
+  - `decField` 降级 + 可观测：单条坏密文 try/catch → `console.error('[crypto] decField 解密失败')` + 返回 `''`，不让整列表加载失败；系统性失败（masterKey 不匹配 / safeStorage 翻转）经 `setDecryptFailureHandler` 注入的 handler 限流上报（窗口 60s，去重防刷屏），`main.ts` 启动时注入写 `system_log` 的实现（R2 加固）。
   - `hashPassword` / `verifyPasswordSync`：口令哈希 PBKDF2，`verifyPasswordSync` 含结构防御 + 输入长度上限（防 pbkdf2 超长 DoS）+ `timingSafeEqual`。
   - 派生密钥 LRU 缓存 `derivedKeyCache`（`DERIVED_CACHE_MAX = 2048`）降低列表解密同步阻塞。
-- **加密列命名**：`<col>_enc`（如 `name_enc`、`password_enc`、`vision_api_key_enc`）。
+- **加密列命名**：`<col>_enc`（如 `name_enc`、`password_enc`、`vision_api_key_enc`、`web_url_enc`、`data_enc`）。
 - **新增加密字段一律走 `encField`/`decField`**，禁止裸调 `encrypt`/`decrypt` 漏掉 null/降级处理。
 
 ### 4. Prepared Statement 复用（性能红线 D-P2）
@@ -140,7 +165,7 @@
 **Patterns:**
 - **IPC 层**：所有 handler 经 `secure`/`safe` 包装，异常 `console.error('[ipc] handler error:', err)` + `throw new Error(sanitizeMessage(...))`（脱敏后传递，不泄露内部细节）。
 - **非致命降级**：单点失败不应让整体功能中断，try/catch 后回退安全值：
-  - `decField` 坏密文 → 返回 `''`
+  - `decField` 坏密文 → 返回 `''`（并经 handler 上报系统性失败，见 Pattern 3）
   - `OUIService.preload` 失败 → `vendorMap = null`，回退逐行查库
   - `runMigrations` 跳过时的 `createSystemLog` 失败 → `catch { console.log(...) }`
 - **致命抛出**：迁移步骤失败 → better-sqlite3 自动 ROLLBACK → `createSystemLog({status:'failed'})` → 抛出让启动中止（D-08，DB 停留前版本）。外键重建校验失败 → `throw`。
@@ -154,7 +179,7 @@
 - **type 取值**：`'discovery' | 'acl' | 'migration' | 'backup'`（DB CHECK 约束，见 v6 迁移）。
 - **status 取值**：`'success' | 'failed' | 'warning'`。
 - **字段截断**：`truncate()` 超长字段（`MAX_LOG_FIELD_LEN = 16000`）加 `...[truncated]` 后缀。
-- **何时记**：迁移执行/跳过、备份跳过/执行、ACL 收紧等关键运维事件。
+- **何时记**：迁移执行/跳过、备份跳过/执行、ACL 收紧、解密系统性失败（R2）等关键运维事件。
 - **前缀约定**：`[ipc]` / `[crypto]` / `[oui]` / `[startup]` —— console 输出按模块加方括号前缀。
 
 ## Comments
@@ -186,8 +211,9 @@
 ## Module Design
 
 **Exports：**
-- Service：`export class XService { static ... }`（一个 class 一个文件，文件名 = `<name>Service.ts`）。
-- Util：命名导出（`export function encrypt/decrypt/encField/decField`、`export function hasColumn`）。
+- Service（静态类形态）：`export class XService { static ... }`（一个 class 一个文件，文件名 = `<name>Service.ts`）。
+- Service（函数式形态）：多个 `export function` 同模块，文件名为领域名 `device.ts`/`topology.ts`（不带 `Service` 后缀）。
+- Util：命名导出（`export function encrypt/decrypt/encField/decField`、`export function hasColumn`、`export function validateLimit/validateOffset`）。
 - React 组件：`export default function Comp()`；页面级组件位于 `src/components/pages/`。
 - IPC：每个 domain 导出 `register<Domain>Ipc()`，由 `electron/main.ts` 启动时调用。
 
@@ -199,4 +225,4 @@
 
 ---
 
-*Convention analysis: 2026-06-28*
+*Convention analysis: 2026-07-26（基于 HEAD `3adbbeb`，刷新 service 双形态 + oui:getAll 分页 + decField 可观测层）*

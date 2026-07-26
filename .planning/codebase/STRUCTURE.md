@@ -1,6 +1,6 @@
 # Codebase Structure
 
-**Analysis Date:** 2026-06-28
+**Analysis Date:** 2026-07-26
 
 ## Directory Layout
 
@@ -13,7 +13,7 @@ network_toplogy/
 │   ├── services/             # 业务层（领域逻辑 + DB 读写 + 加解密）
 │   ├── database/             # 数据层（better-sqlite3 + 迁移 + ACL）
 │   ├── ipc/                  # IPC 网关层（模块化 ipcMain.handle 注册）
-│   └── utils/                # 安全原语（crypto/authGuard/keyManager/webSecurity）
+│   └── utils/                # 安全原语（crypto/authGuard/keyManager/webSecurity/pagination/sshConfig）
 ├── src/                      # renderer（React 19，纯 UI，无 Node）
 │   ├── main.tsx              # renderer 入口
 │   ├── App.tsx               # 首启/登录/主布局分流
@@ -28,7 +28,7 @@ network_toplogy/
 │   ├── types/                # 共享 TS 类型 + electron.d.ts（window.api 类型声明）
 │   ├── styles/               # 全局 CSS
 │   └── assets/               # 静态资源
-├── tests/unit/               # vitest 单测（auth/crypto/migrationHelpers）
+├── tests/unit/               # vitest 单测（auth/crypto/migrationHelpers/commandSafety/keyManager/authGuard/pagination）
 ├── scripts/                  # 构建脚本（build-electron.cjs）
 ├── build/                    # electron-builder 图标等
 ├── public/                   # 静态公共资源
@@ -48,7 +48,7 @@ network_toplogy/
 **`electron/services/`（业务层）:**
 - Purpose: 领域逻辑 + DB 读写 + 字段加解密 + 外部协议。
 - Contains: 20 个 `.ts` 文件，每个服务持有模块级 `MK`，由 `setXxxMasterKey()` 注入。
-- Key files: `device.ts`/`topology.ts`/`ai.ts`/`connection.ts`/`commandSafety.ts`/`discovery.ts`/`knowledgeBaseService.ts`/`arpCollector.ts`/`ouiService.ts`/`networkSegmentService.ts`/`anomalyService.ts`/`schedulerService.ts`/`backupScheduler.ts`/`systemLog.ts`/`aiExecLogger.ts`/`auth.ts`/`vendor-commands.ts`。
+- Key files: `device.ts`/`topology.ts`/`ai.ts`/`connection.ts`/`commandSafety.ts`/`discovery.ts`/`knowledgeBaseService.ts`/`arpCollector.ts`/`arpParser.ts`/`ouiService.ts`/`networkSegmentService.ts`/`ipStatusService.ts`/`anomalyService.ts`/`schedulerService.ts`/`backupScheduler.ts`/`exportService.ts`/`systemLog.ts`/`aiExecLogger.ts`/`auth.ts`/`vendor-commands.ts`。
 
 **`electron/database/`（数据层）:**
 - Purpose: better-sqlite3 生命周期、基线 DDL、版本化迁移、文件 ACL。
@@ -56,12 +56,12 @@ network_toplogy/
 
 **`electron/ipc/`（IPC 网关层）:**
 - Purpose: 模块化注册 `ipcMain.handle`，含参数校验与 `secure()` 包裹。
-- Key files: `arpIpc.ts`/`networkIpc.ts`/`anomalyIpc.ts`/`ouiIpc.ts`/`exportIpc.ts`/`schedulerIpc.ts`/`knowledgeBaseIpc.ts`。
+- Key files: `arpIpc.ts`/`networkIpc.ts`/`anomalyIpc.ts`/`ouiIpc.ts`/`exportIpc.ts`/`schedulerIpc.ts`/`knowledgeBaseIpc.ts`（导出 `registerKbIpc()`）。
 - 注：auth/device/topology/connection/ai 的 IPC 仍 inline 在 `electron/main.ts`。
 
 **`electron/utils/`（工具层）:**
-- Purpose: 横切安全原语。
-- Key files: `crypto.ts`（AES-256-GCM + PBKDF2）、`keyManager.ts`（masterKey + safeStorage）、`authGuard.ts`（`secure`/`safe`/登录态/脱敏）、`webSecurity.ts`（窗口加固）。
+- Purpose: 横切安全原语与共享 helper。
+- Key files: `crypto.ts`（AES-256-GCM + PBKDF2）、`keyManager.ts`（masterKey + safeStorage）、`authGuard.ts`（`secure`/`safe`/登录态/脱敏）、`webSecurity.ts`（窗口加固）、`pagination.ts`（分页计算）、`sshConfig.ts`（SSH 配置构造）。
 
 **`src/components/pages/`（路由页面）:**
 - Purpose: 一页一文件，对应侧边栏导航。
@@ -85,11 +85,11 @@ network_toplogy/
 
 **`src/types/`（共享类型）:**
 - Purpose: TS 类型定义，含 IPC 契约。
-- Key files: `electron.d.ts`（`window.api` 类型声明）、`device.ts`/`topology.ts`/`network.ts`/`arp.ts`/`anomaly.ts`/`oui.ts`/`backup.ts`。
+- Key files: `electron.d.ts`（`window.api` 类型声明）、`device.ts`/`topology.ts`/`network.ts`/`arp.ts`/`anomaly.ts`/`oui.ts`/`backup.ts`/`ai.ts`/`kb.ts`/`pagination.ts`。
 
 **`tests/unit/`（单测）:**
 - Purpose: vitest 单元测试。
-- Key files: `crypto.test.ts`/`auth.test.ts`/`migrationHelpers.test.ts`。
+- Key files: `crypto.test.ts`/`auth.test.ts`/`migrationHelpers.test.ts`/`commandSafety.test.ts`/`keyManager.test.ts`/`authGuard.test.ts`/`pagination.test.ts`。
 
 ## Key File Locations
 
@@ -212,4 +212,4 @@ network_toplogy/
 
 ---
 
-*Structure analysis: 2026-06-28*
+*Structure analysis: 2026-07-26*

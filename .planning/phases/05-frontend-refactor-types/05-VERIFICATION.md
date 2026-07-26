@@ -1,34 +1,44 @@
 ---
 phase: 05-frontend-refactor-types
 verified: 2026-07-02T23:20:00Z
-status: human_needed
-score: 4/4 success_criteria statically verified
+status: passed
+score: 4/4 success_criteria statically verified + 25/25 HUMAN-UAT user approved (2026-07-02)
 overrides_applied: 0
 re_verification:
-  previous_status: none
-  is_re_verification: false
+  previous_status: human_needed
+  is_re_verification: true
+  re_verified: 2026-07-26
+  reason: "status human_needed→passed：05-HUMAN-UAT.md 已 25/25 user approved（2026-07-02，commit 8867d14），HV 全项闭环"
 deferred:
   - truth: "前端组件测试基建（TEST-2，AIPage/KB 冒烟测试）"
     addressed_in: "未来 milestone（前端测试基建立项后）"
     evidence: "05-CONTEXT.md deferred 节 + D-5-7 决策：不引入 @testing-library/react（偏离纯逻辑 .ts 单测模式 + 超重构 scope）"
 human_verification:
-  - test: "05-03 AIPage 4 子组件交互冒烟（9 项）"
-    expected: "新建/切换/删除会话、发消息、消息滚动、命令确认弹窗、references 显示、header 设备多选、无 console 报错 全部正常"
-    why_human: "DEP-1 native binding 限制 + D-5-7 无前端组件测试基建，AIPage 异步 IPC 驱动交互无法自动化验证"
-  - test: "05-02 TopologyPage 拓扑交互（6 项）"
-    expected: "拖拽保存、连线保存、批量快拖、发现 confirm、toolbar New/Save/Delete/Import/Export、无 React 警告 全部无 stale 回归"
-    why_human: "DEP-1 + D-5-7；stale closure 消除的运行时验证需 Electron 实测（ref-mirror 时机、手动保存 vs 防抖保存）"
-  - test: "05-04 KnowledgeBasePage 图片加载/缓存/取消（10 项）"
-    expected: "文档列表、chunk 详情、首次 IPC、缓存命中无重复 IPC、in-flight 去重、卸载无 setState 警告、失败 warn、搜索、chunk 编辑、无报错 全部正常"
-    why_human: "DEP-1 + D-5-7；图片缓存命中/去重/卸载取消属运行时行为，需 DevTools Network 观察 IPC 次数 + Console 无 unmounted 警告"
+  status: passed
+  approved_by: user-HV-2026-07-02
+  approved_at: 2026-07-02
+  evidence: "05-HUMAN-UAT.md（status: passed，total 25 / passed 25 / issues 0，commit 8867d14）"
+  items:
+    - test: "05-03 AIPage 4 子组件交互冒烟（9 项）"
+      result: pass
+      expected: "新建/切换/删除会话、发消息、消息滚动、命令确认弹窗、references 显示、header 设备多选、无 console 报错 全部正常"
+      why_human: "DEP-1 native binding 限制 + D-5-7 无前端组件测试基建，AIPage 异步 IPC 驱动交互无法自动化验证"
+    - test: "05-02 TopologyPage 拓扑交互（6 项）"
+      result: pass
+      expected: "拖拽保存、连线保存、批量快拖、发现 confirm、toolbar New/Save/Delete/Import/Export、无 React 警告 全部无 stale 回归"
+      why_human: "DEP-1 + D-5-7；stale closure 消除的运行时验证需 Electron 实测（ref-mirror 时机、手动保存 vs 防抖保存）"
+    - test: "05-04 KnowledgeBasePage 图片加载/缓存/取消（10 项）"
+      result: pass
+      expected: "文档列表、chunk 详情、首次 IPC、缓存命中无重复 IPC、in-flight 去重、卸载无 setState 警告、失败 warn、搜索、chunk 编辑、无报错 全部正常"
+      why_human: "DEP-1 + D-5-7；图片缓存命中/去重/卸载取消属运行时行为，需 DevTools Network 观察 IPC 次数 + Console 无 unmounted 警告"
 ---
 
 # Phase 5: Frontend Refactor & Types — Verification Report
 
 **Phase Goal:** 前端结构清晰、类型严格、无 stale closure 与在途请求泄漏
 **Verified:** 2026-07-02T23:20:00Z
-**Status:** human_needed
-**Re-verification:** No — initial verification
+**Status:** passed
+**Re-verification:** Yes — 2026-07-26 由 `human_needed` 刷新为 `passed`（05-HUMAN-UAT.md 已 25/25 user approved 2026-07-02，commit 8867d14）
 
 ## Goal Achievement
 
@@ -132,11 +142,11 @@ human_verification:
 
 > **Review advisories 说明：** 05-REVIEW.md 9 WARNING + 4 INFO 为 advisory，CR-01（无限重渲染）已修（AIPage.tsx effect deps `[]` + cancelled cleanup + eslint-disable），CR-02 字段顾虑无效（IPMACChange.ip 存在）。剩余 WARNING/INFO 不影响 4 条 SC 的静态判定，记入 notes 供后续优化。
 
-### Human Verification Required
+### Human Verification
 
-DEP-1 native binding 限制 + D-5-7 无前端组件测试基建 → 三 plan（05-02/03/04）的 checkpoint:human-verify 已由用户决定推迟到 phase 末批量 HV。汇总 HV 项：
+DEP-1 native binding 限制 + D-5-7 无前端组件测试基建 → 三 plan（05-02/03/04）的 checkpoint:human-verify 由用户在 phase 末批量执行，2026-07-02 完成 25/25 user approved（详见 05-HUMAN-UAT.md，commit 8867d14）。三组 HV 项：
 
-#### 1. 05-03 AIPage 4 子组件交互冒烟（9 项）
+#### 1. 05-03 AIPage 4 子组件交互冒烟（9 项）— ✓ PASS
 
 **Test:** 启动 Electron app → 进入 AI 页（须先在「系统设置」配置 AI 服务参数）
 **Expected:**
@@ -152,7 +162,7 @@ DEP-1 native binding 限制 + D-5-7 无前端组件测试基建 → 三 plan（0
 
 **Why human:** AIPage 异步 IPC 驱动（ai.chat/listSessions/getSessionMessages），无前端组件测试基建，需 Electron 运行时实测交互
 
-#### 2. 05-02 TopologyPage 拓扑交互无 stale 回归（6 项）
+#### 2. 05-02 TopologyPage 拓扑交互无 stale 回归（6 项）— ✓ PASS
 
 **Test:** 启动 app → 打开拓扑页
 **Expected:**
@@ -165,7 +175,7 @@ DEP-1 native binding 限制 + D-5-7 无前端组件测试基建 → 三 plan（0
 
 **Why human:** ref-mirror 时机、手动保存 vs 防抖保存的运行时语义需 Electron 实测
 
-#### 3. 05-04 KnowledgeBasePage 图片加载/缓存/取消（10 项）
+#### 3. 05-04 KnowledgeBasePage 图片加载/缓存/取消（10 项）— ✓ PASS
 
 **Test:** 启动 app → 进入「知识库」页
 **Expected:**
@@ -195,9 +205,10 @@ DEP-1 native binding 限制 + D-5-7 无前端组件测试基建 → 三 plan（0
 - D-5-5/D-5-6（不改 IPC + 模块级缓存）：✓ preload.ts git diff 空（kb.getImageData 签名不变），imageCache 模块级 cache/inFlight Map
 - D-5-7（不引入前端测试基建）：✓ 无 @testing-library/react，TEST-2 登记到 deferred
 
-**HV 推迟**：3 plan 的 checkpoint:human-verify（AI 交互/拓扑交互/KB 图片）按 DEP-1 + D-5-7 推迟到 phase 末批量 HV，已登记 human_verification 节。**status: human_needed**——自动化全部通过，等待人工运行时验证。
+**HV 闭环**：3 plan 的 checkpoint:human-verify（AI 交互 9 项 / 拓扑交互 6 项 / KB 图片 10 项）已于 2026-07-02 由用户 Electron 运行时实测全部通过，05-HUMAN-UAT.md 记录 25/25 user approved（commit 8867d14）。**status: passed**——静态四绿 + 人工 25/25 全闭环。HV 期间观测到的设备连接问题（`ECONNREFUSED:22` / 命令执行超时 / `ECONNRESET`）属后端 `connection.ts`/`ai.ts`/`discovery`/`arpCollector` Phase 5 未触碰路径，归 Phase 6 ROBUST-01/02（详见 05-HUMAN-UAT.md Deferred）。
 
 ---
 
 _Verified: 2026-07-02T23:20:00Z_
+_Re-verified (status→passed): 2026-07-26_
 _Verifier: Claude (gsd-verifier)_

@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Awaiting next milestone
-last_updated: "2026-07-05T09:42:04.977Z"
+last_updated: "2026-07-26"
 last_activity: 2026-07-26 — Quick task 260726-vcu: R5 安全核心单测收尾
 progress:
   total_phases: 6
@@ -33,7 +33,7 @@ Last activity: 2026-07-26 — Quick task 260726-vcu: R5 安全核心单测收尾
 - **Phases completed**: 6/6（v1.0 全交付）
 - **Requirements delivered**: 14/14（BUILD-01, ARCH-01/02, PERF-01~04, DATA-01, FE-01~04, ROBUST-01/02）
 - **REQ coverage mapped**: 14/14 ✓
-- **Plans executed**: 16/16（af12dc0 → d906cab，163 commits）
+- **Plans executed**: 16/16（af12dc0 → d906cab，115 commits）
 - **Velocity**: Phase 6 两 plan ~7min + ~5min（串行，三绿门禁全绿）
 
 ## Deferred Items
@@ -46,7 +46,7 @@ v1.0 milestone close 时 acknowledged 的 deferred items（2026-07-05，DEP-1 na
 | uat_gap | Phase 05-HUMAN-UAT.md | passed（用户 approved，audit 计数 25 scenarios） |
 | uat_gap | Phase 06-HUMAN-UAT.md | partial（HV-1/2/3 pass 句柄不泄漏；HV-4a/b/c defer，2026-07-26） |
 | verification_gap | Phase 03-VERIFICATION.md | partial（HV #1/#2/#4 回填 pass，#3/#5 defer） |
-| verification_gap | Phase 05-VERIFICATION.md | human_needed |
+| verification_gap | Phase 05-VERIFICATION.md | passed（re-verify 2026-07-26，对齐 05-HUMAN-UAT 25/25 user approved） |
 | verification_gap | Phase 06-VERIFICATION.md | partial（HV-1/2/3 pass，HV-4a/b/c defer） |
 | quick_task | 260628-trt-pdfjs-dist-backupscheduler-retention-0 | resolved（已归档至 quick/archive/） |
 
@@ -61,7 +61,7 @@ v1.0 milestone close 时 acknowledged 的 deferred items（2026-07-05，DEP-1 na
 - ARCH-01 在 PERF-04 之前：PERF-04 的"按 user_version 跳过"依赖 ARCH-01 的 user_version 机制
 - DATA-01 在 PERF 之后：避免重复改 IPC 通道
 - FE-01（AIPage 拆分）工作量最大，归入 Phase 5 与其他 FE 项合并
-- 跳过 map-codebase + domain research：已有 CodeGraph 全符号索引 + 84-agent 审计，架构已充分掌握
+- map-codebase 初轮以「已有 CodeGraph 全符号索引 + 84-agent 审计」为由跳过，后续已补执行（commit 64a28fb，产出 `.planning/codebase/` 7 文档 ARCHITECTURE/CONCERNS/CONVENTIONS/INTEGRATIONS/STACK/STRUCTURE/TESTING，随 phase 演进持续维护）；domain research 因外部搜索工具不可用仍跳过
 - Phase 1 BUILD-01 完成：better-sqlite3/ssh2/telnet-client 锁 exact（12.9.0/1.17.0/2.2.13），可复现构建基线建立，tsc+esbuild 双绿，commit 940aa7c
 - telnet-client 一并锁 exact（原生编译依赖，与 better-sqlite3 同类漂移面），plan 主动加固项
 - cpu-features 传递原生编译失败视为 scope 外既存问题（ssh2 可选加速器，缺失不影响功能），用 --types node 规避不阻塞 ABI 验证
@@ -79,8 +79,8 @@ v1.0 milestone close 时 acknowledged 的 deferred items（2026-07-05，DEP-1 na
 - [x] `/gsd-plan-phase 1` — Build & Dependency Foundation (BUILD-01) ✓ planned (01-PLAN.md, 2 tasks)
 - [x] `/gsd-execute-phase 1` — 锁 better-sqlite3/ssh2/telnet-client exact + 可复现构建验证 ✓ executed (01-01-SUMMARY.md, commit 940aa7c)
 - [x] `/gsd-execute-phase 2` Plan 02-01 — 迁移注册表 + hasColumn ✓ executed (02-01-SUMMARY.md, commits 9ac9b82/b26caaf/69524aa)
-- [ ] `/gsd-execute-phase 2` Plan 02-02 — ACL 收紧 + 定时 backup（BackupScheduler）
-- [ ] `/gsd-execute-phase 2` Plan 02-03 — connection.ts migrateAndSecure + init.ts 散落块删除 + runMigrations 接入
+- [x] `/gsd-execute-phase 2` Plan 02-02 — ACL 收紧 + 定时 backup（BackupScheduler）✓ executed (02-02-SUMMARY.md)
+- [x] `/gsd-execute-phase 2` Plan 02-03 — connection.ts migrateAndSecure + init.ts 散落块删除 + runMigrations 接入 ✓ executed (02-03-SUMMARY.md)
 
 ### Blockers
 
@@ -127,7 +127,7 @@ v1.0 milestone close 时 acknowledged 的 deferred items（2026-07-05，DEP-1 na
 
 ---
 *Initialized: 2026-06-22*
-*Last updated: 2026-06-28 after Phase 4 Plan 04-02 execution (04-02-SUMMARY.md, commit db1d61d)*
+*Last updated: 2026-07-26 after Quick task 260726-vcu (R5 安全核心单测收尾) + doc-code 审计 drift 同步（frontmatter/git range/map-codebase 决策/Phase 2 02-02 02-03 todo 刷新）*
 | Phase 01 P01 | 50min | 2 tasks | 2 files |
 | Phase 02 P01 | 5min | 2 tasks | 3 files |
 | Phase 02 P02 | 2min | 2 tasks | 2 files |
