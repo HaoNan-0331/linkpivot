@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: Awaiting next milestone
 last_updated: "2026-07-26"
-last_activity: 2026-07-26 — Quick task 260726-voh: 文档同步消 85 条 drift
+last_activity: 2026-07-26 — Quick task 260726-w67: P1 medium 加固
 progress:
   total_phases: 6
   completed_phases: 6
@@ -26,7 +26,7 @@ progress:
 Phase: Milestone v1.0 complete
 Plan: —
 Status: Awaiting next milestone
-Last activity: 2026-07-26 — Quick task 260726-voh: 文档同步消 85 条 drift
+Last activity: 2026-07-26 — Quick task 260726-w67: P1 medium 加固
 
 ## Performance Metrics
 
@@ -97,6 +97,7 @@ v1.0 milestone close 时 acknowledged 的 deferred items（2026-07-05，DEP-1 na
 | 260726-upa | R2/R3 加密核心加固（decField 可观测 + keyManager 翻转抛错，TDD +9 测试） | 2026-07-26 | 0613832 | [260726-upa-crypto-key-hardening](./quick/260726-upa-crypto-key-hardening/) |
 | 260726-vcu | R5 收尾——commandSafety + authGuard 单测（安全核心回归网闭环，55/55） | 2026-07-26 | 815ae87 | [260726-vcu-command-safety-authguard-tests](./quick/260726-vcu-command-safety-authguard-tests/) |
 | 260726-voh | 文档同步——workflow 刷新 13 文档消 85 条 drift（CONCERNS/STACK/INTEGRATIONS/ARCHITECTURE/CONVENTIONS/STRUCTURE/TESTING/STATE/PROJECT/CLAUDE/03,05,06-VERIFICATION） | 2026-07-26 | 224b56b | [260726-voh-doc-sync](./quick/260726-voh-doc-sync/) |
+| 260726-w67 | P1 加固——auth safe 包装 + app.isPackaged + native rebuild/CI 冒烟 | 2026-07-26 | 998d1cf | [260726-w67-p1-hardening](./quick/260726-w67-p1-hardening/) |
 | Phase 04 P03 | ~2min | 2 tasks | 4 files |
 | Phase 05 P01 | 30m | 2 tasks | 9 files |
 | Phase 05 P03 | ~12min | 2 auto + 1 HV(deferred) tasks | 6 created + 2 modified files |
