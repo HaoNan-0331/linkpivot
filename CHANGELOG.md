@@ -1,5 +1,32 @@
 # CHANGELOG
 
+## [0.1.2] - 2026-07-26
+
+### pre-release hardening（GO-WITH-FIXES 发版前必修 10 项）
+
+本次发版纳入 pre-release-audit（5 维度 28 findings：0 critical / 1 high / 7 medium / 16 low，verdict GO-WITH-FIXES）发版前必修项 + 历史已落地修复归并：
+
+- **[H1 high·安全] shell.openExternal 协议白名单**：抽 `electron/utils/webSecurity.ts:openExternalSafe` 共享函数（http/https 白名单，其余 deny），`hardenWindow` setWindowOpenHandler / `main.ts` 全局 web-contents-created handler / `connection.ts:openWebSafe` 三处复用，杜绝 file:/javascript:/custom-protocol 等危险协议经外链入口逃逸。
+- **[M1 medium·安全] 生产 CSP 收紧**：connect-src `'self'`（去 https: 通配，渲染层无合法外联，AI/Vision 调用全在主进程 fetch）；追加 `object-src 'none'; base-uri 'self'; frame-ancestors 'none'`（禁插件 embed / 防 base 注入 / 防 clickjacking）。dev 模式跳过 CSP 注入不影响 vite HMR。
+- **[M2 medium·健壮] 启动期异常不卡渲染层**：`app.whenReady().then(...)` 末尾加 `.catch` → `dialog.showErrorBox('启动失败', err.message)` + `app.quit()`，启动期 DB/migrate/IPC register 任意 throw 不再吞错卡 loading。
+- **[M4 medium·打包正确性] telnet-client asarUnpack**：`electron-builder.yml` asarUnpack 追加 `node_modules/telnet-client/**/*`，与 better-sqlite3/ssh2 同标准（原生编译依赖必须 unpack），修正 BUILD-01 决策与打包配置不一致。
+- **[M5 medium·安全] openRDP 去 shell 拼接**：`connection.ts:openRDP` 由 `exec(\`mstsc "${tmpPath}"\`)`（exec+shell 拼接）改 `execFile('mstsc', [tmpPath], { shell: false })`，与同文件 acl.ts:30 execFileSync(shell:false) 风格统一，消除 shell 注入面（device.id 为 UUID 零行为变化）。
+- **[L5 low·健壮] before-quit closeDatabase try/catch**：`main.ts` before-quit 的 `closeDatabase()` 包 try/catch + `console.error('[before-quit] closeDatabase failed')`，保证退出路径平稳不中断 WAL checkpoint。
+- **[L11 low·一致性] package-lock.json 根版本刷 0.1.2**：`npm install --package-lock-only` 同步 lockfile version，与 package.json 对齐。
+- **[L13 low·元数据] package.json author**：`""` → `"wanghaonan"`。
+- **[L14 low·安全防御] .gitignore 兜底**：追加 `master.key / *.pem / *.pfx / *.p12 / *.key`，防误提交密钥/证书。
+
+历史已落地修复归并本次发版（详见对应日期条目）：
+- **[kb-db-malformed] 资料库 FTS5 shadow 损坏**：事务化（updateChunk/deleteChunk/mergeChunks/splitChunk/deleteDocument 显式 db.transaction）+ 启动自愈（main.ts integrity-check → rebuild → 不阻塞 init）。
+- **[exec-cmd-concat] H3C 多命令 exec 字符串粘连**：`ai.ts:executeCommandsOnDevice` 重构为每命令独立 SSH 连接，物理隔离杜绝 vty 命令粘连，discovery 素材完整。
+- **[Phase 5 FE-01~04] KB 类型化与 ChunkContent 图片渲染**：src/types/kb.ts 强类型 + imageCache LRU + ChunkContent [图片N] → 图片渲染（260705-sj1 quick 闭环）。
+- **[v1.0 milestone] 6 phase / 16 plan / 14 REQ 全交付**：BUILD-01 / ARCH-01/02 / PERF-01~04 / DATA-01 / FE-01~04 / ROBUST-01/02。
+
+发版后迭代（本 quick 显式排除，归下一 milestone / 后续 quick）：
+M6/M7 渲染层 any（electron 服务层）、L7 db any、L10 复杂度、L1 弱 SSH 算法、L2 ai limit、L3 captcha、L4 Login、L6 authGuard、L8/L9 渲染层、L12 rebuild 锁定、L15 xterm、L16 ssh2 license。
+
+验证：tsc web strict + noUnusedLocals 全绿；esbuild 主进程打包全绿；vitest 25/25 全绿。
+
 ## 2026-07-25
 
 ### debug kb-db-malformed · 资料库 FTS5 shadow 损坏致 malformed（事务化 + shadow 重灌 + 启动自愈）

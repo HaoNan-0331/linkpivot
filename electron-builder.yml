@@ -7,6 +7,7 @@ asarUnpack:
   - "**/*.node"
   - "node_modules/better-sqlite3/**/*"
   - "node_modules/ssh2/**/*"
+  - "node_modules/telnet-client/**/*"
 
 # === 文件过滤：只包含运行所需文件 ===
 files:

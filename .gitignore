@@ -11,3 +11,10 @@ release/
 
 # CodeGraph 索引（local to machine，不应提交）
 .codegraph/
+
+# 安全兜底：禁止误提交密钥/证书
+master.key
+*.pem
+*.pfx
+*.p12
+*.key
