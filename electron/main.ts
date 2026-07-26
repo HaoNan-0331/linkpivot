@@ -1,9 +1,9 @@
-import { app, BrowserWindow, ipcMain, session, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, session } from 'electron'
 import path from 'path'
 import { initDatabase, closeDatabase, migrateAndSecure, getDatabase } from './database/connection'
 import { createTables } from './database/init'
 import { getOrCreateMasterKey } from './utils/keyManager'
-import { hardenWindow } from './utils/webSecurity'
+import { hardenWindow, openExternalSafe } from './utils/webSecurity'
 import { secure, setAuthenticated } from './utils/authGuard'
 import { generateCaptcha, login, isFirstRun, initAdmin } from './services/auth'
 import { setDeviceMasterKey, listDevices, createDevice, updateDevice, deleteDevice, getDeviceById } from './services/device'
@@ -66,14 +66,19 @@ app.whenReady().then(() => {
       responseHeaders: {
         ...details.responseHeaders,
         'Content-Security-Policy': [
-          "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https:",
+          "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
         ],
       },
     })
   })
   // 全局兜底：所有新建 webContents 的弹窗（target=_blank / window.open）交给系统浏览器
   app.on('web-contents-created', (_event, contents) => {
-    contents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' } })
+    contents.setWindowOpenHandler(({ url }) => {
+      try { openExternalSafe(url) } catch (e) {
+        console.warn('[global] blocked openExternal:', (e as Error).message)
+      }
+      return { action: 'deny' }
+    })
   })
 
   masterKey = getOrCreateMasterKey()
@@ -182,8 +187,17 @@ app.whenReady().then(() => {
 
   createWindow()
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
+}).catch((err: unknown) => {
+  const msg = (err && (err as Error).message) ? (err as Error).message : String(err)
+  console.error('[startup] fatal:', err)
+  try { dialog.showErrorBox('启动失败', msg) } catch (_e) { /* dialog 不可用时降级 */ }
+  app.quit()
 })
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
 
-app.on('before-quit', () => { BackupScheduler.stop(); closeDatabase() })
+app.on('before-quit', () => {
+  BackupScheduler.stop()
+  try { closeDatabase() }
+  catch (e) { console.error('[before-quit] closeDatabase failed:', (e && (e as Error).message) || e) }
+})

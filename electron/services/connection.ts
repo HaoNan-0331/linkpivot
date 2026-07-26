@@ -1,12 +1,12 @@
-import { BrowserWindow, shell } from 'electron'
-import { exec } from 'child_process'
+import { BrowserWindow } from 'electron'
+import { execFile } from 'child_process'
 import path from 'path'
 import fs from 'fs'
 import net from 'net'
 import iconv from 'iconv-lite'
 import { Client, type ConnectConfig, type ClientChannel } from 'ssh2'
 import { getDeviceById, setDeviceMasterKey } from './device'
-import { hardenWindow } from '../utils/webSecurity'
+import { hardenWindow, openExternalSafe } from '../utils/webSecurity'
 
 interface DeviceInfo {
   id: string
@@ -94,15 +94,7 @@ export function openTerminal(deviceId: string): { sessionId: string } {
 }
 
 export function openWebSafe(url: string) {
-  try {
-    const parsed = new URL(url)
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      throw new Error(`不支持的协议: ${parsed.protocol}`)
-    }
-    shell.openExternal(url)
-  } catch {
-    throw new Error('无效的 URL')
-  }
+  openExternalSafe(url)
 }
 
 function decodeBuffer(data: Buffer): string {
@@ -397,8 +389,7 @@ export function openRDP(device: DeviceInfo) {
   // mstsc on Windows accepts an .rdp file path as argument
   const tmpPath = path.join(require('os').tmpdir(), `rdp_${device.id || Date.now()}.rdp`)
   fs.writeFileSync(tmpPath, rdpFile, 'utf-8')
-  const cmd = `mstsc "${tmpPath}"`
-  exec(cmd, (err) => {
+  execFile('mstsc', [tmpPath], { shell: false }, (err) => {
     if (err) throw new Error(`启动 RDP 失败: ${err.message}`)
   })
 }
