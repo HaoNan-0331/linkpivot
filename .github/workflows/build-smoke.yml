@@ -1,0 +1,33 @@
+name: build-smoke
+
+# P1-c: 打包冒烟 job——防 better-sqlite3/ssh2 native binding ABI 静默失配（CONCERNS DEP-1）。
+# push/PR 触发；windows runner 跑 rebuild + build + test + 验证 .node 产物存在。
+# 不含 electron-builder 打 installer（CI 慢 + 需签名配置，留作后续扩展）。
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # 显式 native rebuild（接入 electron:build 前置；本地同样经 npm run rebuild:native）
+      - run: npm run rebuild:native
+      - run: npm run build
+      - run: npm test
+      - name: verify native binding built for electron ABI
+        shell: bash
+        run: |
+          test -f node_modules/better-sqlite3/build/Release/better_sqlite3.node
+          test -f dist-electron/main.js
+          echo "native binding + main bundle OK"

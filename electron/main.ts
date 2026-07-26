@@ -5,7 +5,7 @@ import { createTables } from './database/init'
 import { getOrCreateMasterKey } from './utils/keyManager'
 import { setDecryptFailureHandler } from './utils/crypto'
 import { hardenWindow, openExternalSafe } from './utils/webSecurity'
-import { secure, setAuthenticated } from './utils/authGuard'
+import { secure, safe, setAuthenticated } from './utils/authGuard'
 import { generateCaptcha, login, isFirstRun, initAdmin } from './services/auth'
 import { setDeviceMasterKey, listDevices, createDevice, updateDevice, deleteDevice, getDeviceById } from './services/device'
 import { setTopologyMasterKey, listTopologies, getTopologyById, createTopology, updateTopology, deleteTopology, exportTopology, importTopology } from './services/topology'
@@ -43,7 +43,7 @@ function createWindow() {
   })
   hardenWindow(mainWindow)
 
-  if (process.env.NODE_ENV === 'development') {
+  if (!app.isPackaged) {
     mainWindow.loadURL('http://localhost:5173')
     mainWindow.webContents.openDevTools({ mode: 'detach' })
   } else {
@@ -59,7 +59,7 @@ app.whenReady().then(() => {
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     // dev 模式：vite + @vitejs/plugin-react 注入 inline HMR preamble，严格 CSP 'script-src self' 会阻止 → 白屏。
     // dev 跳过 CSP 注入以兼容 HMR；production 保持严格 CSP（渲染层 XSS 第二道防线）。
-    if (process.env.NODE_ENV === 'development') {
+    if (!app.isPackaged) {
       callback({})
       return
     }
@@ -134,14 +134,14 @@ app.whenReady().then(() => {
   BackupScheduler.start()
 
   // Auth IPC（登录前可用，不做鉴权；login 成功置登录态）
-  ipcMain.handle('auth:getCaptcha', () => { const r = generateCaptcha(); return { svg: r.svg, key: r.key } })
-  ipcMain.handle('auth:login', async (_e, u, p, ck, ci) => {
+  ipcMain.handle('auth:getCaptcha', safe(() => { const r = generateCaptcha(); return { svg: r.svg, key: r.key } }))
+  ipcMain.handle('auth:login', safe(async (_e, u, p, ck, ci) => {
     const r = await login(u, p, ck, ci)
     if (r.success) setAuthenticated(true)
     return r
-  })
-  ipcMain.handle('auth:isFirstRun', () => isFirstRun())
-  ipcMain.handle('auth:initAdmin', (_e, u, p) => initAdmin(u, p))
+  }))
+  ipcMain.handle('auth:isFirstRun', safe(() => isFirstRun()))
+  ipcMain.handle('auth:initAdmin', safe((_e, u, p) => initAdmin(u, p)))
 
   // Device IPC（secure = 登录鉴权 + 异常脱敏）
   ipcMain.handle('device:list', secure(() => listDevices()))
