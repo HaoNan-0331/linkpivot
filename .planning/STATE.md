@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: Awaiting next milestone
 last_updated: "2026-07-05T09:42:04.977Z"
-last_activity: 2026-07-05 — Milestone v1.0 completed and archived
+last_activity: 2026-07-26 — Quick task 260726-udg: 落盘 doc-code 一致性审计报告
 progress:
   total_phases: 6
   completed_phases: 6
@@ -26,7 +26,7 @@ progress:
 Phase: Milestone v1.0 complete
 Plan: —
 Status: Awaiting next milestone
-Last activity: 2026-07-05 — Milestone v1.0 completed and archived
+Last activity: 2026-07-26 — Quick task 260726-udg: 落盘 doc-code 一致性审计报告
 
 ## Performance Metrics
 
@@ -93,6 +93,7 @@ v1.0 milestone close 时 acknowledged 的 deferred items（2026-07-05，DEP-1 na
 | 260628-trt | 修审计新发现 pdfjs-dist 缺失依赖 + backupScheduler retention=0 删备份 | 2026-06-28 | ba06854 | [260628-trt-pdfjs-dist-backupscheduler-retention-0](./quick/archive/260628-trt-pdfjs-dist-backupscheduler-retention-0/) |
 | 260705-sj1 | KB 检索 snippet [图片N] → 图片渲染（search 4 路径 attachImages + ChunkContent 复用，Phase 5 FE-04 defer 闭环） | 2026-07-05 | a49b495/68c6ea3 | [260705-sj1-kb-snippet](./quick/archive/260705-sj1-kb-snippet/) |
 | 260726-p9e | pre-release hardening（审计 GO-WITH-FIXES 发版前必修 H1+M1-M5+L5/L11/L13/L14）→ bump 0.1.2 | 2026-07-26 | b6a689b/490c20f | [260726-p9e-pre-release-hardening-bump-0-1-2](./quick/260726-p9e-pre-release-hardening-bump-0-1-2/) |
+| 260726-udg | 落盘 doc-code 一致性审计报告（14 维度/121 发现/0 误报，R1 经用户澄清降级） | 2026-07-26 | fc80c7f | [260726-udg-doc-code-audit](./quick/260726-udg-doc-code-audit/) |
 | Phase 04 P03 | ~2min | 2 tasks | 4 files |
 | Phase 05 P01 | 30m | 2 tasks | 9 files |
 | Phase 05 P03 | ~12min | 2 auto + 1 HV(deferred) tasks | 6 created + 2 modified files |
