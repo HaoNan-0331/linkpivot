@@ -42,12 +42,12 @@ v1.0 milestone close 时 acknowledged 的 deferred items（2026-07-05，DEP-1 na
 
 | Category | Item | Status |
 |----------|------|--------|
-| uat_gap | Phase 03-HUMAN-UAT.md | partial（5 scenarios 未回填，PERF HV） |
+| uat_gap | Phase 03-HUMAN-UAT.md | partial（3/5 pass：#1/#2/#4；#3/#5 defer，2026-07-26） |
 | uat_gap | Phase 05-HUMAN-UAT.md | passed（用户 approved，audit 计数 25 scenarios） |
-| uat_gap | Phase 06-HUMAN-UAT.md | unknown（SC#4 句柄快照 4 项 HV defer） |
-| verification_gap | Phase 03-VERIFICATION.md | human_needed |
+| uat_gap | Phase 06-HUMAN-UAT.md | partial（HV-1/2/3 pass 句柄不泄漏；HV-4a/b/c defer，2026-07-26） |
+| verification_gap | Phase 03-VERIFICATION.md | partial（HV #1/#2/#4 回填 pass，#3/#5 defer） |
 | verification_gap | Phase 05-VERIFICATION.md | human_needed |
-| verification_gap | Phase 06-VERIFICATION.md | human_needed |
+| verification_gap | Phase 06-VERIFICATION.md | partial（HV-1/2/3 pass，HV-4a/b/c defer） |
 | quick_task | 260628-trt-pdfjs-dist-backupscheduler-retention-0 | resolved（已归档至 quick/archive/） |
 
 后续：`/gsd-verify-work` 在真实 Electron + SSH/Telnet/DB 设备回填 HV；`/gsd-audit-uat` 审计累积 defer 项。

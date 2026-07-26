@@ -131,12 +131,12 @@ function snapshotHandles(tag: string) {
 
 | HV ID | 关联 SC | 关联 plan | 状态 (pass/fail) | 句柄快照基线 total | 末轮 total | 备注 |
 |-------|---------|-----------|------------------|---------------------|------------|------|
-| HV-1 | SC#4 | 06-01 | pending | - | - | |
-| HV-2 | SC#4 | 06-01 | pending | - | - | |
-| HV-3 | SC#1/SC#4 | 06-01 | pending | - | - | |
-| HV-4a | SC#2 | 06-02 | pending | - | - | |
-| HV-4b | SC#2 | 06-02 | pending | - | - | |
-| HV-4c | SC#3 | 06-02 | pending | - | - | |
+| HV-1 | SC#4 | 06-01 | pass | 2 | 2 | ARP `arp_entries` 326 行采集，定时快照（2s）全程 total=2 不涨（2026-07-26） |
+| HV-2 | SC#4 | 06-01 | pass | 2 | 2 | discovery 16:37 触发（server/核心/接入交换机），total 不涨 |
+| HV-3 | SC#1/SC#4 | 06-01 | pass | 2 | 2 | server(192.0.2.1)/核心 failed 不可达+连接错误路径触发，total 不残留 |
+| HV-4a | SC#2 | 06-02 | defer | - | - | mock AI 返回非 JSON，构造性强 defer |
+| HV-4b | SC#2 | 06-02 | defer | - | - | mock command parse 失败 defer |
+| HV-4c | SC#3 | 06-02 | defer | - | - | 模拟 DB 写失败 defer |
 
 **全部 pass 后**：在 06-VERIFICATION.md（或对应 verification 产物）回填 HV-1~HV-4 pass，Phase 6 status 标 `human_passed`。
 
