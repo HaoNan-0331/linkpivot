@@ -90,13 +90,33 @@ export function encField(val: string | null | undefined, key: string): string | 
   return encrypt(val, key)
 }
 
+// R2: 解密失败可观测层。decField 仍降级返回 ''（保留「单条坏密文不阻断 list 加载」的设计意图），
+// 但系统性失败（masterKey 不匹配 / safeStorage 翻转）通过注入的 handler 上报，避免无声数据丢失。
+// 默认无 handler（仅 console.error）；main.ts 启动时注入写 system_log 的实现——
+// 此处不 import services/systemLog，避免 crypto.ts 连带 better-sqlite3 依赖、保持纯函数可单测。
+type DecryptFailureHandler = (err: unknown) => void
+let decryptFailureHandler: DecryptFailureHandler | null = null
+const DECRYPT_FAIL_LOG_WINDOW_MS = 60_000
+let lastDecryptFailNotify = 0
+
+export function setDecryptFailureHandler(fn: DecryptFailureHandler | null): void {
+  decryptFailureHandler = fn
+  lastDecryptFailNotify = 0 // 重设 handler 时重置限流窗口，新订阅者首次失败即上报
+}
+
 export function decField(val: string | null | undefined, key: string): string {
   if (!val) return ''
   try {
     return decrypt(val, key)
   } catch (e) {
-    // 单条坏密文不应让整个列表加载失败，降级返回空串并记录
+    // 单条坏密文不应让整个列表加载失败，降级返回空串
     console.error('[crypto] decField 解密失败:', e)
+    // R2: 限流去重上报（窗口内多次失败只通知一次，防 list 多行全失败刷屏）
+    const now = Date.now()
+    if (decryptFailureHandler && now - lastDecryptFailNotify > DECRYPT_FAIL_LOG_WINDOW_MS) {
+      lastDecryptFailNotify = now
+      try { decryptFailureHandler(e) } catch { /* 上报失败非致命 */ }
+    }
     return ''
   }
 }

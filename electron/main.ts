@@ -3,6 +3,7 @@ import path from 'path'
 import { initDatabase, closeDatabase, migrateAndSecure, getDatabase } from './database/connection'
 import { createTables } from './database/init'
 import { getOrCreateMasterKey } from './utils/keyManager'
+import { setDecryptFailureHandler } from './utils/crypto'
 import { hardenWindow, openExternalSafe } from './utils/webSecurity'
 import { secure, setAuthenticated } from './utils/authGuard'
 import { generateCaptcha, login, isFirstRun, initAdmin } from './services/auth'
@@ -11,7 +12,7 @@ import { setTopologyMasterKey, listTopologies, getTopologyById, createTopology, 
 import { setConnectionMasterKey, openTerminal, openWebSafe, writeToSession, writeByWebContentsId, disconnectSession, testDeviceConnection } from './services/connection'
 import { setAiMasterKey, chat, getAiConfigMasked, saveAiConfig, getCommandWhitelist, saveCommandWhitelist, getExecMode, setExecMode, confirmCommand, getAiLogs, getChatHistory, saveChatMessage as aiSaveChatMessage, clearChatHistory, createSession, listSessions, getSessionMessages, deleteSession, updateSessionTitle } from './services/ai'
 import { discoverTopology } from './services/discovery'
-import { getSystemLogs } from './services/systemLog'
+import { getSystemLogs, createSystemLog } from './services/systemLog'
 import { setArpMasterKey } from './services/arpCollector'
 import { SchedulerService } from './services/schedulerService'
 import { BackupScheduler } from './services/backupScheduler'
@@ -88,6 +89,13 @@ app.whenReady().then(() => {
   setAiMasterKey(masterKey)
   setArpMasterKey(masterKey)
   setKbMasterKey(masterKey)
+  // R2: decField 解密失败可观测——masterKey 不匹配 / safeStorage 翻转时写 system_log 告警，避免无声数据丢失。
+  // handler 在此注入（解耦：crypto.ts 不依赖 services/DB，保持纯函数可单测）。
+  setDecryptFailureHandler(() => {
+    try {
+      createSystemLog({ type: 'security', status: 'warning', errorMessage: '字段解密失败（可能 masterKey 不匹配或数据损坏，请检查 master.key / 系统账户是否变更）' })
+    } catch { /* 日志写库失败非致命 */ }
+  })
   const __startupT0 = performance.now()   // PERF-04 (W1)：冷启动 DB+OUI init 计时起点
   initDatabase()
   createTables()
