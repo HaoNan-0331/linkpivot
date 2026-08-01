@@ -73,11 +73,10 @@ export type ExperienceListResult = PaginatedResult<Experience>
 
 /**
  * experience:listDevices 返回的关联设备。
- * IPC 边界已剥离所有 `_enc` 后缀密文列（name_enc 等），renderer 永不可见设备密文。
- * 设备非密文字段动态（service 返 devices 原始行 * 列），故用索引签名 + unknown。
+ * WR-05：service listDevicesByExperience 改走 deviceService.getDeviceById（rowToDevice
+ * 安全白名单映射），返回的是标准 Device DTO（显式字段，密文经 device MK 解密为明文）。
+ * 复用 Device 类型替代原开放索引签名 `[key: string]: unknown`，未来 devices 新增非 `_enc`
+ * 敏感列不会静默泄露（device 域 rowToDevice 控制投影白名单）。
  */
-export interface ExperienceRelatedDevice {
-  id: string
-  // 仅保留 device 非密文字段（name_enc 等 `_enc` 列在 IPC handler 剥离，renderer 永不可见）
-  [key: string]: unknown
-}
+import type { Device } from './device'
+export type ExperienceRelatedDevice = Device

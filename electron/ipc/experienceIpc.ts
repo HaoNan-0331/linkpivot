@@ -35,8 +35,9 @@ import { secure } from '../utils/authGuard'
  * listExperiences 内 MAX_BATCH=1000 throw 已强制，避免双层校验逻辑漂移与 noUnusedLocals 触发）。
  */
 
-// IPC 边界剥离设备密文列：listDevicesByExperience 返 devices 原始行含 name_enc 等 `_enc` 后缀列，
-// renderer 不可见密文。在 IPC handler 返回前 map 删除所有以 `_enc` 结尾的 key（SEC-02）。
+// WR-05 深度防御：listDevicesByExperience 改走 deviceService.getDeviceById（rowToDevice
+// 安全白名单映射），返回的 Device DTO 已无 `_enc` 密文列。此 stripEncColumns 兜底剥离保留，
+// 防御未来 device 域 rowToDevice 误返密文残留——主防线已是 service 层白名单正向投影。
 function stripEncColumns(rows: any[]): any[] {
   return rows.map((row) => {
     const safe: Record<string, unknown> = {}

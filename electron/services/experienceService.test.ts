@@ -1,5 +1,30 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type Database from 'better-sqlite3'
+
+// WR-05：listDevicesByExperience 改走 deviceService.getDeviceById，mock 拦截 device 模块，
+// 让它从 mock DB 读 device 行并映射为 Device DTO（不依赖真实 getDatabase/better-sqlite3）。
+// 模块级 mockDbRef 由 beforeEach 注入当前 mock DB 实例。
+const mockDbRef: { current: any } = { current: null }
+vi.mock('./device', () => ({
+  getDeviceById: (id: string) => {
+    const db = mockDbRef.current
+    if (!db) return null
+    const t = db.tables.get('devices')
+    if (!t) return null
+    const row = t.rows.get(id)
+    if (!row) return null
+    // 简化 Device DTO：返回白名单字段（模拟 rowToDevice 安全投影，无 _enc 密文列）
+    return {
+      id: row.id,
+      name: row.name ?? `device-${row.id}`,
+      deviceType: row.device_type ?? 'generic',
+      connectionType: row.connection_type ?? null,
+      status: row.status ?? 'unknown',
+      createdAt: row.created_at ?? null,
+    }
+  },
+}))
+
 import {
   createExperience,
   getExperience,
@@ -369,17 +394,16 @@ class MemDb {
       }
     }
 
-    // SELECT d.* FROM devices d JOIN exp_device_rel r ... WHERE r.experience_id = ?
-    if (/FROM\s+devices\s+d\s+JOIN\s+exp_device_rel/i.test(sql)) {
+    // WR-05：SELECT r.device_id AS device_id FROM exp_device_rel r WHERE r.experience_id = ?
+    // （listDevicesByExperience 改走 deviceService.getDeviceById，service 只查 device_id 列表）
+    if (/SELECT\s+r\.device_id\s+AS\s+device_id\s+FROM\s+exp_device_rel/i.test(sql)) {
       return {
         all: (expId: any) => {
           const rel = this.tables.get('exp_device_rel')
-          const devices = this.tables.get('devices')
-          if (!rel || !devices) return []
-          const devIds = Array.from(rel.rows.values())
+          if (!rel) return []
+          return Array.from(rel.rows.values())
             .filter((r) => r.experience_id === expId)
-            .map((r) => r.device_id)
-          return devIds.map((id) => ({ ...devices.rows.get(id) })).filter(Boolean)
+            .map((r) => ({ device_id: r.device_id }))
         },
       }
     }
@@ -427,6 +451,8 @@ beforeEach(() => {
   setExperienceMasterKey(MK_TEST_KEY)
   const db = seedDb()
   _setExperienceDbGetter(() => db as unknown as Database.Database)
+  // WR-05：同步注入 mock DB 给 device 模块的 vi.mock（listDevicesByExperience 经 getDeviceById）
+  mockDbRef.current = db
 })
 
 describe('experienceService', () => {
@@ -549,6 +575,7 @@ describe('experienceService', () => {
   it('listExperiences bi-temporal 三态过滤（NULL 永有效 / 过去已失效 / 未来仍有效）', () => {
     const db = seedDb()
     _setExperienceDbGetter(() => db as unknown as Database.Database)
+    mockDbRef.current = db
     const exp = db.tables.get('experiences')!
     const mkRow = (id: string, invalidAt: string | null) => ({
       id, title: id, category: 'product', content: 'c', tags: '[]', status: 'draft',
@@ -629,10 +656,14 @@ describe('experienceService', () => {
 
   it('relateDevice 幂等去重（重复关联不报错）', () => {
     const exp = createExperience({ title: 't', category: 'product', content: 'c' })
+    // WR-05：listDevicesByExperience 经 getDeviceById 读 devices 表，需 seed device 行
+    mockDbRef.current.tables.get('devices')!.rows.set('dev-1', { id: 'dev-1', name: 'SW-1' })
     relateDevice(exp.id, 'dev-1')
     expect(() => relateDevice(exp.id, 'dev-1')).not.toThrow()
     const devices = listDevicesByExperience(exp.id)
     expect(devices.length).toBe(1)
+    expect((devices[0] as any).id).toBe('dev-1')
+    expect((devices[0] as any).name).toBe('SW-1') // Device DTO 白名单字段，无 _enc 密文
   })
 
   it('unrelateDevice 删除关联', () => {
@@ -666,6 +697,7 @@ describe('experienceService', () => {
     // 直接造一条 attrs_enc 是坏密文的行验证降级路径
     const db = seedDb()
     _setExperienceDbGetter(() => db as unknown as Database.Database)
+    mockDbRef.current = db
     db.tables.get('experiences')!.rows.set('bad-id', {
       id: 'bad-id',
       title: '坏密文',

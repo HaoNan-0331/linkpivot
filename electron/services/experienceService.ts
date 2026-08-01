@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid'
 import type Database from 'better-sqlite3'
 import { getDatabase } from '../database/connection'
 import { encField, decField } from '../utils/crypto'
+import { getDeviceById } from './device'
 import type { PaginatedResult } from '../../src/types/pagination'
 
 /**
@@ -324,11 +325,22 @@ export function unrelateDevice(experienceId: string, deviceId: string): void {
   db().prepare('DELETE FROM exp_device_rel WHERE experience_id = ? AND device_id = ?').run(experienceId, deviceId)
 }
 
-/** 经验→关联设备基本信息（name_enc 等密文列原样，脱敏由 IPC 层处理）。 */
+/**
+ * 经验→关联设备（WR-05 白名单正向投影）。
+ * 旧实现 `SELECT d.*` 返 devices 原始行（含所有 `_enc` 密文列），靠 IPC 层 stripEncColumns
+ * 黑名单剥离——未来 devices 新增非 `_enc` 后缀敏感列会静默泄露 renderer。
+ * 改为：先查关联 device_id 列表，再逐个调 deviceService.getDeviceById（device 域既有的
+ * rowToDevice 安全白名单映射，只返 Device DTO 明文字段，密文经 device MK 解密）。
+ * 关联设备量小（单经验几台），N+1 可接受；安全优于单 SQL 黑名单剥离。IPC 层 stripEncColumns
+ * 保留作深度防御（Device DTO 已无 `_enc` 列，实际无操作）。
+ */
 export function listDevicesByExperience(experienceId: string): any[] {
-  return db().prepare(
-    `SELECT d.* FROM devices d JOIN exp_device_rel r ON d.id = r.device_id WHERE r.experience_id = ?`
-  ).all(experienceId) as any[]
+  const rows = db().prepare(
+    `SELECT r.device_id AS device_id FROM exp_device_rel r WHERE r.experience_id = ?`
+  ).all(experienceId) as Array<{ device_id: string }>
+  return rows
+    .map((r) => getDeviceById(r.device_id))
+    .filter((d): d is NonNullable<typeof d> => d !== null)
 }
 
 /** 设备→关联经验（反查，复用 listExperiences 的 deviceId 分支；无分页，返全部有效关联经验）。 */
