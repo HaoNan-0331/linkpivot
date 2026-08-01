@@ -110,17 +110,20 @@ export interface ListExperiencesOpts {
 
 /**
  * attrs 模板校验 + JSON 序列化。
- * - troubleshooting 类若 attrs 非空，强制 severity 必须是 5 枚举之一（缺/非法 throw）
- * - attrs 为空对象/null → 返 null（不加密空 attrs）
+ * - 非 troubleshooting 类 attrs 为空对象/null/undefined → 返 null（不加密空 attrs）
+ * - WR-04：troubleshooting 类 severity 必填且必须是 5 枚举之一（即便 attrs 显式传空也强制），
+ *   与「troubleshooting 必填 severity」契约一致，避免 Phase 8 详情页遇 attrs=null 无法
+ *   severity 筛选/排序
  * - 返回 JSON 字符串待 encField 加密
  */
 function validateAndStringifyAttrs(category: ExperienceCategory, attrs: ExperienceAttrs | null | undefined): string | null {
-  if (!attrs || Object.keys(attrs).length === 0) return null
   if (category === 'troubleshooting') {
-    if (!attrs.severity || !VALID_SEVERITIES.includes(attrs.severity)) {
-      throw new Error('troubleshooting 类经验 attrs 缺少合法 severity')
+    // WR-04：troubleshooting 优先校验 severity（attrs 清空也强制），不进入下方空 attrs 早返分支
+    if (!attrs || !attrs.severity || !VALID_SEVERITIES.includes(attrs.severity)) {
+      throw new Error('troubleshooting 类经验 attrs 必须含合法 severity')
     }
   }
+  if (!attrs || Object.keys(attrs).length === 0) return null
   return JSON.stringify(attrs)
 }
 

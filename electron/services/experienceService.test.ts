@@ -454,7 +454,8 @@ describe('experienceService', () => {
     ).toThrow()
   })
 
-  it('createExperience troubleshooting 类缺 severity 抛错', () => {
+  it('createExperience troubleshooting 类缺 severity 抛错（WR-04 attrs 清空也强制）', () => {
+    // attrs 非空但无 severity
     expect(() =>
       createExperience({
         title: '缺严重度',
@@ -462,8 +463,9 @@ describe('experienceService', () => {
         content: 'c',
         attrs: { symptoms: 's' },
       })
-    ).toThrow('troubleshooting 类经验 attrs 缺少合法 severity')
+    ).toThrow('troubleshooting 类经验 attrs 必须含合法 severity')
 
+    // attrs 非法 severity
     expect(() =>
       createExperience({
         title: '非法严重度',
@@ -471,7 +473,27 @@ describe('experienceService', () => {
         content: 'c',
         attrs: { severity: 'catastrophic' as any },
       })
-    ).toThrow('troubleshooting 类经验 attrs 缺少合法 severity')
+    ).toThrow('troubleshooting 类经验 attrs 必须含合法 severity')
+
+    // WR-04：attrs 显式传空对象也强制 severity（不再走空 attrs 早返分支）
+    expect(() =>
+      createExperience({
+        title: '清空 attrs',
+        category: 'troubleshooting',
+        content: 'c',
+        attrs: {},
+      })
+    ).toThrow('troubleshooting 类经验 attrs 必须含合法 severity')
+
+    // WR-04：attrs 为 null 也强制 severity
+    expect(() =>
+      createExperience({
+        title: 'null attrs',
+        category: 'troubleshooting',
+        content: 'c',
+        attrs: null,
+      })
+    ).toThrow('troubleshooting 类经验 attrs 必须含合法 severity')
   })
 
   it('createExperience 非 troubleshooting 空 attrs 不加密（attrs_enc 为 null）', () => {
