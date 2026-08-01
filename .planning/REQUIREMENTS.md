@@ -43,7 +43,7 @@
 
 ### 安全 (SEC)
 
-- [ ] **SEC-01**: 所有经验相关 IPC 经 secure/safe 鉴权包装 + 异常脱敏 — Phase 7
+- [x] **SEC-01**: 所有经验相关 IPC 经 secure/safe 鉴权包装 + 异常脱敏 — Phase 7
 - [x] **SEC-02**: 经验数据访问遵循现有脱敏规范（凭证不外泄）— Phase 7
 
 ## v2 Requirements（二期）
@@ -93,7 +93,7 @@
 | RETRIEVE-01 | Phase 11 | Pending |
 | RETRIEVE-02 | Phase 11 | Pending |
 | RETRIEVE-03 | Phase 11 | Pending |
-| SEC-01 | Phase 7 | Pending |
+| SEC-01 | Phase 7 | Complete |
 | SEC-02 | Phase 7 | Complete |
 
 **Coverage:**

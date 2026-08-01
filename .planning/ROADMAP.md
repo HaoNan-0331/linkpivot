@@ -53,7 +53,7 @@ Plans:
 - [x] 07-01-PLAN.md — experiences + exp_device_rel 建表迁移（v8 幂等）+ ExperienceService 静态类（CRUD/设备关联/bi-temporal 软失效/attrs 模板校验/字段加密）
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 07-02-PLAN.md — experienceIpc.ts 10 channel 全 secure 包装 + main.ts 注入注册 + preload 暴露 + experience.ts DTO/electron.d.ts 类型
+- [x] 07-02-PLAN.md — experienceIpc.ts 10 channel 全 secure 包装 + main.ts 注入注册 + preload 暴露 + experience.ts DTO/electron.d.ts 类型
 
 ### Phase 8: AI Drafting Pipeline
 **Goal**: 用户在与 AI 对话完成后点「经验总结」，AI 自动回顾整段会话、脱敏、查重、按固定分类模板结构化起草 1~N 条 draft 态草稿——不污染存量、不泄密、不乱造分类。
