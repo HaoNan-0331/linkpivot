@@ -46,11 +46,11 @@
   3. 经验带 bi-temporal 有效期（valid_at/invalid_at），过期软失效（invalid_at 落时间）后不进「有效检索」但保留历史，不物理删除
   4. 所有经验相关 IPC channel 经 `secure`/`safe` 包装（鉴权 + 异常脱敏），凭证/敏感列按现有规范脱敏（renderer 永不收明文凭证），channel 命名 `<domain>:<action>`
   5. 迁移幂等可重跑（`sqlite_master.sql` 特征串守卫，不靠 user_version），多写包 `db.transaction`，throw 即 ROLLBACK，历史数据向后兼容
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 07-01: TBD
-- [ ] 07-02: TBD
+- [ ] 07-01-PLAN.md — experiences + exp_device_rel 建表迁移（v8 幂等）+ ExperienceService 静态类（CRUD/设备关联/bi-temporal 软失效/attrs 模板校验/字段加密）
+- [ ] 07-02-PLAN.md — experienceIpc.ts 10 channel 全 secure 包装 + main.ts 注入注册 + preload 暴露 + experience.ts DTO/electron.d.ts 类型
 
 ### Phase 8: AI Drafting Pipeline
 **Goal**: 用户在与 AI 对话完成后点「经验总结」，AI 自动回顾整段会话、脱敏、查重、按固定分类模板结构化起草 1~N 条 draft 态草稿——不污染存量、不泄密、不乱造分类。
