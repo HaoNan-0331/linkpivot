@@ -38,6 +38,32 @@ interface MockTable {
   uniqueKeys: string[][] // UNIQUE 组合列名
 }
 
+/**
+ * 括号/引号感知的 VALUES 分词器：处理 datetime('now','localtime') 内含逗号 + 引号字符串。
+ * 输入 "?, ?, 'draft', datetime('now','localtime')" → ['?', '?', "'draft'", "datetime('now','localtime')"]
+ */
+function tokenizeValues(s: string): string[] {
+  const tokens: string[] = []
+  let cur = ''
+  let depth = 0
+  let inStr: "'" | '"' | null = null
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]
+    if (inStr) {
+      cur += ch
+      if (ch === inStr && s[i - 1] !== '\\') inStr = null
+      continue
+    }
+    if (ch === "'" || ch === '"') { inStr = ch as any; cur += ch; continue }
+    if (ch === '(') { depth++; cur += ch; continue }
+    if (ch === ')') { depth--; cur += ch; continue }
+    if (ch === ',' && depth === 0) { tokens.push(cur.trim()); cur = ''; continue }
+    cur += ch
+  }
+  if (cur.trim()) tokens.push(cur.trim())
+  return tokens
+}
+
 class MemDb {
   tables: Map<string, MockTable> = new Map()
   userVersion = 0
@@ -103,20 +129,32 @@ class MemDb {
       }
     }
 
-    // INSERT
-    const insertMatch = sql.match(/^INSERT\s+(OR\s+IGNORE\s+)?INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/i)
-    if (insertMatch) {
-      const orIgnore = !!insertMatch[1]
-      const table = insertMatch[2]
-      const cols = insertMatch[3].split(',').map((s) => s.trim())
-      const placeholders = insertMatch[4].split(',').map((s) => s.trim())
+    // INSERT —— VALUES 段需括号感知分词（datetime('now','localtime') 内含逗号/括号）
+    const insertHead = sql.match(/^INSERT\s+(OR\s+IGNORE\s+)?INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(/i)
+    if (insertHead) {
+      const orIgnore = !!insertHead[1]
+      const table = insertHead[2]
+      const cols = insertHead[3].split(',').map((s) => s.trim())
+      // 提取 VALUES(...) 的内容（insertHead 已匹配到 'VALUES ('，取其后到末尾闭合括号）
+      const valuesContent = sql.slice(insertHead[0].length).replace(/\)\s*;?\s*$/, '')
+      const placeholders = tokenizeValues(valuesContent)
       return {
         run: (...vals: any[]) => {
           const t = this.tables.get(table)
           if (!t) throw new Error(`no table ${table}`)
           const row: Row = {}
+          let valIdx = 0
           cols.forEach((c, i) => {
-            row[c] = placeholders[i] === '?' ? vals[i] : undefined
+            const ph = placeholders[i]
+            if (ph === '?') {
+              row[c] = vals[valIdx++]
+            } else {
+              // 字面量：'draft' → draft；datetime('now','localtime') → 标记 NOW-MOCK
+              const litStr = ph.match(/^'(.*)'$/)
+              if (litStr) row[c] = litStr[1]
+              else if (/^datetime\(/i.test(ph)) row[c] = 'NOW-MOCK'
+              else row[c] = undefined
+            }
           })
           // id 生成（uuid 由调用方传入；exp_device_rel 也传 uuid）
           const idVal = row.id
@@ -208,21 +246,52 @@ class MemDb {
       }
     }
 
-    // SELECT COUNT(*)
-    const countMatch = sql.match(/^SELECT\s+COUNT\(\*\)\s+AS\s+(\w+)\s+FROM\s+(\w+)(\s+WHERE\s+(.+))?$/i)
+    // SELECT COUNT(*) —— 支持 FROM <table> [alias] [JOIN ...] [WHERE ...]
+    const countMatch = sql.match(/^SELECT\s+COUNT\(\*\)\s+AS\s+(\w+)\s+FROM\s+(\w+)(\s+\w+)?(\s+JOIN\s+.+?)?(\s+WHERE\s+(.+))?$/i)
     if (countMatch) {
       const alias = countMatch[1]
       const table = countMatch[2]
-      const whereClause = countMatch[4]
+      const whereClause = countMatch[6]
+      const hasJoin = !!countMatch[4]
       return {
         get: (...vals: any[]) => {
           const t = this.tables.get(table)
           if (!t) return { [alias]: 0 }
-          let cnt = 0
-          for (const row of t.rows.values()) {
-            if (!whereClause || this.matchesWhere(row, whereClause, vals)) cnt++
+          let rows = Array.from(t.rows.values()).map((r) => ({ ...r }))
+          let remaining = vals
+          // JOIN exp_device_rel 反查 device
+          if (hasJoin && /exp_device_rel/i.test(countMatch[4])) {
+            const rel = this.tables.get('exp_device_rel')
+            const deviceId = remaining[0]
+            remaining = remaining.slice(1)
+            const expIds = rel
+              ? Array.from(rel.rows.values()).filter((r) => r.device_id === deviceId).map((r) => r.experience_id)
+              : []
+            rows = rows.filter((r) => expIds.includes(r.id))
           }
-          return { [alias]: cnt }
+          // 其余 WHERE 条件（category/status/invalid 过滤）
+          if (whereClause) {
+            rows = rows.filter((r) => {
+              // 复用 list 的过滤逻辑：把 whereClause 与 remaining 参数拼装
+              if (/invalid_at\s+IS\s+NULL/i.test(whereClause)) {
+                if (r.invalid_at) return false
+              }
+              const catM = whereClause.match(/e\.category\s*=\s*\?|category\s*=\s*\?/)
+              if (catM) {
+                const cat = remaining[0]
+                remaining = remaining.slice(1)
+                if (r.category !== cat) return false
+              }
+              const statM = whereClause.match(/e\.status\s*=\s*\?|status\s*=\s*\?/)
+              if (statM) {
+                const st = remaining[0]
+                remaining = remaining.slice(1)
+                if (r.status !== st) return false
+              }
+              return true
+            })
+          }
+          return { [alias]: rows.length }
         },
       }
     }
