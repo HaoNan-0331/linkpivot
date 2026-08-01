@@ -27,12 +27,12 @@ network_toplogy 是面向运维人员的网络拓扑管理桌面工具（Electro
 - ✓ IPC/数据安全：大数据 IPC 分页/上限 + 截断信封（getIPDetails/oui:getAll/anomaly:getChanges 默认 cap + limit/offset + {rows,total,truncated}；export:arpTable 流式分块写 CSV 消除一次性全量读）— Validated in Phase 4: Data / IPC Safety（DATA-01）
 - ✓ 前端重构与类型：AIPage 399→95 行拆 4 子组件（ChatSessionList/ChatMessageList/ChatInput/CommandConfirmModal）+ useAIChat 自定义 hook；前端 any→src/types（electron.d.ts 全建模 + ai/kb/oui DTO，6 REQ 组件+DevicesPage 清零）；TopologyPage ref-mirror（nodesRef/edgesRef）消 stale closure；ChunkContent 客户端 AbortController + 模块级 LRU + in-flight 去重图片缓存 — Validated in Phase 5: Frontend Refactor & Types（FE-01, FE-02, FE-03, FE-04）
 - ✓ 健壮性/资源安全：arpCollector.executeSSH/executeTelnet + ai.executeCommandsOnDevice + execOne 句柄 try/finally 统一回收（cleanup 统一出口 clearTimeout+end，timeout 路径 destroy，executeTelnet 补自有 setTimeout，execOne 补 stream.on('error') 兜底）；discovery 两处 JSON parse enriched Error（原始片段 slice 0,200 + err.message）+ 5 处 createSystemLog 经 safeLog 非致命包裹（console.warn 兜底，line 258 嵌套陷阱切断）— Validated in Phase 6: Robustness & Resource Safety（ROBUST-01, ROBUST-02）
+- ✓ 经验数据层与安全基线：experiences + exp_device_rel 两表（通用列 + attrs_enc 模板 JSON 区 + bi-temporal valid_at/invalid_at 软失效 + 预埋 status/source_session_id/last_verified_at/reuse_count/relation_type）+ v8 幂等迁移（sqlite_master.sql 特征串守卫）；ExperienceService 函数式（CRUD/设备多对多关联/bi-temporal 软失效/attrs 模板校验/AES-256-GCM attrs_enc 加密/MAX_BATCH）；10 个 experience:* IPC channel 全 secure 包装 + stripEncColumns/白名单正向投影边界脱敏 + main.ts setExperienceMasterKey 注入 — Validated in Phase 7: Experience Data Layer & Security Baseline（EXP-01, EXP-02, EXP-03, EXP-04, SEC-01, SEC-02）
 
 ### Active
 
 <!-- 本轮 milestone v1.1：AI 对话经验沉淀（详细 REQ-IDs 见 REQUIREMENTS.md） -->
 
-- [ ] 经验数据层：结构化表（通用列 + attrs 模板区）+ 设备关联表 + bi-temporal 软失效 + 迁移
 - [ ] AI 经验起草：会话回顾 → PII 脱敏 → 查存量去重(ADD/UPDATE/NOOP) → 强 schema JSON 起草 → draft
 - [ ] 人工确认：弹窗逐条编辑/勾选 + 质量门硬校验 + 疑似重复提示 + 原始会话溯源回链
 - [ ] 经验板块页：知识库下新增「经验」Tab，多维筛选 + 关键词搜索 + 手动 CRUD + 标失效
@@ -57,6 +57,7 @@ network_toplogy 是面向运维人员的网络拓扑管理桌面工具（Electro
 - **Phase 4 complete (2026-06-28)**：数据/IPC 安全交付（DATA-01）—— 3 list 通道（getIPDetails/oui:getAll/anomaly:getChanges）hybrid 分页契约（默认 cap 2000/5000/100 + 硬上限 + validateLimit 钳制）+ 截断信封 {rows,total,truncated}（不静默藏数据）；export:arpTable 流式分块写 CSV（分批 LIMIT/OFFSET + append，内存峰值 O(单批) 非 O(全表)，签名/返回形态不变）。3 plans / 验证通过。
 - **Phase 5 complete (2026-07-05)**：前端重构与类型交付（FE-01~04）—— AIPage 拆 4 子组件 + useAIChat 自定义 hook（D-5-1，非 zustand/prop drilling）；前端 any→src/types（electron.d.ts 26 处建模 + 新建 ai/kb DTO + oui OUIRow，6 REQ 组件+DevicesPage any 清零，D-5-2/3）；TopologyPage ref-mirror 消 stale closure（D-5-4，不迁 store）；ChunkContent 客户端 AbortController + 模块级 LRU + in-flight 去重（D-5-5/6，不改 IPC）。4 plans / 4 SC 静态全过 + 25 项 Electron 人工 HV approved / code review 1 blocker（CR-01 无限重渲染）已修 + 9 warning/4 info advisory 未修。Deferred：搜索 snippet `[图片N]` 文本呈现（预存 UX）、设备连接观测（Phase 6 范畴）。
 - **Phase 6 complete (2026-07-05)**：健壮性/资源安全交付（ROBUST-01/02）—— arpCollector.executeSSH/executeTelnet + ai.executeCommandsOnDevice + execOne 全 try/finally 化（cleanup 统一出口 clearTimeout+end，timeout 路径 destroy，executeTelnet 补自有 setTimeout，execOne 补 stream.on('error') 兜底，D-6-1/D-6-2）；discovery safeLog helper（5 处 createSystemLog 非致命包裹 + console.warn 兜底，line 258 嵌套陷阱切断）+ enrichParseError（enriched Error 含原始片段 slice 0,200，D-6-3/D-6-4）。2 plans / 4 SC 静态全过 + code review 2 critical（句柄泄漏 CR-01 execOne stream error / CR-02 use-after-destroy race）+ 3 warning 全修复 / SC#4 句柄快照 4 项 HV defer（DEP-1 native binding 无法 plain node 实测，06-HUMAN-UAT.md）。**v1.0 milestone 全 6 phase / 14 REQ 交付完成。**
+- **Phase 7 complete (2026-08-01)**：经验数据层与安全基线交付（EXP-01/02/03/04, SEC-01/02）— experiences + exp_device_rel 两表（v8 幂等迁移，DDL init.ts/migrations.ts 逐字一致）+ ExperienceService 函数式 service（CRUD/设备多对多/attrs 模板校验/AES-256-GCM attrs_enc 加密/bi-temporal 软失效/MAX_BATCH）+ 10 个 experience:* IPC channel 全 secure 包装 + stripEncColumns/WR-05 白名单正向投影边界脱敏 + main.ts setExperienceMasterKey 注入。2 plans / 验证 5/5 SC + 6 REQ passed / code review 2 critical（CR-01 update 越权 / CR-02 timestamp 格式）+ 1 runtime bug（IF-03 tags parse）+ 3 warning 全修复 / 三绿门禁 75 测试全过。
 
 ## Current State
 
@@ -124,4 +125,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-08-01 — milestone v1.1「AI 对话经验沉淀」启动（new-milestone）*
+*Last updated: 2026-08-01 — Phase 7（经验数据层与安全基线）完成，v1.1 milestone 进度 1/5 phase*
