@@ -121,6 +121,18 @@ const api = {
     splitChunk: (chunkId: string, splitPosition: number, title1: string, title2: string) => ipcRenderer.invoke('kb:splitChunk', chunkId, splitPosition, title1, title2),
     getImageData: (imagePath: string) => ipcRenderer.invoke('kb:getImageData', imagePath),
   },
+  experience: {
+    list: (opts?: unknown) => ipcRenderer.invoke('experience:list', opts),
+    get: (id: string) => ipcRenderer.invoke('experience:get', id),
+    create: (input: unknown) => ipcRenderer.invoke('experience:create', input),
+    update: (id: string, fields: unknown) => ipcRenderer.invoke('experience:update', id, fields),
+    delete: (id: string) => ipcRenderer.invoke('experience:delete', id),
+    invalidate: (id: string) => ipcRenderer.invoke('experience:invalidate', id),
+    relateDevice: (experienceId: string, deviceId: string, relationType?: string) => ipcRenderer.invoke('experience:relateDevice', experienceId, deviceId, relationType),
+    unrelateDevice: (experienceId: string, deviceId: string) => ipcRenderer.invoke('experience:unrelateDevice', experienceId, deviceId),
+    listByDevice: (deviceId: string, includeInvalid?: boolean) => ipcRenderer.invoke('experience:listByDevice', deviceId, includeInvalid),
+    listDevices: (experienceId: string) => ipcRenderer.invoke('experience:listDevices', experienceId),
+  },
 }
 
 contextBridge.exposeInMainWorld('api', api)

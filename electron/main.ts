@@ -25,6 +25,8 @@ import { registerExportIpc } from './ipc/exportIpc'
 import { registerSchedulerIpc } from './ipc/schedulerIpc'
 import { setKbMasterKey } from './services/knowledgeBaseService'
 import { registerKbIpc } from './ipc/knowledgeBaseIpc'
+import { setExperienceMasterKey } from './services/experienceService'
+import { registerExperienceIpc } from './ipc/experienceIpc'
 
 let mainWindow: BrowserWindow | null = null
 let masterKey: string
@@ -89,6 +91,7 @@ app.whenReady().then(() => {
   setAiMasterKey(masterKey)
   setArpMasterKey(masterKey)
   setKbMasterKey(masterKey)
+  setExperienceMasterKey(masterKey)
   // R2: decField 解密失败可观测——masterKey 不匹配 / safeStorage 翻转时写 system_log 告警，避免无声数据丢失。
   // handler 在此注入（解耦：crypto.ts 不依赖 services/DB，保持纯函数可单测）。
   setDecryptFailureHandler(() => {
@@ -130,6 +133,7 @@ app.whenReady().then(() => {
   registerExportIpc()
   registerSchedulerIpc()
   registerKbIpc()
+  registerExperienceIpc()
   SchedulerService.start()
   BackupScheduler.start()
 
