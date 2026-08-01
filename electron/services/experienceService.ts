@@ -48,6 +48,26 @@ export type ExperienceStatus = 'draft' | 'confirmed' | 'published' | 'invalid'
 const VALID_CATEGORIES: ExperienceCategory[] = ['troubleshooting', 'best_practices', 'product', 'env']
 const VALID_SEVERITIES = ['critical', 'high', 'medium', 'low', 'info']
 
+// CR-02 bi-temporal 文本比较格式契约：
+// experiences.valid_at / invalid_at / last_verified_at 三列所有写入必须是
+// `YYYY-MM-DD HH:MM:SS`（localtime，无毫秒/无时区偏移）格式，否则与
+// `datetime('now','localtime')` 的字典序文本比较会失真（如 'T'(0x54) > 空格(0x20)
+// 误判更晚），导致 listExperiences 的 `invalid_at > datetime('now','localtime')`
+// 漏判/误判有效态。当前写入路径：
+// - createExperience：valid_at 走 DB DEFAULT datetime('now','localtime')（合规）
+// - invalidateExperience：invalid_at 走 datetime('now','localtime')（合规）
+// - incReuseCount/touchLastVerifiedAt：last_verified_at 走 datetime('now','localtime')（合规）
+// CR-01 已切断 renderer 经 update 直写三列的路径。任何未来新增的「外部时间戳入参」入口
+// （如 Phase 11 允许回填校验时间）必须经此守卫校验。
+const CANONICAL_TS_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/
+
+/** 校验外部时间戳入参符合 bi-temporal 列格式契约（YYYY-MM-DD HH:MM:SS localtime）。 */
+export function assertCanonicalTimestamp(v: string, col: string): void {
+  if (!CANONICAL_TS_RE.test(v)) {
+    throw new Error(`${col} 格式必须是 YYYY-MM-DD HH:MM:SS（localtime），收到: ${v}`)
+  }
+}
+
 export interface ExperienceAttrs {
   // troubleshooting 深字段（其他类轻结构，attrs 可为空）
   symptoms?: string
@@ -256,7 +276,10 @@ export function updateExperience(id: string, fields: ExperienceUpdateFields): an
   return getExperience(id)
 }
 
-/** 软失效：设 invalid_at（不物理删除，保留可追溯历史）。 */
+/** 软失效：设 invalid_at（不物理删除，保留可追溯历史）。
+ * CR-02 格式契约：invalid_at 用 datetime('now','localtime') 写入，天然产出
+ * YYYY-MM-DD HH:MM:SS（localtime），与 listExperiences 的 `invalid_at > datetime(...)`
+ * 文本比较格式一致，无需 assertCanonicalTimestamp 校验。 */
 export function invalidateExperience(id: string): any {
   const conn = db()
   conn.prepare(
