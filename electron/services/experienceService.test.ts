@@ -29,6 +29,18 @@ import {
 
 const MK_TEST_KEY = 'test-master-key-32-bytes-ok!!'
 
+// WR-02 mock 当前时间（YYYY-MM-DD HH:MM:SS localtime，对齐 datetime('now','localtime') 格式）。
+// invalidateExperience 写入 invalid_at 用 datetime('now','localtime')，mock 改写为
+// 真实可比时间戳（替代 'NOW-MOCK' 字符串），让过滤侧能做真实 `>` 文本比较，复刻
+// listExperiences 的 bi-temporal `invalid_at IS NULL OR invalid_at > datetime(...)` 双分支。
+function mockNow(): string {
+  return new Date().toISOString().replace('T', ' ').slice(0, 19)
+}
+// 偏移 mock 时间（秒），用于构造过期/未来 invalid_at 三态：负=过去（已失效），正=未来（有效）
+function mockNowOffseted(offsetSec: number): string {
+  return new Date(Date.now() + offsetSec * 1000).toISOString().replace('T', ' ').slice(0, 19)
+}
+
 // ---------- 内存 mock DB ----------
 interface Row { [col: string]: any }
 interface MockTable {
@@ -149,10 +161,10 @@ class MemDb {
             if (ph === '?') {
               row[c] = vals[valIdx++]
             } else {
-              // 字面量：'draft' → draft；datetime('now','localtime') → 标记 NOW-MOCK
+              // 字面量：'draft' → draft；datetime('now','localtime') → 真实可比时间戳（WR-02）
               const litStr = ph.match(/^'(.*)'$/)
               if (litStr) row[c] = litStr[1]
-              else if (/^datetime\(/i.test(ph)) row[c] = 'NOW-MOCK'
+              else if (/^datetime\(/i.test(ph)) row[c] = mockNow()
               else row[c] = undefined
             }
           })
@@ -212,7 +224,7 @@ class MemDb {
                 if (typeof v === 'string' && v.includes('reuse_count + 1')) {
                   row[c] = (Number(row[c]) || 0) + 1
                 } else if (typeof v === 'string' && v.toLowerCase().startsWith("datetime(")) {
-                  row[c] = 'NOW-MOCK'
+                  row[c] = mockNow()
                 } else {
                   row[c] = v
                 }
@@ -272,9 +284,11 @@ class MemDb {
           // 其余 WHERE 条件（category/status/invalid 过滤）
           if (whereClause) {
             rows = rows.filter((r) => {
-              // 复用 list 的过滤逻辑：把 whereClause 与 remaining 参数拼装
+              // WR-02 复刻 bi-temporal 双分支：invalid_at IS NULL OR invalid_at > now
+              // （真实文本比较，覆盖过期/有效/NULL 三态，不再靠 'NOW-MOCK' truthy 碰巧通过）
               if (/invalid_at\s+IS\s+NULL/i.test(whereClause)) {
-                if (r.invalid_at) return false
+                const now = mockNow()
+                if (r.invalid_at && !(r.invalid_at > now)) return false
               }
               const catM = whereClause.match(/e\.category\s*=\s*\?|category\s*=\s*\?/)
               if (catM) {
@@ -344,9 +358,11 @@ class MemDb {
             rows = rows.filter((r) => r.status === st)
             vals = vals.slice(1)
           }
-          // includeInvalid=false 过滤：invalid_at IS NULL OR invalid_at > datetime(...)
+          // WR-02 includeInvalid=false 过滤：复刻 bi-temporal 双分支真实比较
+          // （invalid_at IS NULL OR invalid_at > now），覆盖过期/有效/NULL 三态
           if (/invalid_at\s+IS\s+NULL/i.test(sql)) {
-            rows = rows.filter((r) => !r.invalid_at)
+            const now = mockNow()
+            rows = rows.filter((r) => !r.invalid_at || r.invalid_at > now)
           }
           return rows
         },
@@ -379,9 +395,11 @@ class MemDb {
     // experience_id = ? AND device_id = ?
     const relMatch = whereClause.match(/^experience_id\s*=\s*\?\s+AND\s+device_id\s*=\s*\?$/i)
     if (relMatch) return row.experience_id === vals[0] && row.device_id === vals[1]
-    // 复杂表达式（invalid_at IS NULL OR invalid_at > datetime(...))
+    // WR-02 复杂表达式（invalid_at IS NULL OR invalid_at > datetime(...))
+    // 真实文本比较，覆盖过期/有效/NULL 三态
     if (/invalid_at\s+IS\s+NULL/i.test(whereClause)) {
-      return !row.invalid_at
+      const now = mockNow()
+      return !row.invalid_at || row.invalid_at > now
     }
     // 单列 = ?（experience_id = ? 等）
     const colMatch = whereClause.match(/^(\w+)\s*=\s*\?$/)
@@ -501,6 +519,46 @@ describe('experienceService', () => {
     invalidateExperience(e2.id)
     const res = listExperiences({ includeInvalid: true })
     expect(res.rows.length).toBe(2)
+  })
+
+  // WR-02 回归保护：bi-temporal `invalid_at IS NULL OR invalid_at > now` 真实文本比较。
+  // 三态：NULL（永有效）/ 过去（已失效）/ 未来（仍有效），验证 listExperiences 默认过滤正确，
+  // 而非靠 'NOW-MOCK' 字符串 truthy 碰巧通过。配合 CR-02 格式契约。
+  it('listExperiences bi-temporal 三态过滤（NULL 永有效 / 过去已失效 / 未来仍有效）', () => {
+    const db = seedDb()
+    _setExperienceDbGetter(() => db as unknown as Database.Database)
+    const exp = db.tables.get('experiences')!
+    const mkRow = (id: string, invalidAt: string | null) => ({
+      id, title: id, category: 'product', content: 'c', tags: '[]', status: 'draft',
+      attrs_enc: null, valid_at: mockNowOffseted(-3600),
+      invalid_at: invalidAt, last_verified_at: null, reuse_count: 0,
+      created_at: mockNowOffseted(-3600), updated_at: mockNowOffseted(-3600),
+    })
+    exp.rows.set('exp-null', mkRow('exp-null', null))            // NULL → 永有效
+    exp.rows.set('exp-past', mkRow('exp-past', mockNowOffseted(-600)))  // 过去 → 已失效
+    exp.rows.set('exp-future', mkRow('exp-future', mockNowOffseted(600))) // 未来 → 仍有效
+
+    // includeInvalid=false：只返 NULL 与未来（有效态）
+    const valid = listExperiences({ includeInvalid: false })
+    const validIds = valid.rows.map((r: any) => r.id).sort()
+    expect(validIds).toEqual(['exp-future', 'exp-null'])
+    expect(valid.total).toBe(2)
+
+    // includeInvalid=true：返全部三态
+    const all = listExperiences({ includeInvalid: true })
+    expect(all.rows.length).toBe(3)
+    expect(all.total).toBe(3)
+  })
+
+  it('listExperiences bi-temporal 过期行经 invalidateExperience 被过滤（回归）', () => {
+    // invalidateExperience 写 mockNow()，过滤时 mockNow() 略晚 → 已过期被过滤（真实 sqlite 语义）
+    const e1 = createExperience({ title: '有效', category: 'product', content: 'c' })
+    const e2 = createExperience({ title: '将失效', category: 'product', content: 'c' })
+    invalidateExperience(e2.id)
+    const res = listExperiences({ includeInvalid: false })
+    const ids = res.rows.map((r: any) => r.id)
+    expect(ids).toContain(e1.id)
+    expect(ids).not.toContain(e2.id)
   })
 
   it('listExperiences limit 超过 MAX_BATCH 抛错', () => {
