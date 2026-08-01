@@ -13,7 +13,7 @@ import { createSystemLog } from '../services/systemLog'
  *      在 createTables() 建好基线表之后、premigration 备份之后执行（D-06）。
  *      init.ts 不直接调用 runMigrations（单一调用点原则）。
  */
-export const MIGRATION_HEAD = 7
+export const MIGRATION_HEAD = 8
 
 interface MigrationStep {
   version: number
@@ -190,6 +190,62 @@ END`)
   step()
 }
 
+const v8 = (db: Database.Database): void => {
+  // Phase 7：experiences + exp_device_rel 建表（幂等守卫 D-14 第二形式：sqlite_master sql-content）。
+  // CREATE TABLE IF NOT EXISTS 本身幂等，但此处仍查特征串——与 v5/v6/v7 同构，保留"特征串命中即 no-op 早返"的可观测一致性。
+  // 遗留库走此 v8 迁移建表；fresh-install 由 init.ts DDL 建表（两路径最终 schema 一致）。
+  const expSchema = (db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='experiences'"
+  ).get() as { sql?: string } | undefined)?.sql || ''
+  if (expSchema.includes('attrs_enc')) {
+    return // 表已建含 attrs_enc 列，no-op（幂等重跑 D-14）
+  }
+  const step = db.transaction(() => {
+    // 以下 DDL 必须与 init.ts fresh-install 块逐字一致（含所有列/CHECK/索引/FK，v7 注释同款要求）。
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS experiences (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        category TEXT NOT NULL DEFAULT 'troubleshooting'
+          CHECK(category IN ('troubleshooting','best_practices','product','env')),
+        content TEXT NOT NULL DEFAULT '',
+        tags TEXT DEFAULT '[]',
+        status TEXT NOT NULL DEFAULT 'draft'
+          CHECK(status IN ('draft','confirmed','published','invalid')),
+        source_session_id TEXT,
+        attrs_enc TEXT,
+        valid_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        invalid_at TEXT,
+        last_verified_at TEXT,
+        reuse_count INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now','localtime')),
+        updated_at TEXT DEFAULT (datetime('now','localtime')),
+        FOREIGN KEY (source_session_id) REFERENCES chat_sessions(id) ON DELETE SET NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_experiences_category ON experiences(category);
+      CREATE INDEX IF NOT EXISTS idx_experiences_status ON experiences(status);
+      CREATE INDEX IF NOT EXISTS idx_experiences_valid ON experiences(valid_at);
+      CREATE INDEX IF NOT EXISTS idx_experiences_invalid ON experiences(invalid_at);
+      CREATE INDEX IF NOT EXISTS idx_experiences_source_session ON experiences(source_session_id);
+
+      CREATE TABLE IF NOT EXISTS exp_device_rel (
+        id TEXT PRIMARY KEY,
+        experience_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        relation_type TEXT NOT NULL DEFAULT 'primary',
+        created_at TEXT DEFAULT (datetime('now','localtime')),
+        UNIQUE(experience_id, device_id),
+        FOREIGN KEY (experience_id) REFERENCES experiences(id) ON DELETE CASCADE,
+        FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_exp_device_rel_exp ON exp_device_rel(experience_id);
+      CREATE INDEX IF NOT EXISTS idx_exp_device_rel_device ON exp_device_rel(device_id);
+    `)
+    db.pragma('user_version = 8')
+  })
+  step()
+}
+
 const MIGRATIONS: MigrationStep[] = [
   { version: 1, name: 'chat_history.session_id', run: v1 },
   { version: 2, name: 'ai_exec_logs.prompt_text+ai_response', run: v2 },
@@ -198,6 +254,7 @@ const MIGRATIONS: MigrationStep[] = [
   { version: 5, name: 'devices.connection_type CHECK rdp rebuild', run: v5 },
   { version: 6, name: 'ai_system_logs CHECK widen (acl/migration/backup + warning)', run: v6 },
   { version: 7, name: 'kb_chunks_au FTS UPDATE trigger add WHEN (skip non-FTS-field updates)', run: v7 },
+  { version: 8, name: 'experiences + exp_device_rel create (Phase 7 experience data layer)', run: v8 },
 ]
 
 /**

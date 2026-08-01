@@ -281,6 +281,53 @@ export function createTables() {
         VALUES (new.rowid, new.title, new.content,
           (SELECT GROUP_CONCAT(description, ' ') FROM kb_images WHERE chunk_id = new.id));
     END;
+
+    -- Experience tables (Phase 7: 经验沉淀数据层，独立于 kb_* 文档表)
+    -- 列设计取舍（与 design 文档一致）：
+    --   - content 明文不加密：attrs/正文分离，content 进未来 Phase 11 FTS5 检索，加密则无法索引
+    --   - attrs_enc 加密：troubleshooting 处置可能贴含密码的命令，必须 AES-256-GCM；JSON blob 整体加密
+    --   - tags 明文 JSON 数组：列表筛选需裸查，不加密
+    --   - status 含 4 态（draft/confirmed/published/invalid）为 Phase 8-10 预埋
+    --   - source_session_id / last_verified_at / reuse_count 为 Phase 8/9/11 预埋列，建表即存在避免后续补迁移
+    --   - bi-temporal：valid_at + invalid_at 各建索引，支撑「有效检索」过滤
+
+    CREATE TABLE IF NOT EXISTS experiences (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'troubleshooting'
+        CHECK(category IN ('troubleshooting','best_practices','product','env')),
+      content TEXT NOT NULL DEFAULT '',
+      tags TEXT DEFAULT '[]',
+      status TEXT NOT NULL DEFAULT 'draft'
+        CHECK(status IN ('draft','confirmed','published','invalid')),
+      source_session_id TEXT,
+      attrs_enc TEXT,
+      valid_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+      invalid_at TEXT,
+      last_verified_at TEXT,
+      reuse_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now','localtime')),
+      updated_at TEXT DEFAULT (datetime('now','localtime')),
+      FOREIGN KEY (source_session_id) REFERENCES chat_sessions(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_experiences_category ON experiences(category);
+    CREATE INDEX IF NOT EXISTS idx_experiences_status ON experiences(status);
+    CREATE INDEX IF NOT EXISTS idx_experiences_valid ON experiences(valid_at);
+    CREATE INDEX IF NOT EXISTS idx_experiences_invalid ON experiences(invalid_at);
+    CREATE INDEX IF NOT EXISTS idx_experiences_source_session ON experiences(source_session_id);
+
+    CREATE TABLE IF NOT EXISTS exp_device_rel (
+      id TEXT PRIMARY KEY,
+      experience_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      relation_type TEXT NOT NULL DEFAULT 'primary',
+      created_at TEXT DEFAULT (datetime('now','localtime')),
+      UNIQUE(experience_id, device_id),
+      FOREIGN KEY (experience_id) REFERENCES experiences(id) ON DELETE CASCADE,
+      FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_exp_device_rel_exp ON exp_device_rel(experience_id);
+    CREATE INDEX IF NOT EXISTS idx_exp_device_rel_device ON exp_device_rel(device_id);
   `)
 
   // 散落迁移块（chat_history.session_id / ai_exec_logs.prompt_text+ai_response /
