@@ -124,7 +124,10 @@ function validateAndStringifyAttrs(category: ExperienceCategory, attrs: Experien
   return JSON.stringify(attrs)
 }
 
-/** 行映射：解密 attrs_enc 回填 attrs 字段，delete 密文列（不外泄给调用方）。 */
+/** 行映射：解密 attrs_enc 回填 attrs 字段，delete 密文列（不外泄给调用方）。
+ * IF-03：tags 列以 JSON 字符串存储（createExperience 用 JSON.stringify），读出时
+ * JSON.parse 回 string[]，与 Experience.tags: string[] DTO 一致，避免 renderer
+ * 直接 .map/.includes 崩溃。坏 JSON 降级空数组（与 attrs parse 同模式）。 */
 function rowToExperience(row: any): any {
   if (!row) return null
   if (row.attrs_enc) {
@@ -137,6 +140,17 @@ function rowToExperience(row: any): any {
     }
   } else {
     row.attrs = null
+  }
+  // IF-03 tags JSON 字符串 → string[]（运行时匹配 DTO，坏 JSON 降级空数组）
+  if (row.tags != null && typeof row.tags === 'string') {
+    try {
+      row.tags = JSON.parse(row.tags)
+    } catch {
+      row.tags = []
+    }
+    if (!Array.isArray(row.tags)) row.tags = []
+  } else if (row.tags == null) {
+    row.tags = []
   }
   delete row.attrs_enc
   return row
