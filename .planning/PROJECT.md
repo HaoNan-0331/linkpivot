@@ -30,11 +30,13 @@ network_toplogy 是面向运维人员的网络拓扑管理桌面工具（Electro
 
 ### Active
 
-<!-- 本轮 milestone：代码审计延后的深度优化技术债（详细 REQ-IDs 见 REQUIREMENTS.md） -->
+<!-- 本轮 milestone v1.1：AI 对话经验沉淀（详细 REQ-IDs 见 REQUIREMENTS.md） -->
 
-- [x] 性能/资源：OUI N+1 查询消除（启动预载入 Map）、processARPEntries 事务化、FTS 触发器 WHEN 优化、init OUI/DDL 移出主线程 — Validated in Phase 3: Performance Optimization
-- [x] IPC/数据：大数据 IPC 分页/上限（getIPDetails/oui:getAll/anomaly:getChanges/export:arpTable）— Validated in Phase 4: Data / IPC Safety（DATA-01）
-- [x] 健壮性/资源安全：arpCollector.executeSSH/executeTelnet + ai.executeCommandsOnDevice + execOne 句柄 try/finally 统一回收（cleanup 统一出口 clearTimeout+end，timeout 路径 destroy，executeTelnet 补自有 setTimeout，execOne 补 stream.on('error') 兜底）；discovery 两处 JSON parse enriched Error（原始片段 slice 0,200）+ 5 处 createSystemLog 经 safeLog 非致命包裹（console.warn 兜底，line 258 嵌套陷阱切断）— Validated in Phase 6: Robustness & Resource Safety（ROBUST-01, ROBUST-02）
+- [ ] 经验数据层：结构化表（通用列 + attrs 模板区）+ 设备关联表 + bi-temporal 软失效 + 迁移
+- [ ] AI 经验起草：会话回顾 → PII 脱敏 → 查存量去重(ADD/UPDATE/NOOP) → 强 schema JSON 起草 → draft
+- [ ] 人工确认：弹窗逐条编辑/勾选 + 质量门硬校验 + 疑似重复提示 + 原始会话溯源回链
+- [ ] 经验板块页：知识库下新增「经验」Tab，多维筛选 + 关键词搜索 + 手动 CRUD + 标失效
+- [ ] AI 检索复用：SQL 粗筛 + LLM 精排 + read-time 即时验证(设备状态/commandSafety/有效期) + 引用溯源
 
 ### Out of Scope
 
@@ -68,13 +70,25 @@ network_toplogy 是面向运维人员的网络拓扑管理桌面工具（Electro
 - 后端 any 清理 + ai.ts/kbService 拆分（TD-1/TD-2）
 - BUG-3 before-quit 不等 in-flight backup（backupScheduler/main.ts 备份退出健壮性）
 
-## Next Milestone Goals
+## Current Milestone: v1.1 AI 对话经验沉淀
 
-待 `/gsd-new-milestone` 启动。候选方向（用户「新增功能后面再说」）：
-- 新功能开发（用户明确延后到此 milestone 后）
+**Goal:** 把一次性的 AI 运维对话沉淀为可检索、可溯源、防过期、防泄密的长期经验资产，供人工浏览与 AI 后续检索复用。
+
+**Target features:**
+- 经验数据层：结构化表（通用列 + `attrs` 模板区）+ 设备关联表 + bi-temporal 软失效 + 迁移
+- AI 经验起草：会话回顾 → PII 脱敏 → 查存量去重(ADD/UPDATE/NOOP) → 强 schema JSON 起草 → draft
+- 人工确认：弹窗逐条编辑/勾选 + 质量门硬校验 + 疑似重复提示 + 原始会话溯源回链
+- 经验板块页：知识库下新增「经验」Tab，多维筛选 + 关键词搜索 + 手动 CRUD + 标失效
+- AI 检索复用：SQL 粗筛 + LLM 精排 + read-time 即时验证 + 引用溯源
+
+**Key context:** 三条红线（不上向量库 / 不引图数据库 / AI 产出必经人工确认）；复用现有 `saveChatMessage` / LLM 挑索引检索 / `****xxxx` 脱敏 / `commandSafety`。调研与设计见 `.planning/research/2026-08-01-experience-summary-research.md` + `.planning/designs/2026-08-01-experience-summary-design.md`。
+
+## Deferred Milestone Goals
+
+后续 milestone 候选：
 - IPv6 支持（现有 ipToNumber/CIDR 仅 IPv4）
 - DEP-1 缓解（@electron/rebuild + electron-vite 集成 vitest 跑 Electron 内测试，补句柄回归测试自动化）
-- FRAG-2/3 + TD-1/TD-2 后端 cleanup milestone
+- FRAG-2/3 + TD-1/TD-2 后端 cleanup
 
 ## Constraints
 
@@ -110,4 +124,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-05 after v1.0 milestone archived（技术债优化 6 phase / 14 REQ 全交付）*
+*Last updated: 2026-08-01 — milestone v1.1「AI 对话经验沉淀」启动（new-milestone）*
