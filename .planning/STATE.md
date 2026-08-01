@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: AI 对话经验沉淀
 status: executing
-last_updated: "2026-08-01T12:37:56.750Z"
-last_activity: 2026-08-01 -- Phase 7 planning complete
+last_updated: "2026-08-01T13:52:13.603Z"
+last_activity: 2026-08-01
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 2
-  completed_plans: 0
-  percent: 0
+  completed_plans: 1
+  percent: 50
 ---
 
 # STATE: network_toplogy
@@ -25,12 +25,12 @@ See: .planning/PROJECT.md (updated 2026-08-01)
 
 ## Current Position
 
-Phase: 7 of 11 (Experience Data Layer & Security Baseline) — v1.1 第一个 phase
-Plan: —
+Phase: 07 (experience-data-layer-security-baseline) — EXECUTING
+Plan: 2 of 2
 Status: Ready to execute
-Last activity: 2026-08-01 -- Phase 7 planning complete
+Last activity: 2026-08-01
 
-Progress: [░░░░░░░░░░] 0%（v1.1：0/5 phases）
+Progress: [█████░░░░░] 50%
 
 ## Performance Metrics
 
@@ -62,6 +62,13 @@ v1.1 roadmap 阶段（按 design 文档分层 + 目标倒推）：
 - **三条红线贯穿**：不上向量库（FTS5+SQL 粗筛+LLM 精排）/ 不引图数据库（exp_device_rel 关联表复刻轻量图边）/ AI 产出永远先进 draft 人工确认才 published
 - **REQ 计数更正**：REQUIREMENTS.md header 原写 "19 total"，实际 20（EXP4+DRAFT4+REVIEW3+BROWSE4+RETRIEVE3+SEC2=20）。Traceability 表 20 行佐证。roadmap 按 20 计，覆盖 20/20
 
+Phase 7 执行期决策（07-01 落地）：
+
+- [Phase 7]: 07-01 content 明文 / attrs_enc 加密分离 — content 支撑 Phase 11 FTS5 检索无法加密，敏感凭证只放 attrs 走 AES-256-GCM（威胁 T-07-04 accept 取舍）
+- [Phase 7]: 07-01 4 态 status（draft/confirmed/published/invalid）+ source_session_id/last_verified_at/reuse_count 建表即预埋 — 避免 Phase 8-10 状态机/溯源/复用补迁移
+- [Phase 7]: 07-01 experienceService 采用函数式形态（模块级 let MK + export function，无 class）— 与 knowledgeBaseService.ts 同属知识库域同读写加密列，形态一致便于维护
+- [Phase 7]: 07-01 测试用内存 mock DB 规避 DEP-1 native binding ABI 冲突 — vitest 在 plain Node 运行无法加载 @electron/rebuild 重建的 better-sqlite3，service 经 _setExperienceDbGetter（@internal）注入 db getter，生产路径走 getDatabase() 单例不受影响
+
 v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 
 - 加密/迁移改动必须向后兼容历史数据（v1/v2 IV 兼容、迁移幂等守卫靠 sqlite_master 特征串不靠 user_version、throw 即 ROLLBACK）
@@ -86,6 +93,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 | 260726-vcu | R5 收尾——commandSafety + authGuard 单测（55/55） | 2026-07-26 | 815ae87 | quick/260726-vcu-command-safety-authguard-tests/ |
 | 260726-voh | 文档同步——workflow 刷新 13 文档消 85 条 drift | 2026-07-26 | 224b56b | quick/260726-voh-doc-sync/ |
 | 260726-w67 | P1 加固——auth safe 包装 + app.isPackaged + native rebuild/CI 冒烟 | 2026-07-26 | 998d1cf | quick/260726-w67-p1-hardening/ |
+| Phase 07 P07-01 | 7m24s | 2 tasks | 5 files |
 
 ### Risk Watch
 
@@ -120,8 +128,8 @@ v1.1 明确 defer 到二期（4 FUTURE，不进 roadmap）：
 
 ## Session Continuity
 
-- **Last action**: `/gsd-new-project` → roadmapper 创建 v1.1 ROADMAP.md（Phases 7-11）+ STATE.md + 更新 REQUIREMENTS.md Traceability
-- **Next action**: `/gsd-plan-phase 7` — Experience Data Layer & Security Baseline（EXP-01/02/03/04, SEC-01/02）
+- **Last action**: Completed 07-01-PLAN.md（experiences + exp_device_rel 建表 + v8 迁移 + ExperienceService 函数式 service，3 commits 7467a0f/06d8215/7ba8170，三绿门禁全绿 + 18 单测全 PASS）
+- **Next action**: 执行 Phase 7 Plan 02（IPC 网关层，挂 secure/safe + experience:* channel，消费 experienceService + 脱敏）
 - **Resume command**: `/gsd-status`
 
 ## Phase → Requirement Map

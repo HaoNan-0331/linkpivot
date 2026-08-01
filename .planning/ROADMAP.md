@@ -50,7 +50,7 @@
 
 Plans:
 **Wave 1**
-- [ ] 07-01-PLAN.md — experiences + exp_device_rel 建表迁移（v8 幂等）+ ExperienceService 静态类（CRUD/设备关联/bi-temporal 软失效/attrs 模板校验/字段加密）
+- [x] 07-01-PLAN.md — experiences + exp_device_rel 建表迁移（v8 幂等）+ ExperienceService 静态类（CRUD/设备关联/bi-temporal 软失效/attrs 模板校验/字段加密）
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 07-02-PLAN.md — experienceIpc.ts 10 channel 全 secure 包装 + main.ts 注入注册 + preload 暴露 + experience.ts DTO/electron.d.ts 类型

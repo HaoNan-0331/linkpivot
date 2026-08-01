@@ -10,10 +10,10 @@
 
 ### 经验数据层 (EXP)
 
-- [ ] **EXP-01**: 用户可查看/管理持久化经验条目（标题/分类/内容/标签/来源会话）— Phase 7
-- [ ] **EXP-02**: 经验可关联一台或多台设备（可选）— Phase 7
-- [ ] **EXP-03**: 经验带 bi-temporal 有效期（valid_at/invalid_at），过期软失效保留历史、不进有效检索 — Phase 7
-- [ ] **EXP-04**: 经验按分类区分字段深度（troubleshooting 类带症状/根因/处置/预防/严重度模板，其他类轻结构）— Phase 7
+- [x] **EXP-01**: 用户可查看/管理持久化经验条目（标题/分类/内容/标签/来源会话）— Phase 7
+- [x] **EXP-02**: 经验可关联一台或多台设备（可选）— Phase 7
+- [x] **EXP-03**: 经验带 bi-temporal 有效期（valid_at/invalid_at），过期软失效保留历史、不进有效检索 — Phase 7
+- [x] **EXP-04**: 经验按分类区分字段深度（troubleshooting 类带症状/根因/处置/预防/严重度模板，其他类轻结构）— Phase 7
 
 ### AI 起草 (DRAFT)
 
@@ -44,7 +44,7 @@
 ### 安全 (SEC)
 
 - [ ] **SEC-01**: 所有经验相关 IPC 经 secure/safe 鉴权包装 + 异常脱敏 — Phase 7
-- [ ] **SEC-02**: 经验数据访问遵循现有脱敏规范（凭证不外泄）— Phase 7
+- [x] **SEC-02**: 经验数据访问遵循现有脱敏规范（凭证不外泄）— Phase 7
 
 ## v2 Requirements（二期）
 
@@ -75,10 +75,10 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| EXP-01 | Phase 7 | Pending |
-| EXP-02 | Phase 7 | Pending |
-| EXP-03 | Phase 7 | Pending |
-| EXP-04 | Phase 7 | Pending |
+| EXP-01 | Phase 7 | Complete |
+| EXP-02 | Phase 7 | Complete |
+| EXP-03 | Phase 7 | Complete |
+| EXP-04 | Phase 7 | Complete |
 | DRAFT-01 | Phase 8 | Pending |
 | DRAFT-02 | Phase 8 | Pending |
 | DRAFT-03 | Phase 8 | Pending |
@@ -94,7 +94,7 @@
 | RETRIEVE-02 | Phase 11 | Pending |
 | RETRIEVE-03 | Phase 11 | Pending |
 | SEC-01 | Phase 7 | Pending |
-| SEC-02 | Phase 7 | Pending |
+| SEC-02 | Phase 7 | Complete |
 
 **Coverage:**
 - v1.1 requirements: 20 total（EXP 4 + DRAFT 4 + REVIEW 3 + BROWSE 4 + RETRIEVE 3 + SEC 2；原文 header 误写 19，traceability 表 20 行佐证为 20）
