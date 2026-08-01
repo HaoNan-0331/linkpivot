@@ -26,18 +26,18 @@ export interface ExperienceInput {
   attrs?: ExperienceAttrs | null
 }
 
-/** experience:update 入参（白名单字段，对齐 experienceService.updateExperience 的 ExperienceUpdateFields） */
+/** experience:update 入参（白名单字段，对齐 experienceService.updateExperience 的 ExperienceUpdateFields）。
+ * CR-01 收紧：移除 status / validAt / invalidAt / lastVerifiedAt / reuseCount 五个审计/状态字段。
+ * - status / invalid_at：只能经 experience:invalidate 软失效入口
+ * - reuse_count：只能经 incReuseCount（Phase 11 暴露 IPC 后）
+ * - last_verified_at：只能经 touchLastVerifiedAt（Phase 11 暴露 IPC 后）
+ * - valid_at：仅 create 时 DB 默认值生成，不可改 */
 export interface ExperienceUpdateInput {
   title?: string
   category?: ExperienceCategory
   content?: string
   tags?: string[]
-  status?: ExperienceStatus
   attrs?: ExperienceAttrs | null
-  validAt?: string
-  invalidAt?: string | null
-  lastVerifiedAt?: string
-  reuseCount?: number
 }
 
 /** experience:list 入参（对齐 experienceService.ListExperiencesOpts） */

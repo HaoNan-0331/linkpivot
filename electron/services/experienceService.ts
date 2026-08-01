@@ -46,7 +46,6 @@ export type ExperienceCategory = 'troubleshooting' | 'best_practices' | 'product
 export type ExperienceStatus = 'draft' | 'confirmed' | 'published' | 'invalid'
 
 const VALID_CATEGORIES: ExperienceCategory[] = ['troubleshooting', 'best_practices', 'product', 'env']
-const VALID_STATUSES: ExperienceStatus[] = ['draft', 'confirmed', 'published', 'invalid']
 const VALID_SEVERITIES = ['critical', 'high', 'medium', 'low', 'info']
 
 export interface ExperienceAttrs {
@@ -67,17 +66,17 @@ export interface ExperienceInput {
   attrs?: ExperienceAttrs | null
 }
 
+// CR-01 收紧：renderer 入参仅业务字段。
+// status / validAt / invalidAt / lastVerifiedAt / reuseCount 五个审计/状态字段移出白名单，
+// 只能经专用受控接口修改：invalidateExperience（软失效→invalid_at）、incReuseCount
+// （reuse_count++）、touchLastVerifiedAt（last_verified_at）。valid_at 仅 create 时由
+// datetime('now','localtime') 默认值生成，无后续修改入口。renderer 无法经 update 绕过。
 export interface ExperienceUpdateFields {
   title?: string
   category?: ExperienceCategory
   content?: string
   tags?: string[]
-  status?: ExperienceStatus
   attrs?: ExperienceAttrs | null
-  validAt?: string
-  invalidAt?: string | null
-  lastVerifiedAt?: string
-  reuseCount?: number
 }
 
 export interface ListExperiencesOpts {
@@ -232,10 +231,6 @@ export function updateExperience(id: string, fields: ExperienceUpdateFields): an
   }
   if (fields.content !== undefined) { sets.push('content = ?'); params.push(fields.content) }
   if (fields.tags !== undefined) { sets.push('tags = ?'); params.push(JSON.stringify(fields.tags)) }
-  if (fields.status !== undefined) {
-    if (!VALID_STATUSES.includes(fields.status)) throw new Error(`非法 status: ${fields.status}`)
-    sets.push('status = ?'); params.push(fields.status)
-  }
   if (fields.attrs !== undefined) {
     // category 用于校验：若同时改 category 则用新 category，否则查现有
     const cat = fields.category ?? (getExperience(id) as any)?.category
@@ -244,10 +239,6 @@ export function updateExperience(id: string, fields: ExperienceUpdateFields): an
     const attrsEnc = attrsStr ? encField(attrsStr, MK) : null
     sets.push('attrs_enc = ?'); params.push(attrsEnc)
   }
-  if (fields.validAt !== undefined) { sets.push('valid_at = ?'); params.push(fields.validAt) }
-  if (fields.invalidAt !== undefined) { sets.push('invalid_at = ?'); params.push(fields.invalidAt) }
-  if (fields.lastVerifiedAt !== undefined) { sets.push('last_verified_at = ?'); params.push(fields.lastVerifiedAt) }
-  if (fields.reuseCount !== undefined) { sets.push('reuse_count = ?'); params.push(fields.reuseCount) }
 
   if (sets.length === 0) {
     // 无可更新字段，直接返回当前行
