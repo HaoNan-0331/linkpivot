@@ -438,7 +438,7 @@ function seedDb(): MemDb {
   db.ensureTable('experiences', [
     'id', 'title', 'category', 'content', 'tags', 'status', 'source_session_id',
     'attrs_enc', 'valid_at', 'invalid_at', 'last_verified_at', 'reuse_count',
-    'created_at', 'updated_at',
+    'created_at', 'updated_at', 'duplicate_of_exp_id',
   ])
   db.ensureTable('exp_device_rel', ['id', 'experience_id', 'device_id', 'relation_type', 'created_at'],
     [['experience_id', 'device_id']])
@@ -532,6 +532,38 @@ describe('experienceService', () => {
     const direct = getExperience(exp.id)
     expect(direct).not.toBeNull()
     expect((direct as any).attrs_enc).toBeUndefined()
+  })
+
+  describe('createExperience duplicateOfExpId（Phase 8 B-1/B-2 方案 A）', () => {
+    it('不传 duplicateOfExpId 时列写 NULL（向后兼容 Phase 7）', () => {
+      const exp = createExperience({ title: 't', category: 'best_practices', content: 'c' })
+      const raw = mockDbRef.current.tables.get('experiences').rows.get(exp.id)
+      expect(raw.duplicate_of_exp_id).toBeNull()
+    })
+
+    it('传 duplicateOfExpId 字符串时列写该值', () => {
+      const exp = createExperience({
+        title: 't', category: 'best_practices', content: 'c', duplicateOfExpId: 'exp-old-123',
+      })
+      const raw = mockDbRef.current.tables.get('experiences').rows.get(exp.id)
+      expect(raw.duplicate_of_exp_id).toBe('exp-old-123')
+    })
+
+    it('传 null 时列写 NULL', () => {
+      const exp = createExperience({ title: 't', category: 'product', content: 'c', duplicateOfExpId: null })
+      const raw = mockDbRef.current.tables.get('experiences').rows.get(exp.id)
+      expect(raw.duplicate_of_exp_id).toBeNull()
+    })
+
+    it('troubleshooting 类 + duplicateOfExpId 同时传：severity 校验 + dup_id 写入两不误', () => {
+      const exp = createExperience({
+        title: 't', category: 'troubleshooting', content: 'c',
+        attrs: { severity: 'high' }, duplicateOfExpId: 'exp-old-456',
+      })
+      const raw = mockDbRef.current.tables.get('experiences').rows.get(exp.id)
+      expect(raw.duplicate_of_exp_id).toBe('exp-old-456')
+      expect(exp.attrs.severity).toBe('high')
+    })
   })
 
   it('getExperience 解密回填 attrs 且不外泄 attrs_enc', () => {

@@ -85,6 +85,8 @@ export interface ExperienceInput {
   tags?: string[]
   sourceSessionId?: string | null
   attrs?: ExperienceAttrs | null
+  /** Phase 8 D-03a：UPDATE 草稿标注命中的旧 exp_id。不传/传 null → 写 NULL（向后兼容 Phase 7）。 */
+  duplicateOfExpId?: string | null
 }
 
 // CR-01 收紧：renderer 入参仅业务字段。
@@ -170,11 +172,15 @@ export function createExperience(input: ExperienceInput): any {
   const attrsStr = validateAndStringifyAttrs(input.category, input.attrs)
   const attrsEnc = attrsStr ? encField(attrsStr, MK) : null
   const tags = JSON.stringify(input.tags ?? [])
+  // Phase 8 B-1/B-2 方案 A：duplicate_of_exp_id 与 draft 行同 INSERT 单语句原子写入。
+  // CREATE 成功即标注同写入，失败 throw → 整条不落库（标注与 draft 行共存亡）。
+  // 不校验指向 exp_id 存在性（信任 Plan 03 编排层传入 LLM 判定 + Phase 9 人工确认兜底；experiences 表无 self-FK）。
+  const dupId = input.duplicateOfExpId ?? null
   const conn = db()
   conn.prepare(
-    `INSERT INTO experiences (id, title, category, content, tags, status, source_session_id, attrs_enc, valid_at)
-     VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, datetime('now','localtime'))`
-  ).run(id, input.title, input.category, input.content, tags, input.sourceSessionId ?? null, attrsEnc)
+    `INSERT INTO experiences (id, title, category, content, tags, status, source_session_id, attrs_enc, valid_at, duplicate_of_exp_id)
+     VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, datetime('now','localtime'), ?)`
+  ).run(id, input.title, input.category, input.content, tags, input.sourceSessionId ?? null, attrsEnc, dupId)
   return getExperience(id)
 }
 
