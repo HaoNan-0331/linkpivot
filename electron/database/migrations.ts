@@ -13,7 +13,7 @@ import { createSystemLog } from '../services/systemLog'
  *      在 createTables() 建好基线表之后、premigration 备份之后执行（D-06）。
  *      init.ts 不直接调用 runMigrations（单一调用点原则）。
  */
-export const MIGRATION_HEAD = 8
+export const MIGRATION_HEAD = 9
 
 interface MigrationStep {
   version: number
@@ -246,6 +246,20 @@ const v8 = (db: Database.Database): void => {
   step()
 }
 
+const v9 = (db: Database.Database): void => {
+  // Phase 8（D-03a）：experiences 加 duplicate_of_exp_id TEXT nullable 列。
+  // 支撑起草 UPDATE 命中关联（Phase 9 确认时据 draft.duplicate_of_exp_id 定位旧条目）+ 二期经验↔经验关联预留。
+  // 幂等守卫 D-14 第一形式：hasColumn 判定（与 v1/v2/v3/v4 同构，纯 ALTER ADD COLUMN）。
+  // 不动 status 枚举（沿用 Phase 7 四态）、不动现有列、不加 CHECK/DEFAULT。
+  const step = db.transaction(() => {
+    if (!hasColumn(db, 'experiences', 'duplicate_of_exp_id')) {
+      db.exec('ALTER TABLE experiences ADD COLUMN duplicate_of_exp_id TEXT')
+    }
+    db.pragma('user_version = 9')
+  })
+  step()
+}
+
 const MIGRATIONS: MigrationStep[] = [
   { version: 1, name: 'chat_history.session_id', run: v1 },
   { version: 2, name: 'ai_exec_logs.prompt_text+ai_response', run: v2 },
@@ -255,6 +269,7 @@ const MIGRATIONS: MigrationStep[] = [
   { version: 6, name: 'ai_system_logs CHECK widen (acl/migration/backup + warning)', run: v6 },
   { version: 7, name: 'kb_chunks_au FTS UPDATE trigger add WHEN (skip non-FTS-field updates)', run: v7 },
   { version: 8, name: 'experiences + exp_device_rel create (Phase 7 experience data layer)', run: v8 },
+  { version: 9, name: 'experiences.duplicate_of_exp_id (Phase 8 drafting UPDATE hit link)', run: v9 },
 ]
 
 /**
