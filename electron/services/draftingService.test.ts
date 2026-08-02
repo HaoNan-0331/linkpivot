@@ -69,7 +69,7 @@ describe('draftSession / validateDrafts（D-01 schema 校验 + D-04 反幻觉）
   })
 
   it('2. ```json 包裹 + 首尾多余文字 → 剥离后 ok', async () => {
-    const wrapped = '这是结果：\n```json\n[' + JSON.stringify(troubDraft).slice(1, -1) + ']\n```\n解释'
+    const wrapped = '这是结果：\n```json\n' + JSON.stringify([troubDraft]) + '\n```\n解释'
     callAIMock.mockResolvedValueOnce(wrapped)
     const out = await draftSession({ maskedConversation: '对话', existingSummaries: [] })
     expect(out).toHaveLength(1)
@@ -123,7 +123,6 @@ describe('draftSession / validateDrafts（D-01 schema 校验 + D-04 反幻觉）
       demoMode: true,
     })
     expect(out).toEqual([])
-    expect(callAI).toBeDefined()
     expect(callAIMock).toHaveBeenCalledTimes(0)
   })
 
