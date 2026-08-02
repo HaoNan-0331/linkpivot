@@ -305,8 +305,8 @@ describe('judgeVerdicts（W-4 两阶段复判）', () => {
     expect(callAIMock).toHaveBeenCalledTimes(0)
   })
 
-  it('12c. LLM 未返某 draft_index → 保持原 ADD 初值（保守新增）', async () => {
-    // 输入 2 条 drafts，LLM 只返 draft_index=1（UPDATE）
+  it('12c. LLM 未返某 draft_index + 该 category 有同分类存量 → 保守判 NOOP（WR-03 宁漏勿重）', async () => {
+    // 输入 2 条 drafts，LLM 只返 draft_index=1（UPDATE）；drafts[0]=troubleshooting 有存量 → 未覆盖保守 NOOP
     callAIMock.mockResolvedValueOnce(
       JSON.stringify([{ draft_index: 1, verdict: 'UPDATE', duplicate_of_exp_id: 'exp-x' }])
     )
@@ -319,7 +319,27 @@ describe('judgeVerdicts（W-4 两阶段复判）', () => {
         env: [],
       },
     })
-    expect(out[0].duplication_verdict).toBe('ADD') // 未覆盖 → 保持原值
+    expect(out[0].duplication_verdict).toBe('NOOP') // 未覆盖 + troubleshooting 有存量 → 保守 NOOP
+    expect(out[0].duplicate_of_exp_id).toBeNull()
+    expect(out[1].duplication_verdict).toBe('UPDATE')
+    expect(out[1].duplicate_of_exp_id).toBe('exp-x')
+  })
+
+  it('12c2. LLM 未返某 draft_index + 该 category 无存量 → 保持 ADD（WR-03 无存量分支）', async () => {
+    // drafts[0]=product 无存量 → 未覆盖保持 ADD（无重复风险）；drafts[1]=troubleshooting 被覆盖
+    callAIMock.mockResolvedValueOnce(
+      JSON.stringify([{ draft_index: 1, verdict: 'UPDATE', duplicate_of_exp_id: 'exp-x' }])
+    )
+    const out = await judgeVerdicts({
+      drafts: [{ ...prodDraft }, { ...troubDraft }],
+      existingByCategory: {
+        troubleshooting: [{ exp_id: 'exp-x', title: 'x', content_preview: 'p' }],
+        best_practices: [],
+        product: [], // prodDraft category 无存量
+        env: [],
+      },
+    })
+    expect(out[0].duplication_verdict).toBe('ADD') // 未覆盖 + product 无存量 → 保持 ADD
     expect(out[1].duplication_verdict).toBe('UPDATE')
     expect(out[1].duplicate_of_exp_id).toBe('exp-x')
   })

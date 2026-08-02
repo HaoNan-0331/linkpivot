@@ -5,6 +5,7 @@ import { draftSession, judgeVerdicts } from './draftingService'
 import type { ExistingExperienceSummary, DraftDraft } from './draftingService'
 import { createExperience, relateDevice } from './experienceService'
 import type { ExperienceCategory, ExperienceAttrs } from './experienceService'
+import { createSystemLog } from './systemLog'
 
 /**
  * 经验总结编排 service（Phase 8 D-01/02/03/04 + 5 SC + B-1/B-2/W-3/W-4 修订）。
@@ -126,8 +127,22 @@ export async function summarizeSessionForUi(input: SummarizeSessionInput): Promi
     // 关联设备（draft 关联的设备 = 会话期间涉及的设备，全部 primary 关联）
     // relateDevice 独立于 createExperience dup_id 原子单元——关联失败不阻塞 draft 入库，
     // 关联缺失可 Phase 10 浏览页手动补；dup_id 已与 draft 行共存亡（B-2 在 createExperience 内保证）
+    // WR-02：关联失败必须有可观测日志（createSystemLog），日志写库失败再 console.warn 兜底防二阶静默吞错
     for (const did of deviceIds) {
-      try { relateDevice(exp.id, did, 'primary') } catch { /* 设备关联失败不阻塞 draft 入库，日志兜底 */ }
+      try {
+        relateDevice(exp.id, did, 'primary')
+      } catch (e) {
+        try {
+          createSystemLog({
+            type: 'security',
+            status: 'warning',
+            deviceIds: did,
+            errorMessage: `experience ${exp.id} 关联设备 ${did} 失败: ${(e as Error).message}`,
+          })
+        } catch {
+          console.warn(`[experienceDrafting] experience ${exp.id} 关联设备 ${did} 失败且日志写库失败:`, (e as Error).message)
+        }
+      }
     }
     if (d.duplication_verdict === 'ADD') {
       created.push({ exp_id: exp.id, title: exp.title, category: exp.category })

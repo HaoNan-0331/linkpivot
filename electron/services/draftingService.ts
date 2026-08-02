@@ -271,7 +271,8 @@ export function validateVerdicts(raw: string, draftCount: number): { ok: true; e
  * W-4 阶段 B 复判：对 drafts[] 每条按其 category 同分类存量判 ADD/UPDATE/NOOP + 命中 exp_id。
  * 编排层（Plan 03）按每条 draft.category 调 findExistingForDraft 窄查后填充 existingByCategory（≤50 条/分类截断）。
  * demoMode=true → 不调 LLM，原 drafts 保持（verdict 维持阶段 A 初值）。
- * 复判失败重试 MAX_DRAFT_RETRIES=3 次；LLM 未返某 draft_index → 该条保守保持原 ADD 初值。
+ * 复判失败重试 MAX_DRAFT_RETRIES=3 次；WR-03：LLM 未返某 draft_index 时，该条按其 category 是否有同分类存量处理——
+ * 有存量保守判 NOOP（跳过落库，宁漏勿重，交 Phase 9 人工兜底），无存量保持 ADD（不可能重复）。
  */
 export async function judgeVerdicts(input: JudgeVerdictsInput): Promise<DraftDraft[]> {
   if (input.demoMode) return input.drafts
@@ -293,11 +294,24 @@ export async function judgeVerdicts(input: JudgeVerdictsInput): Promise<DraftDra
     const raw = await callAI(config, messages)
     const result = validateVerdicts(raw, input.drafts.length)
     if (result.ok) {
-      // 回填：按 draft_index 覆盖 verdict + dupId；未覆盖的保守保持原值
+      // 回填：按 draft_index 覆盖 verdict + dupId
       const out = input.drafts.map((d) => ({ ...d }))
+      const covered = new Set<number>()
       for (const e of result.entries) {
         out[e.draft_index].duplication_verdict = e.verdict
         out[e.draft_index].duplicate_of_exp_id = e.duplicate_of_exp_id
+        covered.add(e.draft_index)
+      }
+      // WR-03：LLM 未覆盖的 draft，若其 category 有同分类存量，保守判 NOOP（宁漏落库不重复落库）。
+      // 无存量时保持 ADD（不可能重复）；有存量但 LLM 漏判 → 疑似重复，跳过落库交 Phase 9 人工兜底。
+      for (let i = 0; i < out.length; i++) {
+        if (!covered.has(i)) {
+          const sameCat = input.existingByCategory[out[i].category]
+          if (sameCat && sameCat.length > 0) {
+            out[i].duplication_verdict = 'NOOP'
+            out[i].duplicate_of_exp_id = null
+          }
+        }
       }
       return out
     }

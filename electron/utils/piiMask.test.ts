@@ -35,6 +35,44 @@ describe('maskCredentials（凭证全脱敏）', () => {
   it('无凭证关键词原样返回', () => {
     expect(maskCredentials('hello world')).toBe('hello world')
   })
+
+  // CR-01 回归：自然语言连接词形态——值 = 连接词后的真实凭证（不吞连接词致凭证残留）
+  it('CR-01: password is hunter2 → password is ****（英文连接词 is）', () => {
+    expect(maskCredentials('password is hunter2')).toBe('password is ****')
+  })
+
+  it('CR-01: token 为 abc-secret → token 为 ****（中文连接词 为）', () => {
+    expect(maskCredentials('token 为 abc-secret')).toBe('token 为 ****')
+  })
+
+  it('CR-01: 密码 是 p@ss123 → 密码 是 ****（中文关键词 + 中文连接词 是）', () => {
+    expect(maskCredentials('密码 是 p@ss123')).toBe('密码 是 ****')
+  })
+
+  it('CR-01: the api key is sk-abc123 → the api key is ****（句中连接词）', () => {
+    expect(maskCredentials('the api key is sk-abc123')).toBe('the api key is ****')
+  })
+
+  it('CR-01 回归: 原始 password: xxx 仍正确（分隔符路径未退化）', () => {
+    expect(maskCredentials('password: admin123')).toBe('password: ****')
+  })
+
+  // CR-02 回归：key 双向词界，不误伤 monkey/donkey/keyboard
+  it('CR-02: monkey=bar 原样返回（前置 lookbehind 排除 monkey 内部 key）', () => {
+    expect(maskCredentials('monkey=bar')).toBe('monkey=bar')
+  })
+
+  it('CR-02: donkey hay 原样返回（不误吞 hay）', () => {
+    expect(maskCredentials('donkey hay')).toBe('donkey hay')
+  })
+
+  it('CR-02: keyboard shortcut 原样返回（后置 (?![a-z]) 排除 keyboard）', () => {
+    expect(maskCredentials('keyboard shortcut')).toBe('keyboard shortcut')
+  })
+
+  it('CR-02 正向: 独立 key 仍脱敏——api key: sk-x → api key: ****', () => {
+    expect(maskCredentials('api key: sk-x')).toBe('api key: ****')
+  })
 })
 
 describe('maskIpv4（保留尾4）', () => {

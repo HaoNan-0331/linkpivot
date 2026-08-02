@@ -81,7 +81,7 @@ export default function AIPage() {
             style={{ minWidth: 280, maxWidth: 400 }}
             value={chat.selectedDevices}
             onChange={chat.setSelectedDevices}
-            options={chat.devices.map((d) => ({ value: d.id, label: `${d.name} (${d.connectionType.toUpperCase()})` }))}
+            options={chat.devices.map((d) => ({ value: d.id, label: `${d.name} (${(d.connectionType || 'unknown').toUpperCase()})` }))}
             maxTagCount="responsive"
           />
         </div>
