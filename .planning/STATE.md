@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: AI 对话经验沉淀
 status: executing
-last_updated: "2026-08-02T12:37:59.615Z"
+last_updated: "2026-08-02T12:50:35.303Z"
 last_activity: 2026-08-02
 progress:
   total_phases: 5
   completed_phases: 1
   total_plans: 5
-  completed_plans: 3
-  percent: 60
+  completed_plans: 4
+  percent: 80
 ---
 
 # STATE: network_toplogy
@@ -20,17 +20,17 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-01)
 
 - **Core Value**: 让运维人员在一个桌面工具内安全地掌握网络拓扑、远程操控设备并获得 AI 辅助分析。拓扑准确呈现与设备安全可控为最高优先级。
-- **Current Focus**: v1.1 AI 对话经验沉淀 — Phase 8（AI Drafting Pipeline）执行中，08-01 地基层完成（v9 迁移 + piiMask + duplicateDetector + createExperience 扩展，4 commits，103 测试全绿），下一步 08-02 LLM 起草 service
+- **Current Focus**: v1.1 AI 对话经验沉淀 — Phase 8（AI Drafting Pipeline）执行中，08-02 LLM 起草 service 完成（draftSession 阶段A 纯起草 + judgeVerdicts 阶段B W-4 两阶段复判 + validateDrafts schema Gate + W-2 confidence 边界，23 测试全绿，2 commits），下一步 08-03 IPC + 编排层串联
 - **Mode**: Vertical Feature Slices（按功能层分 phase：数据→起草→确认→浏览→检索，非 v1.0 的 Horizontal Layers）
 
 ## Current Position
 
 Phase: 08 (ai-drafting-pipeline) — EXECUTING
-Plan: 2 of 3
-Status: 08-01 done, ready to execute 08-02
+Plan: 3 of 3
+Status: 08-02 done (draftingService TDD RED→GREEN 23 测试全绿，3 commits), ready to execute 08-03
 Last activity: 2026-08-02
 
-Progress: [██████░░░░] 60%
+Progress: [████████░░] 80%
 
 ## Performance Metrics
 
@@ -83,6 +83,12 @@ Phase 8 执行期决策（08-01 落地）：
 - [Phase 8]: 08-01 duplicateDetector 函数式查重（同分类+设备优先/无设备全库）— 喂前150字摘要列表无硬阈值（信任 LLM + 红线③人工确认兜底），复用 Phase 7 listExperiences，无 class/MK 持有
 - [Phase 8]: 08-01 createExperience 扩展接受可选 duplicateOfExpId — 单语句原子 INSERT 含 duplicate_of_exp_id 列（B-1 Service 封装 + B-2 共存亡方案 A），CREATE 失败 throw 整条不落库；编排层不裸 SQL UPDATE（grep 反向守卫=0）；不校验 FK 存在性（experiences 无 self-FK，信任 Plan 03 + Phase 9 兜底）
 
+Phase 8 执行期决策（08-02 落地）：
+
+- [Phase 8]: 08-02 draftingService 函数式无 class 无 MK（不读写加密列，grep encrypt/decrypt=0 反向守卫）— 与 CONVENTIONS Pattern 1b（无加密列 service）一致；callAI 签名零改动（D-01 红线，grep response_format/json_object/raw.json=0），代码层 JSON.parse + schema 校验作 schema Drift Gate
+- [Phase 8]: 08-02 W-4 两阶段复判窄化语义落地 — 阶段 A draftSession 纯起草 existingSummaries=[]（不喂存量全标 ADD），阶段 B judgeVerdicts 编排层按每条 draft.category 窄查喂同分类存量（≤50 条截断）复判覆盖 verdict+dupId，防单次起草 4×1000 context 溢出；judgeVerdicts 短路（全分类无存量不调 LLM）+ LLM 未返 draft_index 保守保持 ADD 初值（信任红线③ 人工确认兜底）
+- [Phase 8]: 08-02 W-2 confidence 边界统一收口 — '85%'→0.85 / '0.9'→0.9 / 'high'→NaN fail / 1.5→超界 fail（typeof string 先 parseFloat/百分比转换 + 范围校验），任一 fail 整体重试 MAX_DRAFT_RETRIES=3 次（D-01 schema Drift Gate）
+
 v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 
 - 加密/迁移改动必须向后兼容历史数据（v1/v2 IV 兼容、迁移幂等守卫靠 sqlite_master 特征串不靠 user_version、throw 即 ROLLBACK）
@@ -93,6 +99,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 
 - [x] `/gsd-execute-phase 7` — Experience Data Layer & Security Baseline（EXP-01/02/03, SEC-01/02）07-01 + 07-02 全部落地，待 verify
 - [x] 08-01-PLAN.md — AI 起草地基层（v9 迁移 + piiMask + duplicateDetector + createExperience 扩展，4 commits a3d8d9e/958c7b3/538c6ad/b76cfa0，三绿门禁全绿 103 测试）
+- [x] 08-02-PLAN.md — LLM 起草 service（draftSession 阶段A 纯起草 + judgeVerdicts 阶段B W-4 两阶段复判 + validateDrafts schema Gate + buildDraftingPrompt 反幻觉 + W-2 confidence 边界，TDD RED→GREEN 23 测试全绿，2 commits 253dda4/2ec666e，三绿门禁全绿 126 测试）
 
 ### Blockers/Concerns
 
@@ -112,6 +119,8 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 | Phase 07 P07-02 | 5m56s | 2 tasks | 5 files |
 | Phase 07 P07-02 | 5m56s | 2 tasks | 5 files |
 | Phase 08 P01 | 12m | 4 tasks | 8 files |
+| Phase 08 P02 | ~3.5min | 1 task (TDD) | 2 files |
+| Phase 8 P02 | ~3.5min | 1 tasks | 2 files |
 
 ### Risk Watch
 
@@ -146,8 +155,8 @@ v1.1 明确 defer 到二期（4 FUTURE，不进 roadmap）：
 
 ## Session Continuity
 
-- **Last action**: Completed 08-01-PLAN.md（AI 起草地基层：v9 迁移加 duplicate_of_exp_id 列 + piiMask 分级脱敏 util + duplicateDetector 函数式查重 service + createExperience 扩展接受 duplicateOfExpId 单语句原子写入，4 commits a3d8d9e/958c7b3/538c6ad/b76cfa0，三绿门禁全绿 103 测试全 PASS）
-- **Next action**: 继续执行 08-02-PLAN.md（LLM 起草 service，消费 piiMask + duplicateDetector + createExperience 门面）；本 wave 08-01 + 08-02 完成后转 08-03（IPC + 编排层）
+- **Last action**: Completed 08-02-PLAN.md（LLM 起草 service：draftSession 阶段A 纯起草 + judgeVerdicts 阶段B W-4 两阶段复判 + validateDrafts/validateVerdicts 代码层 schema Gate + buildDraftingPrompt 反幻觉禁 [CMD] + W-2 confidence 边界收口，TDD RED 253dda4→GREEN 2ec666e，三绿门禁全绿 126 测试全 PASS）
+- **Next action**: 继续执行 08-03-PLAN.md（IPC + 编排层：阶段 A draftSession + 阶段 B judgeVerdicts 串联 + piiMask 前置 + duplicateDetector 窄查 + createExperience 落库 + source_session_id 幂等）；本 plan 是 Phase 8 最后一 plan
 - **Resume command**: `/gsd-status`
 
 ## Phase → Requirement Map

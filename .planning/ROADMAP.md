@@ -72,7 +72,7 @@ Plans:
 - [x] 08-01-PLAN.md — v9 迁移加 experiences.duplicate_of_exp_id 列（幂等）+ PII 脱敏 util（D-04 凭证/IPv4/MAC 分级）+ 查重 service（D-02 同分类+设备）+ 扩展 createExperience 接受 duplicateOfExpId（B-1/B-2 方案 A 单语句原子门面写入）
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 08-02-PLAN.md — draftingService 函数式：draftSession 阶段A纯起草 + judgeVerdicts 阶段B按分类窄查复判（W-4 两阶段，D-01 强 schema JSON + 代码校验 + 重试 3 次，反幻觉禁止 [CMD]，W-2 confidence 边界）
+- [x] 08-02-PLAN.md — draftingService 函数式：draftSession 阶段A纯起草 + judgeVerdicts 阶段B按分类窄查复判（W-4 两阶段，D-01 强 schema JSON + 代码校验 + 重试 3 次，反幻觉禁止 [CMD]，W-2 confidence 边界）
 - [ ] 08-03-PLAN.md — experienceDrafting 两阶段编排 service（读会话→脱敏→阶段A起草→阶段B窄查复判→门面落库不裸 SQL/不吞错）+ experience:summarizeSession IPC secure + AIPage「经验总结」按钮 + W-3 编排单测（SC5 追加不覆盖/NOOP 不落库）
 
 ### Phase 9: Human Review & Confirmation
@@ -134,7 +134,7 @@ Phases execute in numeric order: 7 → 8 → 9 → 10 → 11（v1.0 Phases 1-6 �
 | 5. Frontend Refactor & Types | v1.0 | 4/4 | Complete | 2026-07-05 |
 | 6. Robustness & Resource Safety | v1.0 | 2/2 | Complete | 2026-07-05 |
 | 7. Experience Data Layer & Security Baseline | v1.1 | 0/TBD | Not started | - |
-| 8. AI Drafting Pipeline | v1.1 | 1/3 | In Progress|  |
+| 8. AI Drafting Pipeline | v1.1 | 2/3 | In Progress|  |
 | 9. Human Review & Confirmation | v1.1 | 0/TBD | Not started | - |
 | 10. Experience Browse Page | v1.1 | 0/TBD | Not started | - |
 | 11. AI Retrieval & Reuse | v1.1 | 0/TBD | Not started | - |
