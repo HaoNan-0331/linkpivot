@@ -27,6 +27,7 @@ import { setKbMasterKey } from './services/knowledgeBaseService'
 import { registerKbIpc } from './ipc/knowledgeBaseIpc'
 import { setExperienceMasterKey } from './services/experienceService'
 import { registerExperienceIpc } from './ipc/experienceIpc'
+import { registerExperienceDraftingIpc } from './ipc/experienceDraftingIpc'
 
 let mainWindow: BrowserWindow | null = null
 let masterKey: string
@@ -134,6 +135,7 @@ app.whenReady().then(() => {
   registerSchedulerIpc()
   registerKbIpc()
   registerExperienceIpc()
+  registerExperienceDraftingIpc()
   SchedulerService.start()
   BackupScheduler.start()
 

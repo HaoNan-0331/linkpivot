@@ -132,6 +132,7 @@ const api = {
     unrelateDevice: (experienceId: string, deviceId: string) => ipcRenderer.invoke('experience:unrelateDevice', experienceId, deviceId),
     listByDevice: (deviceId: string, includeInvalid?: boolean) => ipcRenderer.invoke('experience:listByDevice', deviceId, includeInvalid),
     listDevices: (experienceId: string) => ipcRenderer.invoke('experience:listDevices', experienceId),
+    summarizeSession: (sessionId: string) => ipcRenderer.invoke('experience:summarizeSession', sessionId),
   },
 }
 

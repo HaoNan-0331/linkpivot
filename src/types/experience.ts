@@ -80,3 +80,17 @@ export type ExperienceListResult = PaginatedResult<Experience>
  */
 import type { Device } from './device'
 export type ExperienceRelatedDevice = Device
+
+/**
+ * experience:summarizeSession 返回（Phase 8 Plan 03）。
+ * renderer 不收会话原文，仅收 draft 落库结果（exp_id/title/category + NOOP 提示）。
+ * 字段对齐 service 层 experienceDrafting.DraftingResult，不加冗余字段
+ * （draftSession/judgeVerdicts 失败即 throw 经 secure 脱敏透出，不静默返 retryExhausted）。
+ */
+export interface DraftingResult {
+  empty: boolean
+  demoMode: boolean
+  created: Array<{ exp_id: string; title: string; category: ExperienceCategory }>
+  updated: Array<{ exp_id: string; title: string; category: ExperienceCategory; duplicate_of_exp_id: string }>
+  noop: Array<{ duplicate_of_exp_id: string; reasoning: string }>
+}

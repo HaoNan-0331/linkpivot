@@ -7,7 +7,7 @@ import type { IPMACBinding, IPMACChange, ChangeStats, ExcludedIP, CreateExcluded
 import type { OUIRow, CreateOUIInput, UpdateOUIInput, OUIStats, ScheduleConfig, SchedulerStatus, UpdateScheduleInput } from './oui'
 import type { ChatMessage, ChatSession, DiscoverResult } from './ai'
 import type { KbDocument, KbStatus, KbSearchResult } from './kb'
-import type { Experience, ExperienceInput, ExperienceUpdateInput, ExperienceListResult, ExperienceListInput, ExperienceRelatedDevice } from './experience'
+import type { Experience, ExperienceInput, ExperienceUpdateInput, ExperienceListResult, ExperienceListInput, ExperienceRelatedDevice, DraftingResult } from './experience'
 // FE-02：ChatMessage/ChatSession 迁至 ./ai（role 收联合类型）。
 // re-export 维持既有 `import { ChatMessage } from '@/types/electron'` 调用面
 // 不中断（AIPage.tsx 等，FE-01 Wave 2 将迁移导入路径至 @/types/ai）。
@@ -210,6 +210,7 @@ export interface ElectronAPI {
     unrelateDevice: (experienceId: string, deviceId: string) => Promise<void>
     listByDevice: (deviceId: string, includeInvalid?: boolean) => Promise<Experience[]>
     listDevices: (experienceId: string) => Promise<ExperienceRelatedDevice[]>
+    summarizeSession: (sessionId: string) => Promise<DraftingResult>
   }
 }
 
