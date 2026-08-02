@@ -65,11 +65,15 @@ Plans:
   3. 起草前先按设备/分类查存量，AI 对每条草稿判定 ADD（新增）/UPDATE（更新旧条目）/NOOP（跳过），UPDATE/疑似重复在草稿上标注命中条目
   4. AI 输出按固定枚举分类（troubleshooting/best_practices/product/env）+ 分类专属模板强制 JSON schema，分类不超出枚举、字段不瞎编、缺数据标 gap 不强填
   5. 同一 session 可多次总结（追加不覆盖），LLM 限流/失败可重试不丢总结（断点续传以 source_session_id 幂等）
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 08-01: TBD
-- [ ] 08-02: TBD
+**Wave 1**
+- [ ] 08-01-PLAN.md — v9 迁移加 experiences.duplicate_of_exp_id 列（幂等）+ PII 脱敏 util（D-04 凭证/IPv4/MAC 分级）+ 查重 service（D-02 同分类+设备）+ 扩展 createExperience 接受 duplicateOfExpId（B-1/B-2 方案 A 单语句原子门面写入）
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 08-02-PLAN.md — draftingService 函数式：draftSession 阶段A纯起草 + judgeVerdicts 阶段B按分类窄查复判（W-4 两阶段，D-01 强 schema JSON + 代码校验 + 重试 3 次，反幻觉禁止 [CMD]，W-2 confidence 边界）
+- [ ] 08-03-PLAN.md — experienceDrafting 两阶段编排 service（读会话→脱敏→阶段A起草→阶段B窄查复判→门面落库不裸 SQL/不吞错）+ experience:summarizeSession IPC secure + AIPage「经验总结」按钮 + W-3 编排单测（SC5 追加不覆盖/NOOP 不落库）
 
 ### Phase 9: Human Review & Confirmation
 **Goal**: 用户对 AI 起草的每条草稿逐条编辑/勾选/校验后采纳，确认才转 published——人工是 session→permanent 的唯一闸口，质量门阻止残缺条目入库，且每条都能回溯到产生它的原始会话。
@@ -130,7 +134,7 @@ Phases execute in numeric order: 7 → 8 → 9 → 10 → 11（v1.0 Phases 1-6 �
 | 5. Frontend Refactor & Types | v1.0 | 4/4 | Complete | 2026-07-05 |
 | 6. Robustness & Resource Safety | v1.0 | 2/2 | Complete | 2026-07-05 |
 | 7. Experience Data Layer & Security Baseline | v1.1 | 0/TBD | Not started | - |
-| 8. AI Drafting Pipeline | v1.1 | 0/TBD | Not started | - |
+| 8. AI Drafting Pipeline | v1.1 | 0/3 | Not started | - |
 | 9. Human Review & Confirmation | v1.1 | 0/TBD | Not started | - |
 | 10. Experience Browse Page | v1.1 | 0/TBD | Not started | - |
 | 11. AI Retrieval & Reuse | v1.1 | 0/TBD | Not started | - |
