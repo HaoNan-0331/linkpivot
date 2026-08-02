@@ -20,7 +20,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-01)
 
 - **Core Value**: 让运维人员在一个桌面工具内安全地掌握网络拓扑、远程操控设备并获得 AI 辅助分析。拓扑准确呈现与设备安全可控为最高优先级。
-- **Current Focus**: v1.1 AI 对话经验沉淀 — Phase 7（Experience Data Layer & Security Baseline）执行完毕，待 verify
+- **Current Focus**: v1.1 AI 对话经验沉淀 — Phase 8（AI Drafting Pipeline）discuss 完成（4 决策锁定：LLM JSON 强 schema / 查重同分类+设备 / status 沿用 4 态 / PII 分级脱敏），待 plan
 - **Mode**: Vertical Feature Slices（按功能层分 phase：数据→起草→确认→浏览→检索，非 v1.0 的 Horizontal Layers）
 
 ## Current Position
