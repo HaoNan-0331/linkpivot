@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: AI 对话经验沉淀
 status: executing
-last_updated: "2026-08-02T09:46:43.228Z"
-last_activity: 2026-08-02 -- Phase 8 planning complete
+last_updated: "2026-08-02T12:37:59.615Z"
+last_activity: 2026-08-02
 progress:
   total_phases: 5
   completed_phases: 1
   total_plans: 5
-  completed_plans: 2
-  percent: 40
+  completed_plans: 3
+  percent: 60
 ---
 
 # STATE: network_toplogy
@@ -20,17 +20,17 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-01)
 
 - **Core Value**: 让运维人员在一个桌面工具内安全地掌握网络拓扑、远程操控设备并获得 AI 辅助分析。拓扑准确呈现与设备安全可控为最高优先级。
-- **Current Focus**: v1.1 AI 对话经验沉淀 — Phase 8（AI Drafting Pipeline）discuss 完成（4 决策锁定：LLM JSON 强 schema / 查重同分类+设备 / status 沿用 4 态 / PII 分级脱敏），待 plan
+- **Current Focus**: v1.1 AI 对话经验沉淀 — Phase 8（AI Drafting Pipeline）执行中，08-01 地基层完成（v9 迁移 + piiMask + duplicateDetector + createExperience 扩展，4 commits，103 测试全绿），下一步 08-02 LLM 起草 service
 - **Mode**: Vertical Feature Slices（按功能层分 phase：数据→起草→确认→浏览→检索，非 v1.0 的 Horizontal Layers）
 
 ## Current Position
 
-Phase: 8
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-08-02 -- Phase 8 planning complete
+Phase: 08 (ai-drafting-pipeline) — EXECUTING
+Plan: 2 of 3
+Status: 08-01 done, ready to execute 08-02
+Last activity: 2026-08-02
 
-Progress: [██████████] 100%
+Progress: [██████░░░░] 60%
 
 ## Performance Metrics
 
@@ -76,6 +76,13 @@ Phase 7 执行期决策（07-02 落地）：
 - [Phase 7]: 07-02 IPC 层不 import MAX_BATCH — 透传 opts.limit 不二次校验，service 层 listExperiences 内 MAX_BATCH=1000 throw 已强制，避免双层校验逻辑漂移与 noUnusedLocals 触发
 - [Phase 7]: 07-02 channel 命名遵循全仓 camelCase 事实约定 — 复合词 action 用 camelCase（relateDevice/unrelateDevice/listByDevice/listDevices），与 kb:listDocuments/anomaly:acknowledgeAll 等一致；ipc↔preload 三向逐字一致（diff exit 0）
 
+Phase 8 执行期决策（08-01 落地）：
+
+- [Phase 8]: 08-01 v9 迁移加 experiences.duplicate_of_exp_id TEXT nullable 列 — hasColumn 幂等守卫 + db.transaction（throw ROLLBACK），支撑 Plan 03 起草标注命中旧条目 + 二期经验↔经验关联预留；fresh-install DDL 与迁移两路径逐字一致
+- [Phase 8]: 08-01 PII 脱敏分级（凭证全脱敏 **** + IPv4 尾4 + MAC 前3掩码后3保留）— 送 LLM 前主进程串联（凭证→IP→MAC，避免凭证值被 IP/MAC 正则误伤），原始 chat_history 明文不动；MAC 以 D-04 范例为准（前三段掩码），plan 注释「前两段掩码后四段保留」与范例矛盾时以范例为准
+- [Phase 8]: 08-01 duplicateDetector 函数式查重（同分类+设备优先/无设备全库）— 喂前150字摘要列表无硬阈值（信任 LLM + 红线③人工确认兜底），复用 Phase 7 listExperiences，无 class/MK 持有
+- [Phase 8]: 08-01 createExperience 扩展接受可选 duplicateOfExpId — 单语句原子 INSERT 含 duplicate_of_exp_id 列（B-1 Service 封装 + B-2 共存亡方案 A），CREATE 失败 throw 整条不落库；编排层不裸 SQL UPDATE（grep 反向守卫=0）；不校验 FK 存在性（experiences 无 self-FK，信任 Plan 03 + Phase 9 兜底）
+
 v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 
 - 加密/迁移改动必须向后兼容历史数据（v1/v2 IV 兼容、迁移幂等守卫靠 sqlite_master 特征串不靠 user_version、throw 即 ROLLBACK）
@@ -85,6 +92,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 ### Pending Todos
 
 - [x] `/gsd-execute-phase 7` — Experience Data Layer & Security Baseline（EXP-01/02/03, SEC-01/02）07-01 + 07-02 全部落地，待 verify
+- [x] 08-01-PLAN.md — AI 起草地基层（v9 迁移 + piiMask + duplicateDetector + createExperience 扩展，4 commits a3d8d9e/958c7b3/538c6ad/b76cfa0，三绿门禁全绿 103 测试）
 
 ### Blockers/Concerns
 
@@ -103,6 +111,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 | Phase 07 P07-01 | 7m24s | 2 tasks | 5 files |
 | Phase 07 P07-02 | 5m56s | 2 tasks | 5 files |
 | Phase 07 P07-02 | 5m56s | 2 tasks | 5 files |
+| Phase 08 P01 | 12m | 4 tasks | 8 files |
 
 ### Risk Watch
 
@@ -137,8 +146,8 @@ v1.1 明确 defer 到二期（4 FUTURE，不进 roadmap）：
 
 ## Session Continuity
 
-- **Last action**: Completed 07-02-PLAN.md（experienceIpc 10 channel 全 secure 包装 + listDevices 边界 stripEncColumns 脱敏 + main.ts 注入 setExperienceMasterKey/registerExperienceIpc + preload 暴露 experience.* 10 方法 + experience.ts DTO + electron.d.ts 类型声明，2 commits 8e4ac43/592f368，三绿门禁全绿 + 73 测试全 PASS）
-- **Next action**: Phase 7 两个 plan 全部执行完毕（07-01 数据层 + 07-02 IPC 网关），运行 `/gsd-verify-phase 7` 验收 SEC-01/02 + EXP-01/02/03；通过后转 Phase 8 规划（AI Drafting Pipeline）
+- **Last action**: Completed 08-01-PLAN.md（AI 起草地基层：v9 迁移加 duplicate_of_exp_id 列 + piiMask 分级脱敏 util + duplicateDetector 函数式查重 service + createExperience 扩展接受 duplicateOfExpId 单语句原子写入，4 commits a3d8d9e/958c7b3/538c6ad/b76cfa0，三绿门禁全绿 103 测试全 PASS）
+- **Next action**: 继续执行 08-02-PLAN.md（LLM 起草 service，消费 piiMask + duplicateDetector + createExperience 门面）；本 wave 08-01 + 08-02 完成后转 08-03（IPC + 编排层）
 - **Resume command**: `/gsd-status`
 
 ## Phase → Requirement Map

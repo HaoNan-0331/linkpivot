@@ -18,8 +18,8 @@
 ### AI 起草 (DRAFT)
 
 - [ ] **DRAFT-01**: 用户点「经验总结」后，AI 回顾整段会话产出 1~N 条经验草稿（draft 态）— Phase 8
-- [ ] **DRAFT-02**: 会话中 IP/MAC/账号密码等 PII 送 AI 总结前自动脱敏（复用现有 ****xxxx 机制）— Phase 8
-- [ ] **DRAFT-03**: AI 起草前查存量，判定 ADD/UPDATE/NOOP，提示疑似重复 — Phase 8
+- [x] **DRAFT-02**: 会话中 IP/MAC/账号密码等 PII 送 AI 总结前自动脱敏（复用现有 ****xxxx 机制）— Phase 8
+- [x] **DRAFT-03**: AI 起草前查存量，判定 ADD/UPDATE/NOOP，提示疑似重复 — Phase 8
 - [ ] **DRAFT-04**: AI 按固定枚举分类 + 分类模板强制结构化 JSON 输出（不乱造分类/字段）— Phase 8
 
 ### 人工确认 (REVIEW)
@@ -80,8 +80,8 @@
 | EXP-03 | Phase 7 | Complete |
 | EXP-04 | Phase 7 | Complete |
 | DRAFT-01 | Phase 8 | Pending |
-| DRAFT-02 | Phase 8 | Pending |
-| DRAFT-03 | Phase 8 | Pending |
+| DRAFT-02 | Phase 8 | Complete |
+| DRAFT-03 | Phase 8 | Complete |
 | DRAFT-04 | Phase 8 | Pending |
 | REVIEW-01 | Phase 9 | Pending |
 | REVIEW-02 | Phase 9 | Pending |
