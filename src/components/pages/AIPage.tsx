@@ -91,6 +91,9 @@ export default function AIPage() {
           loading={chat.loading}
           onChange={chat.setInput}
           onSend={chat.handleSend}
+          summarizing={chat.summarizing}
+          onSummarize={chat.handleSummarize}
+          canSummarize={chat.canSummarize}
         />
       </div>
       <CommandConfirmModal pendingConfirm={chat.pendingConfirm} onConfirm={chat.handleConfirm} />

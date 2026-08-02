@@ -52,4 +52,8 @@ export interface UseAIChatReturn {
   handleDeleteSession: (id: string) => Promise<void>
   handleSend: () => Promise<void>
   handleConfirm: (approved: boolean) => Promise<void>
+  // Phase 8 Plan 03：经验总结（点「经验总结」按钮）
+  summarizing: boolean
+  canSummarize: boolean        // 会话有内容才可点（SC1 强约束）
+  handleSummarize: () => Promise<void>
 }

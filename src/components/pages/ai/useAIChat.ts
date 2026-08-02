@@ -28,6 +28,7 @@ export function useAIChat(): UseAIChatReturn {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [pendingConfirm, setPendingConfirm] = useState<ConfirmData | null>(null)
+  const [summarizing, setSummarizing] = useState(false)
 
   const loadSessions = useCallback(async () => {
     const list = await window.api.ai.listSessions()
@@ -161,6 +162,32 @@ export function useAIChat(): UseAIChatReturn {
     setLoading(false)
   }, [pendingConfirm, currentSessionId])
 
+  // Phase 8 Plan 03：经验总结（点「经验总结」按钮 → experience:summarizeSession IPC）
+  // SC1：empty/demoMode 提示不强产；SC5：source_session_id 幂等可重复点击；
+  // 异步 loading 防重复点击；完成弹 antd message 汇总 created/updated/noop 计数，提示「草稿待确认」（Phase 9 入口）
+  const handleSummarize = useCallback(async () => {
+    if (!currentSessionId || summarizing) return
+    setSummarizing(true)
+    try {
+      const result = await window.api.experience.summarizeSession(currentSessionId)
+      if (result.demoMode) {
+        message.warning('未配置 AI 服务，无法总结（请先在「系统设置」配置 AI）')
+      } else if (result.empty) {
+        message.info('该会话无可总结经验')
+      } else {
+        const parts: string[] = []
+        if (result.created.length > 0) parts.push(`新增 ${result.created.length} 条草稿`)
+        if (result.updated.length > 0) parts.push(`更新 ${result.updated.length} 条草稿`)
+        if (result.noop.length > 0) parts.push(`跳过 ${result.noop.length} 条重复`)
+        message.success(`经验总结完成：${parts.join('，')}（草稿待确认）`)
+      }
+    } catch (e: unknown) {
+      message.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSummarizing(false)
+    }
+  }, [currentSessionId, summarizing])
+
   return {
     devices,
     selectedDevices,
@@ -178,5 +205,8 @@ export function useAIChat(): UseAIChatReturn {
     handleDeleteSession,
     handleSend,
     handleConfirm,
+    summarizing,
+    canSummarize: messages.length > 0,
+    handleSummarize,
   }
 }

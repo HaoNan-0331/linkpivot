@@ -1,5 +1,5 @@
 import { Input, Button } from 'antd'
-import { SendOutlined } from '@ant-design/icons'
+import { SendOutlined, ThunderboltOutlined } from '@ant-design/icons'
 
 const { TextArea } = Input
 
@@ -8,11 +8,14 @@ interface ChatInputProps {
   loading: boolean
   onChange: (v: string) => void
   onSend: () => void
+  summarizing?: boolean
+  onSummarize?: () => void
+  canSummarize?: boolean   // 会话有内容才可点（SC1 强约束）
 }
 
-export default function ChatInput({ value, loading, onChange, onSend }: ChatInputProps) {
+export default function ChatInput({ value, loading, onChange, onSend, summarizing, onSummarize, canSummarize }: ChatInputProps) {
   return (
-    <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+    <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'flex-end' }}>
       <TextArea
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -35,6 +38,16 @@ export default function ChatInput({ value, loading, onChange, onSend }: ChatInpu
       >
         发送
       </Button>
+      {onSummarize && (
+        <Button
+          icon={<ThunderboltOutlined />}
+          onClick={onSummarize}
+          loading={summarizing}
+          disabled={!canSummarize || loading || summarizing}
+        >
+          经验总结
+        </Button>
+      )}
     </div>
   )
 }
