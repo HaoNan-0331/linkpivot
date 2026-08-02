@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: AI 对话经验沉淀
-status: executing
-last_updated: "2026-08-02T12:50:35.303Z"
+status: verifying
+last_updated: "2026-08-02T13:06:56.084Z"
 last_activity: 2026-08-02
 progress:
   total_phases: 5
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 5
-  completed_plans: 4
-  percent: 80
+  completed_plans: 5
+  percent: 100
 ---
 
 # STATE: network_toplogy
@@ -20,17 +20,17 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-01)
 
 - **Core Value**: 让运维人员在一个桌面工具内安全地掌握网络拓扑、远程操控设备并获得 AI 辅助分析。拓扑准确呈现与设备安全可控为最高优先级。
-- **Current Focus**: v1.1 AI 对话经验沉淀 — Phase 8（AI Drafting Pipeline）执行中，08-02 LLM 起草 service 完成（draftSession 阶段A 纯起草 + judgeVerdicts 阶段B W-4 两阶段复判 + validateDrafts schema Gate + W-2 confidence 边界，23 测试全绿，2 commits），下一步 08-03 IPC + 编排层串联
+- **Current Focus**: v1.1 AI 对话经验沉淀 — Phase 8（AI Drafting Pipeline）3/3 plans 全部完成，08-03 IPC + 编排层串联落地（experienceDrafting.summarizeSessionForUi 两阶段编排 + experience:summarizeSession secure IPC + AIPage「经验总结」按钮，4 commits，136 测试全绿），Phase 8 ready for verification，下一步 Phase 9（Human Review & Confirmation）
 - **Mode**: Vertical Feature Slices（按功能层分 phase：数据→起草→确认→浏览→检索，非 v1.0 的 Horizontal Layers）
 
 ## Current Position
 
 Phase: 08 (ai-drafting-pipeline) — EXECUTING
 Plan: 3 of 3
-Status: 08-02 done (draftingService TDD RED→GREEN 23 测试全绿，3 commits), ready to execute 08-03
+Status: Phase complete — ready for verification
 Last activity: 2026-08-02
 
-Progress: [████████░░] 80%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -89,6 +89,11 @@ Phase 8 执行期决策（08-02 落地）：
 - [Phase 8]: 08-02 W-4 两阶段复判窄化语义落地 — 阶段 A draftSession 纯起草 existingSummaries=[]（不喂存量全标 ADD），阶段 B judgeVerdicts 编排层按每条 draft.category 窄查喂同分类存量（≤50 条截断）复判覆盖 verdict+dupId，防单次起草 4×1000 context 溢出；judgeVerdicts 短路（全分类无存量不调 LLM）+ LLM 未返 draft_index 保守保持 ADD 初值（信任红线③ 人工确认兜底）
 - [Phase 8]: 08-02 W-2 confidence 边界统一收口 — '85%'→0.85 / '0.9'→0.9 / 'high'→NaN fail / 1.5→超界 fail（typeof string 先 parseFloat/百分比转换 + 范围校验），任一 fail 整体重试 MAX_DRAFT_RETRIES=3 次（D-01 schema Drift Gate）
 
+Phase 8 执行期决策（08-03 落地）：
+
+- [Phase 8]: 08-03 W-4 两阶段编排落地（阶段A draftSession existingSummaries=[] 纯起草 + 阶段B findExistingForDraft 按 distinct category 窄查 ≤50 条/分类截断 + judgeVerdicts 复判覆盖 verdict+dupId），避免单次起草 4×1000 context 溢出，复用 08-01 findExistingForDraft 窄化检索粒度（D-02 同 category+同 deviceId）
+- [Phase 8]: 08-03 B-1+B-2 方案A 门面落库（UPDATE 经 createExperience duplicateOfExpId 单语句原子写 dup_id，不裸 SQL UPDATE，不 try/catch 吞错；CREATE 失败即 throw 中断该条 draft 落库，标注与 draft 行共存亡）；relateDevice 的 try/catch 保留因设备关联独立于 dup_id 原子单元（关联缺失可 Phase 10 浏览页手动补）；DraftingResult DTO 不含会话原文（T-08-13 边界脱敏，renderer 经 experience:summarizeSession 永不收 chat_history 明文）
+
 v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 
 - 加密/迁移改动必须向后兼容历史数据（v1/v2 IV 兼容、迁移幂等守卫靠 sqlite_master 特征串不靠 user_version、throw 即 ROLLBACK）
@@ -100,6 +105,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 - [x] `/gsd-execute-phase 7` — Experience Data Layer & Security Baseline（EXP-01/02/03, SEC-01/02）07-01 + 07-02 全部落地，待 verify
 - [x] 08-01-PLAN.md — AI 起草地基层（v9 迁移 + piiMask + duplicateDetector + createExperience 扩展，4 commits a3d8d9e/958c7b3/538c6ad/b76cfa0，三绿门禁全绿 103 测试）
 - [x] 08-02-PLAN.md — LLM 起草 service（draftSession 阶段A 纯起草 + judgeVerdicts 阶段B W-4 两阶段复判 + validateDrafts schema Gate + buildDraftingPrompt 反幻觉 + W-2 confidence 边界，TDD RED→GREEN 23 测试全绿，2 commits 253dda4/2ec666e，三绿门禁全绿 126 测试）
+- [x] 08-03-PLAN.md — IPC + 编排层串联（experienceDrafting.summarizeSessionForUi W-4 两阶段编排 + experience:summarizeSession secure IPC + preload/main/DTO/类型 + AIPage「经验总结」按钮 + useAIChat.handleSummarize，TDD RED→GREEN 10 测试全绿，4 commits 8cffc07/d146de5/e561a41/3e13788，三绿门禁全绿 136 测试）
 
 ### Blockers/Concerns
 
@@ -121,6 +127,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 | Phase 08 P01 | 12m | 4 tasks | 8 files |
 | Phase 08 P02 | ~3.5min | 1 task (TDD) | 2 files |
 | Phase 8 P02 | ~3.5min | 1 tasks | 2 files |
+| Phase 08 P03 | ~7min | 3 tasks | 11 files |
 
 ### Risk Watch
 
@@ -155,8 +162,8 @@ v1.1 明确 defer 到二期（4 FUTURE，不进 roadmap）：
 
 ## Session Continuity
 
-- **Last action**: Completed 08-02-PLAN.md（LLM 起草 service：draftSession 阶段A 纯起草 + judgeVerdicts 阶段B W-4 两阶段复判 + validateDrafts/validateVerdicts 代码层 schema Gate + buildDraftingPrompt 反幻觉禁 [CMD] + W-2 confidence 边界收口，TDD RED 253dda4→GREEN 2ec666e，三绿门禁全绿 126 测试全 PASS）
-- **Next action**: 继续执行 08-03-PLAN.md（IPC + 编排层：阶段 A draftSession + 阶段 B judgeVerdicts 串联 + piiMask 前置 + duplicateDetector 窄查 + createExperience 落库 + source_session_id 幂等）；本 plan 是 Phase 8 最后一 plan
+- **Last action**: Completed 08-03-PLAN.md（IPC + 编排层串联：experienceDrafting.summarizeSessionForUi W-4 两阶段编排 service + experience:summarizeSession secure IPC + preload/main/DTO/类型 + AIPage「经验总结」按钮 + useAIChat.handleSummarize，TDD RED 8cffc07→GREEN d146de5 + IPC e561a41 + UI 3e13788，三绿门禁全绿 136 测试全 PASS，Phase 8 3/3 plans 全部完成）
+- **Next action**: Phase 8 ready for verification — `/gsd-verify-phase 8` 后进入 Phase 9（Human Review & Confirmation，REVIEW-01/02/03，依赖 Phase 8 draft 态草稿作输入）
 - **Resume command**: `/gsd-status`
 
 ## Phase → Requirement Map

@@ -73,7 +73,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [x] 08-02-PLAN.md — draftingService 函数式：draftSession 阶段A纯起草 + judgeVerdicts 阶段B按分类窄查复判（W-4 两阶段，D-01 强 schema JSON + 代码校验 + 重试 3 次，反幻觉禁止 [CMD]，W-2 confidence 边界）
-- [ ] 08-03-PLAN.md — experienceDrafting 两阶段编排 service（读会话→脱敏→阶段A起草→阶段B窄查复判→门面落库不裸 SQL/不吞错）+ experience:summarizeSession IPC secure + AIPage「经验总结」按钮 + W-3 编排单测（SC5 追加不覆盖/NOOP 不落库）
+- [x] 08-03-PLAN.md — experienceDrafting 两阶段编排 service（读会话→脱敏→阶段A起草→阶段B窄查复判→门面落库不裸 SQL/不吞错）+ experience:summarizeSession IPC secure + AIPage「经验总结」按钮 + W-3 编排单测（SC5 追加不覆盖/NOOP 不落库）
 
 ### Phase 9: Human Review & Confirmation
 **Goal**: 用户对 AI 起草的每条草稿逐条编辑/勾选/校验后采纳，确认才转 published——人工是 session→permanent 的唯一闸口，质量门阻止残缺条目入库，且每条都能回溯到产生它的原始会话。
