@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## Phase 8（v1.1 开发）- AI Drafting Pipeline（DRAFT-01~04）
+
+### 端到端经验总结 pipeline（08-01/02/03 + code review fix）
+
+- **数据层（08-01）**：v9 迁移加 `experiences.duplicate_of_exp_id TEXT` 列（hasColumn 幂等）；`piiMask` util 分级脱敏（凭证全脱敏 / IPv4 尾4 / MAC 尾4，D-04）；`duplicateDetector.findExistingForDraft` 同分类+设备查重喂起草 LLM；`experienceService.createExperience` 扩展 `duplicateOfExpId` 单语句原子写入（B-1 门面 + B-2 共存亡）。
+- **起草引擎（08-02）**：`draftingService` 函数式——`draftSession`（阶段A纯起草）+ `judgeVerdicts`（W-4 两阶段复判，按 category 窄化防 context 溢出）+ `validateDrafts`（强 schema：分类枚举锁 / troubleshooting severity / duplication_verdict / W-2 confidence 边界）+ 反幻觉 prompt（禁 [CMD]）。callAI 签名零改动（D-01）。
+- **端到端（08-03）**：`experienceDrafting.summarizeSessionForUi` 两阶段编排（读会话→PII 脱敏→阶段A 起草→阶段B 窄查复判→门面落库）+ `experience:summarizeSession` IPC（secure 包装）+ preload/main 注入 + DraftingResult DTO + AIPage「经验总结」按钮（loading/通知/无可总结提示/demoMode）。红线全落地：secure 包装 / status='draft' 不经 update / 脱敏前置 / 不裸 SQL 写 dup_id（grep 反向守卫=0）。
+- **code review fix（CR-01/02 + WR-02/03/04/06）**：CR-01 piiMask 补自然语言连接词脱敏（`password is hunter2` / `token 为 xxx`）+ 捕获组重组防回调 `\S+$` 跨越中文/[:=] 吞前缀；CR-02 key 关键词加双向词界（ASCII lookbehind `(?<![A-Za-z0-9_])` + `key(?![a-z])` 后置）排除 monkey/keyboard，用 lookbehind 替代 `\b` 兼容中文关键词边界；WR-02 relateDevice catch 加 `createSystemLog` 可观测日志 + console.warn 二阶兜底；WR-03 judgeVerdicts 未覆盖 draft + 其 category 有同分类存量 → 保守判 NOOP（宁漏勿重）；WR-04 AIPage `connectionType.toUpperCase` 加空值守护；WR-06 补回归单测。
+
+三绿门禁：tsc strict EXIT 0 / electron-main build / vitest 146 PASS（基线 + piiMask 28 / duplicateDetector 5 / draftingService 24 / experienceDrafting 10）。
+
 ## [0.1.2] - 2026-07-26
 
 ### pre-release hardening（GO-WITH-FIXES 发版前必修 10 项）
