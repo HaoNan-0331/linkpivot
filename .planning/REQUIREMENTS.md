@@ -24,9 +24,9 @@
 
 ### 人工确认 (REVIEW)
 
-- [ ] **REVIEW-01**: AI 起草后弹窗逐条编辑（标题/分类/内容/模板字段/标签/关联设备）+ 勾选采纳/丢弃 — Phase 9
-- [ ] **REVIEW-02**: 必填项缺失（如 troubleshooting 缺症状/处置）该条标红阻止确认（质量门）— Phase 9
-- [ ] **REVIEW-03**: 每条草稿可一键回链产生它的原始会话（溯源）— Phase 9
+- [x] **REVIEW-01**: AI 起草后弹窗逐条编辑（标题/分类/内容/模板字段/标签/关联设备）+ 勾选采纳/丢弃 — Phase 9
+- [x] **REVIEW-02**: 必填项缺失（如 troubleshooting 缺症状/处置）该条标红阻止确认（质量门）— Phase 9
+- [x] **REVIEW-03**: 每条草稿可一键回链产生它的原始会话（溯源）— Phase 9
 
 ### 经验板块页 (BROWSE)
 
@@ -83,9 +83,9 @@
 | DRAFT-02 | Phase 8 | Complete |
 | DRAFT-03 | Phase 8 | Complete |
 | DRAFT-04 | Phase 8 | Complete |
-| REVIEW-01 | Phase 9 | Pending |
-| REVIEW-02 | Phase 9 | Pending |
-| REVIEW-03 | Phase 9 | Pending |
+| REVIEW-01 | Phase 9 | Complete |
+| REVIEW-02 | Phase 9 | Complete |
+| REVIEW-03 | Phase 9 | Complete |
 | BROWSE-01 | Phase 10 | Pending |
 | BROWSE-02 | Phase 10 | Pending |
 | BROWSE-03 | Phase 10 | Pending |

@@ -88,7 +88,7 @@ Plans:
 
 Plans:
 **Wave 1**
-- [ ] 09-01-PLAN.md — experienceService 新增 confirmDrafts/listDrafts/getSessionMessages（受控接口 + 单事务原子 + service 层质量门兜底）+ 内存 mock DB 单测
+- [x] 09-01-PLAN.md — experienceService 新增 confirmDrafts/listDrafts/getSessionMessages（受控接口 + 单事务原子 + service 层质量门兜底）+ 内存 mock DB 单测
 
 **Wave 2** *(blocked on Wave 1)*
 - [ ] 09-02-PLAN.md — experienceIpc 追加 3 secure channel（experience:confirmDrafts/listDrafts/getSessionMessages）+ preload + DTO + electron.d.ts 三向一致
