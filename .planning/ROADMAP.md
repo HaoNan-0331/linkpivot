@@ -84,10 +84,17 @@ Plans:
   2. 必填项缺失的草稿（如 troubleshooting 缺症状/处置、未选 severity）标红且无法确认入库——质量门硬校验拦在确认按钮前
   3. 每条草稿可一键回链产生它的原始会话（source_session_id 溯源），用户能在确认前查会话原文核对
   4. 确认后条目转 confirmed 态入库，丢弃的条目不留库；UPDATE 判定的草稿确认后落为对存量条目的更新
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 09-01: TBD
+**Wave 1**
+- [ ] 09-01-PLAN.md — experienceService 新增 confirmDrafts/listDrafts/getSessionMessages（受控接口 + 单事务原子 + service 层质量门兜底）+ 内存 mock DB 单测
+
+**Wave 2** *(blocked on Wave 1)*
+- [ ] 09-02-PLAN.md — experienceIpc 追加 3 secure channel（experience:confirmDrafts/listDrafts/getSessionMessages）+ preload + DTO + electron.d.ts 三向一致
+
+**Wave 3** *(blocked on Wave 2)*
+- [ ] 09-03-PLAN.md — ReviewConfirmModal（宽 Modal master-detail + 质量门标红 + 批量提交）+ SessionMessagesModal（只读溯源叠层）+ useAIChat/AIPage/ChatInput 串联（待确认 Badge 角标入口）
 
 ### Phase 10: Experience Browse Page
 **Goal**: 用户可在知识库的「经验」板块独立浏览、筛选、搜索、手动维护经验，并不只依赖 AI 总结——经验资产可被人工主动管理（新增/编辑/标失效）。
