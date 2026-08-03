@@ -94,3 +94,37 @@ export interface DraftingResult {
   updated: Array<{ exp_id: string; title: string; category: ExperienceCategory; duplicate_of_exp_id: string }>
   noop: Array<{ duplicate_of_exp_id: string; reasoning: string }>
 }
+
+/**
+ * experience:confirmDrafts 入参（Phase 9，对齐 service 层 experienceService.ConfirmDraftItem）。
+ * fields 复用 ExperienceUpdateInput（CR-01 白名单，不含 status）；renderer 入参 camelCase，
+ * service 层 fields 类型 ExperienceUpdateFields 与 ExperienceUpdateInput 同构（同 5 个可选字段，
+ * TS 结构化类型兼容）。supersedeOld：D-9-2，UPDATE 草稿专用，默认 false
+ * （防 AI 误判 UPDATE 实为 ADD 误删旧条目）。
+ */
+export interface ConfirmDraftItem {
+  expId: string
+  action: 'adopt' | 'discard'
+  fields?: ExperienceUpdateInput
+  relateDevices?: string[]
+  supersedeOld?: boolean
+}
+export interface ConfirmDraftsInput { drafts: ConfirmDraftItem[] }
+
+/** experience:confirmDrafts 返回（采纳/丢弃/标失效计数）。 */
+export interface ConfirmDraftsResult { adopted: number; discarded: number; superseded: number }
+
+/** experience:listDrafts 返回（draft 态 Experience 列表，复用现有 Experience DTO）。 */
+export type DraftSummary = Experience
+
+/**
+ * experience:getSessionMessages 返回（原始会话明文消息数组，design D-04 明文回链 renderer）。
+ * 字段对齐 ai.ts getChatHistory 返回形态（DB 行返原生 snake_case 保留，见文件头注释约定）。
+ */
+export interface SessionMessage {
+  id: string
+  role: string
+  content: string
+  deviceId: string | null
+  createdAt: string
+}

@@ -10,8 +10,13 @@ import {
   unrelateDevice,
   listDevicesByExperience,
   listExperiencesByDevice,
+  // Phase 9 人工确认（review）—— service 层具名函数（confirmDrafts/listDrafts/getSessionMessages）
+  confirmDrafts,
+  listDrafts,
+  getSessionMessages,
+  MAX_BATCH,
 } from '../services/experienceService'
-import type { ExperienceInput, ExperienceUpdateInput, ExperienceListInput } from '../../src/types/experience'
+import type { ExperienceInput, ExperienceUpdateInput, ExperienceListInput, ConfirmDraftsInput } from '../../src/types/experience'
 import { secure } from '../utils/authGuard'
 
 /**
@@ -79,4 +84,25 @@ export function registerExperienceIpc() {
 
   ipcMain.handle('experience:listDevices', secure((_e, experienceId: string) =>
     stripEncColumns(listDevicesByExperience(experienceId))))
+
+  // Phase 9：人工确认（review）—— 全 secure 包装（鉴权 + 异常脱敏），延续 experience:* 基线。
+  // confirmDrafts：IPC 层校验入参 drafts 数组 + MAX_BATCH 上限，与 service 层兜底校验（experienceService
+  // 内 drafts.length > MAX_BATCH throw）形成双层防御（T-09-06 mitigate），避免 untrusted renderer 越权大批量调用。
+  ipcMain.handle('experience:confirmDrafts', secure((_e, input: ConfirmDraftsInput) => {
+    if (!input || !Array.isArray(input.drafts) || input.drafts.length > MAX_BATCH) {
+      throw new Error(`批量上限 ${MAX_BATCH} 条（或入参无效）`)
+    }
+    return confirmDrafts(input)
+  }))
+
+  // listDrafts：返 draft 态 Experience 列表（service 层 listExperiences status='draft' 内 MAX_BATCH 截断）。
+  ipcMain.handle('experience:listDrafts', secure(() => listDrafts()))
+
+  // getSessionMessages：单 sessionId 查询天然有界（T-09-08 accept）；sessionId 形态校验防注入。
+  ipcMain.handle('experience:getSessionMessages', secure((_e, sessionId: string) => {
+    if (!sessionId || typeof sessionId !== 'string') {
+      throw new Error('sessionId 无效')
+    }
+    return getSessionMessages(sessionId)
+  }))
 }
