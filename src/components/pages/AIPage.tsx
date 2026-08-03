@@ -6,6 +6,7 @@ import ChatSessionList from './ai/ChatSessionList'
 import ChatMessageList from './ai/ChatMessageList'
 import ChatInput from './ai/ChatInput'
 import CommandConfirmModal from './ai/CommandConfirmModal'
+import ReviewConfirmModal from './ai/ReviewConfirmModal'
 
 const { Title } = Typography
 
@@ -94,9 +95,17 @@ export default function AIPage() {
           summarizing={chat.summarizing}
           onSummarize={chat.handleSummarize}
           canSummarize={chat.canSummarize}
+          pendingDraftCount={chat.pendingDraftCount}
+          onOpenReview={chat.openReviewFromBadge}
         />
       </div>
       <CommandConfirmModal pendingConfirm={chat.pendingConfirm} onConfirm={chat.handleConfirm} />
+      <ReviewConfirmModal
+        open={chat.reviewOpen}
+        onClose={() => chat.setReviewOpen(false)}
+        initialDraftIds={chat.reviewInitialDraftIds}
+        onSubmitted={chat.handleReviewSubmitted}
+      />
     </div>
   )
 }

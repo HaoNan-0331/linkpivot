@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react'
 import { message } from 'antd'
 import type { ChatSession } from '@/types/ai'
+import type { ConfirmDraftsResult } from '@/types/experience'
 import type { UseAIChatReturn, DeviceOption, ChatMsg, ConfirmData } from './types'
 
 /**
@@ -29,6 +30,10 @@ export function useAIChat(): UseAIChatReturn {
   const [loading, setLoading] = useState(false)
   const [pendingConfirm, setPendingConfirm] = useState<ConfirmData | null>(null)
   const [summarizing, setSummarizing] = useState(false)
+  // Phase 9 Plan 03：人工确认弹窗状态 + 待确认角标计数（D-9-7）
+  const [reviewOpen, setReviewOpen] = useState(false)
+  const [reviewInitialDraftIds, setReviewInitialDraftIds] = useState<string[]>([])
+  const [pendingDraftCount, setPendingDraftCount] = useState(0)
 
   const loadSessions = useCallback(async () => {
     const list = await window.api.ai.listSessions()
@@ -179,7 +184,16 @@ export function useAIChat(): UseAIChatReturn {
         if (result.created.length > 0) parts.push(`新增 ${result.created.length} 条草稿`)
         if (result.updated.length > 0) parts.push(`更新 ${result.updated.length} 条草稿`)
         if (result.noop.length > 0) parts.push(`跳过 ${result.noop.length} 条重复`)
-        message.success(`经验总结完成：${parts.join('，')}（草稿待确认）`)
+        // Phase 9 Plan 03：created/updated 有 draft 才开 ReviewConfirmModal，否则仅提示
+        const draftIds = [...result.created, ...result.updated].map((x) => x.exp_id)
+        if (draftIds.length > 0) {
+          message.success(`经验总结完成：${parts.join('，')}，请逐条确认`)
+          setReviewInitialDraftIds(draftIds)
+          setReviewOpen(true)
+        } else {
+          message.success(`经验总结完成：${parts.join('，')}（无待确认草稿）`)
+        }
+        setPendingDraftCount(draftIds.length)
       }
     } catch (e: unknown) {
       message.error(e instanceof Error ? e.message : String(e))
@@ -187,6 +201,22 @@ export function useAIChat(): UseAIChatReturn {
       setSummarizing(false)
     }
   }, [currentSessionId, summarizing])
+
+  // Phase 9 Plan 03：弹窗提交后回调——刷新暂存 draft 计数（角标用）
+  const handleReviewSubmitted = useCallback(async (_result: ConfirmDraftsResult) => {
+    try {
+      const remaining = await window.api.experience.listDrafts()
+      setPendingDraftCount(remaining.length)
+    } catch {
+      setPendingDraftCount(0)
+    }
+  }, [])
+
+  // Phase 9 Plan 03：角标入口点击重开弹窗（D-9-7 暂存重开，拉全量暂存 draft）
+  const openReviewFromBadge = useCallback(async () => {
+    setReviewInitialDraftIds([])
+    setReviewOpen(true)
+  }, [])
 
   return {
     devices,
@@ -208,5 +238,12 @@ export function useAIChat(): UseAIChatReturn {
     summarizing,
     canSummarize: messages.length > 0,
     handleSummarize,
+    // Phase 9 Plan 03：人工确认弹窗 + 待确认角标（D-9-7）
+    reviewOpen,
+    reviewInitialDraftIds,
+    pendingDraftCount,
+    setReviewOpen,
+    handleReviewSubmitted,
+    openReviewFromBadge,
   }
 }

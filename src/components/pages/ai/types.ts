@@ -1,4 +1,5 @@
 import type { ChatSession } from '@/types/ai'
+import type { ConfirmDraftsResult } from '@/types/experience'
 
 /**
  * AI 子树本地类型（FE-01 / D-5-1）。
@@ -56,4 +57,11 @@ export interface UseAIChatReturn {
   summarizing: boolean
   canSummarize: boolean        // 会话有内容才可点（SC1 强约束）
   handleSummarize: () => Promise<void>
+  // Phase 9 Plan 03：人工确认弹窗 + 待确认角标（D-9-7）
+  reviewOpen: boolean
+  reviewInitialDraftIds: string[]
+  pendingDraftCount: number
+  setReviewOpen: (open: boolean) => void
+  handleReviewSubmitted: (result: ConfirmDraftsResult) => Promise<void>
+  openReviewFromBadge: () => Promise<void>
 }
