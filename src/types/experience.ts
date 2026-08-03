@@ -66,6 +66,9 @@ export interface Experience {
   reuse_count: number
   created_at: string
   updated_at: string
+  /** Phase 8 v9 列：UPDATE 草稿命中的存量旧条目 id（draft 态标注，Phase 9 确认时据此显 supersedeOld Checkbox）。
+   * 全量 SELECT 运行时已带此列，DTO 补声明对齐 rowToExperience 返参。 */
+  duplicate_of_exp_id?: string | null
 }
 
 /** 复用全仓分页信封（DATA-01 / D-4-2），渲染层读 .rows/.total/.truncated */
