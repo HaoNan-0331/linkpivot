@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type Database from 'better-sqlite3'
+import { encField } from '../utils/crypto'
 
 // WR-05：listDevicesByExperience 改走 deviceService.getDeviceById，mock 拦截 device 模块，
 // 让它从 mock DB 读 device 行并映射为 Device DTO（不依赖真实 getDatabase/better-sqlite3）。
@@ -25,6 +26,13 @@ vi.mock('./device', () => ({
   },
 }))
 
+// Phase 9 getSessionMessages 复用 ai.ts getChatHistory：mock 拦截 ai 模块返固定消息数组，
+// 验证 service 层透传解密明文 + 非法 sessionId throw（不依赖真实 getDatabase/chat_history）。
+const mockChatHistory: Record<string, Array<{ id: string; role: string; content: string; deviceId: string | null; createdAt: string }>> = {}
+vi.mock('./ai', () => ({
+  getChatHistory: (sessionId?: string) => (sessionId && mockChatHistory[sessionId]) ?? [],
+}))
+
 import {
   createExperience,
   getExperience,
@@ -37,6 +45,9 @@ import {
   listExperiencesByDevice,
   incReuseCount,
   touchLastVerifiedAt,
+  confirmDrafts,
+  listDrafts,
+  getSessionMessages,
   setExperienceMasterKey,
   MAX_BATCH,
   _setExperienceDbGetter,
@@ -135,7 +146,32 @@ class MemDb {
   }
 
   transaction<T>(fn: () => T): () => T {
-    return () => fn()
+    return () => {
+      // ROLLBACK 语义：fn throw 时回滚所有表行到事务前快照（复刻 better-sqlite3 行为）。
+      const snapshot = this.snapshot()
+      try {
+        return fn()
+      } catch (err) {
+        this.restore(snapshot)
+        throw err
+      }
+    }
+  }
+
+  /** 深拷贝所有表行 + autoindex + userVersion 作事务回滚快照。 */
+  private snapshot(): { tables: Map<string, MockTable>; userVersion: number } {
+    const tables = new Map<string, MockTable>()
+    for (const [name, t] of this.tables) {
+      const rowsCopy = new Map<string, Row>()
+      for (const [id, row] of t.rows) rowsCopy.set(id, { ...row })
+      tables.set(name, { rows: rowsCopy, autoindex: t.autoindex, columns: [...t.columns], uniqueKeys: t.uniqueKeys.map((k) => [...k]) })
+    }
+    return { tables, userVersion: this.userVersion }
+  }
+
+  private restore(snap: { tables: Map<string, MockTable>; userVersion: number }) {
+    this.tables = snap.tables
+    this.userVersion = snap.userVersion
   }
 
   pragma(stmt: string): any {
@@ -225,8 +261,9 @@ class MemDb {
         run: (...vals: any[]) => {
           const t = this.tables.get(table)
           if (!t) throw new Error(`no table ${table}`)
-          // 解析 SET col1 = ?, col2 = datetime('now','localtime')
-          const assignments = setClause.split(',').map((s) => s.trim())
+          // 解析 SET col1 = ?, col2 = datetime('now','localtime'), col3 = 'published'
+          // 用括号/引号感知分词器避免 datetime('now','localtime') 内含逗号被误分
+          const assignments = tokenizeValues(setClause)
           const setCols: string[] = []
           let valIdx = 0
           const setValues: any[] = []
@@ -237,7 +274,7 @@ class MemDb {
             if (m[2] === '?') {
               setValues.push(vals[valIdx++])
             } else {
-              // datetime('now','localtime') 或 reuse_count = reuse_count + 1 这类表达式
+              // datetime('now','localtime') / reuse_count + 1 / 'literal' 字面量
               setValues.push(m[2])
             }
           }
@@ -250,6 +287,10 @@ class MemDb {
                   row[c] = (Number(row[c]) || 0) + 1
                 } else if (typeof v === 'string' && v.toLowerCase().startsWith("datetime(")) {
                   row[c] = mockNow()
+                } else if (typeof v === 'string') {
+                  // 'published' 等 SQL 字符串字面量 → 去引号取原值
+                  const litStr = v.match(/^'(.*)'$/)
+                  row[c] = litStr ? litStr[1] : v
                 } else {
                   row[c] = v
                 }
@@ -747,5 +788,261 @@ describe('experienceService', () => {
     expect(got).not.toBeNull()
     expect(got.attrs_enc).toBeUndefined()
     expect(got.attrs).toEqual({}) // decField 降级 ''，JSON.parse('')→异常→fallback {}
+  })
+})
+
+// ---------- Phase 9 人工确认闸口单测（confirmDrafts / listDrafts / getSessionMessages） ----------
+
+/**
+ * 直接向 mock DB 插入一条 draft 行（绕过 createExperience 的 severity 强校验），
+ * 用于构造 service 层兜底质量门的失败场景（缺 severity / 缺 symptoms 等）。
+ */
+function insertDraftRaw(db: any, id: string, overrides: Partial<Record<string, any>> = {}) {
+  db.tables.get('experiences').rows.set(id, {
+    id,
+    title: overrides.title ?? 't',
+    category: overrides.category ?? 'best_practices',
+    content: overrides.content ?? 'c',
+    tags: '[]',
+    status: 'draft',
+    source_session_id: null,
+    attrs_enc: overrides.attrs_enc ?? null,
+    valid_at: overrides.valid_at ?? mockNow(),
+    invalid_at: null,
+    last_verified_at: null,
+    reuse_count: 0,
+    created_at: overrides.created_at ?? mockNow(),
+    updated_at: overrides.updated_at ?? mockNow(),
+    duplicate_of_exp_id: overrides.duplicate_of_exp_id ?? null,
+  })
+}
+
+describe('confirmDrafts', () => {
+  it('adopt 单条 troubleshooting draft → status 转 published + 计数 adopted=1', () => {
+    const exp = createExperience({
+      title: 'ARP 表满',
+      category: 'troubleshooting',
+      content: '清理 ARP 表',
+      attrs: { severity: 'high', symptoms: 'arp 表爆', resolution: 'clear arp' },
+    })
+    const res = confirmDrafts({ drafts: [{ expId: exp.id, action: 'adopt' }] })
+    expect(res.adopted).toBe(1)
+    expect(res.discarded).toBe(0)
+    expect(res.superseded).toBe(0)
+    const got = getExperience(exp.id) as any
+    expect(got.status).toBe('published')
+  })
+
+  it('troubleshooting draft 缺 severity → throw（service 层兜底质量门）', () => {
+    // createExperience 强制 severity，故直接插缺 severity 的 draft 行
+    const db = mockDbRef.current
+    insertDraftRaw(db, 'draft-nosev', {
+      category: 'troubleshooting',
+      attrs_enc: null, // attrs 解析为 null（无 attrs_enc 列密文）
+    })
+    expect(() =>
+      confirmDrafts({ drafts: [{ expId: 'draft-nosev', action: 'adopt' }] })
+    ).toThrow('severity')
+  })
+
+  it('troubleshooting draft 缺 symptoms → throw', () => {
+    // 造一条 severity 合法但无 symptoms 的 draft（直接写 attrs_enc 密文，带 severity 无 symptoms）
+    const db = mockDbRef.current
+    insertDraftRaw(db, 'draft-nosym', {
+      category: 'troubleshooting',
+      attrs_enc: encField(JSON.stringify({ severity: 'high' }), MK_TEST_KEY),
+    })
+    expect(() =>
+      confirmDrafts({ drafts: [{ expId: 'draft-nosym', action: 'adopt' }] })
+    ).toThrow('symptoms')
+  })
+
+  it('troubleshooting draft 缺 resolution → throw', () => {
+    const db = mockDbRef.current
+    insertDraftRaw(db, 'draft-nores', {
+      category: 'troubleshooting',
+      attrs_enc: encField(JSON.stringify({ severity: 'high', symptoms: 's' }), MK_TEST_KEY),
+    })
+    expect(() =>
+      confirmDrafts({ drafts: [{ expId: 'draft-nores', action: 'adopt' }] })
+    ).toThrow('resolution')
+  })
+
+  it('轻结构类 draft 缺 title → throw', () => {
+    const db = mockDbRef.current
+    insertDraftRaw(db, 'draft-notitle', { category: 'best_practices', title: '' })
+    expect(() =>
+      confirmDrafts({ drafts: [{ expId: 'draft-notitle', action: 'adopt' }] })
+    ).toThrow('title')
+  })
+
+  it('轻结构类 draft 缺 content → throw', () => {
+    const db = mockDbRef.current
+    insertDraftRaw(db, 'draft-nocontent', { category: 'best_practices', content: '' })
+    expect(() =>
+      confirmDrafts({ drafts: [{ expId: 'draft-nocontent', action: 'adopt' }] })
+    ).toThrow('content')
+  })
+
+  it('discard 单条 draft → hard DELETE + 计数 discarded=1', () => {
+    const exp = createExperience({ title: 't', category: 'product', content: 'c' })
+    const res = confirmDrafts({ drafts: [{ expId: exp.id, action: 'discard' }] })
+    expect(res.discarded).toBe(1)
+    expect(res.adopted).toBe(0)
+    expect(getExperience(exp.id)).toBeNull()
+  })
+
+  it('adopt + supersedeOld=true + duplicate_of_exp_id 非空 → 旧条目 invalidate（invalid_at 落时间）', () => {
+    // 旧条目 expA（published + valid）
+    const expA = createExperience({ title: '旧', category: 'product', content: 'c' })
+    mockDbRef.current.tables.get('experiences').rows.get(expA.id).status = 'published'
+    // draft expB 命中 expA
+    const expB = createExperience({
+      title: '新',
+      category: 'product',
+      content: 'c2',
+      duplicateOfExpId: expA.id,
+    })
+    const res = confirmDrafts({
+      drafts: [{ expId: expB.id, action: 'adopt', supersedeOld: true }],
+    })
+    expect(res.superseded).toBe(1)
+    expect(res.adopted).toBe(1)
+    const gotA = getExperience(expA.id) as any
+    const gotB = getExperience(expB.id) as any
+    expect(gotA.invalid_at).toBeTruthy() // 旧条目软失效
+    expect(gotB.status).toBe('published')
+  })
+
+  it('adopt + supersedeOld=false（默认）+ duplicate_of_exp_id 非空 → 旧条目保留 invalid_at 仍 falsy', () => {
+    const expA = createExperience({ title: '旧', category: 'product', content: 'c' })
+    mockDbRef.current.tables.get('experiences').rows.get(expA.id).status = 'published'
+    const expB = createExperience({
+      title: '新',
+      category: 'product',
+      content: 'c2',
+      duplicateOfExpId: expA.id,
+    })
+    const res = confirmDrafts({ drafts: [{ expId: expB.id, action: 'adopt' }] })
+    expect(res.superseded).toBe(0)
+    const gotA = getExperience(expA.id) as any
+    expect(gotA.invalid_at).toBeFalsy() // 旧条目未动（mock 行可能无 invalid_at 字段，falsy 即可）
+  })
+
+  it('单事务原子：adopt 第一条成功 + 第二条 quality 门 throw → 整批 ROLLBACK 第一条不落 published', () => {
+    const exp1 = createExperience({
+      title: '完整',
+      category: 'troubleshooting',
+      content: 'c',
+      attrs: { severity: 'high', symptoms: 's', resolution: 'r' },
+    })
+    // 第二条：troubleshooting 缺 severity（直接插 raw）
+    insertDraftRaw(mockDbRef.current, 'draft-bad', { category: 'troubleshooting', attrs_enc: null })
+    expect(() =>
+      confirmDrafts({
+        drafts: [
+          { expId: exp1.id, action: 'adopt' },
+          { expId: 'draft-bad', action: 'adopt' },
+        ],
+      })
+    ).toThrow('severity')
+    // ROLLBACK：第一条 status 仍 draft（无半成品）
+    const got1 = getExperience(exp1.id) as any
+    expect(got1.status).toBe('draft')
+  })
+
+  it('drafts.length > MAX_BATCH → throw 批量上限错误', () => {
+    const drafts = Array.from({ length: MAX_BATCH + 1 }, (_, i) => ({
+      expId: `d-${i}`,
+      action: 'discard' as const,
+    }))
+    expect(() => confirmDrafts({ drafts })).toThrow('MAX_BATCH')
+  })
+
+  it('adopt + fields 非空 → updateExperience 落编辑字段（title/content 改动）', () => {
+    const exp = createExperience({ title: '原标题', category: 'product', content: '原内容' })
+    const res = confirmDrafts({
+      drafts: [
+        {
+          expId: exp.id,
+          action: 'adopt',
+          fields: { title: '改后标题', content: '改后内容' },
+        },
+      ],
+    })
+    expect(res.adopted).toBe(1)
+    const got = getExperience(exp.id) as any
+    expect(got.title).toBe('改后标题')
+    expect(got.content).toBe('改后内容')
+    expect(got.status).toBe('published')
+  })
+
+  it('adopt + relateDevices diff → 新增关联 + 移除未列关联', () => {
+    const exp = createExperience({ title: 't', category: 'product', content: 'c' })
+    mockDbRef.current.tables.get('devices').rows.set('dev-1', { id: 'dev-1', name: 'SW-1' })
+    mockDbRef.current.tables.get('devices').rows.set('dev-2', { id: 'dev-2', name: 'SW-2' })
+    relateDevice(exp.id, 'dev-1')
+    const res = confirmDrafts({
+      drafts: [{ expId: exp.id, action: 'adopt', relateDevices: ['dev-2'] }],
+    })
+    expect(res.adopted).toBe(1)
+    const devs = listDevicesByExperience(exp.id).map((d: any) => d.id)
+    expect(devs).toEqual(['dev-2'])
+  })
+
+  it('adopt + relateDevices 空数组 → 现有设备关联不变（防默认值传播拆关联）', () => {
+    const exp = createExperience({ title: 't', category: 'product', content: 'c' })
+    mockDbRef.current.tables.get('devices').rows.set('dev-1', { id: 'dev-1', name: 'SW-1' })
+    relateDevice(exp.id, 'dev-1')
+    confirmDrafts({ drafts: [{ expId: exp.id, action: 'adopt', relateDevices: [] }] })
+    const devs = listDevicesByExperience(exp.id).map((d: any) => d.id)
+    expect(devs).toEqual(['dev-1']) // 现有关联保留
+  })
+
+  it('adopt + relateDevices=undefined → 现有设备关联不变', () => {
+    const exp = createExperience({ title: 't', category: 'product', content: 'c' })
+    mockDbRef.current.tables.get('devices').rows.set('dev-1', { id: 'dev-1', name: 'SW-1' })
+    relateDevice(exp.id, 'dev-1')
+    confirmDrafts({ drafts: [{ expId: exp.id, action: 'adopt' }] })
+    const devs = listDevicesByExperience(exp.id).map((d: any) => d.id)
+    expect(devs).toEqual(['dev-1'])
+  })
+})
+
+describe('listDrafts', () => {
+  it('返回 status=draft 的全部草稿', () => {
+    createExperience({ title: 'd1', category: 'product', content: 'c' })
+    createExperience({ title: 'd2', category: 'product', content: 'c' })
+    // 一条 published 行（mock 直接改 status）
+    const exp3 = createExperience({ title: 'p1', category: 'product', content: 'c' })
+    mockDbRef.current.tables.get('experiences').rows.get(exp3.id).status = 'published'
+    const drafts = listDrafts()
+    expect(drafts.length).toBe(2)
+    expect(drafts.every((d: any) => d.status === 'draft')).toBe(true)
+  })
+})
+
+describe('getSessionMessages', () => {
+  beforeEach(() => {
+    // 清空 mock 历史避免跨用例污染
+    for (const k of Object.keys(mockChatHistory)) delete mockChatHistory[k]
+  })
+
+  it('返回 getChatHistory 解密明文数组', () => {
+    mockChatHistory['s1'] = [
+      { id: 'm1', role: 'user', content: '明文1', deviceId: null, createdAt: '2026-08-03 12:00:00' },
+      { id: 'm2', role: 'assistant', content: '明文2', deviceId: null, createdAt: '2026-08-03 12:00:01' },
+    ]
+    const msgs = getSessionMessages('s1')
+    expect(msgs).toEqual(mockChatHistory['s1'])
+  })
+
+  it('sessionId 不存在 → 返空数组', () => {
+    expect(getSessionMessages('nope')).toEqual([])
+  })
+
+  it('sessionId 无效（空/非 string）→ throw', () => {
+    expect(() => getSessionMessages('')).toThrow('sessionId 无效')
+    expect(() => getSessionMessages(null as any)).toThrow('sessionId 无效')
   })
 })
