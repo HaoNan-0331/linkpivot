@@ -3,6 +3,7 @@ import type Database from 'better-sqlite3'
 import { getDatabase } from '../database/connection'
 import { encField, decField } from '../utils/crypto'
 import { getDeviceById } from './device'
+import { getChatHistory } from './ai'
 import type { PaginatedResult } from '../../src/types/pagination'
 
 /**
@@ -110,6 +111,25 @@ export interface ListExperiencesOpts {
   limit?: number
   offset?: number
 }
+
+/**
+ * Phase 9 D-9-1/D-9-4：confirmDrafts 受控接口入参（draft→published + 可选 supersede 旧条目 + 丢弃）。
+ * fields 复用 ExperienceUpdateFields（CR-01 白名单，不含 status）——采纳时若用户在弹窗编辑过字段则一并落库。
+ * relateDevices：全量期望关联 device_id 列表（confirmDrafts 内 diff 现有关联后调 relateDevice/unrelateDevice）。
+ *   语义：undefined 或空数组 [] 都视为「不动现有关联」（diff 跳过）；只有 length>0 的显式数组才触发 diff。
+ *   空数组语义已废弃，防 renderer 默认值传播静默拆关联。
+ * supersedeOld：D-9-2，UPDATE 草稿（duplicate_of_exp_id 非空）专用，默认 false（防 Phase 8 AI 误判
+ *   UPDATE 实为 ADD 误删有效旧条目），true 时旧条目经 invalidateExperience 软失效（invalid_at 落时间）。
+ */
+export interface ConfirmDraftItem {
+  expId: string
+  action: 'adopt' | 'discard'
+  fields?: ExperienceUpdateFields
+  relateDevices?: string[]
+  supersedeOld?: boolean
+}
+export interface ConfirmDraftsInput { drafts: ConfirmDraftItem[] }
+export interface ConfirmDraftsResult { adopted: number; discarded: number; superseded: number }
 
 /**
  * attrs 模板校验 + JSON 序列化。
@@ -362,4 +382,122 @@ export function incReuseCount(id: string): void {
 
 export function touchLastVerifiedAt(id: string): void {
   db().prepare("UPDATE experiences SET last_verified_at = datetime('now','localtime') WHERE id = ?").run(id)
+}
+
+// ---------- Phase 9 人工确认闸口（session→permanent 唯一人工闸口，红线③执行点） ----------
+
+/**
+ * Phase 9 D-9-1/D-9-4：批量确认草稿。
+ * 单事务原子（throw ROLLBACK，全成全败）：
+ * - action='adopt'：UPDATE status='draft'→'published' + 若 fields 非空则 updateExperience 落编辑字段 + diff relateDevices
+ * - action='adopt' + supersedeOld=true 且 draft.duplicate_of_exp_id 非空：invalidateExperience(旧条目) 软失效（D-9-2）
+ * - action='discard'：deleteExperience（hard DELETE，D-9-6）
+ * 质量门 service 层兜底：adopt 的 troubleshooting 草稿二次校验 severity/symptoms/resolution，
+ * 轻结构类校验 title/content 必填（与 renderer 标红三层纵深）。
+ * 不动 CR-01 收紧的 updateExperience 白名单——status 改变只走本接口（draft→published），不复活 update 的 status 字段。
+ */
+export function confirmDrafts(input: ConfirmDraftsInput): ConfirmDraftsResult {
+  if (!input || !Array.isArray(input.drafts)) {
+    throw new Error('confirmDrafts 入参无效：drafts 必须为数组')
+  }
+  if (input.drafts.length > MAX_BATCH) {
+    throw new Error(`批量上限超过 MAX_BATCH（${MAX_BATCH}）`)
+  }
+  let adopted = 0
+  let discarded = 0
+  let superseded = 0
+  const conn = db()
+  const tx = conn.transaction(() => {
+    // 循环外 prepare 复用（CONVENTIONS Pattern 4）
+    const stmtPublish = conn.prepare(
+      `UPDATE experiences SET status = 'published', updated_at = datetime('now','localtime') WHERE id = ?`
+    )
+    for (const d of input.drafts) {
+      if (d.action === 'discard') {
+        deleteExperience(d.expId)
+        discarded++
+        continue
+      }
+      // action === 'adopt'
+      const cur = getExperience(d.expId) as any
+      if (!cur) throw new Error(`草稿不存在: ${d.expId}`)
+      // 质量门 service 层兜底：adopt 时若用户编辑过 fields 则用 fields，否则用现有 cur 字段
+      const finalCategory = d.fields?.category ?? cur.category
+      const finalAttrs = d.fields?.attrs !== undefined ? d.fields.attrs : cur.attrs
+      const finalTitle = d.fields?.title ?? cur.title
+      const finalContent = d.fields?.content ?? cur.content
+      // troubleshooting 必填校验（severity/symptoms/resolution）
+      if (finalCategory === 'troubleshooting') {
+        const sev = finalAttrs?.severity
+        if (!sev || !['critical', 'high', 'medium', 'low', 'info'].includes(sev)) {
+          throw new Error(`草稿 ${d.expId} troubleshooting 缺合法 severity，无法确认`)
+        }
+        if (!finalAttrs?.symptoms || !String(finalAttrs.symptoms).trim()) {
+          throw new Error(`草稿 ${d.expId} troubleshooting 缺 symptoms，无法确认`)
+        }
+        if (!finalAttrs?.resolution || !String(finalAttrs.resolution).trim()) {
+          throw new Error(`草稿 ${d.expId} troubleshooting 缺 resolution，无法确认`)
+        }
+      } else {
+        // 轻结构类：title/content 必填
+        if (!finalTitle || !String(finalTitle).trim()) {
+          throw new Error(`草稿 ${d.expId} 缺 title，无法确认`)
+        }
+        if (!finalContent || !String(finalContent).trim()) {
+          throw new Error(`草稿 ${d.expId} 缺 content，无法确认`)
+        }
+      }
+      // 落编辑字段（若有）——走 updateExperience（CR-01 白名单，不含 status）
+      if (d.fields && Object.keys(d.fields).length > 0) {
+        updateExperience(d.expId, d.fields)
+      }
+      // draft→published（专用接口，不复活 update 白名单）
+      stmtPublish.run(d.expId)
+      adopted++
+      // 设备关联 diff：仅当 relateDevices 为 length>0 的显式数组才触发（undefined/空数组都视为
+      // 不动现有关联，防 renderer 默认空数组静默拆光所有现有关联）
+      if (d.relateDevices != null && d.relateDevices.length > 0) {
+        const curDevices = listDevicesByExperience(d.expId).map((dev: any) => dev.id)
+        const expectSet = new Set(d.relateDevices)
+        const toAdd = d.relateDevices.filter((id) => !curDevices.includes(id))
+        const toRemove = curDevices.filter((id) => !expectSet.has(id))
+        for (const did of toAdd) relateDevice(d.expId, did)
+        for (const did of toRemove) unrelateDevice(d.expId, did)
+      }
+      // D-9-2：UPDATE 草稿（duplicate_of_exp_id 非空）+ supersedeOld=true → 旧条目软失效
+      if (d.supersedeOld && cur.duplicate_of_exp_id) {
+        invalidateExperience(cur.duplicate_of_exp_id)
+        superseded++
+      }
+    }
+  })
+  tx()
+  return { adopted, discarded, superseded }
+}
+
+/**
+ * Phase 9 D-9-7：列暂存 draft（AIPage 待确认角标入口用，重开确认弹窗）。
+ * 复用 listExperiences 的 status='draft' 过滤分支；draft 行 invalid_at 恒 NULL，includeInvalid 取值不影响。
+ */
+export function listDrafts(): any[] {
+  return listExperiences({ status: 'draft', includeInvalid: true, limit: MAX_BATCH, offset: 0 }).rows
+}
+
+/**
+ * Phase 9 D-9-5：取原始会话原文（用户在确认弹窗内点「查看原始会话」溯源核对）。
+ * 复用 ai.ts getChatHistory（已 decField 解密 chat_history.content_enc 返明文）。
+ * 信任边界（design D-04）：返明文给 renderer——用户核对自己对话，单机 safeStorage 绑机器，不做 PII 脱敏。
+ * sessionId 指向已删/不存在时 getChatHistory 返空数组，由 renderer 提示「原会话已不可查」。
+ */
+export function getSessionMessages(sessionId: string): Array<{
+  id: string
+  role: string
+  content: string
+  deviceId: string | null
+  createdAt: string
+}> {
+  if (!sessionId || typeof sessionId !== 'string') {
+    throw new Error('sessionId 无效')
+  }
+  return getChatHistory(sessionId)
 }
