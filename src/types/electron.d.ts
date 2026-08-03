@@ -7,7 +7,7 @@ import type { IPMACBinding, IPMACChange, ChangeStats, ExcludedIP, CreateExcluded
 import type { OUIRow, CreateOUIInput, UpdateOUIInput, OUIStats, ScheduleConfig, SchedulerStatus, UpdateScheduleInput } from './oui'
 import type { ChatMessage, ChatSession, DiscoverResult } from './ai'
 import type { KbDocument, KbStatus, KbSearchResult } from './kb'
-import type { Experience, ExperienceInput, ExperienceUpdateInput, ExperienceListResult, ExperienceListInput, ExperienceRelatedDevice, DraftingResult } from './experience'
+import type { Experience, ExperienceInput, ExperienceUpdateInput, ExperienceListResult, ExperienceListInput, ExperienceRelatedDevice, DraftingResult, ConfirmDraftsInput, ConfirmDraftsResult, DraftSummary, SessionMessage } from './experience'
 // FE-02：ChatMessage/ChatSession 迁至 ./ai（role 收联合类型）。
 // re-export 维持既有 `import { ChatMessage } from '@/types/electron'` 调用面
 // 不中断（AIPage.tsx 等，FE-01 Wave 2 将迁移导入路径至 @/types/ai）。
@@ -211,6 +211,10 @@ export interface ElectronAPI {
     listByDevice: (deviceId: string, includeInvalid?: boolean) => Promise<Experience[]>
     listDevices: (experienceId: string) => Promise<ExperienceRelatedDevice[]>
     summarizeSession: (sessionId: string) => Promise<DraftingResult>
+    // Phase 9 人工确认（review）—— 三向一致：channel 名 = preload invoke = 此处方法名（逐字）
+    confirmDrafts: (input: ConfirmDraftsInput) => Promise<ConfirmDraftsResult>
+    listDrafts: () => Promise<DraftSummary[]>
+    getSessionMessages: (sessionId: string) => Promise<SessionMessage[]>
   }
 }
 

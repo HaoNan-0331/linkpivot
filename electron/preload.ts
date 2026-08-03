@@ -133,6 +133,10 @@ const api = {
     listByDevice: (deviceId: string, includeInvalid?: boolean) => ipcRenderer.invoke('experience:listByDevice', deviceId, includeInvalid),
     listDevices: (experienceId: string) => ipcRenderer.invoke('experience:listDevices', experienceId),
     summarizeSession: (sessionId: string) => ipcRenderer.invoke('experience:summarizeSession', sessionId),
+    // Phase 9 人工确认（review）—— 经 window.api.experience.* 调用，全 secure 包装
+    confirmDrafts: (input: unknown) => ipcRenderer.invoke('experience:confirmDrafts', input),
+    listDrafts: () => ipcRenderer.invoke('experience:listDrafts'),
+    getSessionMessages: (sessionId: string) => ipcRenderer.invoke('experience:getSessionMessages', sessionId),
   },
 }
 
