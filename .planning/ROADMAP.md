@@ -91,7 +91,7 @@ Plans:
 - [x] 09-01-PLAN.md — experienceService 新增 confirmDrafts/listDrafts/getSessionMessages（受控接口 + 单事务原子 + service 层质量门兜底）+ 内存 mock DB 单测
 
 **Wave 2** *(blocked on Wave 1)*
-- [ ] 09-02-PLAN.md — experienceIpc 追加 3 secure channel（experience:confirmDrafts/listDrafts/getSessionMessages）+ preload + DTO + electron.d.ts 三向一致
+- [x] 09-02-PLAN.md — experienceIpc 追加 3 secure channel（experience:confirmDrafts/listDrafts/getSessionMessages）+ preload + DTO + electron.d.ts 三向一致
 
 **Wave 3** *(blocked on Wave 2)*
 - [ ] 09-03-PLAN.md — ReviewConfirmModal（宽 Modal master-detail + 质量门标红 + 批量提交）+ SessionMessagesModal（只读溯源叠层）+ useAIChat/AIPage/ChatInput 串联（待确认 Badge 角标入口）

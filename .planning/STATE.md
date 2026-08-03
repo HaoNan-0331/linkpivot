@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: AI 对话经验沉淀
 status: executing
-last_updated: "2026-08-03T16:49:47.628Z"
-last_activity: 2026-08-03
+last_updated: "2026-08-04T00:57:00+08:00"
+last_activity: 2026-08-04
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 8
-  completed_plans: 6
-  percent: 75
+  completed_plans: 7
+  percent: 88
 ---
 
 # STATE: network_toplogy
@@ -20,17 +20,17 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-01)
 
 - **Core Value**: 让运维人员在一个桌面工具内安全地掌握网络拓扑、远程操控设备并获得 AI 辅助分析。拓扑准确呈现与设备安全可控为最高优先级。
-- **Current Focus**: v1.1 AI 对话经验沉淀 — Phase 9（Human Review & Confirmation）执行中，09-01 服务层落地完成（experienceService.ts 新增 confirmDrafts/listDrafts/getSessionMessages 三函数 + 单事务原子 + service 层兜底质量门 + 不动 CR-01 update 白名单，2 commits 455721d/d307b75，三绿门禁 165 测试全绿），下一步 09-02（IPC 层注册 3 个 secure channel）
+- **Current Focus**: v1.1 AI 对话经验沉淀 — Phase 9（Human Review & Confirmation）执行中，09-02 IPC 网关层落地完成（experienceIpc.ts 注册 experience:confirmDrafts/listDrafts/getSessionMessages 3 个 secure channel + MAX_BATCH IPC 层双层防御 + preload 暴露 window.api.experience.* 3 API + src/types/experience.ts 5 renderer DTO + electron.d.ts 3 方法签名 + 三向一致 IPC↔preload↔d.ts，main.ts 无需改，3 commits f168ef1/9172476/9b8baec，三绿门禁 tsc+build+vitest 165/165 全绿），下一步 09-03（renderer 层弹窗 ReviewConfirmModal/SessionMessagesModal）
 - **Mode**: Vertical Feature Slices（按功能层分 phase：数据→起草→确认→浏览→检索，非 v1.0 的 Horizontal Layers）
 
 ## Current Position
 
 Phase: 09 (human-review-confirmation) — EXECUTING
-Plan: 2 of 3
-Status: Executing Phase 09（09-01 完成，下一步 09-02 IPC 层）
-Last activity: 2026-08-03
+Plan: 3 of 3
+Status: Executing Phase 09（09-01 + 09-02 完成，下一步 09-03 renderer 层弹窗）
+Last activity: 2026-08-04
 
-Progress: [████████░░] 75%
+Progress: [█████████░] 88%
 
 ## Performance Metrics
 
@@ -103,6 +103,13 @@ Phase 9 执行期决策（09-01 落地）：
 - [Phase 9]: 09-01 supersedeOld 默认 false（D-9-2，防 Phase 8 AI 误判 UPDATE 实为 ADD 误删有效旧条目），用户主动勾选才 invalidateExperience 旧条目；service 层兜底质量门（troubleshooting severity/symptoms/resolution + 轻结构 title/content 必填，与 renderer 标红三层纵深，T-09-01 mitigate）
 - [Phase 9]: 09-01 MemDb mock 增强（非业务，测试支撑）：transaction 加 ROLLBACK 语义（snapshot/restore 复刻 better-sqlite3 真实行为）+ UPDATE SET 分词改用括号/引号感知 tokenizer（处理 datetime('now','localtime') 内含逗号 + 'literal' 字符串字面量去引号）
 
+Phase 9 执行期决策（09-02 落地）：
+
+- [Phase 9]: 09-02 IPC 层 import MAX_BATCH（与 07-02 不同）——07-02 experience:list 透传 opts.limit 不二次校验（service 兜底），但 09-02 confirmDrafts 是写操作 + untrusted renderer 直接入参 drafts 数组，IPC 层加 MAX_BATCH 校验作双层防御（T-09-06），故 import MAX_BATCH 避免 noUnusedLocals 触发；两决策各自成立
+- [Phase 9]: 09-02 IPC 入参类型用 renderer DTO ConfirmDraftsInput（与现有 ExperienceInput import 同模式），service 内部接受同构 ExperienceUpdateFields，TS 结构化类型兼容无运行时开销；fields 复用 ExperienceUpdateInput（CR-01 白名单，不含 status）
+- [Phase 9]: 09-02 DraftSummary = Experience type alias（复用现有 DTO 不重复定义，与 Phase 7 ExperienceRelatedDevice = Device 同模式）
+- [Phase 9]: 09-02 三向一致 channel 名逐字相等（experienceIpc ↔ preload ↔ electron.d.ts），ai.getSessionMessages 与 experience.getSessionMessages namespace 隔离各占 1，grep 验证全 = 1
+
 v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 
 - 加密/迁移改动必须向后兼容历史数据（v1/v2 IV 兼容、迁移幂等守卫靠 sqlite_master 特征串不靠 user_version、throw 即 ROLLBACK）
@@ -116,6 +123,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 - [x] 08-02-PLAN.md — LLM 起草 service（draftSession 阶段A 纯起草 + judgeVerdicts 阶段B W-4 两阶段复判 + validateDrafts schema Gate + buildDraftingPrompt 反幻觉 + W-2 confidence 边界，TDD RED→GREEN 23 测试全绿，2 commits 253dda4/2ec666e，三绿门禁全绿 126 测试）
 - [x] 08-03-PLAN.md — IPC + 编排层串联（experienceDrafting.summarizeSessionForUi W-4 两阶段编排 + experience:summarizeSession secure IPC + preload/main/DTO/类型 + AIPage「经验总结」按钮 + useAIChat.handleSummarize，TDD RED→GREEN 10 测试全绿，4 commits 8cffc07/d146de5/e561a41/3e13788，三绿门禁全绿 136 测试）
 - [x] 09-01-PLAN.md — Phase 9 服务层 confirmDrafts/listDrafts/getSessionMessages 落地（扩 experienceService.ts 不新建 reviewService + 单事务原子 adopt/supersede/discard/设备 diff + service 层兜底质量门 troubleshooting severity/symptoms/resolution + 不动 CR-01 update 白名单 status 改变只走专用接口 + 复用 ai.ts getChatHistory 明文回链 D-9-5 + relateDevices 空/undefined 不动关联防默认值传播拆关联，2 commits 455721d/d307b75，19 新测试，三绿门禁全绿 165 测试全 PASS）
+- [x] 09-02-PLAN.md — Phase 9 IPC 网关层 + preload bridge + renderer DTO 落地（experienceIpc.ts 注册 experience:confirmDrafts/listDrafts/getSessionMessages 3 个 secure channel + IPC 层 MAX_BATCH 双层防御 + preload 暴露 window.api.experience.* 3 API + src/types/experience.ts 5 renderer DTO ConfirmDraftItem/ConfirmDraftsInput/ConfirmDraftsResult/DraftSummary/SessionMessage + electron.d.ts 3 方法签名 + 三向一致 IPC↔preload↔d.ts channel 名逐字相等 + main.ts 无需改 registerExperienceIpc 已注册，2 feat commits f168ef1/9172476 + 1 docs commit 9b8baec，三绿门禁 tsc+build:electron-main+vitest 165/165 全绿，无回归）
 
 ### Blockers/Concerns
 
@@ -139,6 +147,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 | Phase 8 P02 | ~3.5min | 1 tasks | 2 files |
 | Phase 08 P03 | ~7min | 3 tasks | 11 files |
 | Phase 09 P01 | ~6min | 2 tasks | 2 files |
+| Phase 09 P02 | ~7min | 2 tasks | 4 files |
 
 ### Risk Watch
 
@@ -173,8 +182,8 @@ v1.1 明确 defer 到二期（4 FUTURE，不进 roadmap）：
 
 ## Session Continuity
 
-- **Last action**: Completed 09-01-PLAN.md（Phase 9 服务层：experienceService.ts 新增 confirmDrafts 单事务原子 adopt/supersede/discard/设备 diff + service 层兜底质量门 troubleshooting severity/symptoms/resolution + listDrafts 复用 listExperiences status=draft 分支 + getSessionMessages 复用 ai.ts getChatHistory 明文回链 D-9-5 + 不动 CR-01 update 白名单 status 改变只走专用接口，2 commits feat 455721d + test d307b75，三绿门禁全绿 165 测试全 PASS）
-- **Next action**: 执行 09-02-PLAN.md（IPC 层：experienceIpc.ts 注册 experience:confirmDrafts/listDrafts/getSessionMessages 三个 secure channel + preload 暴露 + src/types/experience.ts DTO 对齐）
+- **Last action**: Completed 09-02-PLAN.md（Phase 9 IPC 网关层：experienceIpc.ts 注册 experience:confirmDrafts/listDrafts/getSessionMessages 3 个 secure channel + IPC 层 MAX_BATCH 双层防御 T-09-06 + preload 暴露 window.api.experience.* 3 API + src/types/experience.ts 5 renderer DTO + electron.d.ts 3 方法签名 + 三向一致 IPC↔preload↔d.ts + main.ts 无需改，3 commits f168ef1/9172476/9b8baec，三绿门禁 tsc+build+vitest 165/165 全绿无回归）
+- **Next action**: 执行 09-03-PLAN.md（renderer 层：ReviewConfirmModal 弹窗逐条编辑/勾选 + SessionMessagesModal 原始会话溯源 + 质量门硬校验 + 疑似重复提示，经 window.api.experience.* 调用）
 - **Resume command**: `/gsd-status`
 
 ## Phase → Requirement Map
