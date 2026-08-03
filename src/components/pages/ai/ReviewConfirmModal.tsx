@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Modal, Button, Tag, Checkbox, Spin, Empty, Form, Input, message } from 'antd'
+import { Modal, Button, Tag, Checkbox, Spin, Empty, message } from 'antd'
 import type {
   Experience,
   ExperienceUpdateInput,
@@ -7,13 +7,14 @@ import type {
   ConfirmDraftsResult,
 } from '@/types/experience'
 import SessionMessagesModal from './SessionMessagesModal'
+import ReviewConfirmEditForm from './ReviewConfirmEditForm'
 
 /**
  * ReviewConfirmModal —— Phase 9 人工确认主壳（红线③ session→permanent 唯一人工闸口的 renderer 执行点）。
  *
  * 宽 Modal（80vw）+ master-detail 左右分栏（D-9-3）：
  * - 左：草稿列表（Checkbox 采纳/丢弃 + Tag 标注 category/UPDATE + 质量门未过标红 + UPDATE 草稿显 supersedeOld Checkbox）
- * - 右：选中条目编辑表单（Task 2b 提取为 ReviewConfirmEditForm，本任务用内联最简占位 InlineEditFormPlaceholder）
+ * - 右：选中条目编辑表单（ReviewConfirmEditForm 子组件）
  *
  * 底部批量提交「确认采纳 N 条 + 丢弃 M 条」一次性调 confirmDrafts IPC（D-9-4 单事务原子）。
  * 质量门三层纵深第一层（renderer 实时校验标红 + 确认按钮禁用，REVIEW-02）。
@@ -267,7 +268,8 @@ export default function ReviewConfirmModal({
             {/* 右：编辑表单（选中条目）—— Task 2a 内联最简占位，Task 2b 替换为 ReviewConfirmEditForm */}
             <div style={{ flex: 1, overflowY: 'auto', maxHeight: 480 }}>
               {selectedDraft ? (
-                <InlineEditFormPlaceholder
+                <ReviewConfirmEditForm
+                  draft={selectedDraft}
                   decision={decisions[selectedDraft.id]}
                   onChange={(patch) => updateDecision(selectedDraft.id, patch)}
                   onViewSession={() =>
@@ -288,46 +290,5 @@ export default function ReviewConfirmModal({
         onClose={() => setSessionModalSessionId(null)}
       />
     </>
-  )
-}
-
-/**
- * InlineEditFormPlaceholder —— Task 2a 阶段最简占位（仅 title + content 受控，证明 decisions.fields 双向绑定链路通）。
- * Task 2b 提取完整版到 ReviewConfirmEditForm.tsx 后由主壳 import 替换本占位（届时删除本函数）。
- */
-function InlineEditFormPlaceholder({
-  decision,
-  onChange,
-  onViewSession,
-}: {
-  decision: DraftDecision | undefined
-  onChange: (patch: DecisionPatch) => void
-  onViewSession: () => void
-}) {
-  if (!decision) return null
-  return (
-    <Form layout="vertical">
-      <Form.Item label="标题">
-        <Input
-          value={decision.fields.title ?? ''}
-          onChange={(e) =>
-            onChange({ fields: { title: e.target.value } as ExperienceUpdateInput })
-          }
-        />
-      </Form.Item>
-      <Form.Item label="内容">
-        <Input.TextArea
-          value={decision.fields.content ?? ''}
-          rows={4}
-          onChange={(e) =>
-            onChange({ fields: { content: e.target.value } as ExperienceUpdateInput })
-          }
-        />
-      </Form.Item>
-      <Button onClick={onViewSession}>查看原始会话</Button>
-      <div style={{ marginTop: 8, fontSize: 12, color: '#999' }}>
-        （完整编辑表单由 Task 2b ReviewConfirmEditForm 落地后接线）
-      </div>
-    </Form>
   )
 }
