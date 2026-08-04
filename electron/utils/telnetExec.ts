@@ -11,7 +11,8 @@ import iconv from 'iconv-lite'
  * 设计说明：
  * - 自有 setTimeout 包 connect+exec 整体（telnet-client 库级 connect.timeout/execTimeout 在
  *   网络层挂起时不完全可靠），与 executeSSH 外层兜底对齐，使两协议同构。
- * - finally 清 timer + end（优雅），timeout 路径已 destroy 则幂等（destroy 之后再 end/destroy 无害）。
+ * - finally 清 timer；非 timeout 路径走 end（优雅发 EOF），timeout 路径（已 destroy）跳过 end
+ *   直接幂等 destroy（WR-07：避免 socket 已 destroy 后再 end 的时序耦合脆弱度）。
  *   telnet-client end() 是 async（发 EOF 包），未 await 即返回则紧接 destroy 可能使 EOF 写入失败，
  *   故 finally 回调为 async，外层 await 会等待 Promise.prototype.finally 的 async 回调。
  */
@@ -119,6 +120,10 @@ export async function executeTelnetCommand(
       reject(new Error(`Telnet timeout after ${timeout}ms`))
     }, timeout)
 
+    // IN-03：双 reject 路径安全说明——本 IIFE catch 内 reject(err) 与 timer 的 reject(timeout)
+    // 是两条独立 reject 路径。Promise 规范保证首次 reject 后 settled，二次调 reject/resolve 被忽略无害。
+    // 场景：timer 先 destroy + reject(timeout)，IIFE 内 await connection.exec 才抛「socket destroyed」
+    // → catch → reject(err)（被忽略），无双重结算风险。
     ;(async () => {
       try {
         await connection.connect({
@@ -141,8 +146,14 @@ export async function executeTelnetCommand(
     })()
   }).finally(async () => {
     if (timer) clearTimeout(timer)
-    try { await connection.end() } catch { /* ignore */ }
-    if (timedOut) { try { connection.destroy() } catch { /* ignore */ } }
+    // WR-07：timedOut 路径已 destroy（timeout 兜底分支内 connection.destroy()），不再发 EOF（end）。
+    // 旧实现对所有路径都 await end() 再二次 destroy——依赖 telnet-client end() 在 socket 已 destroy
+    // 时幂等。改：timedOut 直接 destroy 幂等；非 timedOut 走优雅 end() 发 EOF。降低时序耦合脆弱度。
+    if (!timedOut) {
+      try { await connection.end() } catch { /* ignore */ }
+    } else {
+      try { connection.destroy() } catch { /* ignore */ }
+    }
   })
 
   if (!rawOutputIsBuffer) return result
