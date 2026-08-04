@@ -51,12 +51,12 @@ export function validateDraft(d: Experience, fields: ExperienceUpdateInput): str
   const cat = fields.category ?? d.category
   const attrs = fields.attrs ?? d.attrs
   if (cat === 'troubleshooting') {
-    if (!attrs || !attrs.severity) errs.push('缺 severity')
-    if (!attrs || !attrs.symptoms || !String(attrs.symptoms).trim()) errs.push('缺 symptoms')
-    if (!attrs || !attrs.resolution || !String(attrs.resolution).trim()) errs.push('缺 resolution')
+    if (!attrs || !attrs.severity) errs.push('缺 严重程度')
+    if (!attrs || !attrs.symptoms || !String(attrs.symptoms).trim()) errs.push('缺 故障现象')
+    if (!attrs || !attrs.resolution || !String(attrs.resolution).trim()) errs.push('缺 解决办法')
   } else {
-    if (!fields.title || !String(fields.title).trim()) errs.push('缺 title')
-    if (!fields.content || !String(fields.content).trim()) errs.push('缺 content')
+    if (!fields.title || !String(fields.title).trim()) errs.push('缺 标题')
+    if (!fields.content || !String(fields.content).trim()) errs.push('缺 内容')
   }
   return errs
 }

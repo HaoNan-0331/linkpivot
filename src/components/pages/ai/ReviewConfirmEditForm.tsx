@@ -35,11 +35,11 @@ const CATEGORY_OPTIONS: Array<{ value: ExperienceCategory; label: string }> = [
 ]
 
 const SEVERITY_OPTIONS: Array<{ value: NonNullable<ExperienceAttrs['severity']>; label: string }> = [
-  { value: 'critical', label: 'critical' },
-  { value: 'high', label: 'high' },
-  { value: 'medium', label: 'medium' },
-  { value: 'low', label: 'low' },
-  { value: 'info', label: 'info' },
+  { value: 'critical', label: '致命' },
+  { value: 'high', label: '高' },
+  { value: 'medium', label: '中' },
+  { value: 'low', label: '低' },
+  { value: 'info', label: '提示' },
 ]
 
 export default function ReviewConfirmEditForm({
@@ -71,7 +71,7 @@ export default function ReviewConfirmEditForm({
 
   return (
     <Form layout="vertical">
-      <Form.Item label="标题" validateStatus={errs.includes('缺 title') ? 'error' : ''} help={errs.includes('缺 title') ? '缺 title' : ''}>
+      <Form.Item label="标题" validateStatus={errs.includes('缺 标题') ? 'error' : ''} help={errs.includes('缺 标题') ? '缺 标题' : ''}>
         <Input
           value={decision.fields.title ?? ''}
           onChange={(e) => onChange({ fields: { title: e.target.value } as ExperienceUpdateInput })}
@@ -88,8 +88,8 @@ export default function ReviewConfirmEditForm({
       </Form.Item>
       <Form.Item
         label="内容"
-        validateStatus={errs.includes('缺 content') ? 'error' : ''}
-        help={errs.includes('缺 content') ? '缺 content' : ''}
+        validateStatus={errs.includes('缺 内容') ? 'error' : ''}
+        help={errs.includes('缺 内容') ? '缺 内容' : ''}
       >
         <Input.TextArea
           value={decision.fields.content ?? ''}
@@ -109,9 +109,9 @@ export default function ReviewConfirmEditForm({
       {cat === 'troubleshooting' && (
         <>
           <Form.Item
-            label="severity"
-            validateStatus={errs.includes('缺 severity') ? 'error' : ''}
-            help={errs.includes('缺 severity') ? '缺 severity' : ''}
+            label="严重程度"
+            validateStatus={errs.includes('缺 严重程度') ? 'error' : ''}
+            help={errs.includes('缺 严重程度') ? '缺 严重程度' : ''}
           >
             <Select
               value={attrs.severity}
@@ -121,9 +121,9 @@ export default function ReviewConfirmEditForm({
             />
           </Form.Item>
           <Form.Item
-            label="symptoms"
-            validateStatus={errs.includes('缺 symptoms') ? 'error' : ''}
-            help={errs.includes('缺 symptoms') ? '缺 symptoms' : ''}
+            label="故障现象"
+            validateStatus={errs.includes('缺 故障现象') ? 'error' : ''}
+            help={errs.includes('缺 故障现象') ? '缺 故障现象' : ''}
           >
             <Input.TextArea
               value={attrs.symptoms ?? ''}
@@ -131,7 +131,7 @@ export default function ReviewConfirmEditForm({
               onChange={(e) => patchAttr('symptoms', e.target.value)}
             />
           </Form.Item>
-          <Form.Item label="root_cause">
+          <Form.Item label="根本原因">
             <Input.TextArea
               value={attrs.root_cause ?? ''}
               rows={2}
@@ -139,9 +139,9 @@ export default function ReviewConfirmEditForm({
             />
           </Form.Item>
           <Form.Item
-            label="resolution"
-            validateStatus={errs.includes('缺 resolution') ? 'error' : ''}
-            help={errs.includes('缺 resolution') ? '缺 resolution' : ''}
+            label="解决办法"
+            validateStatus={errs.includes('缺 解决办法') ? 'error' : ''}
+            help={errs.includes('缺 解决办法') ? '缺 解决办法' : ''}
           >
             <Input.TextArea
               value={attrs.resolution ?? ''}
@@ -149,7 +149,7 @@ export default function ReviewConfirmEditForm({
               onChange={(e) => patchAttr('resolution', e.target.value)}
             />
           </Form.Item>
-          <Form.Item label="prevention">
+          <Form.Item label="预防措施">
             <Input.TextArea
               value={attrs.prevention ?? ''}
               rows={2}
