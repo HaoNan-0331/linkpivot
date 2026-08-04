@@ -98,6 +98,14 @@ export function useAIChat(): UseAIChatReturn {
       )
       if (hasConfig) {
         await loadSessions()
+        // WR-01：同步既有暂存 draft 计数（D-9-7 角标初始化）
+        // 首次 mount/重进页面时 listDrafts 拉取已存在 draft，避免角标为 0 使「待确认 N 条」入口形同虚设
+        try {
+          const remaining = await window.api.experience.listDrafts()
+          setPendingDraftCount(remaining.length)
+        } catch {
+          setPendingDraftCount(0)
+        }
       }
     } catch {
       // ignore —— 守卫已由编排层 configLoading 兜底
