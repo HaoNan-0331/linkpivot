@@ -281,6 +281,27 @@ function pickDisablePaginationCmd(vendor: string | undefined | null): string {
   return 'screen-length 0 temporary'
 }
 
+/**
+ * 按 device.vendor 选 telnet 命令结束判定的 shellPrompt。
+ * Root cause（debug 260804）：华为配置用裸 # 做段落分隔，默认 /[>#]/ 会在配置的 # 处误匹配致 exec 提前 resolve 截断。
+ * 华为/H3C/默认 → 只匹配真实 prompt <hostname>/[hostname]（配置无 <>/[]，不误匹配）；
+ * 思科/锐捷 → \S[>#]（配置用 ! 分隔，# 即真实 prompt，要求 # 前有 hostname 字符，不匹配行首裸 #）。
+ */
+function pickShellPrompt(vendor: string | undefined | null): RegExp {
+  const v = String(vendor || '').toLowerCase()
+  if (v.includes('huawei') || v.includes('h3c')) {
+    // 华为/H3C：真实 prompt <hostname>（用户视图）/ [hostname]（系统视图），配置无 <>/[]，严格匹配绝不误判裸 #
+    return /(<[^>]+>|\[[^\]]+\])/
+  }
+  if (v.includes('cisco') || v.includes('ruijie')) {
+    // 思科/锐捷：配置用 ! 分隔（无裸 #），prompt hostname# / hostname>，要求 #/> 前有 hostname
+    return /\S[>#]/
+  }
+  // 未知/缺失 vendor 通用兜底：覆盖 <host>/[host]/host#/host> 所有主流厂商 prompt 格式，
+  // 换设备/换厂商（含 Juniper/Arista 等未来新增）自动适配，仍不匹配行首裸 #。已知厂商走精确分支更稳。
+  return /(<[^>]+>|\[[^\]]+\]|\S[>#])/
+}
+
 function buildSSHConfig(device: any): ConnectConfig {
   const cfg: ConnectConfig = {
     host: device.ipAddress,
@@ -320,6 +341,7 @@ export function executeCommandsOnDevice(
   // telnet 长输出（display current-configuration 等）默认 ---- More ---- 分页，telnet-client exec 不自动翻页会截断第一屏。
   // exec 真命令前先发关闭分页命令（按 vendor 选），由 executeTelnetCommand 内部 connect 后发出。
   const paginationCmd = isTelnet ? pickDisablePaginationCmd(device.vendor) : undefined
+  const shellPrompt = isTelnet ? pickShellPrompt(device.vendor) : undefined
 
   // SSH-only config（telnet 路径不用）
   const cfg = buildSSHConfig(device)
@@ -344,7 +366,7 @@ export function executeCommandsOnDevice(
           device.ipAddress, tport,
           device.username || '', device.password || '',
           cmd,
-          { timeout: overallTimeout, decodeGbk: true, stripAnsi: true, disablePaginationCmd: paginationCmd }
+          { timeout: overallTimeout, decodeGbk: true, stripAnsi: true, disablePaginationCmd: paginationCmd, shellPrompt }
         ).then((output) => {
           resolve({ command: cmd, output: output.trim(), success: true })
         }).catch((err: any) => {

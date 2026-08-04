@@ -25,6 +25,8 @@ export interface TelnetExecOptions {
   stripAnsi?: boolean
   /** exec 真命令前先发这条命令关闭分页（如华为 screen-length 0 temporary / 思科 terminal length 0），忽略其输出与不支持错误，不阻断主命令 */
   disablePaginationCmd?: string
+  /** 覆盖 connect 的 shellPrompt（命令结束判定）。华为/H3C 长输出含裸 # 段落分隔，默认 /[>#]/ 会误匹配截断，需传精确 prompt（如 /(<[^>]+>|\[[^\]]+\])/）。默认 /[>#]/ */
+  shellPrompt?: RegExp
 }
 
 function stripAnsiString(str: string): string {
@@ -65,6 +67,7 @@ export async function executeTelnetCommand(
   const decodeGbk = options.decodeGbk ?? false
   const stripAnsiFlag = options.stripAnsi ?? false
   const disablePaginationCmd = options.disablePaginationCmd
+  const shellPrompt = options.shellPrompt
   const rawOutputIsBuffer = decodeGbk || stripAnsiFlag
 
   const connection = new Telnet()
@@ -85,8 +88,8 @@ export async function executeTelnetCommand(
           host, port, timeout, username, password,
           loginPrompt: /Username:|login:/i,
           passwordPrompt: /Password:/i,
-          shellPrompt: /[>#]/,
-          echoLines: 0, stripShellPrompt: true, execTimeout: timeout, newlineReplace: true,
+          shellPrompt: shellPrompt ?? /[>#]/,
+          echoLines: 0, stripShellPrompt: true, execTimeout: timeout,
         })
         // 关闭分页（华为 screen-length 0 temporary / 思科 terminal length 0）：长输出（display current-configuration 等）
         // 默认 ---- More ---- 分页，telnet-client exec 不自动翻页会截断在第一屏。忽略分页命令输出与不支持错误，不阻断主命令。

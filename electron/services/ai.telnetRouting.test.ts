@@ -179,23 +179,45 @@ describe('executeCommandsOnDevice — connectionType 分流', () => {
     expect(sshClientCtor).not.toHaveBeenCalled()
   })
 
-  it('telnet 设备按 vendor 选关闭分页命令（华为 → screen-length 0 temporary）', async () => {
+  it('telnet 华为：关分页命令 + 精确 shellPrompt（匹配 <host>/[host]，不匹配裸 #）', async () => {
     const device = {
       ipAddress: '10.7.8.252', connectionType: 'telnet', port: 23,
       username: 'admin', password: 'secret', vendor: 'Huawei',
     }
     telnetExecSpy.mockResolvedValue('full config output')
     await executeCommandsOnDevice(device, ['display current-configuration'])
-    expect(telnetExecSpy.mock.calls[0][5]).toMatchObject({ disablePaginationCmd: 'screen-length 0 temporary' })
+    const opts: any = telnetExecSpy.mock.calls[0][5]
+    expect(opts).toMatchObject({ disablePaginationCmd: 'screen-length 0 temporary' })
+    expect(opts.shellPrompt).toBeInstanceOf(RegExp)
+    expect(opts.shellPrompt.test('<Core2>')).toBe(true)
+    expect(opts.shellPrompt.test('[Core2]')).toBe(true)
+    expect(opts.shellPrompt.test('#')).toBe(false)
   })
 
-  it('telnet 设备按 vendor 选关闭分页命令（思科 → terminal length 0）', async () => {
+  it('telnet 思科：关分页命令 + shellPrompt（匹配 hostname#，不匹配裸 #）', async () => {
     const device = {
       ipAddress: '10.0.0.10', connectionType: 'telnet', port: 23,
       username: 'admin', password: 'secret', vendor: 'Cisco',
     }
     telnetExecSpy.mockResolvedValue('full config output')
     await executeCommandsOnDevice(device, ['show running-config'])
-    expect(telnetExecSpy.mock.calls[0][5]).toMatchObject({ disablePaginationCmd: 'terminal length 0' })
+    const opts: any = telnetExecSpy.mock.calls[0][5]
+    expect(opts).toMatchObject({ disablePaginationCmd: 'terminal length 0' })
+    expect(opts.shellPrompt).toBeInstanceOf(RegExp)
+    expect(opts.shellPrompt.test('Core2#')).toBe(true)
+    expect(opts.shellPrompt.test('#')).toBe(false)
+  })
+
+  it('telnet vendor 缺失走通用 shellPrompt（覆盖 <host>/[host]/host#，不匹配裸 #）', async () => {
+    const device = { ipAddress: '10.0.0.20', connectionType: 'telnet', port: 23, username: 'a', password: 'b' }
+    telnetExecSpy.mockResolvedValue('out')
+    await executeCommandsOnDevice(device, ['show run'])
+    const opts: any = telnetExecSpy.mock.calls[0][5]
+    expect(opts.shellPrompt).toBeInstanceOf(RegExp)
+    expect(opts.shellPrompt.test('<Core2>')).toBe(true)
+    expect(opts.shellPrompt.test('[Core2]')).toBe(true)
+    expect(opts.shellPrompt.test('Core2#')).toBe(true)
+    expect(opts.shellPrompt.test('Core2>')).toBe(true)
+    expect(opts.shellPrompt.test('#')).toBe(false)
   })
 })
