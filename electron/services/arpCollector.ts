@@ -1,10 +1,10 @@
 import { Client } from 'ssh2'
-import { Telnet } from 'telnet-client'
 import { getDatabase } from '../database/connection'
 import { ARPParser } from './arpParser'
 import { encField, decField } from '../utils/crypto'
 import { listDevices } from './device'
 import { SSH_READY_TIMEOUT_MS, SSH_ALGORITHMS } from '../utils/sshConfig'
+import { executeTelnetCommand } from '../utils/telnetExec'
 
 let MK = ''
 export function setArpMasterKey(key: string) { MK = key }
@@ -74,45 +74,8 @@ async function executeSSH(host: string, port: number, username: string, password
   })
 }
 
-async function executeTelnet(host: string, port: number, username: string, password: string, command: string, timeout: number = 30000): Promise<string> {
-  const connection = new Telnet()
-  // D-6-1：补自有 setTimeout 包 connect+exec 整体（telnet-client 库级 connect.timeout/execTimeout 在网络层挂起时不完全可靠，
-  // 与 executeSSH 外层兜底对齐，使两协议同构）。
-  let timer: NodeJS.Timeout | undefined
-  let timedOut = false
-  const result = await new Promise<string>((resolve, reject) => {
-    timer = setTimeout(() => {
-      timedOut = true
-      // timeout 兜底：destroy 强制销毁 socket（telnet-client end 优雅，destroy 强制）
-      try { connection.destroy() } catch { /* ignore */ }
-      reject(new Error(`Telnet timeout after ${timeout}ms`))
-    }, timeout)
-
-    ;(async () => {
-      try {
-        await connection.connect({
-          host, port, timeout, username, password,
-          loginPrompt: /Username:|login:/i,
-          passwordPrompt: /Password:/i,
-          shellPrompt: /[>#]/,
-          echoLines: 0, stripShellPrompt: true, execTimeout: timeout, newlineReplace: true,
-        })
-        const out = await connection.exec(command)
-        resolve(out)
-      } catch (err) {
-        reject(err)
-      }
-    })()
-  }).finally(async () => {
-    // D-6-2 finally：清 timer + end（优雅），timeout 路径已 destroy 则幂等（destroy 之后再 end/destroy 无害）
-    // WR-01: telnet-client end() 是 async（发 EOF 包），未 await 即返回则紧接 destroy 可能让 EOF 写入失败；
-    // 与 D-6-2 line 43 决策语义对齐——finally 回调改 async，外层 await 会等待 Promise.prototype.finally 的 async 回调。
-    if (timer) clearTimeout(timer)
-    try { await connection.end() } catch { /* ignore */ }
-    if (timedOut) { try { connection.destroy() } catch { /* ignore */ } }
-  })
-  return result
-}
+// executeTelnet 已抽取为共用 util（electron/utils/telnetExec.ts），见 executeTelnetCommand。
+// arpCollector 走原始输出（不做 gbk/ANSI 处理），由 ARPParser 自行解析。
 
 export class ARPCollector {
   private concurrency: number
@@ -134,7 +97,7 @@ export class ARPCollector {
       if (device.connectionType === 'ssh') {
         output = await executeSSH(device.ipAddress, device.port || 22, device.username, device.password, command, this.timeout)
       } else {
-        output = await executeTelnet(device.ipAddress, device.port || 23, device.username, device.password, command, this.timeout)
+        output = await executeTelnetCommand(device.ipAddress, device.port || 23, device.username, device.password, command, { timeout: this.timeout })
       }
       result.entries = ARPParser.parse(output, device.vendor)
     } catch (error) {

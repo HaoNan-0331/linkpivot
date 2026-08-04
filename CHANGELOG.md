@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## 2026-08-04 fix(09): AI executeCommandsOnDevice 按 connectionType 分流 telnet/ssh
+
+- **根因（debug: ai-telnet-exec-routing）**：`electron/services/ai.ts` `executeCommandsOnDevice` 历史无条件 `buildSSHConfig` 走 SSH（端口 22），无视 `device.connectionType`，对 telnet 设备 `ECONNREFUSED`。telnet 自动化 exec 能力已存在于 `arpCollector.executeTelnet`（telnet-client），AI 执行层漏接。
+- **修复**：`runOne` 按 `device.connectionType` 分流——telnet（大小写不敏感）走共用 util `executeTelnetCommand`，ssh（含默认/缺省）保留原 `buildSSHConfig + client.exec + execOne` 路径不动（密钥/密码 + stream silence/retry/H3C 粘连语义全保留）。
+- **共用 util 抽取（消除重复）**：新增 `electron/utils/telnetExec.ts`（telnet-client connect `loginPrompt/PasswordPrompt/shellPrompt` + exec + 自有 timeout 兜底 + finally cleanup + 可选 gbk 解码/ANSI 剥离）；`arpCollector.executeTelnet` 改薄壳调 util，消除 arpCollector/ai.ts 双份。
+- **安全**：`checked` 安全层数组（`isCommandAllowed`）两路径共用，无新增注入面；telnet 输出后处理 `decodeGbk + stripAnsi` 与 SSH 路径 `decodeDeviceBuffer + stripAnsi` 对齐。
+- **测试**：新增 `electron/services/ai.telnetRouting.test.ts`（7 cases）——mock telnet-client（经共用 util spy）+ ssh2 Client（真 class），断言 telnet 分流不实例化 ssh2 Client / ssh 分流不调 telnet / 端口缺省回退 23 / 大小写不敏感 / 空命令短路 / telnet 抛错首条 reject 整批。
+- **三绿门禁**：`tsc -p tsconfig.web.json --noEmit` exit 0 / `npm run build:electron-main` exit 0（dist-electron/main.js 1.9mb）/ `npx vitest run` 172 PASS（原 165 + 新增 7，无回归）。
+
 ## Phase 8（v1.1 开发）- AI Drafting Pipeline（DRAFT-01~04）
 
 ### 端到端经验总结 pipeline（08-01/02/03 + code review fix）

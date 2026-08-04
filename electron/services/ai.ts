@@ -6,6 +6,7 @@ import { getDatabase } from '../database/connection'
 import { encField, decField } from '../utils/crypto'
 import { verifyPasswordSync } from '../utils/crypto'
 import { SSH_READY_TIMEOUT_MS, SSH_ALGORITHMS } from '../utils/sshConfig'
+import { executeTelnetCommand } from '../utils/telnetExec'
 import { isCommandAllowed } from './commandSafety'
 import { createLog, updateLogStatus, appendLogAiResponse, getLogs, setAiExecLoggerMasterKey } from './aiExecLogger'
 import { search as kbSearch } from './knowledgeBaseService'
@@ -262,7 +263,7 @@ function stripAnsi(str: string): string {
 
 function decodeDeviceBuffer(data: Buffer): string {
   const text = data.toString('utf-8')
-  if (!text.includes('\ufffd')) return text
+  if (!text.includes('�')) return text
   return iconv.decode(data, 'gbk')
 }
 
@@ -301,16 +302,18 @@ export function executeCommandsOnDevice(
     return { cmd, allowed: safety.allowed, reason: safety.reason }
   })
 
-  // exec-cmd-concat 修复：H3C SSH server 把 exec request 的命令通过 vty 逐字符注入 console，
-  // 历史实现在【单个 SSH 连接（同一 client）上串行 client.exec 多条命令】，前一条命令字符串尾部字符
-  // 尚未被设备 console 消费完毕，下一条 exec 即追加注入，致命令字符串粘连（display arp → display arpp neighbor-information list）。
-  // 改为【每条命令独立 SSH 连接】：不同 session = 不同 vty，物理隔离，彻底杜绝粘连。
-  // 仍用 exec（非 PTY），不引入注入面，不改白名单 / 安全模型；execOne 的 stream silence/retry/timeout 逻辑保持不变。
-  // 代价：握手次数 = 命令数（单设备 5 条约 10s，远好于历史卡顿）。
+  // connectionType 分流：ssh（含默认）走 buildSSHConfig + client.exec + execOne（密钥/密码、stream silence/retry/H3C 粘连全保留）；
+  // telnet 走 executeTelnetCommand（共用 util，telnet-client connect loginPrompt/PasswordPrompt/shellPrompt + exec + gbk + ANSI + 超时兜底）。
+  // 安全层 checked 数组两路径共用，无新增注入面。
+  const isTelnet = String(device.connectionType || '').toLowerCase() === 'telnet'
+
+  // SSH-only config（telnet 路径不用）
   const cfg = buildSSHConfig(device)
   const overallTimeout = 30000 + checked.length * (SSH_READY_TIMEOUT_MS + 15000)
 
-  // runOne：单命令独立 SSH 连接 —— new Client → connect → ready 后 execOne → end 回收。
+  // runOne：按 connectionType 分流单命令执行。
+  // SSH 路径：单命令独立连接 —— new Client → connect → ready 后 execOne → end 回收。
+  // Telnet 路径：每命令独立 Telnet 实例（executeTelnetCommand 内 connect+exec+cleanup），与 SSH「每命令独立连接」同构。
   // 返回该命令结果；连接失败/超时抛出由调用方决定（首条抛出 → reject 整批；后续抛出 → 填充 success:false 不中断）。
   const runOne = (idx: number): Promise<{ command: string; output: string; success: boolean }> => {
     return new Promise((resolve, reject) => {
@@ -319,6 +322,25 @@ export function executeCommandsOnDevice(
         resolve({ command: cmd, output: `命令被安全策略拒绝: ${reason}`, success: false })
         return
       }
+
+      // ---- Telnet 分流：复用共用 util，输出 gbk 解码 + ANSI 剥离（与 SSH 路径 execOne 内 decodeDeviceBuffer + stripAnsi 对齐） ----
+      if (isTelnet) {
+        const tport = device.port || 23
+        executeTelnetCommand(
+          device.ipAddress, tport,
+          device.username || '', device.password || '',
+          cmd,
+          { timeout: overallTimeout, decodeGbk: true, stripAnsi: true }
+        ).then((output) => {
+          resolve({ command: cmd, output: output.trim(), success: true })
+        }).catch((err: any) => {
+          // telnet 连接/执行失败：抛出由外层决定（首条 reject 整批，后续填 success:false）—— 与 SSH 路径 client.on('error') 同语义
+          reject(err instanceof Error ? err : new Error(String(err)))
+        })
+        return
+      }
+
+      // ---- SSH 路径（默认） ----
       const client = new Client()
       let settled = false
       let perCmdTimer: NodeJS.Timeout | undefined
