@@ -34,5 +34,23 @@ exec 真命令前先发「关闭分页」命令（运维自动化标准做法）
 ## 安全
 `screen-length 0 temporary` / `terminal length 0` 是只读会话级配置命令（仅本 telnet 会话关分页，退出恢复），util 内部发不经 AI 命令白名单（与 arpCollector 直接发 getARPCommand 同模式）。
 
-## 待实机验证
-用户设备「公司」华为 telnet，`display current-configuration` 应拿完整配置（接口/VLAN/路由）。若仍截断，下一步精确化 shellPrompt（区分「配置里的 # 段落分隔」与「prompt 的 hostname#」）。
+## 实机验证（第一轮分页修复后仍截断 → 源码取证）
+
+实机验证发现 `display current-configuration` 仍截断（只第一屏）。加临时诊断日志取证，**推翻分页假设**：`hasMore=false`（screen-length 0 temporary 已生效，无 `---- More ----`），不是分页问题。
+
+**第二轮源码取证锁定真因**（telnet-client `index.js:394`）：exec 在**累积 buffer** 里 `search(shellPrompt)`，`/[>#]/` 在华为配置裸 `#` 段落分隔处 `promptIndex>=0` → 提前 resolve → **跳过 pageSeparator 自动翻页分支**（翻页只在 `promptIndex<0` 时触发）→ 截断第一屏。叠加 `newlineReplace: true` bug（`response.join(true)` 把布尔转字符串 `"true"` 当分隔符，`index.js:232`）。
+
+## 第二轮修复（commit 913aade，截断真因）
+
+1. **shellPrompt 按 vendor 精确化**：华为/H3C `/(<[^>]+>|\[[^\]]+\])/` 只匹配 `<host>`/`[host]` 真实 prompt 不匹配裸 `#`；思科/锐捷 `/\S[>#]/`；**未知 vendor 通用兜底** `/(<[^>]+>|\[[^\]]+\]|\S[>#])/` 覆盖所有主流 prompt 格式（换设备/换厂商自动适配）
+2. **去掉 `newlineReplace: true`**（fallback `'\n'`）
+3. `telnetExec` 加 `shellPrompt` 选项；`ai.ts` `pickShellPrompt` helper；test 补华为/思科/default 通用 shellPrompt 行为断言
+
+实机验证：`display current-configuration` **完整返回**（接口/VLAN/路由/aaa 齐全）。vitest 175 全绿。
+
+## 两轮修复的关系
+- 第一轮（`534fdc9`）`disablePaginationCmd`：关分页减少翻页往返（screen-length 生效验证），**保留**——性能优化 + 设备不支持 screen-length 时让 pageSeparator 自动翻页接管
+- 第二轮（`913aade`）shellPrompt 精确化 + 去 newlineReplace bug：**截断真因，必装**
+
+## 教训
+第一轮基于「分页」假设盲改（违反 systematic-debugging root cause first），实测失败后才源码取证找到 shellPrompt 真因。诊断日志（临时 instrumentation）是区分假设的关键——`hasMore=false` 一行数据推翻了分页假设。

@@ -148,7 +148,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 | Phase 08 P03 | ~7min | 3 tasks | 11 files |
 | Phase 09 P01 | ~6min | 2 tasks | 2 files |
 | Phase 09 P02 | ~7min | 2 tasks | 4 files |
-| 260804-t2q | fix telnet 长输出分页截断（华为 ---- More ----） | 2026-08-04 | 534fdc9 | [260804-t2q-fix-telnet-long-output-pagination-trunca](./quick/260804-t2q-fix-telnet-long-output-pagination-trunca/) |
+| 260804-t2q | fix telnet 长输出截断（分页 + shellPrompt 精确化） | 2026-08-04 | 534fdc9/913aade | [260804-t2q-fix-telnet-long-output-pagination-trunca](./quick/260804-t2q-fix-telnet-long-output-pagination-trunca/) |
 
 ### Risk Watch
 

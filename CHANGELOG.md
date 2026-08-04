@@ -17,6 +17,14 @@
 - **测试**：`ai.telnetRouting.test.ts` 补 2 case（华为/思科 vendor 选对分页命令），三绿门禁 vitest 174 PASS（原 172 + 新 2，无回归）。
 - **延续**：ai-telnet-exec-routing debug（commit 8df4166 修连接路由）的输出完整性延续修复。
 
+## 2026-08-04 fix(ai): telnet shellPrompt 精确化（截断真因）+ 去 newlineReplace bug（quick 260804-t2q 第二轮）
+
+- **真因（源码锁定）**：telnet-client `index.js:394` exec 在累积 buffer `search(shellPrompt)`，`/[>#]/` 在华为配置裸 `#` 段落分隔处 `promptIndex>=0` → 提前 resolve 跳过 pageSeparator 自动翻页 → 截断第一屏。**不是分页**（screen-length + pageSeparator 翻页均正常，hasMore=false）。叠加 `newlineReplace: true` bug（`response.join(true)` 把布尔转 `"true"` 当分隔符，`index.js:232`）。
+- **修复**：① shellPrompt 按 vendor 精确化——华为/H3C `/(<[^>]+>|\[[^\]]+\])/` 只匹配 `<host>`/`[host]` 不匹配裸 `#`；思科/锐捷 `/\S[>#]/`；**未知 vendor 通用兜底**覆盖所有主流 prompt 格式（换设备/换厂商自动适配）。② 去掉 `newlineReplace: true`（fallback `'\n'`）。③ `telnetExec` 加 `shellPrompt` 选项；`ai.ts` `pickShellPrompt` helper。
+- **取证方法**：第一轮分页修复实测仍截断 → 加临时诊断日志 → `hasMore=false` 推翻分页假设 → 源码取证找到 shellPrompt 真因（systematic-debugging root cause first）。
+- **测试**：补华为/思科/default 通用 shellPrompt 行为断言，vitest 175 全绿；用户实机验证 `display current-configuration` 完整返回。
+- **两轮关系**：第一轮 `534fdc9` disablePaginationCmd（关分页优化，保留）+ 第二轮 `913aade` shellPrompt 精确化（截断真因，必装）。
+
 ## Phase 8（v1.1 开发）- AI Drafting Pipeline（DRAFT-01~04）
 
 ### 端到端经验总结 pipeline（08-01/02/03 + code review fix）
