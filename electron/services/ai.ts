@@ -6,7 +6,7 @@ import { getDatabase } from '../database/connection'
 import { encField, decField } from '../utils/crypto'
 import { verifyPasswordSync } from '../utils/crypto'
 import { SSH_READY_TIMEOUT_MS, SSH_ALGORITHMS } from '../utils/sshConfig'
-import { executeTelnetCommand } from '../utils/telnetExec'
+import { executeTelnetCommand, pickDisablePaginationCmd, pickShellPrompt } from '../utils/telnetExec'
 import { isCommandAllowed } from './commandSafety'
 import { createLog, updateLogStatus, appendLogAiResponse, getLogs, setAiExecLoggerMasterKey } from './aiExecLogger'
 import { search as kbSearch } from './knowledgeBaseService'
@@ -269,38 +269,10 @@ function decodeDeviceBuffer(data: Buffer): string {
 
 // （已移除交互式 shell 的 prompt 检测/输出提取函数）
 // 命令执行改为 client.exec 非交互模式，不再需要 isPromptLine / detectPrompt / extractCommandOutput。
-
-/**
- * 按 device.vendor 选 telnet 关闭分页命令（长输出 display current-configuration 等防 ---- More ---- 截断）。
- * cisco/锐捷 → terminal length 0；华为/H3C/默认 → screen-length 0 temporary。
- * 命令仅本 telnet 会话关分页（退出恢复），util 内部发不经 AI 命令白名单（与 arpCollector 直接发采集命令同模式）。
- */
-function pickDisablePaginationCmd(vendor: string | undefined | null): string {
-  const v = String(vendor || '').toLowerCase()
-  if (v.includes('cisco') || v.includes('ruijie')) return 'terminal length 0'
-  return 'screen-length 0 temporary'
-}
-
-/**
- * 按 device.vendor 选 telnet 命令结束判定的 shellPrompt。
- * Root cause（debug 260804）：华为配置用裸 # 做段落分隔，默认 /[>#]/ 会在配置的 # 处误匹配致 exec 提前 resolve 截断。
- * 华为/H3C/默认 → 只匹配真实 prompt <hostname>/[hostname]（配置无 <>/[]，不误匹配）；
- * 思科/锐捷 → \S[>#]（配置用 ! 分隔，# 即真实 prompt，要求 # 前有 hostname 字符，不匹配行首裸 #）。
- */
-function pickShellPrompt(vendor: string | undefined | null): RegExp {
-  const v = String(vendor || '').toLowerCase()
-  if (v.includes('huawei') || v.includes('h3c')) {
-    // 华为/H3C：真实 prompt <hostname>（用户视图）/ [hostname]（系统视图），配置无 <>/[]，严格匹配绝不误判裸 #
-    return /(<[^>]+>|\[[^\]]+\])/
-  }
-  if (v.includes('cisco') || v.includes('ruijie')) {
-    // 思科/锐捷：配置用 ! 分隔（无裸 #），prompt hostname# / hostname>，要求 #/> 前有 hostname
-    return /\S[>#]/
-  }
-  // 未知/缺失 vendor 通用兜底：覆盖 <host>/[host]/host#/host> 所有主流厂商 prompt 格式，
-  // 换设备/换厂商（含 Juniper/Arista 等未来新增）自动适配，仍不匹配行首裸 #。已知厂商走精确分支更稳。
-  return /(<[^>]+>|\[[^\]]+\]|\S[>#])/
-}
+//
+// WR-03：telnet 关分页命令 (pickDisablePaginationCmd) 与 shellPrompt (pickShellPrompt) 已抽到
+// electron/utils/telnetExec.ts 共用——ai.ts telnet 分流 与 arpCollector collectFromDevice 同 util，
+// 关分页/精确 prompt 统一来源（导入见顶部 import），避免两处实现漂移。
 
 function buildSSHConfig(device: any): ConnectConfig {
   const cfg: ConnectConfig = {
