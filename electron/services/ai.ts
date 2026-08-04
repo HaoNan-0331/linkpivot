@@ -362,11 +362,16 @@ export function executeCommandsOnDevice(
       // ---- Telnet 分流：复用共用 util，输出 gbk 解码 + ANSI 剥离（与 SSH 路径 execOne 内 decodeDeviceBuffer + stripAnsi 对齐） ----
       if (isTelnet) {
         const tport = device.port || 23
+        // WR-02：telnet 单命令用「单命令预算」而非整批 overallTimeout。
+        // overallTimeout 是整批累计（30s + N*(ready+15)），telnet util 内部 connect+exec 共用单一 timeout
+        // 无 per-command 早触发，N=5 时 overallTimeout≈180s，单命令挂起会卡死整批。
+        // 改传与 SSH 单命令对齐的预算（30s ready + 15s exec silence/兜底），慢设备超时早触发。
+        const perCmdTimeout = 30000 + SSH_READY_TIMEOUT_MS + 15000
         executeTelnetCommand(
           device.ipAddress, tport,
           device.username || '', device.password || '',
           cmd,
-          { timeout: overallTimeout, decodeGbk: true, stripAnsi: true, disablePaginationCmd: paginationCmd, shellPrompt }
+          { timeout: perCmdTimeout, decodeGbk: true, stripAnsi: true, disablePaginationCmd: paginationCmd, shellPrompt }
         ).then((output) => {
           resolve({ command: cmd, output: output.trim(), success: true })
         }).catch((err: any) => {
