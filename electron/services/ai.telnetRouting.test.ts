@@ -38,9 +38,16 @@ vi.mock('ssh2', () => {
 
 // ---- Mock：telnetExec.executeTelnetCommand（spy 调用 + 可控返回） ----
 const telnetExecSpy = vi.fn()
-vi.mock('../utils/telnetExec', () => ({
-  executeTelnetCommand: (...args: any[]) => telnetExecSpy(...args),
-}))
+// WR-03：pickDisablePaginationCmd/pickShellPrompt 已从 ai.ts 抽到 telnetExec.ts 真实实现，
+// mock 保留两者真实导出（用 importActual），仅替换 executeTelnetCommand 为 spy。
+// 测试断言关分页命令文本与 shellPrompt 正则匹配（依赖真实 picker 实现）。
+vi.mock('../utils/telnetExec', async () => {
+  const actual = await vi.importActual<any>('../utils/telnetExec')
+  return {
+    ...actual,
+    executeTelnetCommand: (...args: any[]) => telnetExecSpy(...args),
+  }
+})
 
 // ---- Mock：commandSafety（放行全部，聚焦分流逻辑而非安全规则——安全规则由 commandSafety.test.ts 覆盖） ----
 vi.mock('./commandSafety', () => ({
