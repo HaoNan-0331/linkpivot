@@ -16,8 +16,8 @@ import ReviewConfirmEditForm from './ReviewConfirmEditForm'
  * - 左：草稿列表（Checkbox 采纳/丢弃 + Tag 标注 category/UPDATE + 质量门未过标红 + UPDATE 草稿显 supersedeOld Checkbox）
  * - 右：选中条目编辑表单（ReviewConfirmEditForm 子组件）
  *
- * 底部批量提交「确认采纳 N 条 + 丢弃 M 条」一次性调 confirmDrafts IPC（D-9-4 单事务原子）。
- * 质量门三层纵深第一层（renderer 实时校验标红 + 确认按钮禁用，REVIEW-02）。
+ * 底部批量提交「确认采纳 N 条 + 删除 M 条」一次性调 confirmDrafts IPC（D-9-4 单事务原子）。
+ * 质量门三层纵深第一层（renderer 实时校验标红 + 确认按钮禁用，D-9-4 质量门三层纵深）。
  *
  * D-9-2：UPDATE 草稿（duplicate_of_exp_id 非空）supersedeOld 默认 false（防 Phase 8 AI 误判 UPDATE 实为 ADD 误删旧条目）。
  * D-9-7：relateDevices 初始化 undefined（仅 length>0 数组触发 service 层 diff，不动现有关联）。
@@ -137,7 +137,7 @@ export default function ReviewConfirmModal({
     })
   }
 
-  // 质量门：任一 adopt 草稿缺必填项则禁用提交（REVIEW-02 renderer 第一层）
+  // 质量门：任一 adopt 草稿缺必填项则禁用提交（D-9-4 renderer 第一层）
   const hasBlockingErrors = drafts.some((d) => {
     const dec = decisions[d.id]
     return dec && dec.action === 'adopt' && validateDraft(d, dec.fields).length > 0

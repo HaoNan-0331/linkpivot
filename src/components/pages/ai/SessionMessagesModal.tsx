@@ -3,7 +3,7 @@ import { Modal, Button, Spin, Empty, Tag } from 'antd'
 import type { SessionMessage } from '@/types/experience'
 
 /**
- * SessionMessagesModal —— 原始会话溯源回链只读子 Modal（REVIEW-03 / D-9-5）。
+ * SessionMessagesModal —— 原始会话溯源回链只读子 Modal（D-9-5 溯源回链）。
  *
  * 在 ReviewConfirmModal 内点「查看原始会话」叠层打开，展示该 source_session_id 的会话明文
  * （design D-04 明文回链，用户核对自己对话，单机 safeStorage 绑机器，不做 PII 脱敏）。
