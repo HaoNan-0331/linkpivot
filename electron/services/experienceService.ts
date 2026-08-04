@@ -50,6 +50,25 @@ export type ExperienceStatus = 'draft' | 'confirmed' | 'published' | 'invalid'
 const VALID_CATEGORIES: ExperienceCategory[] = ['troubleshooting', 'best_practices', 'product', 'env']
 const VALID_SEVERITIES = ['critical', 'high', 'medium', 'low', 'info']
 
+/**
+ * WR-04：troubleshooting 类 attrs 质量门单一来源。
+ * confirmDrafts（service 层兜底校验）与 validateAndStringifyAttrs（update/create 入口校验）共用，
+ * 避免双份手写校验未来漂移（一处改 severity 枚举/必填字段而另一处漏改）。
+ * ctx 用于错误信息标注来源（如「草稿 {id}」），便于排错定位。
+ */
+function assertTroubleshootingAttrs(attrs: any, ctx: string): void {
+  const sev = attrs?.severity
+  if (!sev || !VALID_SEVERITIES.includes(sev)) {
+    throw new Error(`${ctx} 缺合法 severity`)
+  }
+  if (!attrs?.symptoms || !String(attrs.symptoms).trim()) {
+    throw new Error(`${ctx} 缺 symptoms`)
+  }
+  if (!attrs?.resolution || !String(attrs.resolution).trim()) {
+    throw new Error(`${ctx} 缺 resolution`)
+  }
+}
+
 // CR-02 bi-temporal 文本比较格式契约：
 // experiences.valid_at / invalid_at / last_verified_at 三列所有写入必须是
 // `YYYY-MM-DD HH:MM:SS`（localtime，无毫秒/无时区偏移）格式，否则与
@@ -427,17 +446,12 @@ export function confirmDrafts(input: ConfirmDraftsInput): ConfirmDraftsResult {
       const finalTitle = d.fields?.title ?? cur.title
       const finalContent = d.fields?.content ?? cur.content
       // troubleshooting 必填校验（severity/symptoms/resolution）
+      // WR-04：抽 assertTroubleshootingAttrs 单一来源，避免与 validateAndStringifyAttrs 漂移。
+      // 注意：validateAndStringifyAttrs（create/update 入口）仅强制 severity（Phase 8 AI 起草允许
+      // 缺 symptoms/resolution 的不完整 draft 落库），confirmDrafts adopt 是「发布前最后一道闸口」
+      // 强制三字段必填——两处契约有意分层，severity 枚举共用 VALID_SEVERITIES 常量消除漂移。
       if (finalCategory === 'troubleshooting') {
-        const sev = finalAttrs?.severity
-        if (!sev || !['critical', 'high', 'medium', 'low', 'info'].includes(sev)) {
-          throw new Error(`草稿 ${d.expId} troubleshooting 缺合法 severity，无法确认`)
-        }
-        if (!finalAttrs?.symptoms || !String(finalAttrs.symptoms).trim()) {
-          throw new Error(`草稿 ${d.expId} troubleshooting 缺 symptoms，无法确认`)
-        }
-        if (!finalAttrs?.resolution || !String(finalAttrs.resolution).trim()) {
-          throw new Error(`草稿 ${d.expId} troubleshooting 缺 resolution，无法确认`)
-        }
+        assertTroubleshootingAttrs(finalAttrs, `草稿 ${d.expId} troubleshooting`)
       } else {
         // 轻结构类：title/content 必填
         if (!finalTitle || !String(finalTitle).trim()) {
