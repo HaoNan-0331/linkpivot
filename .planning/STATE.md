@@ -25,12 +25,12 @@ See: .planning/PROJECT.md (updated 2026-08-01)
 
 ## Current Position
 
-Phase: 09 (human-review-confirmation) — EXECUTING
+Phase: 09 (human-review-confirmation) — COMPLETE
 Plan: 3 of 3
-Status: Executing Phase 09（09-01 + 09-02 完成，下一步 09-03 renderer 层弹窗）
-Last activity: 2026-08-04
+Status: Phase 09 全部完成（09-01 service + 09-02 IPC + 09-03 renderer 弹窗 + 中文化，人工 checkpoint approved，待 verify）
+Last activity: 2026-08-04 -- Phase 9 09-03 完成 + checkpoint approved
 
-Progress: [█████████░] 88%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -124,6 +124,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 - [x] 08-03-PLAN.md — IPC + 编排层串联（experienceDrafting.summarizeSessionForUi W-4 两阶段编排 + experience:summarizeSession secure IPC + preload/main/DTO/类型 + AIPage「经验总结」按钮 + useAIChat.handleSummarize，TDD RED→GREEN 10 测试全绿，4 commits 8cffc07/d146de5/e561a41/3e13788，三绿门禁全绿 136 测试）
 - [x] 09-01-PLAN.md — Phase 9 服务层 confirmDrafts/listDrafts/getSessionMessages 落地（扩 experienceService.ts 不新建 reviewService + 单事务原子 adopt/supersede/discard/设备 diff + service 层兜底质量门 troubleshooting severity/symptoms/resolution + 不动 CR-01 update 白名单 status 改变只走专用接口 + 复用 ai.ts getChatHistory 明文回链 D-9-5 + relateDevices 空/undefined 不动关联防默认值传播拆关联，2 commits 455721d/d307b75，19 新测试，三绿门禁全绿 165 测试全 PASS）
 - [x] 09-02-PLAN.md — Phase 9 IPC 网关层 + preload bridge + renderer DTO 落地（experienceIpc.ts 注册 experience:confirmDrafts/listDrafts/getSessionMessages 3 个 secure channel + IPC 层 MAX_BATCH 双层防御 + preload 暴露 window.api.experience.* 3 API + src/types/experience.ts 5 renderer DTO ConfirmDraftItem/ConfirmDraftsInput/ConfirmDraftsResult/DraftSummary/SessionMessage + electron.d.ts 3 方法签名 + 三向一致 IPC↔preload↔d.ts channel 名逐字相等 + main.ts 无需改 registerExperienceIpc 已注册，2 feat commits f168ef1/9172476 + 1 docs commit 9b8baec，三绿门禁 tsc+build:electron-main+vitest 165/165 全绿，无回归）
+- [x] 09-03-PLAN.md — Phase 9 renderer 层弹窗（ReviewConfirmModal 宽 80vw master-detail 主壳 + 左侧列表勾选/标红 + 底部批量提交 confirmDrafts + validateDraft 导出 + SessionMessagesModal 只读会话回链子 Modal 叠层 + ReviewConfirmEditForm 编辑表单 attrs 模板 + 关联设备 Select + UPDATE supersedeOld D-9-2 默认不勾 + useAIChat/AIPage/ChatInput 串联 handleSummarize 开弹窗 + 待确认 Badge 角标入口 D-9-7 + 表单中文化 label/severity/错误提示，5 commits 458d828/b64e00d/6c43aad/7665bb1/cd87077，三绿门禁 tsc+vite build+electron-main build+vitest 175 全绿，人工 checkpoint approved 全链路无问题）
 
 ### Blockers/Concerns
 

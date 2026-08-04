@@ -30,7 +30,7 @@
 
 - [ ] **Phase 7: Experience Data Layer & Security Baseline** - 经验主表+设备关联表+bi-temporal+attrs 模板+幂等迁移，立 IPC 鉴权/脱敏基线
 - [ ] **Phase 8: AI Drafting Pipeline** - 会话回顾→PII 脱敏→查存量去重→强 schema JSON 起草→draft 态
-- [ ] **Phase 9: Human Review & Confirmation** - 弹窗逐条编辑/勾选 + 质量门硬校验 + 疑似重复提示 + 原始会话溯源回链
+- [x] **Phase 9: Human Review & Confirmation** - 弹窗逐条编辑/勾选 + 质量门硬校验 + 疑似重复提示 + 原始会话溯源回链
 - [ ] **Phase 10: Experience Browse Page** - 知识库「经验」Tab + 多维筛选 + 关键词搜索 + 手动 CRUD + 标失效
 - [ ] **Phase 11: AI Retrieval & Reuse** - SQL 粗筛 + LLM 精排 + read-time 即时验证 + 引用溯源
 
@@ -94,7 +94,7 @@ Plans:
 - [x] 09-02-PLAN.md — experienceIpc 追加 3 secure channel（experience:confirmDrafts/listDrafts/getSessionMessages）+ preload + DTO + electron.d.ts 三向一致
 
 **Wave 3** *(blocked on Wave 2)*
-- [ ] 09-03-PLAN.md — ReviewConfirmModal（宽 Modal master-detail + 质量门标红 + 批量提交）+ SessionMessagesModal（只读溯源叠层）+ useAIChat/AIPage/ChatInput 串联（待确认 Badge 角标入口）
+- [x] 09-03-PLAN.md — ReviewConfirmModal（宽 Modal master-detail + 质量门标红 + 批量提交）+ SessionMessagesModal（只读溯源叠层）+ useAIChat/AIPage/ChatInput 串联（待确认 Badge 角标入口）
 
 ### Phase 10: Experience Browse Page
 **Goal**: 用户可在知识库的「经验」板块独立浏览、筛选、搜索、手动维护经验，并不只依赖 AI 总结——经验资产可被人工主动管理（新增/编辑/标失效）。
