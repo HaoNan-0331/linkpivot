@@ -35,9 +35,11 @@ import { secure } from '../utils/authGuard'
  * 单词 action 不变（list/get/create/update/delete/invalidate），与既有 channel
  * （kb:listDocuments / anomaly:acknowledgeAll / oui:addBatch / network:getIPDetails）一致。
  *
- * 函数式 service 调用面：service 已函数式（无 class），IPC 按需 import 具名函数（createExperience 等），
- * 不 import ExperienceService class、不 import MAX_BATCH（IPC 透传 opts.limit 不二次校验，service 层
- * listExperiences 内 MAX_BATCH=1000 throw 已强制，避免双层校验逻辑漂移与 noUnusedLocals 触发）。
+ * 函数式 service 调用面：service 已函数式（无 class），IPC 按需 import 具名函数（createExperience 等）。
+ * MAX_BATCH 由 service 层导出，IPC 层 confirmDrafts 二次校验 drafts.length 上限（与 service 层兜底
+ * 形成双层防御 T-09-06 mitigate，防 untrusted renderer 越权大批量）；其余 list/get/update 透传 opts.limit，
+ * service 层 listExperiences 内 MAX_BATCH=1000 throw 已强制。getSessionMessages（WR-09）limit 默认 200
+ * 守 MAX_BATCH，与 confirmDrafts 同一红线。
  */
 
 // WR-05 深度防御：listDevicesByExperience 改走 deviceService.getDeviceById（rowToDevice
