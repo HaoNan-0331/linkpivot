@@ -431,6 +431,12 @@ export function confirmDrafts(input: ConfirmDraftsInput): ConfirmDraftsResult {
     const stmtPublish = conn.prepare(
       `UPDATE experiences SET status = 'published', updated_at = datetime('now','localtime') WHERE id = ?`
     )
+    // WR-05：relateDevices diff 用轻量查询（只取 device_id 列表），不经 listDevicesByExperience
+    // （后者每设备走 getDeviceById 白名单投影 + 解密 9 个 _enc 列再丢弃——本场景只需 id 集合 diff，
+    // 同事务内批量 adopt 多条草稿时是显著的同步解密浪费）。listDevicesByExperience 自身不变（其他通道在用）。
+    const stmtCurDev = conn.prepare(
+      `SELECT device_id FROM exp_device_rel WHERE experience_id = ?`
+    )
     for (const d of input.drafts) {
       if (d.action === 'discard') {
         deleteExperience(d.expId)
@@ -471,7 +477,7 @@ export function confirmDrafts(input: ConfirmDraftsInput): ConfirmDraftsResult {
       // 设备关联 diff：仅当 relateDevices 为 length>0 的显式数组才触发（undefined/空数组都视为
       // 不动现有关联，防 renderer 默认空数组静默拆光所有现有关联）
       if (d.relateDevices != null && d.relateDevices.length > 0) {
-        const curDevices = listDevicesByExperience(d.expId).map((dev: any) => dev.id)
+        const curDevices = (stmtCurDev.all(d.expId) as Array<{ device_id: string }>).map((r) => r.device_id)
         const expectSet = new Set(d.relateDevices)
         const toAdd = d.relateDevices.filter((id) => !curDevices.includes(id))
         const toRemove = curDevices.filter((id) => !expectSet.has(id))

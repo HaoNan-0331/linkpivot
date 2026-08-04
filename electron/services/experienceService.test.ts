@@ -449,6 +449,20 @@ class MemDb {
       }
     }
 
+    // WR-05（review-fix）：confirmDrafts relateDevices diff 轻量查询
+    // SELECT device_id FROM exp_device_rel WHERE experience_id = ?
+    if (/SELECT\s+device_id\s+FROM\s+exp_device_rel\s+WHERE\s+experience_id\s*=\s*\?/i.test(sql)) {
+      return {
+        all: (expId: any) => {
+          const rel = this.tables.get('exp_device_rel')
+          if (!rel) return []
+          return Array.from(rel.rows.values())
+            .filter((r) => r.experience_id === expId)
+            .map((r) => ({ device_id: r.device_id }))
+        },
+      }
+    }
+
     throw new Error('mock DB 未实现的语句: ' + sql)
   }
 
