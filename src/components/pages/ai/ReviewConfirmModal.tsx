@@ -77,6 +77,11 @@ export default function ReviewConfirmModal({
   const [submitting, setSubmitting] = useState(false)
   const [sessionModalSessionId, setSessionModalSessionId] = useState<string | null>(null)
 
+  // WR-08：用 draftIdsKey（join 的字符串）作 effect 依赖而非 initialDraftIds 引用。
+  // initialDraftIds 每次由 useAIChat handleSummarize/openReviewFromBadge 新建数组引用，
+  // 即使内容相同也会触发 effect → setDecisions 重置用户已编辑决策。join 成字符串稳定比较，
+  // 同一批 draft id（顺序由 summarizeSession 返回决定，稳定）不重置。
+  const draftIdsKey = (initialDraftIds ?? []).slice().sort().join(',')
   useEffect(() => {
     if (!open) return
     setLoading(true)
@@ -110,7 +115,8 @@ export default function ReviewConfirmModal({
       })
       .finally(() => setLoading(false))
     // initialDraftIds 经 hook 父层每次新建数组引用触发刷新（开弹窗时），闭包内消费最新值
-  }, [open, initialDraftIds])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, draftIdsKey])
 
   const selectedDraft = drafts.find((d) => d.id === selectedExpId) ?? null
 
