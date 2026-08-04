@@ -158,7 +158,7 @@ export default function ReviewConfirmModal({
       }
       const result = await window.api.experience.confirmDrafts(input)
       message.success(
-        `已采纳 ${result.adopted} 条，丢弃 ${result.discarded} 条` +
+        `已采纳 ${result.adopted} 条，删除 ${result.discarded} 条` +
           (result.superseded > 0 ? `，标失效旧条目 ${result.superseded} 条` : '')
       )
       onSubmitted?.(result)
@@ -185,7 +185,7 @@ export default function ReviewConfirmModal({
             全选采纳
           </Button>,
           <Button key="allDiscard" danger onClick={() => setAll('discard')}>
-            全选丢弃
+            全选删除
           </Button>,
           <Button
             key="submit"
@@ -194,7 +194,7 @@ export default function ReviewConfirmModal({
             disabled={hasBlockingErrors || drafts.length === 0}
             onClick={handleSubmit}
           >
-            确认采纳 {adoptCount} 条 + 丢弃 {discardCount} 条
+            确认采纳 {adoptCount} 条 + 删除 {discardCount} 条
           </Button>,
         ]}
       >
