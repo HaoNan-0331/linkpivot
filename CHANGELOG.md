@@ -9,6 +9,14 @@
 - **测试**：新增 `electron/services/ai.telnetRouting.test.ts`（7 cases）——mock telnet-client（经共用 util spy）+ ssh2 Client（真 class），断言 telnet 分流不实例化 ssh2 Client / ssh 分流不调 telnet / 端口缺省回退 23 / 大小写不敏感 / 空命令短路 / telnet 抛错首条 reject 整批。
 - **三绿门禁**：`tsc -p tsconfig.web.json --noEmit` exit 0 / `npm run build:electron-main` exit 0（dist-electron/main.js 1.9mb）/ `npx vitest run` 172 PASS（原 165 + 新增 7，无回归）。
 
+## 2026-08-04 fix(ai): telnet 长输出 exec 前关闭分页防截断（quick 260804-t2q）
+
+- **根因**：`display current-configuration`（华为长输出）只返回第一屏，接口/VLAN/路由全丢。`telnetExec executeTelnetCommand` 无分页处理，华为 `---- More ----` 分页时 telnet-client exec 不自动翻页 → 第一屏静默 → exec 误判命令结束 → 截断。arpCollector 短命令未暴露。
+- **修复**：exec 真命令前先发关闭分页命令（运维自动化标准做法）。`telnetExec.ts` 加 `disablePaginationCmd` 选项（connect 后 try exec 该命令忽略输出/错误）；`ai.ts` 加 `pickDisablePaginationCmd(vendor)`（cisco/锐捷 → `terminal length 0`，华为/H3C/默认 → `screen-length 0 temporary`），telnet 分支传入；arpCollector 不传（短输出）。
+- **安全**：`screen-length 0 temporary` / `terminal length 0` 是只读会话级配置命令（仅本 telnet 会话关分页，退出恢复），util 内部发不经 AI 命令白名单。
+- **测试**：`ai.telnetRouting.test.ts` 补 2 case（华为/思科 vendor 选对分页命令），三绿门禁 vitest 174 PASS（原 172 + 新 2，无回归）。
+- **延续**：ai-telnet-exec-routing debug（commit 8df4166 修连接路由）的输出完整性延续修复。
+
 ## Phase 8（v1.1 开发）- AI Drafting Pipeline（DRAFT-01~04）
 
 ### 端到端经验总结 pipeline（08-01/02/03 + code review fix）
