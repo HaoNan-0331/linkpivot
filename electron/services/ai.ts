@@ -190,13 +190,34 @@ export function updateSessionTitle(sessionId: string, title: string): void {
 
 // ---------- Chat history ----------
 
-export function getChatHistory(sessionId?: string): Array<{
+export function getChatHistory(sessionId?: string, limit?: number): Array<{
   id: string
   role: string
   content: string
   deviceId: string | null
   createdAt: string
 }> {
+  // WR-09：limit 截断（取最近 N 条）防超大历史会话全量返回。默认不传 = 全量（向后兼容 ai 域自用）。
+  // 子查询 ORDER BY created_at ASC 后外层逆取最近 limit 条再正序，保证「最近 N 条 + 时间正序」。
+  if (limit != null && limit > 0) {
+    const sql = sessionId
+      ? `SELECT * FROM (
+           SELECT * FROM chat_history WHERE session_id = ? ORDER BY created_at ASC LIMIT ?
+         ) sub ORDER BY created_at ASC`
+      : `SELECT * FROM (
+           SELECT * FROM chat_history ORDER BY created_at ASC LIMIT ?
+         ) sub ORDER BY created_at ASC`
+    const rows = sessionId
+      ? (getDatabase().prepare(sql).all(sessionId, limit) as any[])
+      : (getDatabase().prepare(sql).all(limit) as any[])
+    return rows.map((row) => ({
+      id: row.id,
+      role: row.role,
+      content: decField(row.content_enc, MK),
+      deviceId: row.device_id,
+      createdAt: row.created_at,
+    }))
+  }
   const rows = sessionId
     ? getDatabase().prepare('SELECT * FROM chat_history WHERE session_id = ? ORDER BY created_at ASC').all(sessionId) as any[]
     : getDatabase().prepare('SELECT * FROM chat_history ORDER BY created_at ASC').all() as any[]

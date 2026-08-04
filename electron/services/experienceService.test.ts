@@ -30,7 +30,12 @@ vi.mock('./device', () => ({
 // 验证 service 层透传解密明文 + 非法 sessionId throw（不依赖真实 getDatabase/chat_history）。
 const mockChatHistory: Record<string, Array<{ id: string; role: string; content: string; deviceId: string | null; createdAt: string }>> = {}
 vi.mock('./ai', () => ({
-  getChatHistory: (sessionId?: string) => (sessionId && mockChatHistory[sessionId]) ?? [],
+  getChatHistory: (sessionId?: string, limit?: number) => {
+    const all = (sessionId && mockChatHistory[sessionId]) ?? []
+    // WR-09：mock 复刻 service 取最近 limit 条语义（service 调 getChatHistory(sessionId, limit)）
+    if (limit != null && limit > 0) return all.slice(-limit)
+    return all
+  },
 }))
 
 import {
@@ -1058,5 +1063,22 @@ describe('getSessionMessages', () => {
   it('sessionId 无效（空/非 string）→ throw', () => {
     expect(() => getSessionMessages('')).toThrow('sessionId 无效')
     expect(() => getSessionMessages(null as any)).toThrow('sessionId 无效')
+  })
+
+  it('WR-09：limit 透传 getChatHistory 取最近 N 条', () => {
+    mockChatHistory['s2'] = [
+      { id: 'm1', role: 'user', content: 'a', deviceId: null, createdAt: '2026-08-03 12:00:00' },
+      { id: 'm2', role: 'user', content: 'b', deviceId: null, createdAt: '2026-08-03 12:00:01' },
+      { id: 'm3', role: 'user', content: 'c', deviceId: null, createdAt: '2026-08-03 12:00:02' },
+    ]
+    // limit=2 → 取最近 2 条（m2, m3）
+    const msgs = getSessionMessages('s2', 2)
+    expect(msgs.length).toBe(2)
+    expect(msgs[0].id).toBe('m2')
+    expect(msgs[1].id).toBe('m3')
+  })
+
+  it('WR-09：limit 超 MAX_BATCH → throw', () => {
+    expect(() => getSessionMessages('s1', MAX_BATCH + 1)).toThrow('MAX_BATCH')
   })
 })

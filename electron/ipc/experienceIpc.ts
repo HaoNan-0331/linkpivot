@@ -98,11 +98,12 @@ export function registerExperienceIpc() {
   // listDrafts：返 draft 态 Experience 列表（service 层 listExperiences status='draft' 内 MAX_BATCH 截断）。
   ipcMain.handle('experience:listDrafts', secure(() => listDrafts()))
 
-  // getSessionMessages：单 sessionId 查询天然有界（T-09-08 accept）；sessionId 形态校验防注入。
-  ipcMain.handle('experience:getSessionMessages', secure((_e, sessionId: string) => {
+  // getSessionMessages：单 sessionId 查询，limit 守 MAX_BATCH（WR-09，与 service 层兜底双层防御）。
+  // sessionId 形态校验防注入；limit 默认 200 取最近 N 条防超大历史会话无界返回。
+  ipcMain.handle('experience:getSessionMessages', secure((_e, sessionId: string, limit?: number) => {
     if (!sessionId || typeof sessionId !== 'string') {
       throw new Error('sessionId 无效')
     }
-    return getSessionMessages(sessionId)
+    return getSessionMessages(sessionId, limit ?? 200)
   }))
 }

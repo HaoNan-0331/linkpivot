@@ -136,7 +136,7 @@ const api = {
     // Phase 9 人工确认（review）—— 经 window.api.experience.* 调用，全 secure 包装
     confirmDrafts: (input: unknown) => ipcRenderer.invoke('experience:confirmDrafts', input),
     listDrafts: () => ipcRenderer.invoke('experience:listDrafts'),
-    getSessionMessages: (sessionId: string) => ipcRenderer.invoke('experience:getSessionMessages', sessionId),
+    getSessionMessages: (sessionId: string, limit?: number) => ipcRenderer.invoke('experience:getSessionMessages', sessionId, limit),
   },
 }
 

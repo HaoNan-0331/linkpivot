@@ -214,7 +214,7 @@ export interface ElectronAPI {
     // Phase 9 人工确认（review）—— 三向一致：channel 名 = preload invoke = 此处方法名（逐字）
     confirmDrafts: (input: ConfirmDraftsInput) => Promise<ConfirmDraftsResult>
     listDrafts: () => Promise<DraftSummary[]>
-    getSessionMessages: (sessionId: string) => Promise<SessionMessage[]>
+    getSessionMessages: (sessionId: string, limit?: number) => Promise<SessionMessage[]>
   }
 }
 

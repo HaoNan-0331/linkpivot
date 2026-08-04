@@ -509,7 +509,7 @@ export function listDrafts(): any[] {
  * 信任边界（design D-04）：返明文给 renderer——用户核对自己对话，单机 safeStorage 绑机器，不做 PII 脱敏。
  * sessionId 指向已删/不存在时 getChatHistory 返空数组，由 renderer 提示「原会话已不可查」。
  */
-export function getSessionMessages(sessionId: string): Array<{
+export function getSessionMessages(sessionId: string, limit: number = 200): Array<{
   id: string
   role: string
   content: string
@@ -519,5 +519,9 @@ export function getSessionMessages(sessionId: string): Array<{
   if (!sessionId || typeof sessionId !== 'string') {
     throw new Error('sessionId 无效')
   }
-  return getChatHistory(sessionId)
+  // WR-09：守 MAX_BATCH 上限（与 list/confirmDrafts 同红线），防超大历史会话无界返回。
+  if (limit > MAX_BATCH) {
+    throw new Error(`limit 超过 MAX_BATCH 上限（${MAX_BATCH}）`)
+  }
+  return getChatHistory(sessionId, limit)
 }
