@@ -270,6 +270,17 @@ function decodeDeviceBuffer(data: Buffer): string {
 // （已移除交互式 shell 的 prompt 检测/输出提取函数）
 // 命令执行改为 client.exec 非交互模式，不再需要 isPromptLine / detectPrompt / extractCommandOutput。
 
+/**
+ * 按 device.vendor 选 telnet 关闭分页命令（长输出 display current-configuration 等防 ---- More ---- 截断）。
+ * cisco/锐捷 → terminal length 0；华为/H3C/默认 → screen-length 0 temporary。
+ * 命令仅本 telnet 会话关分页（退出恢复），util 内部发不经 AI 命令白名单（与 arpCollector 直接发采集命令同模式）。
+ */
+function pickDisablePaginationCmd(vendor: string | undefined | null): string {
+  const v = String(vendor || '').toLowerCase()
+  if (v.includes('cisco') || v.includes('ruijie')) return 'terminal length 0'
+  return 'screen-length 0 temporary'
+}
+
 function buildSSHConfig(device: any): ConnectConfig {
   const cfg: ConnectConfig = {
     host: device.ipAddress,
@@ -306,6 +317,9 @@ export function executeCommandsOnDevice(
   // telnet 走 executeTelnetCommand（共用 util，telnet-client connect loginPrompt/PasswordPrompt/shellPrompt + exec + gbk + ANSI + 超时兜底）。
   // 安全层 checked 数组两路径共用，无新增注入面。
   const isTelnet = String(device.connectionType || '').toLowerCase() === 'telnet'
+  // telnet 长输出（display current-configuration 等）默认 ---- More ---- 分页，telnet-client exec 不自动翻页会截断第一屏。
+  // exec 真命令前先发关闭分页命令（按 vendor 选），由 executeTelnetCommand 内部 connect 后发出。
+  const paginationCmd = isTelnet ? pickDisablePaginationCmd(device.vendor) : undefined
 
   // SSH-only config（telnet 路径不用）
   const cfg = buildSSHConfig(device)
@@ -330,7 +344,7 @@ export function executeCommandsOnDevice(
           device.ipAddress, tport,
           device.username || '', device.password || '',
           cmd,
-          { timeout: overallTimeout, decodeGbk: true, stripAnsi: true }
+          { timeout: overallTimeout, decodeGbk: true, stripAnsi: true, disablePaginationCmd: paginationCmd }
         ).then((output) => {
           resolve({ command: cmd, output: output.trim(), success: true })
         }).catch((err: any) => {

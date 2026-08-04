@@ -178,4 +178,24 @@ describe('executeCommandsOnDevice — connectionType 分流', () => {
     expect(telnetExecSpy).toHaveBeenCalledTimes(1)
     expect(sshClientCtor).not.toHaveBeenCalled()
   })
+
+  it('telnet 设备按 vendor 选关闭分页命令（华为 → screen-length 0 temporary）', async () => {
+    const device = {
+      ipAddress: '10.7.8.252', connectionType: 'telnet', port: 23,
+      username: 'admin', password: 'secret', vendor: 'Huawei',
+    }
+    telnetExecSpy.mockResolvedValue('full config output')
+    await executeCommandsOnDevice(device, ['display current-configuration'])
+    expect(telnetExecSpy.mock.calls[0][5]).toMatchObject({ disablePaginationCmd: 'screen-length 0 temporary' })
+  })
+
+  it('telnet 设备按 vendor 选关闭分页命令（思科 → terminal length 0）', async () => {
+    const device = {
+      ipAddress: '10.0.0.10', connectionType: 'telnet', port: 23,
+      username: 'admin', password: 'secret', vendor: 'Cisco',
+    }
+    telnetExecSpy.mockResolvedValue('full config output')
+    await executeCommandsOnDevice(device, ['show running-config'])
+    expect(telnetExecSpy.mock.calls[0][5]).toMatchObject({ disablePaginationCmd: 'terminal length 0' })
+  })
 })
