@@ -4,7 +4,7 @@ import { ARPParser } from './arpParser'
 import { encField, decField } from '../utils/crypto'
 import { listDevices } from './device'
 import { SSH_READY_TIMEOUT_MS, SSH_ALGORITHMS } from '../utils/sshConfig'
-import { executeTelnetCommand } from '../utils/telnetExec'
+import { executeTelnetCommand, pickDisablePaginationCmd, pickShellPrompt } from '../utils/telnetExec'
 
 let MK = ''
 export function setArpMasterKey(key: string) { MK = key }
@@ -97,7 +97,17 @@ export class ARPCollector {
       if (device.connectionType === 'ssh') {
         output = await executeSSH(device.ipAddress, device.port || 22, device.username, device.password, command, this.timeout)
       } else {
-        output = await executeTelnetCommand(device.ipAddress, device.port || 23, device.username, device.password, command, { timeout: this.timeout })
+        // WR-03：telnet 路径同 ai.ts 分流——按 vendor 关分页 + 精确 shellPrompt。
+        // 默认 /[>#]/ 在 ARP 输出含裸 #（接口名/注释）时提前 resolve 截断；长 ARP 表部分设备 ---- More ----
+        // 分页 telnet-client exec 不自动翻页会截断第一屏。复用 telnetExec.ts 抽出的 vendor picker。
+        output = await executeTelnetCommand(
+          device.ipAddress, device.port || 23, device.username, device.password, command,
+          {
+            timeout: this.timeout,
+            disablePaginationCmd: pickDisablePaginationCmd(device.vendor),
+            shellPrompt: pickShellPrompt(device.vendor),
+          }
+        )
       }
       result.entries = ARPParser.parse(output, device.vendor)
     } catch (error) {
