@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: AI 对话经验沉淀
 status: executing
-last_updated: "2026-08-05T13:20:00.000Z"
-last_activity: 2026-08-05 -- Phase 10 Plan 01 完成（数据/服务/IPC 基线）
+last_updated: "2026-08-05T13:31:17.310Z"
+last_activity: 2026-08-05
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 11
-  completed_plans: 9
-  percent: 64
+  completed_plans: 10
+  percent: 60
 ---
 
 # STATE: network_toplogy
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-08-01)
 ## Current Position
 
 Phase: 10 (experience-browse-page) — EXECUTING
-Plan: 2 of 3（10-01 完成，下一步 10-02 渲染层 ExperienceTab）
-Status: Phase 10 Plan 01 完成
-Last activity: 2026-08-05 -- Phase 10 Plan 01 完成（severity 列迁移 + restoreExperience + listExperiences opts + device_count + IPC 三向契约）
+Plan: 3 of 3（10-01 + 10-02 完成，下一步 10-03 ExperienceTab 渲染层手动 CRUD Modal）
+Status: Ready to execute
+Last activity: 2026-08-05 -- Phase 10 Plan 02 完成（ExperienceEditForm 公共组件抽取 + validateDraft 单一来源）
 
-Progress: [██████████] 100%
+Progress: [█████████░] 91%
 
 ## Performance Metrics
 
@@ -161,6 +161,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 | Phase 09 P02 | ~7min | 2 tasks | 4 files |
 | 260804-t2q | fix telnet 长输出截断（分页 + shellPrompt 精确化） | 2026-08-04 | 534fdc9/913aade | [260804-t2q-fix-telnet-long-output-pagination-trunca](./quick/260804-t2q-fix-telnet-long-output-pagination-trunca/) |
 | Phase 10 P01 | ~13min | 3 tasks | 9 files |
+| Phase 10 P02 | 12min | 2 tasks | 3 files |
 
 ### Risk Watch
 
@@ -195,8 +196,8 @@ v1.1 明确 defer 到二期（4 FUTURE，不进 roadmap）：
 
 ## Session Continuity
 
-- **Last action**: Phase 10 Plan 01 完成（数据/服务/IPC 基线落地，3 commits 2a86fc9/84c4ea5/a1c0ba1，severity v10 迁移 + restoreExperience + listExperiences opts 扩 + device_count 子查询 + IPC 三向契约，三绿门禁 191/191 全绿零回归）
-- **Next action**: 执行 10-02-PLAN.md（renderer 层 ExperienceTab 列表 + KnowledgeBasePage Tabs 改造，消费 10-01 落地的 list/restore/severity/device_count 接口）
+- **Last action**: Phase 10 Plan 02 完成（ExperienceEditForm 公共组件抽取 + validateDraft 单一来源，2 commits e2b1506/b95c44d，D-10-1 保守方案仅共享 validateDraft + 红线③ 例外手动新增直 published + ExperienceInput DTO 扩 status?，三绿门禁 191/191 全绿零回归，Phase 9 表单行为不回归）
+- **Next action**: 执行 10-03-PLAN.md（renderer 层 ExperienceTab 列表 + KnowledgeBasePage Tabs 改造 + 手动 CRUD Modal，消费 ExperienceEditForm + 10-01 落地的 list/restore/severity/device_count 接口）
 - **Resume command**: `/gsd-status`
 
 ## Phase → Requirement Map
