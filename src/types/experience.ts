@@ -44,10 +44,17 @@ export interface ExperienceUpdateInput {
 export interface ExperienceListInput {
   category?: ExperienceCategory
   status?: ExperienceStatus
-  deviceId?: string
+  /** Phase 10 D-10-2：接受单值（向后兼容）或多选数组（UI-SPEC §3 设备多选 IN 占位 OR-join）。 */
+  deviceId?: string | string[]
   includeInvalid?: boolean
   limit?: number
   offset?: number
+  /** Phase 10 D-10-2：关键词搜索（SQL LIKE title/content）。 */
+  search?: string
+  /** Phase 10 D-10-2：severity 明文列直筛。 */
+  severity?: string
+  /** Phase 10 D-10-2：标签多选命中任一（tags JSON 列 LIKE OR-join）。 */
+  tags?: string[]
 }
 
 /** DB 行原生 snake_case（service 层 attrs_enc 已解密回填 attrs 并 delete 密文列） */
@@ -69,6 +76,11 @@ export interface Experience {
   /** Phase 8 v9 列：UPDATE 草稿命中的存量旧条目 id（draft 态标注，Phase 9 确认时据此显 supersedeOld Checkbox）。
    * 全量 SELECT 运行时已带此列，DTO 补声明对齐 rowToExperience 返参。 */
   duplicate_of_exp_id?: string | null
+  /** Phase 10 v10 列：severity 明文投影（troubleshooting 类填 critical/high/medium/low/info，其他类 null）。
+   * 历史数据经 rowToExperience severity fallback（明文列 NULL 时读 attrs.severity）回填，保证向后兼容。 */
+  severity?: 'critical' | 'high' | 'medium' | 'low' | 'info' | null
+  /** Phase 10 D-10-2：关联设备计数（listExperiences 子查询带出，零 N+1；0 表示无关联设备即「全局」）。 */
+  device_count?: number
 }
 
 /** 复用全仓分页信封（DATA-01 / D-4-2），渲染层读 .rows/.total/.truncated */

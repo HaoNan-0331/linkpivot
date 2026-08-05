@@ -14,6 +14,8 @@ import {
   confirmDrafts,
   listDrafts,
   getSessionMessages,
+  // Phase 10 浏览页：撤销恢复（受控接口，与 invalidateExperience 对称）
+  restoreExperience,
   MAX_BATCH,
 } from '../services/experienceService'
 import type { ExperienceInput, ExperienceUpdateInput, ExperienceListInput, ConfirmDraftsInput } from '../../src/types/experience'
@@ -74,6 +76,11 @@ export function registerExperienceIpc() {
 
   ipcMain.handle('experience:invalidate', secure((_e, id: string) =>
     invalidateExperience(id)))
+
+  // Phase 10 D-10-3：撤销恢复（清 invalid_at + status 回 published），与 invalidate 对称的受控接口。
+  // 全 secure 包装（鉴权 + 异常脱敏），延续 experience:* 全 secure 基线（T-10-02 mitigate）。
+  ipcMain.handle('experience:restore', secure((_e, id: string) =>
+    restoreExperience(id)))
 
   ipcMain.handle('experience:relateDevice', secure((_e, experienceId: string, deviceId: string, relationType?: string) =>
     relateDevice(experienceId, deviceId, relationType)))

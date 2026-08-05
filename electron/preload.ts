@@ -128,6 +128,7 @@ const api = {
     update: (id: string, fields: unknown) => ipcRenderer.invoke('experience:update', id, fields),
     delete: (id: string) => ipcRenderer.invoke('experience:delete', id),
     invalidate: (id: string) => ipcRenderer.invoke('experience:invalidate', id),
+    restore: (id: string) => ipcRenderer.invoke('experience:restore', id),
     relateDevice: (experienceId: string, deviceId: string, relationType?: string) => ipcRenderer.invoke('experience:relateDevice', experienceId, deviceId, relationType),
     unrelateDevice: (experienceId: string, deviceId: string) => ipcRenderer.invoke('experience:unrelateDevice', experienceId, deviceId),
     listByDevice: (deviceId: string, includeInvalid?: boolean) => ipcRenderer.invoke('experience:listByDevice', deviceId, includeInvalid),

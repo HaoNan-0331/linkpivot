@@ -206,6 +206,7 @@ export interface ElectronAPI {
     update: (id: string, fields: ExperienceUpdateInput) => Promise<Experience>
     delete: (id: string) => Promise<void>
     invalidate: (id: string) => Promise<Experience>
+    restore: (id: string) => Promise<Experience>
     relateDevice: (experienceId: string, deviceId: string, relationType?: string) => Promise<void>
     unrelateDevice: (experienceId: string, deviceId: string) => Promise<void>
     listByDevice: (deviceId: string, includeInvalid?: boolean) => Promise<Experience[]>
