@@ -106,10 +106,17 @@ Plans:
   3. 用户可在该页手动新增/编辑经验（字段与 AI 起草走同一模板，不依赖 AI 总结流程）
   4. 用户可对经验标记失效（置 invalid_at），失效后从默认有效视图剔除但仍可查（与 EXP-03 软失效一致）
   5. 经验详情页展示来源会话回链、关联设备、复用次数、最后验证时间等元数据
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 10-01: TBD
+**Wave 1**
+- [ ] 10-01-PLAN.md — severity 明文列迁移 v10（幂等）+ service 扩展（restoreExperience 受控接口 + listExperiences opts search/severity/tags 参数化 + createExperience status? 入参 + update 双写 severity + rowToExperience fallback）+ experience:restore secure IPC + preload + ExperienceListInput/Experience DTO 三向一致
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 10-02-PLAN.md — 从 Phase 9 抽 ExperienceEditForm 公共组件 + validateDraft 质量门单一来源（D-10-1）+ Phase 9 ReviewConfirmModal 改 import 复用（保守方案降回归）+ 手动新增直 published（红线③ 例外）
+
+**Wave 3** *(blocked on Wave 1 + 2)*
+- [ ] 10-03-PLAN.md — ExperienceTab（筛选 bar 8 元素 + Table 9 列 + 行操作三能力按状态切换）+ ExperienceDetailModal（width 900 元数据 + 复用 SessionMessagesModal 回链）+ KnowledgeBasePage Tabs 改造（文档 | 经验，懒加载）+ 人工 checkpoint
 
 **UI hint**: yes
 
