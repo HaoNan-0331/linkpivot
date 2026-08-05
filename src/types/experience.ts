@@ -24,6 +24,9 @@ export interface ExperienceInput {
   tags?: string[]
   sourceSessionId?: string | null
   attrs?: ExperienceAttrs | null
+  /** Phase 10 D-10-1：手动新增直 published（红线③ 例外：人工录入非 AI 产出，不进 draft 闸口）。
+   * 默认 'draft'（service 层 input.status ?? 'draft'，保 Phase 7-9 AI 起草路径不变）。 */
+  status?: ExperienceStatus
 }
 
 /** experience:update 入参（白名单字段，对齐 experienceService.updateExperience 的 ExperienceUpdateFields）。
