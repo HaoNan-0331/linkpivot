@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: AI 对话经验沉淀
 status: executing
-last_updated: "2026-08-05T06:53:56.008Z"
-last_activity: 2026-08-05 -- Phase 10 planning complete
+last_updated: "2026-08-05T13:20:00.000Z"
+last_activity: 2026-08-05 -- Phase 10 Plan 01 完成（数据/服务/IPC 基线）
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 11
-  completed_plans: 8
-  percent: 60
+  completed_plans: 9
+  percent: 64
 ---
 
 # STATE: network_toplogy
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-08-01)
 
 ## Current Position
 
-Phase: 10 (experience-browse-page) — UI-SPEC READY
-Plan: UI-SPEC approved，待 plan
-Status: Ready to execute
-Last activity: 2026-08-05 -- Phase 10 planning complete
+Phase: 10 (experience-browse-page) — EXECUTING
+Plan: 2 of 3（10-01 完成，下一步 10-02 渲染层 ExperienceTab）
+Status: Phase 10 Plan 01 完成
+Last activity: 2026-08-05 -- Phase 10 Plan 01 完成（severity 列迁移 + restoreExperience + listExperiences opts + device_count + IPC 三向契约）
 
 Progress: [██████████] 100%
 
@@ -106,6 +106,14 @@ Phase 9 执行期决策（09-01 落地）：
 Phase 9 执行期决策（09-02 落地）：
 
 - [Phase 9]: 09-02 IPC 层 import MAX_BATCH（与 07-02 不同）——07-02 experience:list 透传 opts.limit 不二次校验（service 兜底），但 09-02 confirmDrafts 是写操作 + untrusted renderer 直接入参 drafts 数组，IPC 层加 MAX_BATCH 校验作双层防御（T-09-06），故 import MAX_BATCH 避免 noUnusedLocals 触发；两决策各自成立
+
+Phase 10 执行期决策（10-01 落地）：
+
+- [Phase 10]: 10-01 severity 明文列迁移 v10（hasColumn 守卫 + db.transaction + bump user_version=10 + MIGRATION_HEAD=10）—— attrs.severity 保留向后兼容（双写），v10 内不解密回填（迁移在 MK 注入前跑），service 层 rowToExperience severity fallback 兜底（明文列 NULL 读 attrs.severity，D-10-2 历史数据兼容核心承诺）
+- [Phase 10]: 10-01 restoreExperience 受控接口（清 invalid_at + status 显式回 published）—— 绕 CR-01 update 白名单（不复活 status 字段），与 invalidate/incReuseCount/touchLastVerifiedAt 同模式；status 直回 published 不接受 renderer 入参（T-10-03 mitigate，无法被滥用改其他状态）；invalidate 不动 status 故 restore 须显式回（对称恢复有效态）
+- [Phase 10]: 10-01 listExperiences opts 扩 search/severity/tags 参数化筛选 + deviceId 多选 IN 占位 OR-join（normalize string|string[]）—— 全 ? 占位 + params.push（无字符串拼接用户输入，T-10-01 mitigate SQL 注入）；两分支 rowsSql 带 device_count 子查询（共享常量 deviceCountSub 注入，零 N+1）；多选分支 GROUP BY e.id + COUNT(DISTINCT e.id) total 去重（一条经验关联多选中设备只算 1 条）
+- [Phase 10]: 10-01 createExperience 入参扩 status?（默认 draft 保 Phase 7-9 AI 起草调用方零改动）+ severity 明文列双写（troubleshooting 类填 critical/high/medium/low/info，其他 null）—— 手动新增传 published 是红线③ 例外（人工录入非 AI 产出，D-10-1 discretion）
+- [Phase 10]: 10-01 multi-device total 用 COUNT(DISTINCT e.id) 单层去重（替代双层嵌套子查询，sqlite 原生支持 + mock 更简洁）—— 偏离 plan §action 描述但语义等价，记录于 10-01-SUMMARY deviations
 - [Phase 9]: 09-02 IPC 入参类型用 renderer DTO ConfirmDraftsInput（与现有 ExperienceInput import 同模式），service 内部接受同构 ExperienceUpdateFields，TS 结构化类型兼容无运行时开销；fields 复用 ExperienceUpdateInput（CR-01 白名单，不含 status）
 - [Phase 9]: 09-02 DraftSummary = Experience type alias（复用现有 DTO 不重复定义，与 Phase 7 ExperienceRelatedDevice = Device 同模式）
 - [Phase 9]: 09-02 三向一致 channel 名逐字相等（experienceIpc ↔ preload ↔ electron.d.ts），ai.getSessionMessages 与 experience.getSessionMessages namespace 隔离各占 1，grep 验证全 = 1
@@ -125,6 +133,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 - [x] 09-01-PLAN.md — Phase 9 服务层 confirmDrafts/listDrafts/getSessionMessages 落地（扩 experienceService.ts 不新建 reviewService + 单事务原子 adopt/supersede/discard/设备 diff + service 层兜底质量门 troubleshooting severity/symptoms/resolution + 不动 CR-01 update 白名单 status 改变只走专用接口 + 复用 ai.ts getChatHistory 明文回链 D-9-5 + relateDevices 空/undefined 不动关联防默认值传播拆关联，2 commits 455721d/d307b75，19 新测试，三绿门禁全绿 165 测试全 PASS）
 - [x] 09-02-PLAN.md — Phase 9 IPC 网关层 + preload bridge + renderer DTO 落地（experienceIpc.ts 注册 experience:confirmDrafts/listDrafts/getSessionMessages 3 个 secure channel + IPC 层 MAX_BATCH 双层防御 + preload 暴露 window.api.experience.* 3 API + src/types/experience.ts 5 renderer DTO ConfirmDraftItem/ConfirmDraftsInput/ConfirmDraftsResult/DraftSummary/SessionMessage + electron.d.ts 3 方法签名 + 三向一致 IPC↔preload↔d.ts channel 名逐字相等 + main.ts 无需改 registerExperienceIpc 已注册，2 feat commits f168ef1/9172476 + 1 docs commit 9b8baec，三绿门禁 tsc+build:electron-main+vitest 165/165 全绿，无回归）
 - [x] 09-03-PLAN.md — Phase 9 renderer 层弹窗（ReviewConfirmModal 宽 80vw master-detail 主壳 + 左侧列表勾选/标红 + 底部批量提交 confirmDrafts + validateDraft 导出 + SessionMessagesModal 只读会话回链子 Modal 叠层 + ReviewConfirmEditForm 编辑表单 attrs 模板 + 关联设备 Select + UPDATE supersedeOld D-9-2 默认不勾 + useAIChat/AIPage/ChatInput 串联 handleSummarize 开弹窗 + 待确认 Badge 角标入口 D-9-7 + 表单中文化 label/severity/错误提示，5 commits 458d828/b64e00d/6c43aad/7665bb1/cd87077，三绿门禁 tsc+vite build+electron-main build+vitest 175 全绿，人工 checkpoint approved 全链路无问题）
+- [x] 10-01-PLAN.md — Phase 10 数据/服务/IPC 基线（severity v10 列迁移 hasColumn 守卫 + restoreExperience 受控接口 + listExperiences opts 扩 search/severity/tags + deviceId 多选 IN 占位 OR-join + device_count 子查询零 N+1 + createExperience status? 默认 draft + severity 双写 + rowToExperience fallback + experience:restore IPC secure + preload + DTO 三向契约 + Experience 加 severity/device_count，3 commits 2a86fc9/84c4ea5/a1c0ba1，TDD RED→GREEN 9 新 vitest 用例，三绿门禁 191/191 全绿零回归）
 
 ### Blockers/Concerns
 
@@ -151,6 +160,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 | Phase 09 P01 | ~6min | 2 tasks | 2 files |
 | Phase 09 P02 | ~7min | 2 tasks | 4 files |
 | 260804-t2q | fix telnet 长输出截断（分页 + shellPrompt 精确化） | 2026-08-04 | 534fdc9/913aade | [260804-t2q-fix-telnet-long-output-pagination-trunca](./quick/260804-t2q-fix-telnet-long-output-pagination-trunca/) |
+| Phase 10 P01 | ~13min | 3 tasks | 9 files |
 
 ### Risk Watch
 
@@ -185,8 +195,8 @@ v1.1 明确 defer 到二期（4 FUTURE，不进 roadmap）：
 
 ## Session Continuity
 
-- **Last action**: Phase 10 UI-SPEC approved（10-UI-SPEC.md，gsd-ui-researcher 落契约 + gsd-ui-checker 6/6 dimensions APPROVED：Copywriting/Visuals/Color/Typography/Spacing/Registry Safety 全 PASS，AntD 设计系统，severity 5 级语义色 Tag，Table 9 列顺序 + 筛选 bar 布局 + Modal 尺寸锁定，红线③ copy 约束明确，2 commits e0b4eaf/ac5bdb7）
-- **Next action**: `/gsd-plan-phase 10`（planner 以 UI-SPEC.md 为设计上下文拆 task：KnowledgeBasePage Tabs 改造 / ExperienceTab 列表 / ExperienceEditForm 抽取 / 详情 Modal / service+IPC 扩展 / severity 列迁移）
+- **Last action**: Phase 10 Plan 01 完成（数据/服务/IPC 基线落地，3 commits 2a86fc9/84c4ea5/a1c0ba1，severity v10 迁移 + restoreExperience + listExperiences opts 扩 + device_count 子查询 + IPC 三向契约，三绿门禁 191/191 全绿零回归）
+- **Next action**: 执行 10-02-PLAN.md（renderer 层 ExperienceTab 列表 + KnowledgeBasePage Tabs 改造，消费 10-01 落地的 list/restore/severity/device_count 接口）
 - **Resume command**: `/gsd-status`
 
 ## Phase → Requirement Map

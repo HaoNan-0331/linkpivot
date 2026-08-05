@@ -110,7 +110,7 @@ Plans:
 
 Plans:
 **Wave 1**
-- [ ] 10-01-PLAN.md — severity 明文列迁移 v10（幂等）+ service 扩展（restoreExperience 受控接口 + listExperiences opts search/severity/tags 参数化 + createExperience status? 入参 + update 双写 severity + rowToExperience fallback）+ experience:restore secure IPC + preload + ExperienceListInput/Experience DTO 三向一致
+- [x] 10-01-PLAN.md — severity 明文列迁移 v10（幂等）+ service 扩展（restoreExperience 受控接口 + listExperiences opts search/severity/tags 参数化 + createExperience status? 入参 + update 双写 severity + rowToExperience fallback）+ experience:restore secure IPC + preload + ExperienceListInput/Experience DTO 三向一致（3 commits 2a86fc9/84c4ea5/a1c0ba1，TDD RED→GREEN 9 新 vitest 用例，三绿门禁 191/191 全绿零回归）
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 10-02-PLAN.md — 从 Phase 9 抽 ExperienceEditForm 公共组件 + validateDraft 质量门单一来源（D-10-1）+ Phase 9 ReviewConfirmModal 改 import 复用（保守方案降回归）+ 手动新增直 published（红线③ 例外）
