@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2026-08-05 fix(ai): saveChatMessage 空内容守卫防 NOT NULL 崩溃（quick）
+
+- **根因（debug: chat_history.content_enc NOT NULL）**：用户问「关于公司的经验」时 AI 首回纯 `[KB_SEARCH]` 标签，`chat()` KB 分支 follow-up callAI 撞 deepseek 连接超时 → catch（ai.ts:776-778）把标签剥光成 `''` → `saveChatMessage('assistant','')` → `encField('')` 返回 null → 撞 `chat_history.content_enc NOT NULL`。错误信息「数据库约束失败」完全误导（真因是网络超时）。与 Phase 9 fix 无关，Phase 9 之前即存在的潜在 bug，被网络抖动 + KB_SEARCH 路径触发。
+- **修复**：`saveChatMessage`（ai.ts:233-243）入口加空内容守卫——`content` trim 后为空（空串/纯空格/null/undefined）则抛清晰错误 `'无法保存空消息内容（AI 可能未返回有效回复，请检查网络后重试）'`，不进 INSERT。这是所有 chat 保存的总闸（10+ 调用点），一处守卫护全部。写入用 `trimmed`（与判空一致，消息首尾空格无业务语义）。
+- **测试**：新增 `electron/services/ai.saveChatMessage.test.ts`（5 cases）——空串/纯空格/null/undefined 抛错且不调 prepare、正常消息控制组进 INSERT。三绿门禁 vitest 182 PASS（原 177 + 新 5，无回归）。
+- **关联**：网络超时本身是环境问题（deepseek TCP 偶发超时，需用户稳网络）；本守卫把崩溃降级为清晰错误提示，不改变功能行为。
+
 ## 2026-08-04 fix(09): AI executeCommandsOnDevice 按 connectionType 分流 telnet/ssh
 
 - **根因（debug: ai-telnet-exec-routing）**：`electron/services/ai.ts` `executeCommandsOnDevice` 历史无条件 `buildSSHConfig` 走 SSH（端口 22），无视 `device.connectionType`，对 telnet 设备 `ECONNREFUSED`。telnet 自动化 exec 能力已存在于 `arpCollector.executeTelnet`（telnet-client），AI 执行层漏接。

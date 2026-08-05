@@ -236,10 +236,17 @@ export function saveChatMessage(
   deviceId: string | null,
   sessionId?: string | null
 ): void {
+  // 空内容守卫：trim 后为空则抛清晰错误，不进 INSERT。
+  // 防 chat() KB_SEARCH catch 把纯标签 reply 剥成空串 / LLM 超时返回空 content 时
+  // encField('') 返回 null 撞 chat_history.content_enc NOT NULL，把「网络超时」伪装成「DB 约束错误」。
+  const trimmed = (content ?? '').trim()
+  if (!trimmed) {
+    throw new Error('无法保存空消息内容（AI 可能未返回有效回复，请检查网络后重试）')
+  }
   const id = uuidv4()
   getDatabase().prepare(
     'INSERT INTO chat_history (id, role, content_enc, device_id, session_id) VALUES (?, ?, ?, ?, ?)'
-  ).run(id, role, encField(content, MK), deviceId || null, sessionId || null)
+  ).run(id, role, encField(trimmed, MK), deviceId || null, sessionId || null)
 }
 
 export function clearChatHistory(): void {
