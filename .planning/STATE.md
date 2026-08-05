@@ -140,6 +140,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 | 260726-vcu | R5 收尾——commandSafety + authGuard 单测（55/55） | 2026-07-26 | 815ae87 | quick/260726-vcu-command-safety-authguard-tests/ |
 | 260726-voh | 文档同步——workflow 刷新 13 文档消 85 条 drift | 2026-07-26 | 224b56b | quick/260726-voh-doc-sync/ |
 | 260726-w67 | P1 加固——auth safe 包装 + app.isPackaged + native rebuild/CI 冒烟 | 2026-07-26 | 998d1cf | quick/260726-w67-p1-hardening/ |
+| 260805-scm | saveChatMessage 空内容守卫防 chat_history.content_enc NOT NULL 崩溃（debug 收尾，网络超时降级为清晰错误） | 2026-08-05 | 5dd120c | -（fast inline） |
 | Phase 07 P07-01 | 7m24s | 2 tasks | 5 files |
 | Phase 07 P07-02 | 5m56s | 2 tasks | 5 files |
 | Phase 07 P07-02 | 5m56s | 2 tasks | 5 files |
