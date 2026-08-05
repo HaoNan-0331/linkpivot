@@ -30,10 +30,10 @@
 
 ### 经验板块页 (BROWSE)
 
-- [ ] **BROWSE-01**: 知识库页新增「经验」Tab，展示经验列表 — Phase 10
-- [ ] **BROWSE-02**: 按分类/标签/关联设备/严重度/有效期/状态多维筛选 + 关键词搜索 — Phase 10
-- [ ] **BROWSE-03**: 用户可手动新增/编辑经验（不只靠 AI 总结）— Phase 10
-- [ ] **BROWSE-04**: 用户可将经验标记为失效（invalid_at）— Phase 10
+- [x] **BROWSE-01**: 知识库页新增「经验」Tab，展示经验列表 — Phase 10
+- [x] **BROWSE-02**: 按分类/标签/关联设备/严重度/有效期/状态多维筛选 + 关键词搜索 — Phase 10
+- [x] **BROWSE-03**: 用户可手动新增/编辑经验（不只靠 AI 总结）— Phase 10
+- [x] **BROWSE-04**: 用户可将经验标记为失效（invalid_at）— Phase 10
 
 ### AI 检索复用 (RETRIEVE)
 
@@ -86,10 +86,10 @@
 | REVIEW-01 | Phase 9 | Complete |
 | REVIEW-02 | Phase 9 | Complete |
 | REVIEW-03 | Phase 9 | Complete |
-| BROWSE-01 | Phase 10 | Pending |
-| BROWSE-02 | Phase 10 | Pending |
-| BROWSE-03 | Phase 10 | Pending |
-| BROWSE-04 | Phase 10 | Pending |
+| BROWSE-01 | Phase 10 | Complete |
+| BROWSE-02 | Phase 10 | Complete |
+| BROWSE-03 | Phase 10 | Complete |
+| BROWSE-04 | Phase 10 | Complete |
 | RETRIEVE-01 | Phase 11 | Pending |
 | RETRIEVE-02 | Phase 11 | Pending |
 | RETRIEVE-03 | Phase 11 | Pending |

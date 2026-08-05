@@ -31,7 +31,7 @@
 - [ ] **Phase 7: Experience Data Layer & Security Baseline** - 经验主表+设备关联表+bi-temporal+attrs 模板+幂等迁移，立 IPC 鉴权/脱敏基线
 - [ ] **Phase 8: AI Drafting Pipeline** - 会话回顾→PII 脱敏→查存量去重→强 schema JSON 起草→draft 态
 - [x] **Phase 9: Human Review & Confirmation** - 弹窗逐条编辑/勾选 + 质量门硬校验 + 疑似重复提示 + 原始会话溯源回链
-- [ ] **Phase 10: Experience Browse Page** - 知识库「经验」Tab + 多维筛选 + 关键词搜索 + 手动 CRUD + 标失效
+- [x] **Phase 10: Experience Browse Page** - 知识库「经验」Tab + 多维筛选 + 关键词搜索 + 手动 CRUD + 标失效 (completed 2026-08-05)
 - [ ] **Phase 11: AI Retrieval & Reuse** - SQL 粗筛 + LLM 精排 + read-time 即时验证 + 引用溯源
 
 ## Phase Details
@@ -116,7 +116,7 @@ Plans:
 - [x] 10-02-PLAN.md — 从 Phase 9 抽 ExperienceEditForm 公共组件 + validateDraft 质量门单一来源（D-10-1）+ Phase 9 ReviewConfirmModal 改 import 复用（保守方案降回归）+ 手动新增直 published（红线③ 例外）
 
 **Wave 3** *(blocked on Wave 1 + 2)*
-- [ ] 10-03-PLAN.md — ExperienceTab（筛选 bar 8 元素 + Table 9 列 + 行操作三能力按状态切换）+ ExperienceDetailModal（width 900 元数据 + 复用 SessionMessagesModal 回链）+ KnowledgeBasePage Tabs 改造（文档 | 经验，懒加载）+ 人工 checkpoint
+- [x] 10-03-PLAN.md — ExperienceTab（筛选 bar 8 元素 + Table 9 列 + 行操作三能力按状态切换）+ ExperienceDetailModal（width 900 元数据 + 复用 SessionMessagesModal 回链）+ KnowledgeBasePage Tabs 改造（文档 | 经验，懒加载）+ 人工 checkpoint
 
 **UI hint**: yes
 
@@ -150,7 +150,7 @@ Phases execute in numeric order: 7 → 8 → 9 → 10 → 11（v1.0 Phases 1-6 �
 | 7. Experience Data Layer & Security Baseline | v1.1 | 0/TBD | Not started | - |
 | 8. AI Drafting Pipeline | v1.1 | 2/3 | In Progress|  |
 | 9. Human Review & Confirmation | v1.1 | 0/TBD | Not started | - |
-| 10. Experience Browse Page | v1.1 | 2/3 | In Progress|  |
+| 10. Experience Browse Page | v1.1 | 3/3 | Complete   | 2026-08-05 |
 | 11. AI Retrieval & Reuse | v1.1 | 0/TBD | Not started | - |
 
 ---

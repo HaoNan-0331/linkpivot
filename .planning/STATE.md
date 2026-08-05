@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: AI 对话经验沉淀
-status: executing
-last_updated: "2026-08-05T13:31:17.310Z"
-last_activity: 2026-08-05
+status: completed
+last_updated: "2026-08-05T13:45:28.285Z"
+last_activity: 2026-08-05 -- Phase 10 Plan 03 完成（ExperienceTab 列表/筛选/手动 CRUD/三能力 + ExperienceDetailModal 元数据+SessionMessagesModal 叠层 + KnowledgeBasePage Tabs 改造 + ExperienceEditForm.onSubmit 扩 relateDevices 解决 10-02 遗留，3 commits 23ad8a5/e2f4be8/b525dcd，三绿门禁 tsc+vite+electron-main+vitest 191/191 全绿零回归，人工 checkpoint approved 信任门禁收尾）
 progress:
   total_phases: 5
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 11
-  completed_plans: 10
-  percent: 60
+  completed_plans: 11
+  percent: 80
 ---
 
 # STATE: network_toplogy
@@ -25,12 +25,12 @@ See: .planning/PROJECT.md (updated 2026-08-01)
 
 ## Current Position
 
-Phase: 10 (experience-browse-page) — EXECUTING
-Plan: 3 of 3（10-01 + 10-02 完成，下一步 10-03 ExperienceTab 渲染层手动 CRUD Modal）
-Status: Ready to execute
-Last activity: 2026-08-05 -- Phase 10 Plan 02 完成（ExperienceEditForm 公共组件抽取 + validateDraft 单一来源）
+Phase: 10 (experience-browse-page) — COMPLETE（3/3 plan 全执行完，待 verify）
+Plan: 3 of 3（10-01 + 10-02 + 10-03 全部完成，BROWSE-01/02/03/04 UI 层落地）
+Status: Phase 10 done，下一步 Phase 11 规划（AI Retrieval & Reuse）
+Last activity: 2026-08-05 -- Phase 10 Plan 03 完成（ExperienceTab 列表/筛选/手动 CRUD/三能力 + ExperienceDetailModal 元数据+SessionMessagesModal 叠层 + KnowledgeBasePage Tabs 改造 + ExperienceEditForm.onSubmit 扩 relateDevices 解决 10-02 遗留，3 commits 23ad8a5/e2f4be8/b525dcd，三绿门禁 tsc+vite+electron-main+vitest 191/191 全绿零回归，人工 checkpoint approved 信任门禁收尾）
 
-Progress: [█████████░] 91%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -134,6 +134,8 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 - [x] 09-02-PLAN.md — Phase 9 IPC 网关层 + preload bridge + renderer DTO 落地（experienceIpc.ts 注册 experience:confirmDrafts/listDrafts/getSessionMessages 3 个 secure channel + IPC 层 MAX_BATCH 双层防御 + preload 暴露 window.api.experience.* 3 API + src/types/experience.ts 5 renderer DTO ConfirmDraftItem/ConfirmDraftsInput/ConfirmDraftsResult/DraftSummary/SessionMessage + electron.d.ts 3 方法签名 + 三向一致 IPC↔preload↔d.ts channel 名逐字相等 + main.ts 无需改 registerExperienceIpc 已注册，2 feat commits f168ef1/9172476 + 1 docs commit 9b8baec，三绿门禁 tsc+build:electron-main+vitest 165/165 全绿，无回归）
 - [x] 09-03-PLAN.md — Phase 9 renderer 层弹窗（ReviewConfirmModal 宽 80vw master-detail 主壳 + 左侧列表勾选/标红 + 底部批量提交 confirmDrafts + validateDraft 导出 + SessionMessagesModal 只读会话回链子 Modal 叠层 + ReviewConfirmEditForm 编辑表单 attrs 模板 + 关联设备 Select + UPDATE supersedeOld D-9-2 默认不勾 + useAIChat/AIPage/ChatInput 串联 handleSummarize 开弹窗 + 待确认 Badge 角标入口 D-9-7 + 表单中文化 label/severity/错误提示，5 commits 458d828/b64e00d/6c43aad/7665bb1/cd87077，三绿门禁 tsc+vite build+electron-main build+vitest 175 全绿，人工 checkpoint approved 全链路无问题）
 - [x] 10-01-PLAN.md — Phase 10 数据/服务/IPC 基线（severity v10 列迁移 hasColumn 守卫 + restoreExperience 受控接口 + listExperiences opts 扩 search/severity/tags + deviceId 多选 IN 占位 OR-join + device_count 子查询零 N+1 + createExperience status? 默认 draft + severity 双写 + rowToExperience fallback + experience:restore IPC secure + preload + DTO 三向契约 + Experience 加 severity/device_count，3 commits 2a86fc9/84c4ea5/a1c0ba1，TDD RED→GREEN 9 新 vitest 用例，三绿门禁 191/191 全绿零回归）
+- [x] 10-02-PLAN.md — Phase 10 公共组件抽取（ExperienceEditForm 抽出 + validateDraft 单一来源 troubleshooting severity/symptoms/resolution 标红 + ExperienceInput DTO 扩 status? 红线③ 例外手动新增直 published + 复用 09-03 ReviewConfirmEditForm 既有 attrs 模板/关联设备 Select 逻辑，2 commits e2b1506/b95c44d，三绿门禁 191/191 全绿零回归 Phase 9 表单不回归）
+- [x] 10-03-PLAN.md — Phase 10 UI 层（KnowledgeBasePage 改 Tabs 文档|经验 + ExperienceTab 列表/多维筛选含设备多选 mode multiple/Table 9 列含第 5 列「N 台/全局」用 record.device_count 渲染零 N+1/手动 CRUD 新增直 published/三能力标失效+恢复+物理删除按状态切换 Popconfirm 软硬区分/draft 前端 filter 兜底 + ExperienceDetailModal width 900 footer null 元数据+SessionMessagesModal 叠层+severity 语义色 Tag + ExperienceEditForm.onSubmit 扩 relateDevices 解决 10-02 遗留，3 feat commits 23ad8a5/e2f4be8/b525dcd + 1 docs commit，三绿门禁 tsc+vite build+electron-main build+vitest 191/191 全绿零回归，人工 checkpoint approved 信任门禁收尾——三绿门禁全绿 + UI-SPEC 关键渲染 grep 验证全命中跳过实机，BROWSE-01/02/03/04 UI 层全落地 Phase 10 完成）
 
 ### Blockers/Concerns
 
@@ -162,6 +164,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 | 260804-t2q | fix telnet 长输出截断（分页 + shellPrompt 精确化） | 2026-08-04 | 534fdc9/913aade | [260804-t2q-fix-telnet-long-output-pagination-trunca](./quick/260804-t2q-fix-telnet-long-output-pagination-trunca/) |
 | Phase 10 P01 | ~13min | 3 tasks | 9 files |
 | Phase 10 P02 | 12min | 2 tasks | 3 files |
+| Phase 10 P03 | ~14min | 4 tasks (3 auto + 1 checkpoint approved) | 4 files |
 
 ### Risk Watch
 
@@ -196,8 +199,8 @@ v1.1 明确 defer 到二期（4 FUTURE，不进 roadmap）：
 
 ## Session Continuity
 
-- **Last action**: Phase 10 Plan 02 完成（ExperienceEditForm 公共组件抽取 + validateDraft 单一来源，2 commits e2b1506/b95c44d，D-10-1 保守方案仅共享 validateDraft + 红线③ 例外手动新增直 published + ExperienceInput DTO 扩 status?，三绿门禁 191/191 全绿零回归，Phase 9 表单行为不回归）
-- **Next action**: 执行 10-03-PLAN.md（renderer 层 ExperienceTab 列表 + KnowledgeBasePage Tabs 改造 + 手动 CRUD Modal，消费 ExperienceEditForm + 10-01 落地的 list/restore/severity/device_count 接口）
+- **Last action**: Phase 10 Plan 03 完成（ExperienceTab + ExperienceDetailModal + KnowledgeBasePage Tabs 改造 + ExperienceEditForm.onSubmit 扩 relateDevices 解决 10-02 遗留，3 feat commits 23ad8a5/e2f4be8/b525dcd，三绿门禁 tsc+vite+electron-main+vitest 191/191 全绿零回归，人工 checkpoint approved 信任门禁收尾跳过实机，BROWSE-01/02/03/04 UI 层全落地，Phase 10 全部 3 plan 完成）
+- **Next action**: Phase 10 整体 verify（人工验收 UI 全链路实机，或信任门禁直接进 Phase 11 规划）；Phase 11（AI Retrieval & Reuse）规划 RETRIEVE-01/02/03（FTS5 检索 + LLM 精排 + 复用计数 reuse_count + bi-temporal 过滤 + commandSafety 联动）
 - **Resume command**: `/gsd-status`
 
 ## Phase → Requirement Map
