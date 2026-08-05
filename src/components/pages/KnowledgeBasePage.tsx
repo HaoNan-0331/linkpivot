@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
-import { Table, Button, Upload, Modal, message, Tag, Space, Popconfirm, Input, Select, Card, Checkbox, InputNumber } from 'antd'
+import { Table, Button, Upload, Modal, message, Tag, Space, Popconfirm, Input, Select, Card, Checkbox, InputNumber, Tabs } from 'antd'
 import { UploadOutlined, DeleteOutlined, ReloadOutlined, SearchOutlined, FileTextOutlined, FilePdfOutlined, FileWordOutlined, EditOutlined, MergeCellsOutlined, ScissorOutlined, SaveOutlined, CloseOutlined } from '@ant-design/icons'
 import type { KbDocument, KbChunk, KbImage, KbSearchResult } from '@/types/kb'
 import type { Device } from '@/types/device'
 import { getImage } from './kb/imageCache'
+import ExperienceTab from '../knowledge/ExperienceTab'
 
 const CATEGORY_OPTIONS = [
   { value: 'manual', label: '手册' },
@@ -117,6 +118,8 @@ export default function KnowledgeBasePage() {
   const [splitTitle1, setSplitTitle1] = useState('')
   const [splitTitle2, setSplitTitle2] = useState('')
   const pollingRef = useRef<number | null>(null)
+  // Phase 10（UI-SPEC §1）：经验 Tab 懒加载（首次切到 exp 才挂载，避免默认文档 Tab 无谓加载经验列表）
+  const [expTabLoaded, setExpTabLoaded] = useState(false)
 
   const loadDocuments = async () => {
     setLoading(true)
@@ -374,7 +377,18 @@ export default function KnowledgeBasePage() {
 
   return (
     <div style={{ padding: 24 }}>
-      <Card title="资料库" style={{ marginBottom: 16 }}>
+      <Tabs
+        defaultActiveKey="docs"
+        onChange={(key) => {
+          if (key === 'exp') setExpTabLoaded(true)
+        }}
+        items={[
+          {
+            key: 'docs',
+            label: '文档',
+            children: (
+              <>
+                <Card title="资料库" style={{ marginBottom: 16 }}>
         <Space wrap style={{ marginBottom: 16 }}>
           <Upload
             accept=".txt,.pdf,.doc,.docx"
@@ -460,6 +474,16 @@ export default function KnowledgeBasePage() {
           </div>
         )}
       </Card>
+              </>
+            ),
+          },
+          {
+            key: 'exp',
+            label: '经验',
+            children: expTabLoaded ? <ExperienceTab /> : null,
+          },
+        ]}
+      />
 
       <Modal
         title={detailDoc ? `文档详情 - ${detailDoc.title}` : '文档详情'}
