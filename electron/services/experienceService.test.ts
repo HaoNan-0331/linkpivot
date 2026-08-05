@@ -329,6 +329,25 @@ class MemDb {
       }
     }
 
+    // Phase 10 browse：SELECT COUNT(DISTINCT e.id) AS cnt FROM experiences e JOIN exp_device_rel ... WHERE r.device_id IN (?,...)
+    const distinctCountMatch = sql.match(/^SELECT\s+COUNT\(DISTINCT\s+e\.id\)\s+AS\s+(\w+)\s+FROM\s+experiences\s+e\s+JOIN\s+exp_device_rel\s+r\s+ON\s+e\.id\s*=\s*r\.experience_id\s+WHERE\s+r\.device_id\s+IN\s*\(([^)]+)\)(\s+AND\s+(.+))?$/i)
+    if (distinctCountMatch) {
+      const alias = distinctCountMatch[1]
+      const placeholderCount = distinctCountMatch[2].split(',').filter((s) => s.trim() === '?').length
+      return {
+        get: (...vals: any[]) => {
+          const t = this.tables.get('experiences')
+          if (!t) return { [alias]: 0 }
+          const deviceIds = vals.slice(0, placeholderCount)
+          const rel = this.tables.get('exp_device_rel')
+          const expIdSet = new Set(
+            rel ? Array.from(rel.rows.values()).filter((r) => deviceIds.includes(r.device_id)).map((r) => r.experience_id) : []
+          )
+          return { [alias]: Array.from(t.rows.values()).filter((r) => expIdSet.has(r.id)).length }
+        },
+      }
+    }
+
     // SELECT COUNT(*) —— 支持 FROM <table> [alias] [JOIN ...] [WHERE ...]
     const countMatch = sql.match(/^SELECT\s+COUNT\(\*\)\s+AS\s+(\w+)\s+FROM\s+(\w+)(\s+\w+)?(\s+JOIN\s+.+?)?(\s+WHERE\s+(.+))?$/i)
     if (countMatch) {
@@ -404,10 +423,28 @@ class MemDb {
           if (!t) return []
           // 解析 WHERE 中的 conditions（简化：deviceId JOIN、invalid 过滤、category/status）
           let rows = Array.from(t.rows.values()).map((r) => ({ ...r }))
-          // deviceId 反查：JOIN exp_device_rel
+          // Phase 10：device_count 子查询回填（按 exp_device_rel 关联行计数）
+          const rel = this.tables.get('exp_device_rel')
+          if (/AS\s+device_count/i.test(sql)) {
+            rows.forEach((r) => {
+              r.device_count = rel
+                ? Array.from(rel.rows.values()).filter((rr) => rr.experience_id === r.id).length
+                : 0
+            })
+          }
+          // deviceId 反查：JOIN exp_device_rel，支持 device_id = ? 单值 或 device_id IN (?,...) 多选
+          const inMatch = sql.match(/device_id\s+IN\s*\(([^)]+)\)/)
           const devMatch = sql.match(/device_id\s*=\s*\?/)
-          if (devMatch) {
-            const rel = this.tables.get('exp_device_rel')
+          if (inMatch) {
+            const placeholderCount = inMatch[1].split(',').filter((s: string) => s.trim() === '?').length
+            const deviceIds = vals.slice(0, placeholderCount)
+            vals = vals.slice(placeholderCount)
+            const expIdSet = new Set(
+              rel ? Array.from(rel.rows.values()).filter((r) => deviceIds.includes(r.device_id)).map((r) => r.experience_id) : []
+            )
+            // IN 占位 OR-join 去重（一条经验关联多选中设备只返 1 次，与 GROUP BY e.id 等价）
+            rows = rows.filter((r) => expIdSet.has(r.id))
+          } else if (devMatch) {
             const deviceId = vals[0]
             const expIds = rel
               ? Array.from(rel.rows.values()).filter((r) => r.device_id === deviceId).map((r) => r.experience_id)

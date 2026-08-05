@@ -125,10 +125,17 @@ export interface ExperienceUpdateFields {
 export interface ListExperiencesOpts {
   category?: ExperienceCategory
   status?: ExperienceStatus
-  deviceId?: string
+  /** Phase 10 D-10-2：接受单值（向后兼容 Phase 7-9）或多选数组（UI-SPEC §3 设备多选 IN 占位 OR-join）。 */
+  deviceId?: string | string[]
   includeInvalid?: boolean
   limit?: number
   offset?: number
+  /** Phase 10 D-10-2：关键词搜索（SQL LIKE title/content，参数化防注入）。 */
+  search?: string
+  /** Phase 10 D-10-2：severity 明文列直筛（WHERE e.severity = ?）。 */
+  severity?: string
+  /** Phase 10 D-10-2：标签多选命中任一（tags JSON 列 LIKE，参数化 OR-join）。 */
+  tags?: string[]
 }
 
 /**
@@ -197,13 +204,20 @@ function rowToExperience(row: any): any {
   } else if (row.tags == null) {
     row.tags = []
   }
+  // Phase 10 D-10-2：severity 列 NULL 时 fallback 读 attrs.severity（向后兼容历史数据）。
+  // 顺序关键：必须在 attrs 回填之后（row.attrs.severity 可读）、delete attrs_enc 之前。
+  // 迁移在 MK 注入前跑，无法在 v10 内解密回填 severity 明文列——历史数据 severity 仍只在 attrs_enc，
+  // service 层此 fallback 保证历史数据可读（D-10-2「保证历史数据可查」核心承诺）。
+  if (row.severity == null && row.attrs && row.attrs.severity) {
+    row.severity = row.attrs.severity
+  }
   delete row.attrs_enc
   return row
 }
 
 // ---------- CRUD ----------
 
-export function createExperience(input: ExperienceInput): any {
+export function createExperience(input: ExperienceInput & { status?: ExperienceStatus }): any {
   if (!VALID_CATEGORIES.includes(input.category)) {
     throw new Error(`非法 category: ${input.category}`)
   }
@@ -215,11 +229,16 @@ export function createExperience(input: ExperienceInput): any {
   // CREATE 成功即标注同写入，失败 throw → 整条不落库（标注与 draft 行共存亡）。
   // 不校验指向 exp_id 存在性（信任 Plan 03 编排层传入 LLM 判定 + Phase 9 人工确认兜底；experiences 表无 self-FK）。
   const dupId = input.duplicateOfExpId ?? null
+  // Phase 10 D-10-1：status 默认 'draft'（保 Phase 7-9 AI 起草调用方零改动），手动新增传 'published'
+  // （红线③ 例外：人工录入非 AI 产出，不进 draft 闸口，见 CONTEXT specifics）。
+  const statusVal: ExperienceStatus = input.status ?? 'draft'
+  // Phase 10 D-10-2：severity 明文列双写（troubleshooting 类从 attrs.severity 取，其他类 null）。
+  const severityVal = input.category === 'troubleshooting' ? (input.attrs?.severity ?? null) : null
   const conn = db()
   conn.prepare(
-    `INSERT INTO experiences (id, title, category, content, tags, status, source_session_id, attrs_enc, valid_at, duplicate_of_exp_id)
-     VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, datetime('now','localtime'), ?)`
-  ).run(id, input.title, input.category, input.content, tags, input.sourceSessionId ?? null, attrsEnc, dupId)
+    `INSERT INTO experiences (id, title, category, content, tags, status, source_session_id, attrs_enc, valid_at, duplicate_of_exp_id, severity)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'), ?, ?)`
+  ).run(id, input.title, input.category, input.content, tags, statusVal, input.sourceSessionId ?? null, attrsEnc, dupId, severityVal)
   return getExperience(id)
 }
 
@@ -252,35 +271,65 @@ export function listExperiences(opts: ListExperiencesOpts): PaginatedResult<any>
     conditions.push('e.status = ?')
     params.push(opts.status)
   }
+  // Phase 10 D-10-2：search 关键词 LIKE（title/content，参数化防注入 T-10-01 mitigate）
+  if (opts.search) {
+    conditions.push('(e.title LIKE ? OR e.content LIKE ?)')
+    const kw = `%${opts.search}%`
+    params.push(kw, kw)
+  }
+  // Phase 10 D-10-2：severity 明文列直筛（WHERE e.severity = ?）。
+  // 历史数据 severity 列 NULL 但 attrs.severity 有值时此 WHERE 筛不到（已知限制，
+  // D-10-2「保证历史数据可查」指 fallback 读而非 fallback 筛）。
+  if (opts.severity) {
+    conditions.push('e.severity = ?')
+    params.push(opts.severity)
+  }
+  // Phase 10 D-10-2：tags 多选命中任一（tags 明文 JSON 列 LIKE，参数化 OR-join）
+  if (opts.tags && opts.tags.length > 0) {
+    const ors = opts.tags.map(() => 'e.tags LIKE ?')
+    conditions.push(`(${ors.join(' OR ')})`)
+    opts.tags.forEach((t) => params.push(`%"${t}"%`))
+  }
   // bi-temporal 默认过滤已失效（includeInvalid=false）
   if (!opts.includeInvalid) {
     conditions.push("(e.invalid_at IS NULL OR e.invalid_at > datetime('now','localtime'))")
   }
 
+  // Phase 10 D-10-2：deviceId 单值/数组 normalize（向后兼容 string，UI 多选用 string[]）
+  const deviceIds: string[] = opts.deviceId
+    ? (Array.isArray(opts.deviceId) ? opts.deviceId : [opts.deviceId])
+    : []
+
+  // device_count 子查询（零 N+1）：两分支都带，单次 SQL 带出每行关联设备计数。
+  const deviceCountSub = `(SELECT COUNT(*) FROM exp_device_rel r2 WHERE r2.experience_id = e.id) AS device_count`
+
   const conn = db()
   let rowsSql: string
-  if (opts.deviceId) {
-    // JOIN exp_device_rel 反查
+  if (deviceIds.length > 0) {
+    // JOIN exp_device_rel 反查，多选 IN 占位（参数化，非拼接值 T-10-01 mitigate）。
+    // GROUP BY e.id 去重：一条经验关联多个选中设备时 JOIN 产生多行，去重后恰返 1 次（Test 5 守护）。
+    const inPlaceholders = deviceIds.map(() => '?').join(',')
     rowsSql =
-      `SELECT e.* FROM experiences e ` +
+      `SELECT e.*, ${deviceCountSub} FROM experiences e ` +
       `JOIN exp_device_rel r ON e.id = r.experience_id ` +
-      `WHERE r.device_id = ?` +
+      `WHERE r.device_id IN (${inPlaceholders})` +
       (conditions.length > 0 ? ' AND ' + conditions.join(' AND ') : '') +
-      ` ORDER BY e.created_at DESC`
+      ` GROUP BY e.id ORDER BY e.created_at DESC`
     rowsSql = injectLimitOffset(rowsSql)
-    const rowsParams = [opts.deviceId, ...params, limit, offset]
+    const rowsParams = [...deviceIds, ...params, limit, offset]
     const rows = (conn.prepare(rowsSql).all(...rowsParams) as any[]).map(rowToExperience)
+    // total 用 COUNT(DISTINCT e.id) 去重计数（一条经验关联多选中设备只算 1 条）。
     const totalSql =
-      `SELECT COUNT(*) AS cnt FROM experiences e ` +
+      `SELECT COUNT(DISTINCT e.id) AS cnt FROM experiences e ` +
       `JOIN exp_device_rel r ON e.id = r.experience_id ` +
-      `WHERE r.device_id = ?` +
+      `WHERE r.device_id IN (${inPlaceholders})` +
       (conditions.length > 0 ? ' AND ' + conditions.join(' AND ') : '')
-    const total = (conn.prepare(totalSql).get(opts.deviceId, ...params) as any).cnt
+    const total = (conn.prepare(totalSql).get(...deviceIds, ...params) as any).cnt
     return { rows, total, truncated: rows.length < total }
   }
 
   rowsSql =
-    `SELECT e.* FROM experiences e` +
+    `SELECT e.*, ${deviceCountSub} FROM experiences e` +
     (conditions.length > 0 ? ' WHERE ' + conditions.join(' AND ') : '') +
     ` ORDER BY e.created_at DESC`
   rowsSql = injectLimitOffset(rowsSql)
@@ -321,6 +370,17 @@ export function updateExperience(id: string, fields: ExperienceUpdateFields): an
     const attrsStr = validateAndStringifyAttrs(cat, fields.attrs)
     const attrsEnc = attrsStr ? encField(attrsStr, MK) : null
     sets.push('attrs_enc = ?'); params.push(attrsEnc)
+    // Phase 10 D-10-2：severity 明文列双写（与 attrs.severity 保持一致）。
+    // troubleshooting 类从 attrs.severity 取；其他类清空 severity 列（category 跨边界时复位）。
+    sets.push('severity = ?')
+    params.push(cat === 'troubleshooting' ? (fields.attrs?.severity ?? null) : null)
+  } else if (fields.category !== undefined) {
+    // 仅改 category（未传 attrs）：跨 troubleshooting 边界时需重算 severity 列。
+    // category 非 troubleshooting → severity 列清 null；category 改 troubleshooting 但无 attrs 不强行塞 severity（保 null，service 入口 validateAndStringifyAttrs 不在 update 路径触发）。
+    const newCat = fields.category
+    const cur = getExperience(id) as any
+    const curSev = newCat === 'troubleshooting' ? (cur?.attrs?.severity ?? null) : null
+    sets.push('severity = ?'); params.push(curSev)
   }
 
   if (sets.length === 0) {
@@ -347,6 +407,21 @@ export function invalidateExperience(id: string): any {
   const conn = db()
   conn.prepare(
     `UPDATE experiences SET invalid_at = datetime('now','localtime'), updated_at = datetime('now','localtime') WHERE id = ?`
+  ).run(id)
+  return getExperience(id)
+}
+
+/**
+ * Phase 10 D-10-3：撤销恢复（受控接口，与 invalidateExperience 对称）。
+ * 清 invalid_at + 显式 status 回 'published'（invalidate 不动 status，restore 须显式回有效态）。
+ * 绕 CR-01 update 白名单（不复活 status 字段），与 invalidate/incReuseCount/touchLastVerifiedAt 同模式
+ * （受控状态接口改审计/状态字段，不经 update 白名单）。T-10-03 mitigate：status 直回 'published'
+ * 不接受 renderer 入参（无 status 参数），无法被滥用改其他状态。
+ */
+export function restoreExperience(id: string): any {
+  const conn = db()
+  conn.prepare(
+    `UPDATE experiences SET invalid_at = NULL, status = 'published', updated_at = datetime('now','localtime') WHERE id = ?`
   ).run(id)
   return getExperience(id)
 }
