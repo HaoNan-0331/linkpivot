@@ -8,6 +8,10 @@ import type {
 } from '@/types/experience'
 import SessionMessagesModal from './SessionMessagesModal'
 import ReviewConfirmEditForm from './ReviewConfirmEditForm'
+// D-10-1：validateDraft 质量门单一来源已迁至 ExperienceEditForm（Phase 10 公共组件），
+// 本文件 re-export 供 ReviewConfirmEditForm 复用（保守方案：仅切单一源，表单字段结构不动，保 Phase 9 零回归）。
+import { validateDraft } from '../../knowledge/ExperienceEditForm'
+export { validateDraft }
 
 /**
  * ReviewConfirmModal —— Phase 9 人工确认主壳（红线③ session→permanent 唯一人工闸口的 renderer 执行点）。
@@ -38,27 +42,6 @@ interface ReviewConfirmModalProps {
   initialDraftIds?: string[]
   /** 提交后回调（刷新角标计数） */
   onSubmitted?: (result: ConfirmDraftsResult) => void
-}
-
-/**
- * 质量门 renderer 实时校验（导出供 ReviewConfirmEditForm 复用，避免双份漂移）。
- * - troubleshooting 类：attrs.severity/symptoms/resolution 必填（与 service 层 confirmDrafts 兜底校验对齐）
- * - 轻结构类（best_practices/product/env）：title/content 必填
- * 返回 errors 字符串数组（空数组=通过）。
- */
-export function validateDraft(d: Experience, fields: ExperienceUpdateInput): string[] {
-  const errs: string[] = []
-  const cat = fields.category ?? d.category
-  const attrs = fields.attrs ?? d.attrs
-  if (cat === 'troubleshooting') {
-    if (!attrs || !attrs.severity) errs.push('缺 严重程度')
-    if (!attrs || !attrs.symptoms || !String(attrs.symptoms).trim()) errs.push('缺 故障现象')
-    if (!attrs || !attrs.resolution || !String(attrs.resolution).trim()) errs.push('缺 解决办法')
-  } else {
-    if (!fields.title || !String(fields.title).trim()) errs.push('缺 标题')
-    if (!fields.content || !String(fields.content).trim()) errs.push('缺 内容')
-  }
-  return errs
 }
 
 /** onChange patch 局部形态（DraftDecision 子集） */
