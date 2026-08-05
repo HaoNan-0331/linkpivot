@@ -74,8 +74,10 @@ export function validateDraft(d: Experience, fields: ExperienceUpdateInput): str
 interface ExperienceEditFormProps {
   /** 编辑态预填；新增态 undefined（新增态提交直 published）。 */
   initialValue?: Experience
-  /** 提交回调。新增态传入参带 status:'published'（红线③ 例外）；编辑态传 update 白名单字段（CR-01 不收 status）。 */
-  onSubmit: (fields: ExperienceInput | ExperienceUpdateInput) => void
+  /** 提交回调。新增态传入参带 status:'published'（红线③ 例外）；编辑态传 update 白名单字段（CR-01 不收 status）。
+   * relateDevices（第二参）：关联设备 ids 数组，由调用方在 onSubmit 后调 experience:relateDevice/unrelateDevice
+   * 同步关联设备（10-03 解决 10-02 relateDevices 遗留：手动新增/编辑的关联设备需可保存）。 */
+  onSubmit: (fields: ExperienceInput | ExperienceUpdateInput, relateDevices?: string[]) => void
   onCancel: () => void
 }
 
@@ -154,8 +156,8 @@ export default function ExperienceEditForm({
     // 关联设备 ids 拼回 attrs 不参与——关联设备走单独 relateDevices 通道（由调用方在 onSubmit 后调 relateDevice IPC）。
     // 本组件仅负责表单字段提交；relateDevices 经 onSubmit 第二参回传调用方（见下 handleSubmit 扩展）。
     if (initialValue) {
-      // 编辑态：传 update 白名单字段（CR-01 不收 status），关联设备由调用方另行处理
-      onSubmit({ ...fields })
+      // 编辑态：传 update 白名单字段（CR-01 不收 status），relateDevices 回传调用方做 diff 同步
+      onSubmit({ ...fields }, relateDevices)
     } else {
       // 新增态：直 published（红线③ 例外，D-10-1/CONTEXT specifics/UI-SPEC copy 红线③）
       const input: ExperienceInput = {
@@ -166,7 +168,7 @@ export default function ExperienceEditForm({
         attrs: fields.attrs,
         status: 'published',
       }
-      onSubmit(input)
+      onSubmit(input, relateDevices)
     }
   }
 
