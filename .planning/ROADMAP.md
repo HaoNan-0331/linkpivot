@@ -106,7 +106,7 @@ Plans:
   3. 用户可在该页手动新增/编辑经验（字段与 AI 起草走同一模板，不依赖 AI 总结流程）
   4. 用户可对经验标记失效（置 invalid_at），失效后从默认有效视图剔除但仍可查（与 EXP-03 软失效一致）
   5. 经验详情页展示来源会话回链、关联设备、复用次数、最后验证时间等元数据
-**Plans**: 3 plans
+**Plans**: 4 plans (3 baseline + 1 gap closure)
 
 Plans:
 **Wave 1**
@@ -117,6 +117,9 @@ Plans:
 
 **Wave 3** *(blocked on Wave 1 + 2)*
 - [x] 10-03-PLAN.md — ExperienceTab（筛选 bar 8 元素 + Table 9 列 + 行操作三能力按状态切换）+ ExperienceDetailModal（width 900 元数据 + 复用 SessionMessagesModal 回链）+ KnowledgeBasePage Tabs 改造（文档 | 经验，懒加载）+ 人工 checkpoint
+
+**Gap Closure** *(VERIFICATION/UAT 闭环)*
+- [ ] 10-04-PLAN.md — gap 闭环：CR-01 restoreExperience 守卫（红线③ 不变量）+ CR-02 历史 severity post-MK 回填钩子 + 问题 2 状态 Select↔includeInvalid 联动（invalidOnly 路径）+ 问题 1a ExperienceEditForm 设备 filter 放开（全类型）+ WR-01 tags LIKE ESCAPE 转义 + WR-02 setExperienceDevices 单事务原子 + WR-05 formatTs 兼容 ISO
 
 **UI hint**: yes
 
