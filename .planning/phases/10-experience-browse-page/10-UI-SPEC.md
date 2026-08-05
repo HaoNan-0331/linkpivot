@@ -1,10 +1,11 @@
 ---
 phase: 10
 slug: experience-browse-page
-status: draft
+status: approved
 shadcn_initialized: false
 preset: none
 created: 2026-08-05
+reviewed_at: 2026-08-05
 ---
 
 # Phase 10 — UI Design Contract
@@ -214,11 +215,11 @@ Exceptions:
 
 ## Checker Sign-Off
 
-- [ ] Dimension 1 Copywriting: PASS（全部简体中文，CTA/empty/error/destructive 全覆盖，红线③ copy 约束明确）
-- [ ] Dimension 2 Visuals: PASS（Table 列顺序 + Modal 尺寸 + 筛选 bar 布局 + 行操作锁定）
-- [ ] Dimension 3 Color: PASS（60/30/10 + accent reserved-for 清单 + severity Tag 语义色映射锁定，无新色）
-- [ ] Dimension 4 Typography: PASS（3 sizes / 2 weights，对齐 AntD 默认）
-- [ ] Dimension 5 Spacing: PASS（全 4 倍数，对齐 KnowledgeBasePage 实测）
-- [ ] Dimension 6 Registry Safety: PASS（无第三方 registry）
+- [x] Dimension 1 Copywriting: PASS（全部简体中文，CTA/empty/error/destructive 全覆盖，红线③ copy 约束明确）
+- [x] Dimension 2 Visuals: PASS（Table 列顺序 + Modal 尺寸 + 筛选 bar 布局 + 行操作锁定）
+- [x] Dimension 3 Color: PASS（60/30/10 + accent reserved-for 清单 + severity Tag 语义色映射锁定，无新色）
+- [x] Dimension 4 Typography: PASS（3 sizes / 2 weights，对齐 AntD 默认）
+- [x] Dimension 5 Spacing: PASS（全 4 倍数，对齐 KnowledgeBasePage 实测）
+- [x] Dimension 6 Registry Safety: PASS（无第三方 registry）
 
-**Approval:** pending
+**Approval:** approved（2026-08-05，1 条非阻塞 polish 建议：Modal footer「保存」可升级「保存经验」）
