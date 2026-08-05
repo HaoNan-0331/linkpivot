@@ -13,7 +13,7 @@ import { createSystemLog } from '../services/systemLog'
  *      在 createTables() 建好基线表之后、premigration 备份之后执行（D-06）。
  *      init.ts 不直接调用 runMigrations（单一调用点原则）。
  */
-export const MIGRATION_HEAD = 9
+export const MIGRATION_HEAD = 10
 
 interface MigrationStep {
   version: number
@@ -260,6 +260,26 @@ const v9 = (db: Database.Database): void => {
   step()
 }
 
+const v10 = (db: Database.Database): void => {
+  // Phase 10（D-10-2）：experiences 加 severity TEXT nullable 明文列。
+  // 支撑浏览页 SQL 直筛/排序（WHERE severity = ?）+ Phase 11 检索复用，从加密 attrs 拆明文列。
+  // attrs.severity 保留向后兼容（create/update 双写 severity 列 + attrs.severity；service 层
+  // rowToExperience severity fallback：明文列 NULL 时读 attrs.severity，保证历史数据可读）。
+  // 幂等守卫 D-14 第一形式：hasColumn（与 v1/v2/v3/v4/v9 同构，纯 ALTER ADD COLUMN）。
+  // 不动 status 枚举（沿用 Phase 7 四态）、不加 CHECK/DEFAULT（severity 值由 service 层
+  // VALID_SEVERITIES 校验，与 v9 同款纯 ALTER）。
+  // 数据回填 caveat：迁移在 MK 注入前跑（migrateAndSecure 早于 setExperienceMasterKey），
+  // 无法在 v10 内解密 attrs_enc 回填 severity 明文列——历史数据 severity 仍只在 attrs_enc，
+  // 由 service 层 rowToExperience fallback 兜底（保证历史数据可查）。
+  const step = db.transaction(() => {
+    if (!hasColumn(db, 'experiences', 'severity')) {
+      db.exec('ALTER TABLE experiences ADD COLUMN severity TEXT')
+    }
+    db.pragma('user_version = 10')
+  })
+  step()
+}
+
 const MIGRATIONS: MigrationStep[] = [
   { version: 1, name: 'chat_history.session_id', run: v1 },
   { version: 2, name: 'ai_exec_logs.prompt_text+ai_response', run: v2 },
@@ -270,6 +290,7 @@ const MIGRATIONS: MigrationStep[] = [
   { version: 7, name: 'kb_chunks_au FTS UPDATE trigger add WHEN (skip non-FTS-field updates)', run: v7 },
   { version: 8, name: 'experiences + exp_device_rel create (Phase 7 experience data layer)', run: v8 },
   { version: 9, name: 'experiences.duplicate_of_exp_id (Phase 8 drafting UPDATE hit link)', run: v9 },
+  { version: 10, name: 'experiences.severity (Phase 10 browse filter/sort)', run: v10 },
 ]
 
 /**

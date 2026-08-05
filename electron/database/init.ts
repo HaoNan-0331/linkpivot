@@ -303,6 +303,7 @@ export function createTables() {
       source_session_id TEXT,
       attrs_enc TEXT,
       duplicate_of_exp_id TEXT,
+      severity TEXT,
       valid_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
       invalid_at TEXT,
       last_verified_at TEXT,
