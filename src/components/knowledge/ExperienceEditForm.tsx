@@ -99,14 +99,13 @@ export default function ExperienceEditForm({
   const [devices, setDevices] = useState<Array<{ id: string; name: string }>>([])
   const [relateDevices, setRelateDevices] = useState<string[]>([])
 
-  // 拉关联设备候选（沿用 Phase 9 ssh/telnet 过滤范式，T-10-08 mitigation）。
+  // Phase 10 Plan 04 问题 1a：放开设备类型 filter，候选含全类型（SSH/Telnet/Web/RDP）。
+  // 原 T-10-08 mitigation（filter ssh/telnet）仅适用 AI 起草模块（Phase 8/9，AI 助手仅连 ssh/telnet）；
+  // 手动 CRUD 关联设备应支持全类型（CONTEXT Constraints 产品功能约束四类远程通道设计意图）。
+  // 关联≠连接（仅元数据引用，设备 DTO 已走 rowToDevice 白名单投影无 `_enc` 密文泄露，T-10-04-05 accept）。
   useEffect(() => {
     window.api.device.list().then((all: Device[]) =>
-      setDevices(
-        all
-          .filter((d) => d.connectionType === 'ssh' || d.connectionType === 'telnet')
-          .map((d) => ({ id: d.id, name: d.name }))
-      )
+      setDevices(all.map((d) => ({ id: d.id, name: d.name })))
     ).catch(() => setDevices([]))
   }, [])
 

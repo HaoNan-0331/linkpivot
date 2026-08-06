@@ -20,7 +20,6 @@ import type {
   ExperienceInput,
   ExperienceUpdateInput,
   ExperienceListInput,
-  ExperienceRelatedDevice,
 } from '@/types/experience'
 import ExperienceEditForm from './ExperienceEditForm'
 import ExperienceDetailModal from './ExperienceDetailModal'
@@ -76,9 +75,15 @@ const CATEGORY_LABEL: Record<ExperienceCategory, string> = {
   env: '环境',
 }
 
+// Phase 10 Plan 04 WR-05：兼容 'YYYY-MM-DD HH:mm:ss'（localtime）与 ISO 'T' 两种格式。
+// 原实现 ts.slice(0,16) 假定空格分隔，遇 ISO 时间戳会保留字面 T（'2026-08-05T12:00'）。
+// 改为 Date 解析 + pad 格式化，无字面 T；解析失败降级原值（不崩）。
 function formatTs(ts?: string | null): string {
   if (!ts) return ''
-  return ts.length >= 16 ? ts.slice(0, 16) : ts
+  const d = new Date(ts.replace(' ', 'T'))
+  if (Number.isNaN(d.getTime())) return ts
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 function isInvalid(exp: Experience): boolean {
@@ -121,14 +126,17 @@ export default function ExperienceTab() {
   const loadExperiences = async () => {
     setLoading(true)
     try {
+      // Phase 10 Plan 04 问题 2：status='invalid' 走 invalidOnly 路径（失效行 status 列仍 'published'，
+      // 传 status='invalid' 查不到）；status='published' 强制 includeInvalid=false 显有效经验。
       const opts: ExperienceListInput = {
         search: search.trim() || undefined,
         category,
         severity,
-        status: status as ExperienceListInput['status'],
+        status: status === 'published' ? 'published' : undefined,
+        invalidOnly: status === 'invalid' ? true : undefined,
         deviceId: deviceId.length > 0 ? deviceId : undefined,
         tags: tags.length > 0 ? tags : undefined,
-        includeInvalid,
+        includeInvalid: status === 'published' ? false : status === 'invalid' ? true : includeInvalid,
         limit: 100,
         offset: 0,
       }
@@ -173,21 +181,10 @@ export default function ExperienceTab() {
     setEditingExp(null)
   }
 
-  // 关联设备 diff 同步（10-03 解决 10-02 relateDevices 遗留）
+  // Phase 10 Plan 04 WR-02：关联设备 diff 同步改单 IPC（service 层 setExperienceDevices 单事务原子）。
+  // 原 Promise.all N IPC 非原子，部分失败留半成品关联；改单 IPC 后 throw ROLLBACK 全成全败。
   const syncRelateDevices = async (expId: string, nextIds: string[]) => {
-    let current: ExperienceRelatedDevice[] = []
-    try {
-      current = await window.api.experience.listDevices(expId)
-    } catch {
-      current = []
-    }
-    const currentIds = current.map((d) => d.id)
-    const toAdd = nextIds.filter((id) => !currentIds.includes(id))
-    const toRemove = currentIds.filter((id) => !nextIds.includes(id))
-    await Promise.all([
-      ...toAdd.map((id) => window.api.experience.relateDevice(expId, id)),
-      ...toRemove.map((id) => window.api.experience.unrelateDevice(expId, id)),
-    ])
+    await window.api.experience.setDevices(expId, nextIds)
   }
 
   // 新增/编辑提交（含 relateDevices 第二参）
@@ -202,7 +199,8 @@ export default function ExperienceTab() {
           editingExp.id,
           fields as ExperienceUpdateInput
         )
-        if (relateDevices && relateDevices.length >= 0) {
+        // WR-03 顺手清：原 relateDevices.length>=0 永真，改 if (relateDevices) 更清晰（undefined 不触发同步）
+        if (relateDevices) {
           await syncRelateDevices(editingExp.id, relateDevices)
         }
       } else {
@@ -439,7 +437,16 @@ export default function ExperienceTab() {
           allowClear
           style={{ width: 120 }}
           value={status}
-          onChange={(v) => setStatus(v)}
+          // Phase 10 Plan 04 问题 2：状态 Select 与 includeInvalid 单向联动（UI-SPEC §3 + UAT 测试 6/8 修复）。
+          // 选「已失效」→ status='invalid' + includeInvalid=true（走 invalidOnly 路径筛 invalid_at<=now）；
+          // 选「有效」→ status='published' + includeInvalid=false（强制，覆盖 Switch 状态）；
+          // 清空（undefined）→ 不改 includeInvalid（Switch 仍可独立 toggle）。
+          // Switch 的 onChange 保持 setIncludeInvalid 不变（单向：Select 影响 Switch，反之不）。
+          onChange={(v) => {
+            setStatus(v)
+            if (v === 'invalid') setIncludeInvalid(true)
+            else if (v === 'published') setIncludeInvalid(false)
+          }}
           options={STATUS_OPTIONS}
         />
         <Select

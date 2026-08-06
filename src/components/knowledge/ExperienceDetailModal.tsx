@@ -39,10 +39,13 @@ const SEVERITY_TAG: Record<string, { color: string; label: string }> = {
   info: { color: 'blue', label: '提示' },
 }
 
+// Phase 10 Plan 04 WR-05：兼容 'YYYY-MM-DD HH:mm:ss'（localtime）与 ISO 'T' 两种格式（无字面 T）。
 function formatTs(ts?: string | null): string {
   if (!ts) return ''
-  // 兼容 'YYYY-MM-DD HH:mm:ss' / ISO；截前 16 字符得到 yyyy-MM-dd HH:mm
-  return ts.length >= 16 ? ts.slice(0, 16) : ts
+  const d = new Date(ts.replace(' ', 'T'))
+  if (Number.isNaN(d.getTime())) return ts
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 function isValid(exp: Experience): boolean {
