@@ -40,6 +40,7 @@ vi.mock('./commandSafety', () => ({
 // 但本 service 不 import systemLog，故无需 mock。
 
 import { rerank, validateRerank, buildRerankPrompt, MAX_RERANK_RETRIES, RELEVANCE_THRESHOLD } from './experienceRerank'
+import { retrieveForAnswer, INJECT_LIMIT, MAX_CANDIDATES } from './experienceRetrieval'
 
 const validConfig = { apiKey: 'sk-test', baseUrl: 'http://x', modelName: 'm' }
 
@@ -174,5 +175,165 @@ describe('rerank（精排重试 + demoMode + 候选空短路）', () => {
 
   it('16. RELEVANCE_THRESHOLD 导出为 0.6（D-11-4 planner 定值）', () => {
     expect(RELEVANCE_THRESHOLD).toBe(0.6)
+  })
+})
+
+// ---------- Task 2: retrieveForAnswer 编排 ----------
+
+function makeRow(overrides: Partial<Record<string, any>> = {}) {
+  return {
+    id: 'e1',
+    title: '核心交换机离线排查',
+    content: '检查电源和光模块，display version 查看状态',
+    status: 'published',
+    source_session_id: 'sess-1',
+    invalid_at: null,
+    reuse_count: 0,
+    last_verified_at: null,
+    attrs: { severity: 'high', resolution: 'display interface 检查端口' },
+    tags: ['switch'],
+    ...overrides,
+  }
+}
+
+describe('retrieveForAnswer（编排）', () => {
+  beforeEach(() => {
+    listExperiencesMock.mockReset()
+    incReuseCountMock.mockReset()
+    touchLastVerifiedAtMock.mockReset()
+    isCommandAllowedMock.mockReset()
+    getAiConfigMock.mockReset()
+    getCommandWhitelistMock.mockReset()
+    callAIMock.mockReset()
+    getAiConfigMock.mockReturnValue(validConfig)
+    getCommandWhitelistMock.mockReturnValue(['display', 'show', 'ping', 'traceroute'])
+    isCommandAllowedMock.mockImplementation((cmd: string) => {
+      const first = cmd.trim().toLowerCase().split(/\s+/)[0]
+      const allowed = ['display', 'show', 'ping', 'traceroute'].includes(first)
+      return { allowed, reason: allowed ? 'ok' : 'denied' }
+    })
+  })
+
+  it('17. demoMode（未配 AI）→ 返 demoMode:true injected:[] 不调 listExperiences/rerank', async () => {
+    getAiConfigMock.mockReturnValue(null)
+    const r = await retrieveForAnswer({ userMessage: '问题' })
+    expect(r.demoMode).toBe(true)
+    expect(r.injected).toEqual([])
+    expect(listExperiencesMock).not.toHaveBeenCalled()
+    expect(callAIMock).not.toHaveBeenCalled()
+  })
+
+  it('18. 空库（listExperiences rows=[]）→ 返 empty injected:[] 不调 rerank', async () => {
+    listExperiencesMock.mockReturnValue({ rows: [], total: 0 })
+    const r = await retrieveForAnswer({ userMessage: '问题' })
+    expect(r.injected).toEqual([])
+    expect(callAIMock).not.toHaveBeenCalled()
+  })
+
+  it('19. 有勾选设备 → 走 deviceId 窄查分支（opts.deviceId 数组）', async () => {
+    listExperiencesMock.mockReturnValue({ rows: [], total: 0 })
+    await retrieveForAnswer({ userMessage: '问题', deviceIds: ['d1', 'd2'] })
+    expect(listExperiencesMock).toHaveBeenCalledTimes(1)
+    const opts = listExperiencesMock.mock.calls[0][0]
+    expect(opts.deviceId).toEqual(['d1', 'd2'])
+    expect(opts.includeInvalid).toBe(false)
+    expect(opts.limit).toBe(MAX_CANDIDATES)
+  })
+
+  it('20. 无勾选设备 → 走 search 宽匹配分支（opts.search = userMessage）', async () => {
+    listExperiencesMock.mockReturnValue({ rows: [], total: 0 })
+    await retrieveForAnswer({ userMessage: '交换机离线' })
+    const opts = listExperiencesMock.mock.calls[0][0]
+    expect(opts.search).toBe('交换机离线')
+    expect(opts.deviceId).toBeUndefined()
+  })
+
+  it('21. 精排 score < 阈值 → 过滤掉不注入', async () => {
+    listExperiencesMock.mockReturnValue({ rows: [makeRow({ id: 'e1' })], total: 1 })
+    callAIMock.mockResolvedValueOnce(JSON.stringify([{ exp_id: 'e1', score: 0.3, reason: '不太相关' }]))
+    const r = await retrieveForAnswer({ userMessage: '问题' })
+    expect(r.injected).toEqual([])
+    expect(incReuseCountMock).not.toHaveBeenCalled()
+  })
+
+  it('22. 精排 score >= 阈值 → 命中注入 + incReuseCount + touchLastVerifiedAt 各调一次', async () => {
+    listExperiencesMock.mockReturnValue({ rows: [makeRow({ id: 'e1' })], total: 1 })
+    callAIMock.mockResolvedValueOnce(JSON.stringify([{ exp_id: 'e1', score: 0.85, reason: '高度相关' }]))
+    const r = await retrieveForAnswer({ userMessage: '问题' })
+    expect(r.injected).toHaveLength(1)
+    expect(r.injected[0].exp_id).toBe('e1')
+    expect(r.injected[0].source_session_id).toBe('sess-1')
+    expect(incReuseCountMock).toHaveBeenCalledWith('e1')
+    expect(touchLastVerifiedAtMock).toHaveBeenCalledWith('e1')
+  })
+
+  it('23. 有效期失效（invalid_at 过期）→ 剔除不注入', async () => {
+    const past = new Date(Date.now() - 86400000).toISOString().replace('T', ' ').slice(0, 19)
+    listExperiencesMock.mockReturnValue({ rows: [makeRow({ id: 'e1', invalid_at: past })], total: 1 })
+    callAIMock.mockResolvedValueOnce(JSON.stringify([{ exp_id: 'e1', score: 0.9, reason: 'r' }]))
+    const r = await retrieveForAnswer({ userMessage: '问题' })
+    expect(r.injected).toEqual([])
+  })
+
+  it('24. 命令全失支持（提取到只读命令但首词不在白名单）→ 标 unsupported=true（降权不剔除）', async () => {
+    // debug 被 CMD_EXTRACT_RE 提取（只读首词），但不在测试白名单数组 → 全失支持
+    listExperiencesMock.mockReturnValue({
+      rows: [makeRow({ id: 'e1', content: 'debug ip packet 排查', attrs: { resolution: 'terminal monitor' } })],
+      total: 1,
+    })
+    callAIMock.mockResolvedValueOnce(JSON.stringify([{ exp_id: 'e1', score: 0.8, reason: 'r' }]))
+    const r = await retrieveForAnswer({ userMessage: '问题' })
+    expect(r.injected).toHaveLength(1)
+    expect(r.injected[0].unsupported).toBe(true)
+  })
+
+  it('25. 命令部分失支持（有任一失支持）→ 标 unsupported=true（保守宁可多标）', async () => {
+    // content 含 display（白名单）+ interface（黑名单触发，isCommandAllowed 返 denied 因首词 interface 不在白名单数组）
+    listExperiencesMock.mockReturnValue({
+      rows: [makeRow({ id: 'e1', content: 'display version', attrs: { resolution: 'interface gi0/0/1 检查' } })],
+      total: 1,
+    })
+    callAIMock.mockResolvedValueOnce(JSON.stringify([{ exp_id: 'e1', score: 0.8, reason: 'r' }]))
+    const r = await retrieveForAnswer({ userMessage: '问题' })
+    expect(r.injected[0].unsupported).toBe(true)
+  })
+
+  it('26. 无命令正文 → unsupported=false', async () => {
+    listExperiencesMock.mockReturnValue({
+      rows: [makeRow({ id: 'e1', content: '检查电源连接和散热', attrs: { resolution: '更换硬件' } })],
+      total: 1,
+    })
+    callAIMock.mockResolvedValueOnce(JSON.stringify([{ exp_id: 'e1', score: 0.8, reason: 'r' }]))
+    const r = await retrieveForAnswer({ userMessage: '问题' })
+    expect(r.injected[0].unsupported).toBe(false)
+  })
+
+  it('27. incReuseCount 失败 → 不阻塞主路径（仍注入，console.warn 兜底 D-11-9）', async () => {
+    listExperiencesMock.mockReturnValue({ rows: [makeRow({ id: 'e1' })], total: 1 })
+    incReuseCountMock.mockImplementation(() => { throw new Error('db locked') })
+    callAIMock.mockResolvedValueOnce(JSON.stringify([{ exp_id: 'e1', score: 0.85, reason: 'r' }]))
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const r = await retrieveForAnswer({ userMessage: '问题' })
+    expect(r.injected).toHaveLength(1)
+    expect(warnSpy).toHaveBeenCalled()
+    warnSpy.mockRestore()
+  })
+
+  it('28. INJECT_LIMIT 截断（精排返 > INJECT_LIMIT 条够分候选 → 只注入前 INJECT_LIMIT）', async () => {
+    const rows = []
+    for (let i = 1; i <= INJECT_LIMIT + 3; i++) rows.push(makeRow({ id: `e${i}` }))
+    listExperiencesMock.mockReturnValue({ rows, total: rows.length })
+    callAIMock.mockResolvedValueOnce(
+      JSON.stringify(rows.map((r) => ({ exp_id: r.id, score: 0.9, reason: 'r' })))
+    )
+    const r = await retrieveForAnswer({ userMessage: '问题' })
+    expect(r.injected).toHaveLength(INJECT_LIMIT)
+    expect(incReuseCountMock).toHaveBeenCalledTimes(INJECT_LIMIT)
+  })
+
+  it('29. finalAnswer 永远等于 userMessage（编排不答，正式答交 chat() callAI）', async () => {
+    listExperiencesMock.mockReturnValue({ rows: [], total: 0 })
+    const r = await retrieveForAnswer({ userMessage: '我的运维问题' })
+    expect(r.finalAnswer).toBe('我的运维问题')
   })
 })

@@ -10,6 +10,7 @@ import { executeTelnetCommand, pickDisablePaginationCmd, pickShellPrompt } from 
 import { isCommandAllowed } from './commandSafety'
 import { createLog, updateLogStatus, appendLogAiResponse, getLogs, setAiExecLoggerMasterKey } from './aiExecLogger'
 import { search as kbSearch } from './knowledgeBaseService'
+import { retrieveForAnswer } from './experienceRetrieval'
 
 let MK = ''
 export function setAiMasterKey(key: string) {
@@ -721,6 +722,28 @@ export async function chat(
     }
   }
 
+  // Phase 11 D-11-1 b 自动预取：每轮对话自动检索经验库（不靠 AI 自主标记）。
+  // retrieveForAnswer 内部整体 try/catch，异常时 expReferences=[] 继续正常答（D-11-9 不阻塞主路径）。
+  const userMessage = messages[messages.length - 1]?.content || ''
+  let expReferences: Array<{ exp_id: string; title: string; source_session_id: string | null; unsupported: boolean }> = []
+  try {
+    const retrieval = await retrieveForAnswer({ userMessage, deviceIds })
+    if (retrieval.injected.length > 0) {
+      const expContext = retrieval.injected.map((e, i) =>
+        `[经验${i + 1}: ${e.title}${e.unsupported ? '（⚠ 此条经验命令已失支持，请提示用户手动执行或更新白名单）' : ''}]\n${e.content}`
+      ).join('\n\n')
+      systemPrompt += `\n\n以下是经验库中检索到的相关经验（仅供参考，回答末尾无需标注来源）：\n${expContext}`
+      expReferences = retrieval.injected.map((e) => ({
+        exp_id: e.exp_id,
+        title: e.title,
+        source_session_id: e.source_session_id ?? null,
+        unsupported: e.unsupported,
+      }))
+    }
+  } catch (err) {
+    console.warn('[ai.chat] experience retrieval failed, continue without injection:', (err as Error).message)
+  }
+
   const fullMessages: Array<{ role: string; content: string }> = [
     { role: 'system', content: systemPrompt },
     ...messages,
@@ -802,6 +825,15 @@ export async function chat(
     saveChatMessage('assistant', finalAiReply, null, sessionId)
     if (kbReferences.length > 0) {
       return JSON.stringify({ type: 'kb_answer', content: finalAiReply, references: kbReferences })
+    }
+    // Phase 11 D-11-1/D-11-11：经验注入命中 → 返 exp_answer（references 从注入记录拿，不需 AI 标记）。
+    // renderer（Plan 02）按 references 字段渲染来源列表联合类型（kb / experience）。
+    if (expReferences.length > 0) {
+      return JSON.stringify({
+        type: 'exp_answer',
+        content: finalAiReply,
+        references: expReferences.map((e) => ({ kind: 'experience', expId: e.exp_id, title: e.title, sourceSessionId: e.source_session_id, unsupported: e.unsupported })),
+      })
     }
     return finalAiReply
   }
