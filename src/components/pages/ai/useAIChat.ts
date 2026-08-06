@@ -199,7 +199,25 @@ export function useAIChat(): UseAIChatReturn {
     setLoading(true)
     try {
       const result = await window.api.ai.confirmCommand(confirmData.execId, approved)
-      setMessages((prev) => [...prev, { role: 'assistant', content: result }])
+      // Phase 11 UAT fix：命令路径也返 exp_answer/kb_answer JSON → 解析 references（与 handleSend 同语义）
+      let content = result
+      let refs: ReferenceItem[] | undefined
+      try {
+        const parsed = JSON.parse(result) as { type: string; content?: string; references?: any[] }
+        if (parsed.type === 'exp_answer' || parsed.type === 'kb_answer') {
+          content = parsed.content || ''
+          refs = (parsed.references || []).flatMap((r: any): ReferenceItem[] => {
+            if (r.kind === 'kb' || r.docTitle !== undefined) {
+              return [{ kind: 'kb' as const, docTitle: r.docTitle, chunkTitle: r.chunkTitle, docId: r.docId }]
+            }
+            const exp: ReferenceItem = { kind: 'experience', expId: r.expId, title: r.title, unsupported: r.unsupported }
+            return r.sourceSessionId
+              ? [exp, { kind: 'session' as const, sessionId: r.sourceSessionId, title: '原始会话' }]
+              : [exp]
+          })
+        }
+      } catch { /* 纯文本回复（无 references） */ }
+      setMessages((prev) => [...prev, { role: 'assistant', content, references: refs }])
     } catch (e: unknown) {
       message.error(e instanceof Error ? e.message : String(e))
     }

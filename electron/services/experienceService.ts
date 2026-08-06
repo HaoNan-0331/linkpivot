@@ -276,14 +276,26 @@ export function listExperiences(opts: ListExperiencesOpts): PaginatedResult<any>
     params.push(opts.status)
   }
   // Phase 10 D-10-2：search 关键词 LIKE（title/content，参数化防注入 T-10-01 mitigate）
-  // Phase 11 WR-07 fix：LIKE 通配符元字符（\ % _）转义 + ESCAPE '\\' 子句（与上方 tags LIKE 同模式），
-  // 避免 userMessage 含 '100%'/'a_b' 等字面值时被当通配符误匹配；Phase 11 experienceRetrieval
-  // 把用户原始问题灌进 search，攻击面扩大，故补转义。转义顺序：先反斜杠（避免二次转义）。
+  // Phase 11 WR-07：LIKE 通配符元字符（\ % _）转义 + ESCAPE '\\' 子句。
+  // Phase 11 UAT gap fix：原整句 LIKE 对自然语言长问句（如「华为交换机 DHCP 中继配置怎么检查？」）
+  // 子串匹配召回为 0，致 experienceRetrieval 粗筛空库短路、不注入经验。改为按空格/标点拆词 +
+  // OR-join LIKE 宽召回（D-11-2 宽匹配意图），每词独立 ESCAPE 转义；单字词跳过（去噪声）；
+  // tokens 全空时不加 search 条件（交其他条件/精排筛）。浏览页搜索框同步受益（多词匹配）。
   if (opts.search) {
-    conditions.push("(e.title LIKE ? ESCAPE '\\' OR e.content LIKE ? ESCAPE '\\')")
-    const esc = opts.search.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')
-    const kw = `%${esc}%`
-    params.push(kw, kw)
+    const tokens = opts.search
+      .split(/[\s，。？?！!、,；;]+/)
+      .map((t) => t.trim())
+      .filter((t) => t.length >= 2)
+    if (tokens.length > 0) {
+      const ors = tokens
+        .map(() => "(e.title LIKE ? ESCAPE '\\' OR e.content LIKE ? ESCAPE '\\')")
+        .join(' OR ')
+      conditions.push(`(${ors})`)
+      tokens.forEach((t) => {
+        const esc = t.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')
+        params.push(`%${esc}%`, `%${esc}%`)
+      })
+    }
   }
   // Phase 10 D-10-2：severity 明文列直筛（WHERE e.severity = ?）。
   // 历史数据 severity 列 NULL 但 attrs.severity 有值时此 WHERE 筛不到（已知限制，

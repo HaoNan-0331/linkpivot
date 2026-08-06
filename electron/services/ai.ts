@@ -666,7 +666,37 @@ export async function confirmCommand(
   }
 
   saveChatMessage('assistant', finalReply, null, batch.sessionId)
+
+  // Phase 11 UAT fix：confirmCommand 最终回复也返经验引用（命令确认执行场景不丢来源列表）
+  if (batch.expReferences && batch.expReferences.length > 0) {
+    return buildExpAnswerPayload(finalReply, batch.expReferences)
+  }
   return finalReply
+}
+
+// ---------- Phase 11 experience references helpers ----------
+// UAT fix：经验引用 references 映射——chat()/confirmCommand 所有返回路径（无命令 exp_answer /
+// 有命令 confirm+auto / confirmCommand finalReply）统一用它，确保命令执行场景也返来源列表。
+
+/** expReferences → exp_answer references 数组（统一 camelCase + kind:'experience'）。 */
+function mapExpRefs(
+  expRefs: Array<{ exp_id: string; title: string; source_session_id: string | null; unsupported: boolean }>
+) {
+  return expRefs.map((e) => ({
+    kind: 'experience' as const,
+    expId: e.exp_id,
+    title: e.title,
+    sourceSessionId: e.source_session_id,
+    unsupported: e.unsupported,
+  }))
+}
+
+/** 把最终回复包装成 exp_answer JSON（renderer useAIChat 解析 references 渲染来源列表）。 */
+function buildExpAnswerPayload(
+  content: string,
+  expRefs: Array<{ exp_id: string; title: string; source_session_id: string | null; unsupported: boolean }>
+): string {
+  return JSON.stringify({ type: 'exp_answer', content, references: mapExpRefs(expRefs) })
 }
 
 // ---------- Main chat ----------
@@ -828,7 +858,7 @@ export async function chat(
     if (kbReferences.length > 0 && expReferences.length > 0) {
       const refs = [
         ...kbReferences.map((r: any) => ({ kind: 'kb', docTitle: r.docTitle, chunkTitle: r.chunkTitle, docId: r.docId })),
-        ...expReferences.map((e) => ({ kind: 'experience', expId: e.exp_id, title: e.title, sourceSessionId: e.source_session_id, unsupported: e.unsupported })),
+        ...mapExpRefs(expReferences),
       ]
       return JSON.stringify({ type: 'exp_answer', content: finalAiReply, references: refs })
     }
@@ -836,13 +866,8 @@ export async function chat(
       return JSON.stringify({ type: 'kb_answer', content: finalAiReply, references: kbReferences })
     }
     // Phase 11 D-11-1/D-11-11：经验注入命中 → 返 exp_answer（references 从注入记录拿，不需 AI 标记）。
-    // renderer（Plan 02）按 references 字段渲染来源列表联合类型（kb / experience）。
     if (expReferences.length > 0) {
-      return JSON.stringify({
-        type: 'exp_answer',
-        content: finalAiReply,
-        references: expReferences.map((e) => ({ kind: 'experience', expId: e.exp_id, title: e.title, sourceSessionId: e.source_session_id, unsupported: e.unsupported })),
-      })
+      return buildExpAnswerPayload(finalAiReply, expReferences)
     }
     return finalAiReply
   }
@@ -916,6 +941,7 @@ export async function chat(
       deviceNames: targetDevices.map((d) => d.name),
       sessionId: sessionId || null,
       createdAt: Date.now(),
+      expReferences,
     })
 
     const confirmResponse = JSON.stringify({
@@ -987,6 +1013,8 @@ export async function chat(
   saveChatMessage('user', messages[messages.length - 1]?.content || '', null, sessionId)
   saveChatMessage('assistant', finalReply, null, sessionId)
 
+  // Phase 11 UAT fix：auto 命令路径也返经验引用（避免命令执行场景丢来源列表）
+  if (expReferences.length > 0) return buildExpAnswerPayload(finalReply, expReferences)
   return finalReply
 }
 

@@ -503,17 +503,18 @@ class MemDb {
         consumed.push('stat')
         if (r.status !== st) return false
       }
-      // (e.title LIKE ? [ESCAPE ...] OR e.content LIKE ? [ESCAPE ...]) — 两个 param
-      // Phase 11 WR-07：search LIKE 现含 ESCAPE '\\' 子句（\% \_ \\ 转义），正则容忍可选 ESCAPE，
-      // 关键词反转义回字面值后比较（与下方 tags LIKE 同模式）。
-      const searchM = whereClause.match(/e\.title\s+LIKE\s+\?(?:\s+ESCAPE\s+[^ )]+)?\s+OR\s+e\.content\s+LIKE\s+\?/)
-      if (searchM) {
-        const kw1 = remaining[consumed.length]
-        const kw2 = remaining[consumed.length + 1]
-        consumed.push('kw1', 'kw2')
-        let kw = kw1.replace(/\\(.)/g, '$1') // 反转义：\%→% \_→_ \\→\
-        kw = kw.replace(/^%|%$/g, '')        // 去首尾 % 通配符做 includes
-        const hit = (r.title || '').includes(kw) || (r.content || '').includes(kw)
+      // (e.title LIKE ? [ESCAPE] OR e.content LIKE ?) [OR ...] — N 个 token 对，命中任一
+      // Phase 11 UAT gap fix：search 现按词拆分 OR-join（N token），消费 2N params，任一 token 命中即 true。
+      const searchPairs = (whereClause.match(/e\.title\s+LIKE\s+\?(?:\s+ESCAPE\s+[^ )]+)?\s+OR\s+e\.content\s+LIKE\s+\?/g) || []).length
+      if (searchPairs > 0) {
+        let hit = false
+        for (let i = 0; i < searchPairs; i++) {
+          let kw = remaining[consumed.length + i * 2]
+          kw = kw.replace(/\\(.)/g, '$1') // 反转义：\%→% \_→_ \\→\
+          kw = kw.replace(/^%|%$/g, '')   // 去首尾 % 通配符做 includes
+          if ((r.title || '').includes(kw) || (r.content || '').includes(kw)) { hit = true; break }
+        }
+        consumed.push(...Array(searchPairs * 2).fill('kw'))
         if (!hit) return false
       }
       // e.severity = ?
@@ -686,6 +687,19 @@ describe('Phase 10 browse: severity fallback + device_count + deviceId 多选 + 
 
     const miss = listExperiences({ search: '不存在关键词XYZ', includeInvalid: true })
     expect(miss.rows.length).toBe(0)
+  })
+
+  it('Test 6c: search 多词分词 OR 召回（UAT gap fix）— 自然语言长问句拆词后命中', () => {
+    const db = mockDbRef.current
+    insertExpRaw(db, 'exp-dhcp', { title: '华为交换机DHCP中继配置检查方法', content: '通过 display current-configuration 查看', severity: 'medium' })
+    insertExpRaw(db, 'exp-unrelated', { title: '巡检报告', content: '日常巡检内容', severity: 'low' })
+
+    // 整句「华为交换机 DHCP 中继配置怎么检查？」拆词 → ["华为交换机","DHCP","中继配置怎么检查"]
+    // 任一 token LIKE 命中即召回（"华为交换机"/"DHCP" 命中 exp-dhcp），exp-unrelated 不命中
+    const hit = listExperiences({ search: '华为交换机 DHCP 中继配置怎么检查？', includeInvalid: true })
+    const ids = hit.rows.map((r: any) => r.id)
+    expect(ids).toContain('exp-dhcp')
+    expect(ids).not.toContain('exp-unrelated')
   })
 
   it('Test 7: severity 直筛——只返 severity 匹配的行（明文列 + fallback 两路径）', () => {
