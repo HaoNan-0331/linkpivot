@@ -16,6 +16,8 @@ import {
   getSessionMessages,
   // Phase 10 浏览页：撤销恢复（受控接口，与 invalidateExperience 对称）
   restoreExperience,
+  // Phase 10 Plan 04 WR-02：单事务原子设置关联设备（替代 renderer Promise.all N IPC）
+  setExperienceDevices,
   MAX_BATCH,
 } from '../services/experienceService'
 import type { ExperienceInput, ExperienceUpdateInput, ExperienceListInput, ConfirmDraftsInput } from '../../src/types/experience'
@@ -87,6 +89,11 @@ export function registerExperienceIpc() {
 
   ipcMain.handle('experience:unrelateDevice', secure((_e, experienceId: string, deviceId: string) =>
     unrelateDevice(experienceId, deviceId)))
+
+  // Phase 10 Plan 04 WR-02：单事务原子设置关联设备（service 层 diff，throw ROLLBACK 无半成品）。
+  // 全 secure 包装（鉴权 + 异常脱敏），延续 experience:* 全 secure 基线。
+  ipcMain.handle('experience:setDevices', secure((_e, experienceId: string, deviceIds: string[]) =>
+    setExperienceDevices(experienceId, deviceIds)))
 
   ipcMain.handle('experience:listByDevice', secure((_e, deviceId: string, includeInvalid?: boolean) =>
     listExperiencesByDevice(deviceId, includeInvalid)))

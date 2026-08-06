@@ -38,6 +38,9 @@ import {
   listExperiences,
   restoreExperience,
   invalidateExperience,
+  backfillSeverityFromHistory,
+  setExperienceDevices,
+  relateDevice,
   setExperienceMasterKey,
   _setExperienceDbGetter,
 } from '../experienceService'
@@ -392,6 +395,68 @@ class MemDb {
       }
     }
 
+    // Phase 10 Plan 04 CR-01：restoreExperience 守卫——SELECT status, invalid_at FROM experiences WHERE id = ?
+    const guardMatch = sql.match(/^SELECT\s+status,\s*invalid_at\s+FROM\s+experiences\s+WHERE\s+id\s*=\s*\?$/i)
+    if (guardMatch) {
+      return {
+        get: (id: any) => {
+          const t = this.tables.get('experiences')
+          if (!t) return undefined
+          const row = t.rows.get(id)
+          if (!row) return undefined
+          return { status: row.status, invalid_at: row.invalid_at ?? null }
+        },
+      }
+    }
+
+    // Phase 10 Plan 04 CR-02：backfillSeverityFromHistory——
+    // SELECT id, attrs_enc, severity FROM experiences WHERE severity IS NULL AND attrs_enc IS NOT NULL
+    const backfillMatch = sql.match(/^SELECT\s+id,\s*attrs_enc,\s*severity\s+FROM\s+experiences\s+WHERE\s+severity\s+IS\s+NULL\s+AND\s+attrs_enc\s+IS\s+NOT\s+NULL$/i)
+    if (backfillMatch) {
+      return {
+        all: () => {
+          const t = this.tables.get('experiences')
+          if (!t) return []
+          return Array.from(t.rows.values())
+            .filter((r) => (r.severity === null || r.severity === undefined) && r.attrs_enc != null)
+            .map((r) => ({ id: r.id, attrs_enc: r.attrs_enc, severity: r.severity ?? null }))
+        },
+      }
+    }
+
+    // Phase 10 Plan 04 WR-02：setExperienceDevices——SELECT device_id FROM exp_device_rel WHERE experience_id = ?
+    const relDeviceIdsMatch = sql.match(/^SELECT\s+device_id\s+FROM\s+exp_device_rel\s+WHERE\s+experience_id\s*=\s*\?$/i)
+    if (relDeviceIdsMatch) {
+      return {
+        all: (expId: any) => {
+          const rel = this.tables.get('exp_device_rel')
+          if (!rel) return []
+          return Array.from(rel.rows.values())
+            .filter((r) => r.experience_id === expId)
+            .map((r) => ({ device_id: r.device_id }))
+        },
+      }
+    }
+
+    // DELETE FROM exp_device_rel WHERE experience_id = ? AND device_id = ?（unrelateDevice）
+    const deleteRelMatch = sql.match(/^DELETE\s+FROM\s+exp_device_rel\s+WHERE\s+experience_id\s*=\s*\?\s+AND\s+device_id\s*=\s*\?$/i)
+    if (deleteRelMatch) {
+      return {
+        run: (expId: any, deviceId: any) => {
+          const rel = this.tables.get('exp_device_rel')
+          if (!rel) throw new Error('no table exp_device_rel')
+          let changed = 0
+          for (const [k, row] of Array.from(rel.rows.entries())) {
+            if (row.experience_id === expId && row.device_id === deviceId) {
+              rel.rows.delete(k)
+              changed++
+            }
+          }
+          return { changes: changed }
+        },
+      }
+    }
+
     // SELECT r.device_id AS device_id FROM exp_device_rel ...
     if (/SELECT\s+r\.device_id\s+AS\s+device_id\s+FROM\s+exp_device_rel/i.test(sql)) {
       return {
@@ -414,10 +479,15 @@ class MemDb {
     let remaining = vals
     return rows.filter((r) => {
       // 按出现顺序匹配各 condition 段（与 listExperiences 拼 conditions 顺序无关——逐段独立判定）
-      // bi-temporal invalid_at IS NULL OR invalid_at > now
-      if (/invalid_at\s+IS\s+NULL/i.test(whereClause)) {
+      // bi-temporal invalid_at IS NULL OR invalid_at > now（默认过滤）
+      if (/invalid_at\s+IS\s+NULL\s+OR\s+invalid_at\s*>\s*datetime/i.test(whereClause)) {
         const now = mockNow()
         if (r.invalid_at && !(r.invalid_at > now)) return false
+      }
+      // Phase 10 Plan 04 问题 2：invalidOnly——invalid_at IS NOT NULL AND invalid_at <= now
+      if (/invalid_at\s+IS\s+NOT\s+NULL\s+AND\s+invalid_at\s*<=\s*datetime/i.test(whereClause)) {
+        const now = mockNow()
+        if (!r.invalid_at || r.invalid_at > now) return false
       }
       // e.category = ?
       let consumed: string[] = []
@@ -450,13 +520,18 @@ class MemDb {
         consumed.push('sev')
         if (r.severity !== sv) return false
       }
-      // (e.tags LIKE ? OR ...) — 一个或多个 param，命中任一
+      // (e.tags LIKE ? [ESCAPE ...] OR ...) — 一个或多个 param，命中任一
+      // Phase 10 Plan 04 WR-01：tag 模式现含 ESCAPE 转义（\% \_ \\），反转义回字面值后比较
       const tagsOrs = (whereClause.match(/e\.tags\s+LIKE\s+\?/g) || []).length
       if (tagsOrs > 0) {
         let hit = false
         for (let i = 0; i < tagsOrs; i++) {
           const tagPat = remaining[consumed.length + i]
-          const tagVal = tagPat.replace(/^%"|"$/g, '') // %"tag"% → tag
+          // %"tag"% → tag（去前缀 %" 与后缀 "%，再反转义 ESCAPE 元字符）
+          let tagVal = tagPat
+          if (tagVal.startsWith('%"')) tagVal = tagVal.slice(2)
+          if (tagVal.endsWith('"%')) tagVal = tagVal.slice(0, -2)
+          tagVal = tagVal.replace(/\\(.)/g, '$1') // 反转义：\%→% \\→\ \_→_
           try {
             const tagsArr = JSON.parse(r.tags || '[]')
             if (Array.isArray(tagsArr) && tagsArr.includes(tagVal)) { hit = true; break }
@@ -469,6 +544,7 @@ class MemDb {
       return true
     })
   }
+
 
   private matchesWhere(row: Row, whereClause: string | undefined, vals: any[]): boolean {
     if (!whereClause) return true
@@ -642,7 +718,8 @@ describe('Phase 10 browse: restoreExperience（受控接口，清 invalid_at + s
   })
 
   it('restore 与 invalidate 对称：invalidate 落 invalid_at，restore 清回', () => {
-    const e = createExperience({ title: 't', category: 'product', content: 'c' })
+    // 显式 published（CR-01 守卫：draft 不可经 restore 发布；对称性测试需有效态起手）
+    const e = createExperience({ title: 't', category: 'product', content: 'c', status: 'published' })
     invalidateExperience(e.id)
     const afterInv = mockDbRef.current.tables.get('experiences').rows.get(e.id)
     expect(afterInv.invalid_at).toBeTruthy()
@@ -650,3 +727,122 @@ describe('Phase 10 browse: restoreExperience（受控接口，清 invalid_at + s
     expect(afterRest.invalid_at).toBeNull()
   })
 })
+
+describe('Phase 10 Plan 04 CR-01: restoreExperience 双层守卫', () => {
+  it('不存在 id 抛错（含 id）', () => {
+    expect(() => restoreExperience('no-such-id')).toThrow(/经验不存在.*no-such-id/)
+  })
+
+  it('draft id 抛错（提示走 confirmDrafts）', () => {
+    // createExperience 默认 draft（保 AI 起草路径零改动）
+    const e = createExperience({ title: 't', category: 'product', content: 'c' })
+    expect(e.status).toBe('draft')
+    expect(() => restoreExperience(e.id)).toThrow(/草稿不可经 restore.*confirmDrafts/)
+  })
+
+  it('有效经验（invalid_at IS NULL）抛错（提示无需恢复）', () => {
+    const e = createExperience({ title: 't', category: 'product', content: 'c', status: 'published' })
+    expect(() => restoreExperience(e.id)).toThrow(/经验当前有效，无需恢复/)
+  })
+
+  it('invalid 经验成功恢复：invalid_at 清 NULL + status 回 published', () => {
+    const e = createExperience({ title: 't', category: 'product', content: 'c', status: 'published' })
+    invalidateExperience(e.id)
+    const afterInv = mockDbRef.current.tables.get('experiences').rows.get(e.id)
+    expect(afterInv.invalid_at).toBeTruthy()
+    const got = restoreExperience(e.id) as any
+    expect(got.invalid_at).toBeNull()
+    expect(got.status).toBe('published')
+  })
+})
+
+describe('Phase 10 Plan 04 CR-02: backfillSeverityFromHistory 幂等回填', () => {
+  it('历史 severity NULL + attrs_enc.severity 合法 → 回填；再跑 backfilled=0（幂等）', () => {
+    const db = mockDbRef.current
+    insertExpRaw(db, 'exp-hist-sev', {
+      status: 'published',
+      severity: null, // 列 NULL（历史数据）
+      attrs_enc: encField(JSON.stringify({ severity: 'high', symptoms: 's' }), MK_TEST_KEY),
+    })
+    insertExpRaw(db, 'exp-hist-sev2', {
+      status: 'published',
+      severity: null,
+      attrs_enc: encField(JSON.stringify({ severity: 'low' }), MK_TEST_KEY),
+    })
+    const r1 = backfillSeverityFromHistory()
+    expect(r1.backfilled).toBe(2)
+    expect(db.tables.get('experiences').rows.get('exp-hist-sev').severity).toBe('high')
+    expect(db.tables.get('experiences').rows.get('exp-hist-sev2').severity).toBe('low')
+    // 幂等：severity 已填，再跑 SELECT 不到，backfilled=0
+    const r2 = backfillSeverityFromHistory()
+    expect(r2.backfilled).toBe(0)
+  })
+
+  it('severity 已填的行不动 + attrs_enc 无 severity 的行不报错（severity 留 NULL）', () => {
+    const db = mockDbRef.current
+    insertExpRaw(db, 'exp-filled', {
+      status: 'published',
+      severity: 'critical', // 已填
+      attrs_enc: encField(JSON.stringify({ severity: 'high' }), MK_TEST_KEY),
+    })
+    insertExpRaw(db, 'exp-no-sev', {
+      status: 'published',
+      severity: null,
+      attrs_enc: encField(JSON.stringify({ symptoms: 's', resolution: 'r' }), MK_TEST_KEY), // 无 severity 字段
+    })
+    const r = backfillSeverityFromHistory()
+    expect(r.backfilled).toBe(0) // filled 不进 SELECT，no-sev 无合法 severity 不计
+    expect(db.tables.get('experiences').rows.get('exp-filled').severity).toBe('critical') // 不被改
+    expect(db.tables.get('experiences').rows.get('exp-no-sev').severity).toBeNull() // 留 NULL 不报错
+  })
+})
+
+describe('Phase 10 Plan 04 WR-01: tags LIKE ESCAPE 转义', () => {
+  it('tag 含 "100%" 仅命中字面值 "100%"，不误匹配 "100pa"', () => {
+    const db = mockDbRef.current
+    insertExpRaw(db, 'exp-pct', { status: 'published', tags: JSON.stringify(['100%']) })
+    insertExpRaw(db, 'exp-pa', { status: 'published', tags: JSON.stringify(['100pa']) })
+    const res = listExperiences({ tags: ['100%'], includeInvalid: true })
+    const ids = res.rows.map((r: any) => r.id)
+    expect(ids).toContain('exp-pct')
+    expect(ids).not.toContain('exp-pa')
+  })
+})
+
+describe('Phase 10 Plan 04 WR-02: setExperienceDevices 单事务原子', () => {
+  it('diff：[A,B] → [B,C] = A 删、C 加，最终关联 = [B,C]', () => {
+    const db = mockDbRef.current
+    const exp = createExperience({ title: 't', category: 'product', content: 'c', status: 'published' })
+    relateDevice(exp.id, 'A')
+    relateDevice(exp.id, 'B')
+    // before: [A, B]
+    const before = db.tables.get('exp_device_rel').rows
+    expect(Array.from(before.values()).filter((r: any) => r.experience_id === exp.id).map((r: any) => r.device_id).sort())
+      .toEqual(['A', 'B'])
+    setExperienceDevices(exp.id, ['B', 'C'])
+    const after = Array.from(db.tables.get('exp_device_rel').rows.values())
+      .filter((r: any) => r.experience_id === exp.id)
+      .map((r: any) => r.device_id)
+      .sort()
+    expect(after).toEqual(['B', 'C'])
+  })
+
+  it('throw 回滚：relateDevice 失败时关联不变（事务 ROLLBACK 语义）', () => {
+    const db = mockDbRef.current
+    const exp = createExperience({ title: 't', category: 'product', content: 'c', status: 'published' })
+    relateDevice(exp.id, 'A')
+    // 模拟事务内失败：删除 devices 表触发 relateDevice 找不到表？relateDevice 直写 exp_device_rel，
+    // 不查 devices 表。改用 mock：临时让 exp_device_rel 表消失制造 throw
+    const saved = db.tables.get('exp_device_rel')
+    db.tables.delete('exp_device_rel')
+    expect(() => setExperienceDevices(exp.id, ['B'])).toThrow()
+    // 恢复表，校验 A 仍在（事务回滚）
+    db.tables.set('exp_device_rel', saved)
+    const after = Array.from(db.tables.get('exp_device_rel').rows.values())
+      .filter((r: any) => r.experience_id === exp.id)
+      .map((r: any) => r.device_id)
+    // 原行 A 仍在（事务 ROLLBACK 还原 snapshot）
+    expect(after).toEqual(['A'])
+  })
+})
+

@@ -25,7 +25,7 @@ import { registerExportIpc } from './ipc/exportIpc'
 import { registerSchedulerIpc } from './ipc/schedulerIpc'
 import { setKbMasterKey } from './services/knowledgeBaseService'
 import { registerKbIpc } from './ipc/knowledgeBaseIpc'
-import { setExperienceMasterKey } from './services/experienceService'
+import { setExperienceMasterKey, backfillSeverityFromHistory } from './services/experienceService'
 import { registerExperienceIpc } from './ipc/experienceIpc'
 import { registerExperienceDraftingIpc } from './ipc/experienceDraftingIpc'
 
@@ -104,6 +104,16 @@ app.whenReady().then(() => {
   initDatabase()
   createTables()
   migrateAndSecure()   // 迁移前备份(gated on 非空库) + runMigrations + ACL 收紧 db/wal/shm（D-06/D-12a）
+  // Phase 10 Plan 04 CR-02：post-MK 历史 severity 回填（治本 D-10-2 筛层兑现）。
+  // 迁移在 MK 注入前跑，v10 内无法解密 attrs_enc 回填 severity 明文列——此钩子在 MK 注入 + 迁移后跑，
+  // 解密 attrs_enc.severity 回填，使历史数据 severity 筛选/排序对称可用。幂等（severity IS NULL 守卫），
+  // 失败仅 warn 不阻塞启动（severity 筛选对历史数据降级，不致命，与 FTS5 自愈同范式）。
+  try {
+    const r = backfillSeverityFromHistory()
+    if (r.backfilled > 0) console.log('[startup] backfill severity from history:', r.backfilled)
+  } catch (e) {
+    console.warn('[startup] backfill severity failed (non-blocking):', (e as Error).message)
+  }
   // kb-db-malformed：启动 FTS5 自愈——把"被动 malformed"转成"主动自愈"。
   // taskkill/Stop-Process -Force = SIGKILL 不触发 before-quit → closeDatabase，WAL 未 checkpoint 可致
   // FTS5 shadow（docsize/data/idx）半途中断写入不一致 → 用户态报 database disk image is malformed。

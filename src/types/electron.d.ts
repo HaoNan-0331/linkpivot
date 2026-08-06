@@ -209,6 +209,7 @@ export interface ElectronAPI {
     restore: (id: string) => Promise<Experience>
     relateDevice: (experienceId: string, deviceId: string, relationType?: string) => Promise<void>
     unrelateDevice: (experienceId: string, deviceId: string) => Promise<void>
+    setDevices: (experienceId: string, deviceIds: string[]) => Promise<void>
     listByDevice: (deviceId: string, includeInvalid?: boolean) => Promise<Experience[]>
     listDevices: (experienceId: string) => Promise<ExperienceRelatedDevice[]>
     summarizeSession: (sessionId: string) => Promise<DraftingResult>

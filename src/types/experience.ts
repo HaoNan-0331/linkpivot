@@ -58,6 +58,8 @@ export interface ExperienceListInput {
   severity?: string
   /** Phase 10 D-10-2：标签多选命中任一（tags JSON 列 LIKE OR-join）。 */
   tags?: string[]
+  /** Phase 10 Plan 04 问题 2 配套：仅查失效经验（invalid_at <= now），隐含 includeInvalid=true。 */
+  invalidOnly?: boolean
 }
 
 /** DB 行原生 snake_case（service 层 attrs_enc 已解密回填 attrs 并 delete 密文列） */

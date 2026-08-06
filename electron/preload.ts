@@ -131,6 +131,7 @@ const api = {
     restore: (id: string) => ipcRenderer.invoke('experience:restore', id),
     relateDevice: (experienceId: string, deviceId: string, relationType?: string) => ipcRenderer.invoke('experience:relateDevice', experienceId, deviceId, relationType),
     unrelateDevice: (experienceId: string, deviceId: string) => ipcRenderer.invoke('experience:unrelateDevice', experienceId, deviceId),
+    setDevices: (experienceId: string, deviceIds: string[]) => ipcRenderer.invoke('experience:setDevices', experienceId, deviceIds),
     listByDevice: (deviceId: string, includeInvalid?: boolean) => ipcRenderer.invoke('experience:listByDevice', deviceId, includeInvalid),
     listDevices: (experienceId: string) => ipcRenderer.invoke('experience:listDevices', experienceId),
     summarizeSession: (sessionId: string) => ipcRenderer.invoke('experience:summarizeSession', sessionId),

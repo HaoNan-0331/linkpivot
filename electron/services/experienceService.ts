@@ -136,6 +136,10 @@ export interface ListExperiencesOpts {
   severity?: string
   /** Phase 10 D-10-2：标签多选命中任一（tags JSON 列 LIKE，参数化 OR-join）。 */
   tags?: string[]
+  /** Phase 10 Plan 04 问题 2 配套：仅查失效经验（invalid_at IS NOT NULL AND invalid_at <= now）。
+   * 隐含 includeInvalid=true 语义（失效经验默认被 bi-temporal 过滤剔除，invalidOnly 强制纳入）。
+   * UI 状态 Select 选「已失效」时走此路径，避免传 status='invalid'（失效行 status 列仍 'published'，查不到）。 */
+  invalidOnly?: boolean
 }
 
 /**
@@ -284,14 +288,25 @@ export function listExperiences(opts: ListExperiencesOpts): PaginatedResult<any>
     conditions.push('e.severity = ?')
     params.push(opts.severity)
   }
-  // Phase 10 D-10-2：tags 多选命中任一（tags 明文 JSON 列 LIKE，参数化 OR-join）
+  // Phase 10 D-10-2：tags 多选命中任一（tags 明文 JSON 列 LIKE，参数化 OR-join）。
+  // Phase 10 Plan 04 WR-01：LIKE 通配符元字符（\ % _）转义 + ESCAPE '\\' 子句，避免标签含 '100%'/'a_b'
+  // 等字面值时被当通配符误匹配（T-10-04-03 mitigate）。转义顺序：先反斜杠（避免二次转义）。
+  // 注：标签含字面 `"` 仍需 json_each 子查询精确匹配，本 gap 不做（记 follow-up）。
   if (opts.tags && opts.tags.length > 0) {
-    const ors = opts.tags.map(() => 'e.tags LIKE ?')
+    const ors = opts.tags.map(() => "e.tags LIKE ? ESCAPE '\\\\'")
     conditions.push(`(${ors.join(' OR ')})`)
-    opts.tags.forEach((t) => params.push(`%"${t}"%`))
+    opts.tags.forEach((t) => {
+      const esc = t.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')
+      params.push(`%"${esc}"%`)
+    })
   }
-  // bi-temporal 默认过滤已失效（includeInvalid=false）
-  if (!opts.includeInvalid) {
+  // Phase 10 Plan 04 问题 2 配套：invalidOnly 仅查失效经验（invalid_at <= now）。
+  // 隐含 includeInvalid=true（失效行默认被下方 bi-temporal 过滤剔除，invalidOnly 须先纳入失效集再筛时间）。
+  if (opts.invalidOnly === true) {
+    conditions.push("(e.invalid_at IS NOT NULL AND e.invalid_at <= datetime('now','localtime'))")
+  }
+  // bi-temporal 默认过滤已失效（includeInvalid=false）；invalidOnly=true 时已显式筛失效，跳过默认过滤。
+  if (!opts.includeInvalid && opts.invalidOnly !== true) {
     conditions.push("(e.invalid_at IS NULL OR e.invalid_at > datetime('now','localtime'))")
   }
 
@@ -415,15 +430,66 @@ export function invalidateExperience(id: string): any {
  * Phase 10 D-10-3：撤销恢复（受控接口，与 invalidateExperience 对称）。
  * 清 invalid_at + 显式 status 回 'published'（invalidate 不动 status，restore 须显式回有效态）。
  * 绕 CR-01 update 白名单（不复活 status 字段），与 invalidate/incReuseCount/touchLastVerifiedAt 同模式
- * （受控状态接口改审计/状态字段，不经 update 白名单）。T-10-03 mitigate：status 直回 'published'
- * 不接受 renderer 入参（无 status 参数），无法被滥用改其他状态。
+ * （受控状态接口改审计/状态字段，不经 update 白名单）。
+ *
+ * Phase 10 Plan 04 CR-01 双层守卫（T-10-04-01 mitigate，红线③ 不变量恢复）：
+ * - service 层：先 SELECT status/invalid_at 检查——不存在 throw / draft throw（须走 confirmDrafts 质量门，
+ *   防 untrusted renderer 经 restore 把 draft 直 published）/ 有效经验（invalid_at IS NULL）throw（无需恢复）。
+ * - SQL 层：UPDATE WHERE id = ? AND invalid_at IS NOT NULL 再加一道防御（防 service 层与 SQL 间竞态）。
  */
 export function restoreExperience(id: string): any {
   const conn = db()
+  const cur = conn.prepare('SELECT status, invalid_at FROM experiences WHERE id = ?').get(id) as
+    | { status: string; invalid_at: string | null }
+    | undefined
+  if (!cur) throw new Error(`经验不存在: ${id}`)
+  if (cur.status === 'draft') {
+    throw new Error('草稿不可经 restore 发布，请走 confirmDrafts 质量门')
+  }
+  if (cur.invalid_at == null) {
+    throw new Error('经验当前有效，无需恢复')
+  }
   conn.prepare(
-    `UPDATE experiences SET invalid_at = NULL, status = 'published', updated_at = datetime('now','localtime') WHERE id = ?`
+    `UPDATE experiences SET invalid_at = NULL, status = 'published', updated_at = datetime('now','localtime') WHERE id = ? AND invalid_at IS NOT NULL`
   ).run(id)
   return getExperience(id)
+}
+
+/**
+ * Phase 10 Plan 04 CR-02：历史 severity 回填钩子（治本 D-10-2「保证历史数据可查」筛层兑现）。
+ *
+ * 背景：v10 迁移加 severity 明文列时，迁移在 MK 注入前跑（PATTERNS caveat），无法解密 attrs_enc 回填
+ * severity 明文值，导致历史行 severity 列 NULL。rowToExperience 读层 fallback 保证「可读」，
+ * 但 listExperiences 的 WHERE e.severity = ? 直筛筛不到 NULL 列（D-10-2 明确 fallback 只保证读不保证筛）。
+ * 本钩子在 main.ts MK 注入 + migrateAndSecure 之后跑，解密 attrs_enc.severity 回填 severity 明文列，
+ * 使历史数据的 severity 筛选/排序功能对称可用。
+ *
+ * 幂等：WHERE severity IS NULL 守卫——severity 已填的行不进 SELECT，再跑无副作用。
+ * 单行失败（解密/JSON 解析/severity 非法）跳过不 throw，避免单条脏数据阻塞全量回填
+ * （与 setDecryptFailureHandler 可观测策略一致，decField 失败已写 system_log 告警）。
+ */
+export function backfillSeverityFromHistory(): { backfilled: number } {
+  const conn = db()
+  const rows = conn.prepare(
+    'SELECT id, attrs_enc, severity FROM experiences WHERE severity IS NULL AND attrs_enc IS NOT NULL'
+  ).all() as Array<{ id: string; attrs_enc: string; severity: string | null }>
+  let count = 0
+  const stmtUpdate = conn.prepare('UPDATE experiences SET severity = ? WHERE id = ?')
+  for (const row of rows) {
+    try {
+      const dec = decField(row.attrs_enc, MK)
+      if (!dec) continue
+      const attrs = JSON.parse(dec)
+      const sev = attrs?.severity
+      if (typeof sev === 'string' && VALID_SEVERITIES.includes(sev)) {
+        stmtUpdate.run(sev, row.id)
+        count++
+      }
+    } catch {
+      // 解密/JSON/非法 severity 单行失败：跳过不阻塞全量回填（decField 失败已走 setDecryptFailureHandler）
+    }
+  }
+  return { backfilled: count }
 }
 
 /** 物理删除（exp_device_rel 因 ON DELETE CASCADE 自动清理；仅 Phase 10 浏览页手动删除调用）。 */
@@ -443,6 +509,32 @@ export function relateDevice(experienceId: string, deviceId: string, relationTyp
 /** 取消关联（删单条）。 */
 export function unrelateDevice(experienceId: string, deviceId: string): void {
   db().prepare('DELETE FROM exp_device_rel WHERE experience_id = ? AND device_id = ?').run(experienceId, deviceId)
+}
+
+/**
+ * Phase 10 Plan 04 WR-02：全量设置经验的关联设备（单事务原子 diff）。
+ *
+ * 替代 renderer 侧 Promise.all N IPC 非原子调用（T-10-04-04 mitigate）：
+ * - renderer 原实现 syncRelateDevices 先 listDevices 拉当前 + Promise.all(relateDevice/unrelateDevice) N IPC，
+ *   部分失败留半成品关联状态（无原子性保证）。
+ * - 本接口在 service 层单 transaction 内 diff（toAdd/toRemove），throw 即 ROLLBACK 全成全败。
+ *
+ * 批量上限 100（单经验关联设备量小，MAX_BATCH=1000 不适用此场景；对齐 CLAUDE.md 批量上限精神）。
+ */
+export function setExperienceDevices(expId: string, expectIds: string[]): void {
+  if (!Array.isArray(expectIds)) throw new Error('expectIds 必须为数组')
+  if (expectIds.length > 100) throw new Error('关联设备批量上限 100')
+  const conn = db()
+  const tx = conn.transaction(() => {
+    const cur = (conn.prepare('SELECT device_id FROM exp_device_rel WHERE experience_id = ?').all(expId) as Array<{ device_id: string }>)
+      .map((r) => r.device_id)
+    const expectSet = new Set(expectIds)
+    const toAdd = expectIds.filter((x) => !cur.includes(x))
+    const toRemove = cur.filter((x) => !expectSet.has(x))
+    for (const did of toAdd) relateDevice(expId, did)
+    for (const did of toRemove) unrelateDevice(expId, did)
+  })
+  tx()
 }
 
 /**
