@@ -119,7 +119,7 @@ Plans:
 - [x] 10-03-PLAN.md — ExperienceTab（筛选 bar 8 元素 + Table 9 列 + 行操作三能力按状态切换）+ ExperienceDetailModal（width 900 元数据 + 复用 SessionMessagesModal 回链）+ KnowledgeBasePage Tabs 改造（文档 | 经验，懒加载）+ 人工 checkpoint
 
 **Gap Closure** *(VERIFICATION/UAT 闭环)*
-- [ ] 10-04-PLAN.md — gap 闭环：CR-01 restoreExperience 守卫（红线③ 不变量）+ CR-02 历史 severity post-MK 回填钩子 + 问题 2 状态 Select↔includeInvalid 联动（invalidOnly 路径）+ 问题 1a ExperienceEditForm 设备 filter 放开（全类型）+ WR-01 tags LIKE ESCAPE 转义 + WR-02 setExperienceDevices 单事务原子 + WR-05 formatTs 兼容 ISO
+- [x] 10-04-PLAN.md — gap 闭环：CR-01 restoreExperience 双层守卫（service+SQL，draft/有效/不存在 抛错）+ CR-02 backfillSeverityFromHistory 幂等回填钩子（main.ts post-MK 调用）+ 问题 2 状态 Select↔includeInvalid 单向联动 + invalidOnly service 路径 + 问题 1a ExperienceEditForm 设备 filter 放开全类型 + WR-01 tags LIKE ESCAPE 转义（\ % _）+ WR-02 setExperienceDevices 单事务原子（IPC 三向一致）+ WR-05 两处 formatTs 兼容 ISO + WR-03 顺手清（2 fix commits 29021cc/411b8e5，9 新 vitest 用例，三绿门禁 200/200 全绿零回归）
 
 **UI hint**: yes
 

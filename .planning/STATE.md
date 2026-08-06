@@ -136,6 +136,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 - [x] 10-01-PLAN.md — Phase 10 数据/服务/IPC 基线（severity v10 列迁移 hasColumn 守卫 + restoreExperience 受控接口 + listExperiences opts 扩 search/severity/tags + deviceId 多选 IN 占位 OR-join + device_count 子查询零 N+1 + createExperience status? 默认 draft + severity 双写 + rowToExperience fallback + experience:restore IPC secure + preload + DTO 三向契约 + Experience 加 severity/device_count，3 commits 2a86fc9/84c4ea5/a1c0ba1，TDD RED→GREEN 9 新 vitest 用例，三绿门禁 191/191 全绿零回归）
 - [x] 10-02-PLAN.md — Phase 10 公共组件抽取（ExperienceEditForm 抽出 + validateDraft 单一来源 troubleshooting severity/symptoms/resolution 标红 + ExperienceInput DTO 扩 status? 红线③ 例外手动新增直 published + 复用 09-03 ReviewConfirmEditForm 既有 attrs 模板/关联设备 Select 逻辑，2 commits e2b1506/b95c44d，三绿门禁 191/191 全绿零回归 Phase 9 表单不回归）
 - [x] 10-03-PLAN.md — Phase 10 UI 层（KnowledgeBasePage 改 Tabs 文档|经验 + ExperienceTab 列表/多维筛选含设备多选 mode multiple/Table 9 列含第 5 列「N 台/全局」用 record.device_count 渲染零 N+1/手动 CRUD 新增直 published/三能力标失效+恢复+物理删除按状态切换 Popconfirm 软硬区分/draft 前端 filter 兜底 + ExperienceDetailModal width 900 footer null 元数据+SessionMessagesModal 叠层+severity 语义色 Tag + ExperienceEditForm.onSubmit 扩 relateDevices 解决 10-02 遗留，3 feat commits 23ad8a5/e2f4be8/b525dcd + 1 docs commit，三绿门禁 tsc+vite build+electron-main build+vitest 191/191 全绿零回归，人工 checkpoint approved 信任门禁收尾——三绿门禁全绿 + UI-SPEC 关键渲染 grep 验证全命中跳过实机，BROWSE-01/02/03/04 UI 层全落地 Phase 10 完成）
+- [x] 10-04-PLAN.md — Phase 10 gap closure（5 项必修：CR-01 restoreExperience 双层守卫 service+SQL + CR-02 backfillSeverityFromHistory 幂等回填钩子 main.ts post-MK 调用 + WR-01 tags LIKE ESCAPE 转义 + WR-02 setExperienceDevices 单事务原子 IPC 三向一致 + 问题 2 状态 Select 联动 includeInvalid + invalidOnly service 路径 + 问题 1a ExperienceEditForm 设备 filter 放开全类型 + WR-05 两处 formatTs 兼容 ISO + WR-03 顺手清，2 fix commits 29021cc/411b8e5，9 新 vitest 用例 CR-01 4+CR-02 2+WR-01 1+WR-02 2，三绿门禁 tsc+vite build+electron-main+vitest 200/200 全绿零回归，IPC experience:setDevices 三向一致，5 gap grep 全断言通过）
 
 ### Blockers/Concerns
 
@@ -165,6 +166,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 | Phase 10 P01 | ~13min | 3 tasks | 9 files |
 | Phase 10 P02 | 12min | 2 tasks | 3 files |
 | Phase 10 P03 | ~14min | 4 tasks (3 auto + 1 checkpoint approved) | 4 files |
+| Phase 10 P04 | ~14min | 3 tasks (2 tdd + 1 验证) | 10 files |
 
 ### Risk Watch
 
@@ -199,8 +201,8 @@ v1.1 明确 defer 到二期（4 FUTURE，不进 roadmap）：
 
 ## Session Continuity
 
-- **Last action**: Phase 10 Plan 03 完成（ExperienceTab + ExperienceDetailModal + KnowledgeBasePage Tabs 改造 + ExperienceEditForm.onSubmit 扩 relateDevices 解决 10-02 遗留，3 feat commits 23ad8a5/e2f4be8/b525dcd，三绿门禁 tsc+vite+electron-main+vitest 191/191 全绿零回归，人工 checkpoint approved 信任门禁收尾跳过实机，BROWSE-01/02/03/04 UI 层全落地，Phase 10 全部 3 plan 完成）
-- **Next action**: Phase 10 整体 verify（人工验收 UI 全链路实机，或信任门禁直接进 Phase 11 规划）；Phase 11（AI Retrieval & Reuse）规划 RETRIEVE-01/02/03（FTS5 检索 + LLM 精排 + 复用计数 reuse_count + bi-temporal 过滤 + commandSafety 联动）
+- **Last action**: Phase 10 Plan 04 gap closure 完成（5 项必修：CR-01 restore 双层守卫 + CR-02 backfillSeverityFromHistory 幂等回填 + WR-01 tags ESCAPE 转义 + WR-02 setExperienceDevices 单事务原子 + 问题 2 状态 Select 联动 invalidOnly + 问题 1a 设备 filter 放开 + WR-05 两处 formatTs ISO + WR-03 顺手清，2 fix commits 29021cc/411b8e5，9 新 vitest 用例，三绿门禁 200/200 全绿零回归，IPC experience:setDevices 三向一致，5 gap grep 全断言通过，闭环 VERIFICATION/UAT/REVIEW 暴露的全部必修项）
+- **Next action**: Phase 10 整体 verify（5 gap 已闭环可信任门禁直接进 Phase 11 规划）；Phase 11（AI Retrieval & Reuse）规划 RETRIEVE-01/02/03（FTS5 检索 + LLM 精排 + 复用计数 reuse_count + bi-temporal 过滤 + commandSafety 联动）
 - **Resume command**: `/gsd-status`
 
 ## Phase → Requirement Map
