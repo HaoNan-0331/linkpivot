@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: AI 对话经验沉淀
-status: executing
-last_updated: "2026-08-06T13:01:48.587Z"
+status: verifying
+last_updated: "2026-08-06T13:10:58.358Z"
 last_activity: 2026-08-06
 progress:
   total_phases: 5
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 14
-  completed_plans: 13
-  percent: 80
+  completed_plans: 14
+  percent: 100
 ---
 
 # STATE: network_toplogy
@@ -20,17 +20,17 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-01)
 
 - **Core Value**: 让运维人员在一个桌面工具内安全地掌握网络拓扑、远程操控设备并获得 AI 辅助分析。拓扑准确呈现与设备安全可控为最高优先级。
-- **Current Focus**: v1.1 AI 对话经验沉淀 — Phase 11（AI Retrieval & Reuse）执行中，11-01 main 进程 service 层落地完成（experienceRerank.ts 精排强 schema LLM 评分 + experienceRetrieval.ts 编排 retrieveForAnswer 粗筛→精排→阈值→read-time 两项验证→刷新计数→返注入元数据 + ai.ts chat() b 自动预取串联 retrieveForAnswer + exp_answer 返回类型 references 联合，2 commits e4c0809/8653f90，三绿门禁 tsc+build+build:electron-main+vitest 230/230 全绿零回归），下一步 11-02（renderer 来源列表 ChatMessageList/types 联合类型 + 点击回查复用 Modal）
+- **Current Focus**: v1.1 AI 对话经验沉淀 — Phase 11（AI Retrieval & Reuse）两 plan 全执行完成，待 verify。11-01 main 进程（experienceRerank.ts 精排 + experienceRetrieval.ts 编排 + ai.ts chat() b 自动预取串联 + exp_answer 返回类型，2 commits e4c0809/8653f90）+ 11-02 renderer（types.ts ReferenceItem 联合 kb/experience/session + useAIChat exp_answer 消费 camelCase 字段对齐 ai.ts:835 + ChatMessageList renderRef 按 kind 分流 + 复用 Phase 10 ExperienceDetailModal / Phase 9 SessionMessagesModal 零新建 D-11-12 + 命令失支持 warning Tag D-11-7，2 commits 987b9c4/b683b84），四绿门禁 tsc+build+build:electron-main+vitest 230/230 全绿零回归。下一步 verify Phase 11（人工 checkpoint：与 published 经验对话提问 → 末尾来源列表 → 点击回查 Modal）
 - **Mode**: Vertical Feature Slices（按功能层分 phase：数据→起草→确认→浏览→检索，非 v1.0 的 Horizontal Layers）
 
 ## Current Position
 
-Phase: 11 (ai-retrieval-reuse) — EXECUTING
-Plan: 2 of 2
-Status: 11-01 complete, 11-02 ready
+Phase: 11 (ai-retrieval-reuse) — VERIFYING
+Plan: 2 of 2 (both complete)
+Status: Phase complete — ready for verification
 Last activity: 2026-08-06
 
-Progress: [█████████░] 93%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -127,6 +127,13 @@ Phase 11 执行期决策（11-01 落地）：
 - [Phase 11]: 11-01 read-time 两项验证（D-11-6）——有效期失效剔除（粗筛 includeInvalid=false 已过滤，二次确认防窗口跨天）+ 命令白名单 cmds.some 失支持标 unsupported=true 降权不剔除（保守宁可多标）；不验设备状态（D-11-8 反逻辑）；CMD_EXTRACT_RE 限定只读首词不提取变更类（T-11-02 mitigate）
 - [Phase 11]: 11-01 信任边界——精排 prompt 只送 exp_id+title+content 前150字（不送 attrs 凭证字段）；references 回 renderer 只含 exp_id/title/source_session_id/unsupported（D-11-11 从注入记录拿不需 AI 标记）；INJECT_LIMIT=5/MAX_CANDIDATES=20 经验注入要精不要多防 context 溢出
 
+Phase 11 执行期决策（11-02 落地）：
+
+- [Phase 11]: 11-02 字段命名以 ai.ts:835 实际返回为准（camelCase expId/sourceSessionId），非 plan interfaces 文档笔误的 snake_case——prior_wave_handoff 与源码核对后对齐，避免运行时 parsed.references.expId 为 undefined
+- [Phase 11]: 11-02 session 引用在 renderer 拆出——ai.ts:835 exp_answer references 只返 experience 类型，useAIChat 消费时每条 experience 检查 sourceSessionId 非空则额外 push session 引用项（D-11-10 末尾列表含会话引用），不重复落库 ai.ts 不动避免回归
+- [Phase 11]: 11-02 kb_answer 分支 map 补 kind:'kb'——ai.ts KB_SEARCH 返的 kbReferences 无 kind 字段，ReferenceItem 联合类型需显式 kind 类型安全（运行时已有 kind 直接透传）
+- [Phase 11]: 11-02 ChatMessageList renderRef 按 ref.kind 分流（kb 保持既有 BookOutlined / experience 可点开 ExperienceDetailModal / session 可点开 SessionMessagesModal），session 走末尾 else 不写显式条件；D-11-7 命令失支持用 antd Tag color='warning' 既有色枚举不引 hex 新色；D-11-12 复用 Phase 10/9 既有 Modal 零新建浏览只读场景不传 onEdit 等回调
+
 v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 
 - 加密/迁移改动必须向后兼容历史数据（v1/v2 IV 兼容、迁移幂等守卫靠 sqlite_master 特征串不靠 user_version、throw 即 ROLLBACK）
@@ -146,6 +153,8 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 - [x] 10-02-PLAN.md — Phase 10 公共组件抽取（ExperienceEditForm 抽出 + validateDraft 单一来源 troubleshooting severity/symptoms/resolution 标红 + ExperienceInput DTO 扩 status? 红线③ 例外手动新增直 published + 复用 09-03 ReviewConfirmEditForm 既有 attrs 模板/关联设备 Select 逻辑，2 commits e2b1506/b95c44d，三绿门禁 191/191 全绿零回归 Phase 9 表单不回归）
 - [x] 10-03-PLAN.md — Phase 10 UI 层（KnowledgeBasePage 改 Tabs 文档|经验 + ExperienceTab 列表/多维筛选含设备多选 mode multiple/Table 9 列含第 5 列「N 台/全局」用 record.device_count 渲染零 N+1/手动 CRUD 新增直 published/三能力标失效+恢复+物理删除按状态切换 Popconfirm 软硬区分/draft 前端 filter 兜底 + ExperienceDetailModal width 900 footer null 元数据+SessionMessagesModal 叠层+severity 语义色 Tag + ExperienceEditForm.onSubmit 扩 relateDevices 解决 10-02 遗留，3 feat commits 23ad8a5/e2f4be8/b525dcd + 1 docs commit，三绿门禁 tsc+vite build+electron-main build+vitest 191/191 全绿零回归，人工 checkpoint approved 信任门禁收尾——三绿门禁全绿 + UI-SPEC 关键渲染 grep 验证全命中跳过实机，BROWSE-01/02/03/04 UI 层全落地 Phase 10 完成）
 - [x] 10-04-PLAN.md — Phase 10 gap closure（5 项必修：CR-01 restoreExperience 双层守卫 service+SQL + CR-02 backfillSeverityFromHistory 幂等回填钩子 main.ts post-MK 调用 + WR-01 tags LIKE ESCAPE 转义 + WR-02 setExperienceDevices 单事务原子 IPC 三向一致 + 问题 2 状态 Select 联动 includeInvalid + invalidOnly service 路径 + 问题 1a ExperienceEditForm 设备 filter 放开全类型 + WR-05 两处 formatTs 兼容 ISO + WR-03 顺手清，2 fix commits 29021cc/411b8e5，9 新 vitest 用例 CR-01 4+CR-02 2+WR-01 1+WR-02 2，三绿门禁 tsc+vite build+electron-main+vitest 200/200 全绿零回归，IPC experience:setDevices 三向一致，5 gap grep 全断言通过）
+- [x] 11-01-PLAN.md — Phase 11 main 进程 service 层（experienceRerank.ts 精排强 schema LLM 评分 exp_id 防编造 + score 边界归一化 + 3 次重试 + 反幻觉 prompt + experienceRetrieval.ts 编排 retrieveForAnswer 粗筛窄查/宽匹配双分支 + 阈值过滤 + read-time 两项验证有效期剔除/命令失支持降权 + 命中刷新计数不阻塞 + ai.ts chat() b 自动预取串联 retrieveForAnswer + 经验正文注入 systemPrompt + exp_answer 返回类型 references 联合，2 commits e4c0809/8653f90，30 新 vitest 用例，三绿门禁 tsc+build+build:electron-main+vitest 230/230 全绿零回归，零迁移零新表零加密列触碰，renderer 永不收 attrs 密文）
+- [x] 11-02-PLAN.md — Phase 11 renderer 层引用溯源（types.ts ReferenceItem 联合类型 kb/experience/session + ChatMsg.references 扩联合 + useAIChat exp_answer 消费 camelCase 字段对齐 ai.ts:835 实际契约非 plan 文档笔误 snake_case + kb_answer 分支 map 补 kind:'kb' + session 引用从 experience.sourceSessionId 拆出 D-11-10 + ChatMessageList renderRef 按 kind 分流渲染 + 复用 Phase 10 ExperienceDetailModal/Phase 9 SessionMessagesModal 零新建 D-11-12 + 命令失支持 antd Tag color=warning 既有色 D-11-7，2 commits 987b9c4/b683b84，四绿门禁 tsc+vite build+build:electron-main+vitest 230/230 全绿零回归，acceptance grep 全断言通过，RETRIEVE-03 UI 层全落地）
 
 ### Blockers/Concerns
 
@@ -177,6 +186,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 | Phase 10 P03 | ~14min | 4 tasks (3 auto + 1 checkpoint approved) | 4 files |
 | Phase 10 P04 | ~14min | 3 tasks (2 tdd + 1 验证) | 10 files |
 | Phase 11 P01 | ~12min | 2 tasks (tdd) | 4 files |
+| Phase 11 P02 | ~6min | 2 tasks | 3 files |
 
 ### Risk Watch
 
@@ -211,8 +221,8 @@ v1.1 明确 defer 到二期（4 FUTURE，不进 roadmap）：
 
 ## Session Continuity
 
-- **Last action**: Phase 11 Plan 01 完成（main 进程 service 层：experienceRerank.ts 精排强 schema LLM 评分 exp_id 防编造 + score 边界归一化 + 3 次重试 + 反幻觉 prompt；experienceRetrieval.ts 编排 retrieveForAnswer 粗筛窄查/宽匹配双分支 + 阈值过滤 + read-time 两项验证有效期剔除/命令失支持降权 + 命中刷新计数不阻塞主路径；ai.ts chat() b 自动预取串联 retrieveForAnswer + 经验正文注入 systemPrompt + exp_answer 返回类型 references 联合；2 commits e4c0809/8653f90，30 新 vitest 用例，三绿门禁 tsc+build+build:electron-main+vitest 230/230 全绿零回归，零迁移零新表零加密列触碰，renderer 永不收 attrs 密文）
-- **Next action**: Phase 11 Plan 02（renderer 来源列表 ChatMessageList.tsx 扩 references 联合类型 experience 分支 + types.ts ChatMsg.references 联合 + 点击回查复用 ExperienceDetailModal/SessionMessagesModal D-11-12 + unsupported Tag 标注 D-11-7）
+- **Last action**: Phase 11 Plan 02 完成（renderer 层引用溯源：types.ts ReferenceItem 联合 kb/experience/session + ChatMsg.references 扩联合 + useAIChat exp_answer 消费 camelCase 对齐 ai.ts:835 + kb kind 补全 + session 引用从 sourceSessionId 拆出 + ChatMessageList renderRef 按 kind 分流 + 复用 Phase 10/9 Modal 零新建 + 命令失支持 warning Tag；2 commits 987b9c4/b683b84，四绿门禁 tsc+build+build:electron-main+vitest 230/230 全绿零回归，RETRIEVE-03 UI 层全落地）
+- **Next action**: Phase 11 verify（人工 checkpoint：与 published 经验对话提问 → AI 回答末尾显来源列表 → 点击经验引用开 ExperienceDetailModal → 点击会话引用开 SessionMessagesModal → 命令失支持经验显 warning Tag；RETRIEVE-01/02/03 三 REQ 整体验收）
 - **Resume command**: `/gsd-status`
 
 ## Phase → Requirement Map
