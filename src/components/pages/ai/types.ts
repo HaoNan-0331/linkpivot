@@ -14,14 +14,25 @@ export interface DeviceOption {
   connectionType: string
 }
 
+// Phase 11 RETRIEVE-03：引用来源联合类型（kb / experience / session）
+// - kb：Phase 5 既有 KB 文档引用（kb_answer 分支注入，useAIChat 消费时补 kind:'kb'）
+// - experience：经验引用（exp_answer 分支注入，点击开 ExperienceDetailModal）
+// - session：会话引用（exp_answer 的 experience.sourceSessionId 非空时拆出，点击开 SessionMessagesModal）
+// D-11-11：references 从精排注入记录拿（main 已知注入哪些经验），不需 AI 标记。
+// 注意 ai.ts:835 实际返回 camelCase（expId/sourceSessionId），非 snake_case。
+export type ReferenceItem =
+  | { kind: 'kb'; docTitle: string; chunkTitle: string; docId: string }
+  | { kind: 'experience'; expId: string; title: string; unsupported?: boolean }
+  | { kind: 'session'; sessionId: string; title: string }
+
 // 渲染层消息：比 src/types/ai.ts 的 ChatMessage 多 references 字段
-// （handleSend 的 kb_answer 分支由 AI 回复 JSON 附加，仅渲染层消费）
+// （handleSend 的 kb_answer/exp_answer 分支由 AI 回复 JSON 附加，仅渲染层消费）
 export interface ChatMsg {
   id?: string
   role: 'user' | 'assistant'
   content: string
   createdAt?: string
-  references?: Array<{ docTitle: string; chunkTitle: string; docId: string }>
+  references?: ReferenceItem[]
 }
 
 export interface ConfirmData {
