@@ -1,7 +1,7 @@
 ---
 phase: 11-ai-retrieval-reuse
 verified: 2026-08-06T13:35:00Z
-status: human_needed
+status: passed
 score: 10/10 truths verified
 overrides_applied: 0
 human_verification:
@@ -20,7 +20,7 @@ human_verification:
 
 **Phase Goal:** 后续任意 AI 对话中，AI 自动检索并引用相关经验辅助回答，且复用前即时验证证据（命令白名单/有效期）仍成立、过期/失效自动降权剔除，回答附可回查的引用来源。
 **Verified:** 2026-08-06T13:35:00Z
-**Status:** human_needed
+**Status:** passed（UAT 2026-08-06 真机通过，见 11-HUMAN-UAT.md；UAT 期发现 2 个 gap 已 commit 8af468b 修复 + 1 个 follow-up 记 HUMAN-UAT Gaps）
 **Re-verification:** No — initial verification（无前置 VERIFICATION.md）
 
 ## Goal Achievement
