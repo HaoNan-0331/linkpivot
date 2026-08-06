@@ -503,13 +503,16 @@ class MemDb {
         consumed.push('stat')
         if (r.status !== st) return false
       }
-      // (e.title LIKE ? OR e.content LIKE ?) — 两个 param
-      const searchM = whereClause.match(/e\.title\s+LIKE\s+\?\s+OR\s+e\.content\s+LIKE\s+\?/)
+      // (e.title LIKE ? [ESCAPE ...] OR e.content LIKE ? [ESCAPE ...]) — 两个 param
+      // Phase 11 WR-07：search LIKE 现含 ESCAPE '\\' 子句（\% \_ \\ 转义），正则容忍可选 ESCAPE，
+      // 关键词反转义回字面值后比较（与下方 tags LIKE 同模式）。
+      const searchM = whereClause.match(/e\.title\s+LIKE\s+\?(?:\s+ESCAPE\s+[^ )]+)?\s+OR\s+e\.content\s+LIKE\s+\?/)
       if (searchM) {
         const kw1 = remaining[consumed.length]
         const kw2 = remaining[consumed.length + 1]
         consumed.push('kw1', 'kw2')
-        const kw = kw1.replace(/^%|%/g, '') // 去 % 通配符做 includes
+        let kw = kw1.replace(/\\(.)/g, '$1') // 反转义：\%→% \_→_ \\→\
+        kw = kw.replace(/^%|%$/g, '')        // 去首尾 % 通配符做 includes
         const hit = (r.title || '').includes(kw) || (r.content || '').includes(kw)
         if (!hit) return false
       }

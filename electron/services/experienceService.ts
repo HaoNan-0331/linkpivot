@@ -276,9 +276,13 @@ export function listExperiences(opts: ListExperiencesOpts): PaginatedResult<any>
     params.push(opts.status)
   }
   // Phase 10 D-10-2：search 关键词 LIKE（title/content，参数化防注入 T-10-01 mitigate）
+  // Phase 11 WR-07 fix：LIKE 通配符元字符（\ % _）转义 + ESCAPE '\\' 子句（与上方 tags LIKE 同模式），
+  // 避免 userMessage 含 '100%'/'a_b' 等字面值时被当通配符误匹配；Phase 11 experienceRetrieval
+  // 把用户原始问题灌进 search，攻击面扩大，故补转义。转义顺序：先反斜杠（避免二次转义）。
   if (opts.search) {
-    conditions.push('(e.title LIKE ? OR e.content LIKE ?)')
-    const kw = `%${opts.search}%`
+    conditions.push("(e.title LIKE ? ESCAPE '\\' OR e.content LIKE ? ESCAPE '\\')")
+    const esc = opts.search.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')
+    const kw = `%${esc}%`
     params.push(kw, kw)
   }
   // Phase 10 D-10-2：severity 明文列直筛（WHERE e.severity = ?）。

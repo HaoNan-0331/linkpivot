@@ -88,6 +88,7 @@ export function validateRerank(
   if (!Array.isArray(arr)) return { ok: false, error: '输出非数组' }
 
   const entries: RerankEntry[] = []
+  const seen = new Set<string>()
   for (let i = 0; i < arr.length; i++) {
     const d = arr[i]
     if (!d || typeof d !== 'object') return { ok: false, error: `第 ${i + 1} 条非对象` }
@@ -98,6 +99,12 @@ export function validateRerank(
     if (!candidateExpIds.has(d.exp_id)) {
       return { ok: false, error: `第 ${i + 1} 条 exp_id 不在候选集: ${d.exp_id}` }
     }
+    // CR-02 fix：防 LLM 返重复 exp_id（导致 retrieveForAnswer 对同 id 多次 incReuseCount 累加 +
+    // references 重复渲染）。T-11-06 防编造不覆盖「重复」，故显式去重。
+    if (seen.has(d.exp_id)) {
+      return { ok: false, error: `第 ${i + 1} 条 exp_id 重复: ${d.exp_id}` }
+    }
+    seen.add(d.exp_id)
     const score = normalizeScore(d.score)
     if (score === null) {
       return { ok: false, error: `第 ${i + 1} 条 score 非法（须 0-1 数值，支持 '85%' 或 '0.85' 字符串）: ${d.score}` }

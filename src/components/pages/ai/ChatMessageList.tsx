@@ -29,9 +29,13 @@ export default function ChatMessageList({ messages, loading }: ChatMessageListPr
   // 经验引用点击 → 拉详情开 Modal（信任边界：references 只含 expId 元数据，详情经 secure IPC，
   // ExperienceDetailModal 走既有 stripEncColumns 边界，renderer 永不收 _enc 列，T-11-07 mitigate）
   const openExperience = (expId: string) => {
+    // WR-06 fix：null 判（经验已删/不存在不弹空 Modal）+ .catch（IPC 失败不致 unhandled rejection）
     window.api.experience.get(expId).then((e) => {
+      if (!e) return
       setDetailExp(e)
       setDetailOpen(true)
+    }).catch((err) => {
+      console.warn('[ChatMessageList] openExperience failed', expId, err)
     })
   }
 

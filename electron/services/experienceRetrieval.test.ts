@@ -97,6 +97,18 @@ describe('validateRerank（精排强 schema Gate）', () => {
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.entries).toEqual([])
   })
+
+  it('9b. exp_id 重复（LLM 返同 id 两次）→ fail（CR-02 防 reuse_count 重复累加、references 重复渲染）', () => {
+    const r = validateRerank(
+      JSON.stringify([
+        { exp_id: 'e1', score: 0.8, reason: 'r1' },
+        { exp_id: 'e1', score: 0.9, reason: 'r2' },
+      ]),
+      candSet(['e1', 'e2'])
+    )
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatch(/重复/)
+  })
 })
 
 describe('buildRerankPrompt', () => {
@@ -236,6 +248,7 @@ describe('retrieveForAnswer（编排）', () => {
     expect(listExperiencesMock).toHaveBeenCalledTimes(1)
     const opts = listExperiencesMock.mock.calls[0][0]
     expect(opts.deviceId).toEqual(['d1', 'd2'])
+    expect(opts.status).toBe('published')  // CR-01：强制 published，draft 不进检索池（红线③）
     expect(opts.includeInvalid).toBe(false)
     expect(opts.limit).toBe(MAX_CANDIDATES)
   })
@@ -245,6 +258,7 @@ describe('retrieveForAnswer（编排）', () => {
     await retrieveForAnswer({ userMessage: '交换机离线' })
     const opts = listExperiencesMock.mock.calls[0][0]
     expect(opts.search).toBe('交换机离线')
+    expect(opts.status).toBe('published')  // CR-01：search 分支同样强制 published
     expect(opts.deviceId).toBeUndefined()
   })
 
@@ -275,23 +289,29 @@ describe('retrieveForAnswer（编排）', () => {
     expect(r.injected).toEqual([])
   })
 
-  it('24. 命令全失支持（提取到只读命令但首词不在白名单）→ 标 unsupported=true（降权不剔除）', async () => {
-    // debug 被 CMD_EXTRACT_RE 提取（只读首词），但不在测试白名单数组 → 全失支持
+  it('24. 命令全失支持（提取到的命令首词不在白名单）→ 标 unsupported=true（降权不剔除）', async () => {
+    // WR-03 fix 后 CMD_EXTRACT_RE 只提取 display/show/ping/traceroute；
+    // 覆盖 isCommandAllowed 全 deny 模拟「用户白名单未含这些命令」→ 全失支持
     listExperiencesMock.mockReturnValue({
-      rows: [makeRow({ id: 'e1', content: 'debug ip packet 排查', attrs: { resolution: 'terminal monitor' } })],
+      rows: [makeRow({ id: 'e1', content: 'display version 查看版本', attrs: { resolution: 'show interface' } })],
       total: 1,
     })
+    isCommandAllowedMock.mockImplementation(() => ({ allowed: false, reason: 'denied' }))
     callAIMock.mockResolvedValueOnce(JSON.stringify([{ exp_id: 'e1', score: 0.8, reason: 'r' }]))
     const r = await retrieveForAnswer({ userMessage: '问题' })
     expect(r.injected).toHaveLength(1)
     expect(r.injected[0].unsupported).toBe(true)
   })
 
-  it('25. 命令部分失支持（有任一失支持）→ 标 unsupported=true（保守宁可多标）', async () => {
-    // content 含 display（白名单）+ interface（黑名单触发，isCommandAllowed 返 denied 因首词 interface 不在白名单数组）
+  it('25. 命令部分失支持（任一失支持）→ 标 unsupported=true（保守宁可多标）', async () => {
+    // content 含 display（allowed）+ resolution 含 traceroute（denied）→ cmds.some 失支持即标
     listExperiencesMock.mockReturnValue({
-      rows: [makeRow({ id: 'e1', content: 'display version', attrs: { resolution: 'interface gi0/0/1 检查' } })],
+      rows: [makeRow({ id: 'e1', content: 'display version', attrs: { resolution: 'traceroute 10.0.0.1 路由追踪' } })],
       total: 1,
+    })
+    isCommandAllowedMock.mockImplementation((cmd: string) => {
+      const first = cmd.trim().toLowerCase().split(/\s+/)[0]
+      return { allowed: first === 'display', reason: first === 'display' ? 'ok' : 'denied' }
     })
     callAIMock.mockResolvedValueOnce(JSON.stringify([{ exp_id: 'e1', score: 0.8, reason: 'r' }]))
     const r = await retrieveForAnswer({ userMessage: '问题' })

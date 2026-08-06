@@ -823,6 +823,15 @@ export async function chat(
   if (commands.length === 0 || targetDevices.length === 0) {
     saveChatMessage('user', messages[messages.length - 1]?.content || '', null, sessionId)
     saveChatMessage('assistant', finalAiReply, null, sessionId)
+    // Phase 11 WR-01 fix：KB 与经验同时命中时合并 references（type 'exp_answer' 含 kb+experience 联合），
+    // 避免既有 kb_answer 早 return 丢弃经验 references（功能断流）。renderer exp_answer handler 按 r.kind 分流消费。
+    if (kbReferences.length > 0 && expReferences.length > 0) {
+      const refs = [
+        ...kbReferences.map((r: any) => ({ kind: 'kb', docTitle: r.docTitle, chunkTitle: r.chunkTitle, docId: r.docId })),
+        ...expReferences.map((e) => ({ kind: 'experience', expId: e.exp_id, title: e.title, sourceSessionId: e.source_session_id, unsupported: e.unsupported })),
+      ]
+      return JSON.stringify({ type: 'exp_answer', content: finalAiReply, references: refs })
+    }
     if (kbReferences.length > 0) {
       return JSON.stringify({ type: 'kb_answer', content: finalAiReply, references: kbReferences })
     }

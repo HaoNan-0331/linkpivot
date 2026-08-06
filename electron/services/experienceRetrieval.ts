@@ -44,8 +44,13 @@ export interface RetrieveResult {
   finalAnswer: string
 }
 
-/** 命令提取正则：限定只读首词（display/show/ping/traceroute/debug/terminal/interface），不提取变更类（D-11-7 / T-11-02）。 */
-const CMD_EXTRACT_RE = /(?:display|show|ping|traceroute|debug|terminal|interface)\s+[\w-/]+/g
+/**
+ * 命令提取正则：限定只读首词（display/show/ping/traceroute），不提取变更类（D-11-7 / T-11-02）。
+ * WR-03 fix：原含 debug/terminal/interface 三词，系英文散文高频词（"the interface of"/"terminal in"），
+ * 导致大量非命令正文被当命令提取、isCommandAllowed 首词不在白名单即误标 unsupported=true。
+ * 收窄为 4 个高置信 OPS 诊断命令前缀；debug/terminal/interface 留二期补结构化 command 字段后精确判定。
+ */
+const CMD_EXTRACT_RE = /(?:display|show|ping|traceroute)\s+[\w-/]+/g
 
 export async function retrieveForAnswer(input: RetrieveInput): Promise<RetrieveResult> {
   const empty: RetrieveResult = {
@@ -60,9 +65,12 @@ export async function retrieveForAnswer(input: RetrieveInput): Promise<RetrieveR
   if (!config || !config.apiKey) return { ...empty, demoMode: true }
 
   // 2. 粗筛（D-11-2 窄查策略）
+  // CR-01 fix：强制 status:'published'——只许已发布（人工确认）经验进检索池，draft/confirmed 不进，
+  // 否则 Phase 8 AI 起草 + Phase 9 未确认的 draft 经验会被注入 systemPrompt + incReuseCount 刷新，
+  // 直接违反 milestone 红线③「AI 产出永远先进 draft 人工确认才 published」。
   const opts = input.deviceIds && input.deviceIds.length > 0
-    ? { deviceId: input.deviceIds, includeInvalid: false, limit: MAX_CANDIDATES }
-    : { search: input.userMessage, includeInvalid: false, limit: MAX_CANDIDATES }
+    ? { deviceId: input.deviceIds, status: 'published', includeInvalid: false, limit: MAX_CANDIDATES }
+    : { search: input.userMessage, status: 'published', includeInvalid: false, limit: MAX_CANDIDATES }
   const { rows } = listExperiences(opts)
   if (rows.length === 0) return empty  // 空库短路：不调精排 LLM
 

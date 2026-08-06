@@ -163,6 +163,7 @@ export function useAIChat(): UseAIChatReturn {
         }
         if (parsed.type === 'exp_answer') {
           // D-11-10/D-11-11：经验引用 + 拆会话引用（sourceSessionId 非空额外 push session 项）
+          // WR-01 fix：KB 与经验同命中时 ai.ts 合并进 exp_answer.references（kind:'kb' + kind:'experience'），按 kind 分流。
           const refs: ReferenceItem[] = []
           for (const r of parsed.references || []) {
             if (r.kind === 'experience') {
@@ -170,6 +171,9 @@ export function useAIChat(): UseAIChatReturn {
               // ai.ts:835 references 已含 sourceSessionId 字段（未列入类型联合，运行时存在）
               const sid = (r as { sourceSessionId?: string | null }).sourceSessionId
               if (sid) refs.push({ kind: 'session', sessionId: sid, title: '原始会话' })
+            } else if (r.kind === 'kb') {
+              const kr = r as { docTitle: string; chunkTitle: string; docId: string }
+              refs.push({ kind: 'kb', docTitle: kr.docTitle, chunkTitle: kr.chunkTitle, docId: kr.docId })
             }
           }
           setMessages([...newMessages, { role: 'assistant', content: parsed.content || '', references: refs }])
