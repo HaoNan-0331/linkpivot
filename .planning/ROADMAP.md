@@ -31,7 +31,8 @@
 - [ ] **Phase 7: Experience Data Layer & Security Baseline** - 经验主表+设备关联表+bi-temporal+attrs 模板+幂等迁移，立 IPC 鉴权/脱敏基线
 - [ ] **Phase 8: AI Drafting Pipeline** - 会话回顾→PII 脱敏→查存量去重→强 schema JSON 起草→draft 态
 - [x] **Phase 9: Human Review & Confirmation** - 弹窗逐条编辑/勾选 + 质量门硬校验 + 疑似重复提示 + 原始会话溯源回链
-- [x] **Phase 10: Experience Browse Page** - 知识库「经验」Tab + 多维筛选 + 关键词搜索 + 手动 CRUD + 标失效 (completed 2026-08-05)
+- [x] **Phase 10: Experience Browse Page** - 知识库「经验」Tab + 多维筛选 + 关键词搜索 + 手动 CRUD + 标失效
+ (completed 2026-08-05)
 - [ ] **Phase 11: AI Retrieval & Reuse** - SQL 粗筛 + LLM 精排 + read-time 即时验证 + 引用溯源
 
 ## Phase Details
@@ -129,13 +130,17 @@ Plans:
 **Requirements**: RETRIEVE-01, RETRIEVE-02, RETRIEVE-03
 **Success Criteria** (what must be TRUE):
   1. 后续 AI 对话检索时，经验库被纳入检索池：SQL 结构化粗筛（分类/标签/严重度/关联设备/有效期）+ 关键词召回，候选集喂 LLM 精排（复用现有 LLM 挑索引机制），AI 自动引用相关经验辅助回答
-  2. AI 复用经验前对每条候选即时验证：关联设备当前状态、命令是否仍受 `commandSafety.isCommandAllowed` 白名单支持、valid_at 是否仍在有效期；过期/失效/命令失支持的降权或剔除，刷新 last_verified_at 与 reuse_count
+  2. AI 复用经验前对每条候选即时验证（D-11-6 修订两项，去掉设备状态 D-11-8）：命令是否仍受 `commandSafety.isCommandAllowed` 白名单支持、valid_at 是否仍在有效期；命令失支持降权标注「⚠ 命令已失支持」、有效期失效剔除，命中刷新 last_verified_at 与 reuse_count
   3. AI 回答附引用来源（哪条经验 exp_id / 哪次会话 sessionId），用户可一键回查经验详情或原始会话
   4. 检索默认只命中有效经验（invalid_at IS NULL OR invalid_at > now），与浏览页软失效语义一致
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 11-01: TBD
+**Wave 1**
+- [ ] 11-01-PLAN.md — service 层：精排 experienceRerank（强 schema LLM 评分）+ 编排 experienceRetrieval（粗筛 listExperiences → 精排 → 阈值 → read-time 两项验证 commandSafety+有效期 → incReuseCount/touchLastVerifiedAt 刷新 → chat() b 自动预取注入 exp_answer references）+ 单测（RETRIEVE-01/02）
+
+**Wave 2** *(blocked on Wave 1)*
+- [ ] 11-02-PLAN.md — renderer 层：ChatMsg.references 扩联合类型（kb/experience/session）+ useAIChat 消费 exp_answer + ChatMessageList 末尾来源列表按 kind 分流渲染 + 点击回查复用 ExperienceDetailModal/SessionMessagesModal（零新建 D-11-12）+ unsupported warning Tag（RETRIEVE-03）
 
 ## Progress
 
