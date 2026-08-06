@@ -37,8 +37,8 @@
 
 ### AI 检索复用 (RETRIEVE)
 
-- [ ] **RETRIEVE-01**: 后续 AI 对话自动检索相关经验并引用辅助回答（SQL 粗筛 + LLM 精排，复用现有 LLM 挑索引机制）— Phase 11
-- [ ] **RETRIEVE-02**: AI 复用经验前即时验证（设备状态/commandSafety 白名单/有效期），过期失效降权或剔除 — Phase 11
+- [x] **RETRIEVE-01**: 后续 AI 对话自动检索相关经验并引用辅助回答（SQL 粗筛 + LLM 精排，复用现有 LLM 挑索引机制）— Phase 11
+- [x] **RETRIEVE-02**: AI 复用经验前即时验证（设备状态/commandSafety 白名单/有效期），过期失效降权或剔除 — Phase 11
 - [ ] **RETRIEVE-03**: AI 回答附引用来源（哪条经验/哪次会话），可回查 — Phase 11
 
 ### 安全 (SEC)
@@ -90,8 +90,8 @@
 | BROWSE-02 | Phase 10 | Complete |
 | BROWSE-03 | Phase 10 | Complete |
 | BROWSE-04 | Phase 10 | Complete |
-| RETRIEVE-01 | Phase 11 | Pending |
-| RETRIEVE-02 | Phase 11 | Pending |
+| RETRIEVE-01 | Phase 11 | Complete |
+| RETRIEVE-02 | Phase 11 | Complete |
 | RETRIEVE-03 | Phase 11 | Pending |
 | SEC-01 | Phase 7 | Complete |
 | SEC-02 | Phase 7 | Complete |

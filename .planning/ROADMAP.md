@@ -137,7 +137,7 @@ Plans:
 
 Plans:
 **Wave 1**
-- [ ] 11-01-PLAN.md — service 层：精排 experienceRerank（强 schema LLM 评分）+ 编排 experienceRetrieval（粗筛 listExperiences → 精排 → 阈值 → read-time 两项验证 commandSafety+有效期 → incReuseCount/touchLastVerifiedAt 刷新 → chat() b 自动预取注入 exp_answer references）+ 单测（RETRIEVE-01/02）
+- [x] 11-01-PLAN.md — service 层：精排 experienceRerank（强 schema LLM 评分）+ 编排 experienceRetrieval（粗筛 listExperiences → 精排 → 阈值 → read-time 两项验证 commandSafety+有效期 → incReuseCount/touchLastVerifiedAt 刷新 → chat() b 自动预取注入 exp_answer references）+ 单测（RETRIEVE-01/02）
 
 **Wave 2** *(blocked on Wave 1)*
 - [ ] 11-02-PLAN.md — renderer 层：ChatMsg.references 扩联合类型（kb/experience/session）+ useAIChat 消费 exp_answer + ChatMessageList 末尾来源列表按 kind 分流渲染 + 点击回查复用 ExperienceDetailModal/SessionMessagesModal（零新建 D-11-12）+ unsupported warning Tag（RETRIEVE-03）
@@ -159,7 +159,7 @@ Phases execute in numeric order: 7 → 8 → 9 → 10 → 11（v1.0 Phases 1-6 �
 | 8. AI Drafting Pipeline | v1.1 | 2/3 | In Progress|  |
 | 9. Human Review & Confirmation | v1.1 | 0/TBD | Not started | - |
 | 10. Experience Browse Page | v1.1 | 4/4 | Complete    | 2026-08-06 |
-| 11. AI Retrieval & Reuse | v1.1 | 0/TBD | Not started | - |
+| 11. AI Retrieval & Reuse | v1.1 | 1/2 | In Progress|  |
 
 ---
 *Roadmap created: 2026-06-22*
