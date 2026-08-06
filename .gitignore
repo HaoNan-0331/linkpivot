@@ -18,3 +18,6 @@ master.key
 *.pfx
 *.p12
 *.key
+
+# GSD debug 笔记（bug 复盘含真实场景数据，过程产物不公开上传）
+.planning/debug/

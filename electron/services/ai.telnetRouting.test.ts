@@ -78,7 +78,7 @@ beforeEach(() => {
 describe('executeCommandsOnDevice — connectionType 分流', () => {
   it('telnet 设备走 telnet 通道，不实例化 ssh2 Client', async () => {
     const device = {
-      ipAddress: '10.7.8.252',
+      ipAddress: '10.0.0.10',
       connectionType: 'telnet',
       port: 23,
       username: 'admin',
@@ -93,7 +93,7 @@ describe('executeCommandsOnDevice — connectionType 分流', () => {
     expect(sshClientCtor).not.toHaveBeenCalled()
     // 入参透传：host/port/username/password/command + decodeGbk/stripAnsi 选项
     const args = telnetExecSpy.mock.calls[0]
-    expect(args[0]).toBe('10.7.8.252')
+    expect(args[0]).toBe('10.0.0.10')
     expect(args[1]).toBe(23)
     expect(args[2]).toBe('admin')
     expect(args[3]).toBe('secret')
@@ -108,7 +108,7 @@ describe('executeCommandsOnDevice — connectionType 分流', () => {
 
   it('telnet 设备端口缺省时回退 23', async () => {
     const device = {
-      ipAddress: '10.7.8.252',
+      ipAddress: '10.0.0.10',
       connectionType: 'telnet',
       port: null,
       username: 'admin',
@@ -158,7 +158,7 @@ describe('executeCommandsOnDevice — connectionType 分流', () => {
 
   it('connectionType 大小写不敏感（TELNET 也走 telnet 通道）', async () => {
     const device = {
-      ipAddress: '10.7.8.253',
+      ipAddress: '10.0.0.11',
       connectionType: 'TELNET',
       port: 23,
       username: 'admin',
@@ -179,7 +179,7 @@ describe('executeCommandsOnDevice — connectionType 分流', () => {
   })
 
   it('telnet 通道抛错时首条命令 reject 整批', async () => {
-    const device = { ipAddress: '10.7.8.254', connectionType: 'telnet', port: 23, username: 'a', password: 'b' }
+    const device = { ipAddress: '10.0.0.12', connectionType: 'telnet', port: 23, username: 'a', password: 'b' }
     telnetExecSpy.mockRejectedValue(new Error('Telnet timeout after 30000ms'))
     await expect(executeCommandsOnDevice(device, ['display arp all'])).rejects.toThrow(/Telnet timeout/)
     expect(telnetExecSpy).toHaveBeenCalledTimes(1)
@@ -188,7 +188,7 @@ describe('executeCommandsOnDevice — connectionType 分流', () => {
 
   it('telnet 华为：关分页命令 + 精确 shellPrompt（匹配 <host>/[host]，不匹配裸 #）', async () => {
     const device = {
-      ipAddress: '10.7.8.252', connectionType: 'telnet', port: 23,
+      ipAddress: '10.0.0.10', connectionType: 'telnet', port: 23,
       username: 'admin', password: 'secret', vendor: 'Huawei',
     }
     telnetExecSpy.mockResolvedValue('full config output')

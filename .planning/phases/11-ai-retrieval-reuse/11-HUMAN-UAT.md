@@ -8,14 +8,14 @@ updated: 2026-08-06T22:50:00Z
 
 ## Current Test
 
-UAT 通过（真机带 AI Key + 14 条 published 经验 + 勾选"公司"设备走 DHCP 问句）。修复 commit 8af468b 后命令执行路径也返来源列表。
+UAT 通过（真机带 AI Key + 14 条 published 经验 + 勾选目标设备走 DHCP 问句）。修复 commit 8af468b 后命令执行路径也返来源列表。
 
 ## Tests
 
 ### 1. AI 回答末尾渲染来源列表（经验 📖 + 会话 💬 引用）
 
 expected: 与 Phase 10 published 经验对话提问，AI 回答末尾出现「参考来源：」分隔区，列出经验引用（📖 标题）；若该经验有 source_session_id 同时列出会话引用（💬 原始会话）。
-result: pass — 勾选"公司"设备问"华为交换机 DHCP 中继配置怎么检查？"，确认执行命令后最终回复末尾出现来源列表（3 条 DHCP 经验 + 会话引用）。UAT 发现的两个 gap 已修（commit 8af468b）：search 分词召回 + 命令路径返 references。
+result: pass — 勾选目标设备问"华为交换机 DHCP 中继配置怎么检查？"，确认执行命令后最终回复末尾出现来源列表（3 条 DHCP 经验 + 会话引用）。UAT 发现的两个 gap 已修（commit 8af468b）：search 分词召回 + 命令路径返 references。
 
 ### 2. 点击引用打开 Modal（经验详情 / 会话原文）
 
