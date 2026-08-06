@@ -1,5 +1,24 @@
 # Milestones
 
+## v1.1 AI 对话经验沉淀 (Shipped: 2026-08-06)
+
+**Phases completed:** 5 phases, 14 plans, 20 tasks
+**Requirements delivered:** 20/20（EXP-01/02/03/04 + DRAFT-01/02/03/04 + REVIEW-01/02/03 + BROWSE-01/02/03/04 + RETRIEVE-01/02/03 + SEC-01/02）
+**Known deferred items at close:** 3（见 STATE.md §Deferred Items — Phase 8 live LLM HV 4 项 + verification human_needed + FOLLOWUP-1 confirmCommand 多轮 [CMD] 循环）
+**Git range:** Phase 7 建表迁移 → 9476128（Phase 11 UAT passed），覆盖 5 phase / 14 plan
+
+**Key accomplishments:**
+
+1. **经验数据层 + 安全基线（Phase 7, EXP + SEC）**：experiences + exp_device_rel 两表（v8 幂等迁移，DDL/init 双路径逐字一致）+ ExperienceService 函数式（CRUD/设备多对多/bi-temporal 软失效/AES-256-GCM attrs_enc 加密/MAX_BATCH）+ 10 channel experience:* IPC 全 secure 包装 + stripEncColumns 边界脱敏（renderer 永不收 _enc 列，SEC-02）。
+2. **AI 起草管道（Phase 8, DRAFT）**：piiMask 分级脱敏（凭证 ****/IPv4 尾4/MAC 前3）+ draftingService 两阶段起草（draftSession 阶段A 纯起草 + judgeVerdicts W-4 阶段B 窄化复判 + validateDrafts 强 schema 枚举锁/confidence 边界归一化/反幻觉 prompt + 3 次重试）+ experienceDrafting 编排 + experience:summarizeSession IPC + AIPage「经验总结」按钮。三红线②③落地。
+3. **人工确认闸口（Phase 9, REVIEW）**：confirmDrafts 单事务原子（adopt draft→published + 可选 supersede + discard + 设备关联 diff 全成全败）+ IPC MAX_BATCH 双层防御 + ReviewConfirmModal/SessionMessagesModal/ReviewConfirmEditForm 弹窗 + 待确认 Badge 角标。三红线③唯一闸口（draft→published 只走 confirmDrafts 受控接口，不动 CR-01 update 白名单）。
+4. **经验浏览页（Phase 10, BROWSE）**：severity v10 明文列迁移（幂等 + backfillSeverityFromHistory 回填钩子）+ restoreExperience 受控接口 + listExperiences 多维筛选（search/severity/tags/deviceId 多选 IN 占位 OR-join + device_count 子查询零 N+1）+ KnowledgeBasePage Tabs 文档|经验 + ExperienceTab 手动 CRUD/标失效恢复软硬区分 + gap closure（CR-01/02 + WR-01~05）。
+5. **AI 检索复用（Phase 11, RETRIEVE）**：experienceRerank 精排强 schema LLM 评分 + experienceRetrieval 编排（粗筛 status:'published' 分词 OR 召回 → 精排 → 阈值 → read-time 两项验证 commandSafety+有效期 → incReuseCount/touchLastVerifiedAt 刷新不阻塞主路径）+ ai.ts chat() b 自动预取注入 + exp_answer references 联合返回（命令执行路径也返）+ renderer ReferenceItem 按 kind 分流渲染 + 点击回查复用 Modal + 命令失支持 warning Tag。UAT 真机发现 2 gap（search 整句 LIKE 召回 0 + 命令路径丢 references）当场修复闭环。
+
+**验证：** 四绿门禁（tsc + vite build + build:electron-main + vitest 232）全 phase 全绿零回归；Phase 11 code review 2 BLOCKER（CR-01 draft 泄漏检索池违反红线③ / CR-02 reuse_count 重复累加）+ 4 关键 WARNING 全修复；Phase 11 真机 UAT 3/3 通过。三红线（不上向量库 / 不引图数据库 / AI 产出必经人工确认）全程未破。
+
+---
+
 ## v1.0 技术债优化 (Shipped: 2026-07-05)
 
 **Phases completed:** 6 phases, 16 plans, 20 tasks

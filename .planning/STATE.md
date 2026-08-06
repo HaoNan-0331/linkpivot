@@ -2,16 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: AI 对话经验沉淀
-status: milestone_complete
-last_updated: 2026-08-06T13:39:30.539Z
-last_activity: 2026-08-06
+status: Awaiting next milestone
+last_updated: "2026-08-06T15:17:42.835Z"
+last_activity: 2026-08-06 — Milestone v1.1 completed and archived
 progress:
   total_phases: 5
   completed_phases: 5
   total_plans: 14
   completed_plans: 14
   percent: 100
-stopped_at: Milestone complete (Phase 11 was final phase)
 ---
 
 # STATE: network_toplogy
@@ -21,17 +20,15 @@ stopped_at: Milestone complete (Phase 11 was final phase)
 See: .planning/PROJECT.md (updated 2026-08-01)
 
 - **Core Value**: 让运维人员在一个桌面工具内安全地掌握网络拓扑、远程操控设备并获得 AI 辅助分析。拓扑准确呈现与设备安全可控为最高优先级。
-- **Current Focus**: v1.1 AI 对话经验沉淀 — Phase 11（AI Retrieval & Reuse）两 plan 全执行完成，待 verify。11-01 main 进程（experienceRerank.ts 精排 + experienceRetrieval.ts 编排 + ai.ts chat() b 自动预取串联 + exp_answer 返回类型，2 commits e4c0809/8653f90）+ 11-02 renderer（types.ts ReferenceItem 联合 kb/experience/session + useAIChat exp_answer 消费 camelCase 字段对齐 ai.ts:835 + ChatMessageList renderRef 按 kind 分流 + 复用 Phase 10 ExperienceDetailModal / Phase 9 SessionMessagesModal 零新建 D-11-12 + 命令失支持 warning Tag D-11-7，2 commits 987b9c4/b683b84），四绿门禁 tsc+build+build:electron-main+vitest 230/230 全绿零回归。下一步 verify Phase 11（人工 checkpoint：与 published 经验对话提问 → 末尾来源列表 → 点击回查 Modal）
+- **Current Focus**: v1.1 AI 对话经验沉淀 shipped（2026-08-06，Phases 7-11 / 14 plans / 20 REQ 全交付，三红线未破，四绿门禁 232/232，Phase 11 UAT 3/3 通过）。已归档 milestones/v1.1-ROADMAP.md。下一步 `/gsd:new-milestone` 规划下一版本。
 - **Mode**: Vertical Feature Slices（按功能层分 phase：数据→起草→确认→浏览→检索，非 v1.0 的 Horizontal Layers）
 
 ## Current Position
 
-Phase: 11
-Plan: Not started
-Status: Milestone complete
-Last activity: 2026-08-06
-
-Progress: [██████████] 100%
+Phase: Milestone v1.1 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-08-06 — Milestone v1.1 completed and archived
 
 ## Performance Metrics
 
@@ -211,6 +208,14 @@ v1.0 milestone close 时 acknowledged（2026-07-05），DEP-1 native binding 限
 | verification_gap | Phase 06-VERIFICATION.md | partial（HV-1/2/3 pass，HV-4a/b/c defer） |
 | quick_task | 260628-trt-pdfjs-dist-backupscheduler-retention-0 | resolved（已归档） |
 
+v1.1 milestone close 时 acknowledged（2026-08-06），Phase 8 live LLM HV 真机联调 defer：
+
+| Category | Item | Status |
+|----------|------|--------|
+| uat_gap | Phase 08-HUMAN-UAT.md | partial（4 项 live LLM 起草 HV defer，需 AI Key + 真实会话跑 LLM 起草联调） |
+| verification_gap | Phase 08-VERIFICATION.md | human_needed（同上 Phase 8 live LLM HV 待人工） |
+| followup | FOLLOWUP-1 confirmCommand 多轮 [CMD] 循环 | Phase 5 既有设计，记 11-HUMAN-UAT.md Gaps，下期立项 |
+
 v1.1 明确 defer 到二期（4 FUTURE，不进 roadmap）：
 
 | FUTURE | 内容 | 触发条件 |
@@ -238,4 +243,4 @@ v1.1 明确 defer 到二期（4 FUTURE，不进 roadmap）：
 
 ## Operator Next Steps
 
-- `/gsd-plan-phase 7` — 为 Experience Data Layer & Security Baseline 产出 SPEC/PLAN
+- Start the next milestone with /gsd-new-milestone
