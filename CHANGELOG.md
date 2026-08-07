@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## 0.2.0 (2026-08-06) v1.1 milestone — AI 对话经验沉淀
+
+5 phase / 14 plan / 20 REQ 全交付（EXP/DRAFT/REVIEW/BROWSE/RETRIEVE/SEC）。把一次性的 AI 运维对话沉淀为可检索、可溯源、防过期、防泄密的长期经验资产：经验数据层 → AI 起草 → 人工确认 → 浏览页 → AI 检索复用 全链路贯通。三红线（不上向量库 / 不引图库 / AI 产出必经人工确认）全程未破。四绿门禁 vitest 232 全绿。Phase 11 真机 UAT 3/3 通过。
+
+- **Phase 7 经验数据层 + 安全基线（EXP + SEC）**：experiences + exp_device_rel 两表（v8 幂等迁移）+ ExperienceService 函数式（CRUD/设备多对多/bi-temporal 软失效/AES-256-GCM attrs_enc 加密）+ 10 channel experience:* IPC 全 secure 包装 + stripEncColumns 边界脱敏。
+- **Phase 8 AI 起草管道（DRAFT）**：piiMask 分级脱敏（凭证/IP/MAC）+ draftingService 两阶段起草（draftSession 纯起草 + judgeVerdicts W-4 窄化复判 + validateDrafts 强 schema/反幻觉 + 3 次重试）+ experience:summarizeSession IPC + AIPage「经验总结」按钮。
+- **Phase 9 人工确认闸口（REVIEW）**：confirmDrafts 单事务原子（draft→published 唯一受控接口 + supersede/discard/设备 diff）+ ReviewConfirmModal/SessionMessagesModal 弹窗 + 待确认 Badge 角标。
+- **Phase 10 经验浏览页（BROWSE）**：severity v10 明文列迁移 + listExperiences 多维筛选（search/severity/tags/deviceId 多选 IN 占位 + device_count 零 N+1）+ KnowledgeBasePage Tabs 文档|经验 + 手动 CRUD/标失效恢复 + gap closure（CR-01/02 + WR-01~05）。
+- **Phase 11 AI 检索复用（RETRIEVE）**：experienceRerank 精排强 schema LLM 评分 + experienceRetrieval 编排（粗筛 status:'published' 分词 OR 召回 → 精排 → 阈值 → read-time 两项验证 commandSafety+有效期 → 命中刷新计数）+ ai.ts chat() b 自动预取注入 + exp_answer references 联合返回（命令路径也返）+ renderer 按 kind 分流渲染 + 点击回查复用 Modal + 命令失支持 warning Tag。UAT 真机发现 2 gap（search 整句 LIKE 召回 0 + 命令路径丢 references）当场修复。
+- **预 push 安全清理**：test fixture 真实私网 IP 占位化 + `.planning/debug/` 移出 git（过程笔记不公开）。
+
 ## 2026-08-05 fix(ai): saveChatMessage 空内容守卫防 NOT NULL 崩溃（quick）
 
 - **根因（debug: chat_history.content_enc NOT NULL）**：用户问「关于公司的经验」时 AI 首回纯 `[KB_SEARCH]` 标签，`chat()` KB 分支 follow-up callAI 撞 deepseek 连接超时 → catch（ai.ts:776-778）把标签剥光成 `''` → `saveChatMessage('assistant','')` → `encField('')` 返回 null → 撞 `chat_history.content_enc NOT NULL`。错误信息「数据库约束失败」完全误导（真因是网络超时）。与 Phase 9 fix 无关，Phase 9 之前即存在的潜在 bug，被网络抖动 + KB_SEARCH 路径触发。
