@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: 安全与稳定性加固
 status: planning
-last_updated: "2026-08-07T13:56:54.898Z"
-last_activity: 2026-08-07
+last_updated: "2026-08-07T14:48:14.592Z"
+last_activity: 2026-08-07 — ROADMAP.md 重写为 v1.2（Phases 12-14，7 REQ 全映射，覆盖率 7/7），REQUIREMENTS.md traceability 填好
 progress:
   total_phases: 3
   completed_phases: 0
