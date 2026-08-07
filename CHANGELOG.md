@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 2026-08-07 chore: dead code 清理（quick 260807-fzd）
+
+体检报告 §2.1 标记的三项零引用死代码清理（codegraph_callers=0 + grep 双验证零引用，planner 又独立甄别过）。纯删除，不引入新代码，三红线（IPC 鉴权 / 字段加密 / commandSafety）零触碰。
+
+- **删除 `electron/services/vendor-commands.ts` 整文件**（47 行，3 export：`Vendor` type / `detectVendor` / `getDiscoveryCommands`）— v1.0 discovery.ts 重写已走 AI 动态生成命令的新方案，全项目 0 import。CHANGELOG:239 已记载移除依赖。与体检报告 §1.0「H3C LLDP 走 vendor-commands 命令集」方向过时项关联。
+- **删除 `ai.ts:516 executeCommandOnDevice`（单数 wrapper）** — codegraph_callers=0，discovery.ts:2 实际 import 的是复数 `executeCommandsOnDevice`，单数为历史预留。复数 `executeCommandsOnDevice`（ai.ts:324）及 613/964 调用点 + telnetRouting.test.ts 零改动保留。
+- **删除 `package.json` devDependencies `@types/uuid ^10.0.0`** — uuid v14+ 自带 TypeScript 类型，旁路 @types 包冗余，全项目 0 处 `from '@types/uuid'`。运行时依赖 `dependencies.uuid ^14.0.0`（10 处 `from 'uuid'` import）保留，类型解析走 uuid 包内自带类型。
+- **四绿门禁全绿零回归**：`tsc -p tsconfig.web.json`（strict + noUnusedLocals）/ `npx vitest run`（232/232）/ `npm run build:electron-main`（esbuild main bundle 1.9mb）/ `npx vite build`（renderer）。三处删除无一处影响测试（零 caller）。
+- **证据**：`.planning/audits/2026-08-07-health-audit.md` §2.1。
+
 ## 0.2.0 (2026-08-06) v1.1 milestone — AI 对话经验沉淀
 
 5 phase / 14 plan / 20 REQ 全交付（EXP/DRAFT/REVIEW/BROWSE/RETRIEVE/SEC）。把一次性的 AI 运维对话沉淀为可检索、可溯源、防过期、防泄密的长期经验资产：经验数据层 → AI 起草 → 人工确认 → 浏览页 → AI 检索复用 全链路贯通。三红线（不上向量库 / 不引图库 / AI 产出必经人工确认）全程未破。四绿门禁 vitest 232 全绿。Phase 11 真机 UAT 3/3 通过。
