@@ -146,3 +146,26 @@ workflow 读文档原话未验证代码，主 agent 已补验。这 6 条是 v1.
 | D. 甄别剩余 deferred | §1.0 旧规划 4 待甄别 + §1.2/1.3 medium/low | 大 | 进下个 milestone `/gsd:new-milestone` 规划排期 |
 
 附：本次会话已单独梳理的 5 条用户优化点（设备过滤/FOLLOWUP-1 等）与本报告 §1 有重叠（如设备过滤 = §1.2 Phase 10 UAT 1b），合并处置。
+
+---
+
+## §5 验证收尾（2026-08-07 真机 HV）
+
+体检处置（A/B/C）落地后启动 electron:dev 真机验证，4 项 HV 全过：
+
+| HV | 项 | 结果 |
+|----|----|------|
+| HV-1 | kb-db-malformed 章节删改 | ✓ verified（资料库章节删/改保存，FTS5 无 malformed）|
+| HV-2 | Phase 08 live LLM 起草 + #4 反幻觉 | ✓ verified（2 阶段起草 + 入库经验无 `[CMD]`/`[KB_SEARCH]` 标记）→ STATE.md Phase 08 Deferred 转 passed |
+| HV-3 | 加密 R2/R3 告警（B #5 修复后）| ✓ verified（删 master.key → 系统日志页 type=security warning 可见 → 还原恢复；master.key mtime 5月9日确认原版还原）|
+| HV-4 | exec-cmd-concat 命令粘连 | ✓ verified（真 H3C 自动发现，topology edges 非空）|
+
+**§1.1 真 high 4 项状态更新：**
+- #1 exec-cmd-concat → ✓ verified（HV-4）
+- #2 加密 R2/R3 → ✓ verified（HV-3，依赖 B #5 v11 迁移修复告警落库）
+- #3 DEP-1 ABI 缓解 → 仍 defer（大工程，进下个 milestone）
+- #4 validateDrafts 标记扫描 → B 类代码层闭环（commit `8af620b`）+ HV-2 间接验证（起草正常不被误拒）
+
+**A/B/C 改动回归全绿**：1.1 v11 迁移（user_version=11 + CHECK 含 security 实测）+ 1.2 dead code 删除（功能 + grep 双证）+ 1.3 validateDrafts（HV-2 起草正常）。
+
+**剩余 defer**：#3 DEP-1 ABI 缓解（milestone 级）+ §1.2 medium 15 + §1.3 low 23 + Phase 03/06 真机 HV（本次未做）+ 旧规划回退 4 项甄别。进 `/gsd:new-milestone` 排期。

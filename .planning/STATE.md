@@ -4,7 +4,7 @@ milestone: v1.1
 milestone_name: AI 对话经验沉淀
 status: Awaiting next milestone
 last_updated: "2026-08-06T15:17:42.835Z"
-last_activity: 2026-08-07 — Completed quick task 260807-gfk: 安全 hardening B
+last_activity: 2026-08-07 — 真机 HV 闭环（HV-1/2/3/4 全过：Phase 08 起草 + 加密告警 + 命令粘连 + kb malformed；master.key 已还原）
 progress:
   total_phases: 5
   completed_phases: 5
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-08-01)
 Phase: Milestone v1.1 complete
 Plan: —
 Status: Awaiting next milestone
-Last activity: 2026-08-07 — Completed quick task 260807-gfk: 安全 hardening B
+Last activity: 2026-08-07 — 真机 HV 闭环（HV-1/2/3/4 全过；Phase 08 Deferred 转 passed；master.key 已还原）
 
 ## Performance Metrics
 
@@ -214,8 +214,8 @@ v1.1 milestone close 时 acknowledged（2026-08-06），Phase 8 live LLM HV 真�
 
 | Category | Item | Status |
 |----------|------|--------|
-| uat_gap | Phase 08-HUMAN-UAT.md | partial（4 项 live LLM 起草 HV defer，需 AI Key + 真实会话跑 LLM 起草联调） |
-| verification_gap | Phase 08-VERIFICATION.md | human_needed（同上 Phase 8 live LLM HV 待人工） |
+| uat_gap | Phase 08-HUMAN-UAT.md | passed（2026-08-07 真机 HV-2：AI Key + 真实会话经验总结，2 阶段起草 + #4 反幻觉 + 入库全绿） |
+| verification_gap | Phase 08-VERIFICATION.md | passed（2026-08-07 HV-2 闭环） |
 | followup | FOLLOWUP-1 confirmCommand 多轮 [CMD] 循环 | Phase 5 既有设计，记 11-HUMAN-UAT.md Gaps，下期立项 |
 
 v1.1 明确 defer 到二期（4 FUTURE，不进 roadmap）：
