@@ -1,0 +1,51 @@
+# Milestone v1.2 Requirements: 安全与稳定性加固
+
+**Goal:** 补齐测试基础设施（DEP-1 ABI 缓解解锁自动化回归）+ 收紧安全（SSH 算法 / IPC 入参）+ 清偿旧规划技术债，让 network_toplogy 在真机路径上可自动化验证、安全无盲点。
+
+**Total:** 7 requirements（TEST-01/02 + SEC-03/04/05 + FIX-01/02；SEC 续 v1.1 SEC-01/02 编号）
+
+**Source:** 体检报告 `.planning/audits/2026-08-07-health-audit.md` §1.1 真 high #3 + §1.0 旧规划回退 + §1.2/1.3 medium 安全项。
+
+---
+
+## v1 Requirements
+
+### TEST（测试基础设施）
+
+- [ ] **TEST-01**: SSH/Telnet/DB/better-sqlite3 真路径可自动化回归 — DEP-1 ABI 缓解：electron-vite + vitest 集成跑 Electron 内测试，消除 plain Node 无法加载 @electron/rebuild 重建的 native binding 限制
+- [ ] **TEST-02**: 句柄泄漏可自动化检测 — execOne / executeCommandsOnDevice / executeTelnet 的 try/finally 句柄回收回归（替代 Phase 6 SC#4 人工 HV，闭合 DEP-1 长期 defer 项）
+
+### SEC（安全加固，继 v1.1 SEC-01/02）
+
+- [ ] **SEC-03**: SSH 现代算法连通 — connection.ts 内联 algorithms 补 curve25519-sha256 等（与 sshConfig.ts SSH_ALGORITHMS 对齐，修体检 §1.0 半残留：ai.ts/arpCollector 已走 SSH_ALGORITHMS，connection.ts 终端连接内联配置仍缺）
+- [ ] **SEC-04**: pre-release 安全 hardening 收尾 — 14 项里的安全相关：L1 弱 SSH 算法 / L4 Login / L6 authGuard / L2 ai limit / L3 captcha（审计 P3 `260726-p9e` 显式排除的发版后项）
+- [ ] **SEC-05**: experience:list IPC 入参校验防廉价 DoS — severity 枚举 + search 长度上限 + tags 数组上限（体检 WR-06，untrusted renderer 可廉价触发全表 LIKE）
+
+### FIX（缺陷修复）
+
+- [ ] **FIX-01**: anomaly new_ip 计数正确 — processARPEntries 首次见 IP 写 `change_type='new_ip'`，或从 getStats/AnomalyTab/exportService 移除恒零字段（审计 P3 BUG-1）
+- [ ] **FIX-02**: 旧规划回退闭环 — confirm 防重复点击保护 / ai_exec_logs 完整记录 prompt_text+ai_response / 会话标题更新逻辑移出 confirm_required early return / H3C LLDP 邻居发现重评估（vendor-commands.ts 已在本次 A 类删除，需重新评估正确路径，不回退已废弃命令集）
+
+---
+
+## Future Requirements（defer 到后续 milestone）
+
+- **pre-release 非安全 hardening 项**（M6/M7 渲染层 any / L7 db any / L10 复杂度 / L15 xterm / L16 ssh2 license）→ 技术债 milestone
+- **DEP-1 缓解后补 Phase 03/06 真机 HV**（自动发现性能 / 句柄泄漏长时间运行）转自动化 → v1.2 TEST-01 落地后补
+- **设备过滤放开**（AI 勾选含 web/rdp）+ **FOLLOWUP-1** 多轮 `[CMD]` 循环 → 体验 milestone（本次会话最早提的两个优化点）
+- **any 收口 347/43** + **前端测试通道 0→有**（vitest jsdom + testing-library）+ **WR-02~09 缺陷批量** → 技术债 milestone
+- **IPv6 支持** / **a11y**（引用改 role=button）/ **Phase 5 snippet `[图片N]`** → 体验 milestone
+
+---
+
+## Out of Scope
+
+- **新功能开发**：v1.2 聚焦安全与稳定性加固，不含新功能（沿用 v1.0/v1.1 决策）
+- **重写既有架构**：三红线（IPC 鉴权 secure/safe / 字段加密 _enc+encField/decField / commandSafety.isCommandAllowed）不可回退，本 milestone 仅加固不重写
+- **package.json 主版本跳**：v1.2 milestone 产出打包为 0.3.0（GSD milestone 序列与 package.json semver 独立，不强行统一）
+
+---
+
+## Traceability
+
+（由 roadmapper 填：REQ-ID → Phase 映射，要求每个 REQ 唯一 phase，100% 覆盖）
