@@ -1,6 +1,6 @@
 # Codebase Structure
 
-**Analysis Date:** 2026-07-26
+**Analysis Date:** 2026-08-07
 
 ## Directory Layout
 
@@ -10,20 +10,23 @@ network_toplogy/
 │   ├── main.ts               # 入口：app.whenReady 启动序列
 │   ├── preload.ts            # 主窗口 preload → window.api
 │   ├── terminal-preload.ts   # 终端窗口 preload
-│   ├── services/             # 业务层（领域逻辑 + DB 读写 + 加解密）
+│   ├── services/             # 业务层（25 文件，领域逻辑 + DB 读写 + 加解密，含 v1.1 experience* 子系统）
 │   ├── database/             # 数据层（better-sqlite3 + 迁移 + ACL）
-│   ├── ipc/                  # IPC 网关层（模块化 ipcMain.handle 注册）
-│   └── utils/                # 安全原语（crypto/authGuard/keyManager/webSecurity/pagination/sshConfig）
+│   ├── ipc/                  # IPC 网关层（9 文件，模块化 ipcMain.handle 注册）
+│   └── utils/                # 安全原语（crypto/authGuard/keyManager/webSecurity/pagination/sshConfig/piiMask）
 ├── src/                      # renderer（React 19，纯 UI，无 Node）
 │   ├── main.tsx              # renderer 入口
 │   ├── App.tsx               # 首启/登录/主布局分流
 │   ├── terminal-main.tsx     # 终端窗口 renderer 入口
 │   ├── components/           # UI 组件
 │   │   ├── pages/            # 路由级页面（AI/Devices/Topology/IP/Knowledge/Log/Settings）
+│   │   ├── pages/ai/         # AI 助手页子组件
+│   │   ├── pages/kb/         # 知识库页子组件
+│   │   ├── knowledge/        # 经验功能组件（v1.1，嵌 KnowledgeBasePage Tabs，无独立 ExperiencePage）
 │   │   ├── topology/         # 拓扑画布相关（React Flow 节点/边/工具栏/模态框）
 │   │   ├── ip-management/    # IP 管理标签页（ARP/Network/Anomaly/OUI）
 │   │   ├── settings/         # 设置（命令白名单编辑/执行模式/日志查看）
-│   │   └── *.tsx             # 通用组件（MainLayout/Sidebar/Login/ErrorBoundary 等）
+│   │   └── *.tsx             # 通用组件（MainLayout/Sidebar/Login/ErrorBoundary/TerminalWindow 等）
 │   ├── stores/               # Zustand store
 │   ├── types/                # 共享 TS 类型 + electron.d.ts（window.api 类型声明）
 │   ├── styles/               # 全局 CSS
@@ -47,25 +50,31 @@ network_toplogy/
 
 **`electron/services/`（业务层）:**
 - Purpose: 领域逻辑 + DB 读写 + 字段加解密 + 外部协议。
-- Contains: 20 个 `.ts` 文件，每个服务持有模块级 `MK`，由 `setXxxMasterKey()` 注入。
-- Key files: `device.ts`/`topology.ts`/`ai.ts`/`connection.ts`/`commandSafety.ts`/`discovery.ts`/`knowledgeBaseService.ts`/`arpCollector.ts`/`arpParser.ts`/`ouiService.ts`/`networkSegmentService.ts`/`ipStatusService.ts`/`anomalyService.ts`/`schedulerService.ts`/`backupScheduler.ts`/`exportService.ts`/`systemLog.ts`/`aiExecLogger.ts`/`auth.ts`/`vendor-commands.ts`。
+- Contains: 25 个 `.ts` 文件（不含 `*.test.ts` 与 `__tests__/`），每个加密型服务持有模块级 `MK`，由 `setXxxMasterKey()` 注入。
+- Key files: `device.ts`/`topology.ts`/`ai.ts`/`connection.ts`/`commandSafety.ts`/`discovery.ts`/`knowledgeBaseService.ts`/`arpCollector.ts`/`arpParser.ts`/`ouiService.ts`/`networkSegmentService.ts`/`ipStatusService.ts`/`anomalyService.ts`/`schedulerService.ts`/`backupScheduler.ts`/`exportService.ts`/`systemLog.ts`/`aiExecLogger.ts`/`auth.ts`；**v1.1 经验子系统 6 文件**：`experienceService.ts`/`experienceRetrieval.ts`/`experienceRerank.ts`/`experienceDrafting.ts`/`draftingService.ts`/`duplicateDetector.ts`。注：`vendor-commands.ts` 已成死代码（审计 §2.1，0 import），待清。
 
 **`electron/database/`（数据层）:**
 - Purpose: better-sqlite3 生命周期、基线 DDL、版本化迁移、文件 ACL。
-- Key files: `connection.ts`（init/close/migrateAndSecure）、`init.ts`（createTables+seed）、`migrations.ts`（注册表 `MIGRATION_HEAD=7`）、`migrationHelpers.ts`（`hasColumn` 等幂等守卫）、`acl.ts`（`restrictFilePermissions`/`restrictDirPermissions`）。
+- Key files: `connection.ts`（init/close/migrateAndSecure）、`init.ts`（createTables+seed）、`migrations.ts`（注册表 `MIGRATION_HEAD=10`，v8/v9/v10 为 v1.1 经验子系统迁移）、`migrationHelpers.ts`（`hasColumn` 等幂等守卫）、`acl.ts`（`restrictFilePermissions`/`restrictDirPermissions`）。
 
 **`electron/ipc/`（IPC 网关层）:**
 - Purpose: 模块化注册 `ipcMain.handle`，含参数校验与 `secure()` 包裹。
-- Key files: `arpIpc.ts`/`networkIpc.ts`/`anomalyIpc.ts`/`ouiIpc.ts`/`exportIpc.ts`/`schedulerIpc.ts`/`knowledgeBaseIpc.ts`（导出 `registerKbIpc()`）。
+- Key files: `arpIpc.ts`/`networkIpc.ts`/`anomalyIpc.ts`/`ouiIpc.ts`/`exportIpc.ts`/`schedulerIpc.ts`/`knowledgeBaseIpc.ts`；**v1.1 新增**：`experienceIpc.ts`（15 个 `experience:*` channel，全 secure，无 safe）、`experienceDraftingIpc.ts`（1 个 `experience:summarizeSession`）。
 - 注：auth/device/topology/connection/ai 的 IPC 仍 inline 在 `electron/main.ts`。
 
 **`electron/utils/`（工具层）:**
 - Purpose: 横切安全原语与共享 helper。
-- Key files: `crypto.ts`（AES-256-GCM + PBKDF2）、`keyManager.ts`（masterKey + safeStorage）、`authGuard.ts`（`secure`/`safe`/登录态/脱敏）、`webSecurity.ts`（窗口加固）、`pagination.ts`（分页计算）、`sshConfig.ts`（SSH 配置构造）。
+- Key files: `crypto.ts`（AES-256-GCM + PBKDF2）、`keyManager.ts`（masterKey + safeStorage）、`authGuard.ts`（`secure`/`safe`/登录态/脱敏）、`webSecurity.ts`（窗口加固）、`pagination.ts`（分页计算）、`sshConfig.ts`（SSH 配置构造）、**v1.1** `piiMask.ts`（PII 分级脱敏纯字符串 transform）。
 
 **`src/components/pages/`（路由页面）:**
 - Purpose: 一页一文件，对应侧边栏导航。
-- Key files: `TopologyPage.tsx`/`DevicesPage.tsx`/`AIPage.tsx`/`IpManagementPage.tsx`/`KnowledgeBasePage.tsx`/`LogAuditPage.tsx`/`SettingsPage.tsx`。
+- Key files: `TopologyPage.tsx`/`DevicesPage.tsx`/`AIPage.tsx`/`IpManagementPage.tsx`/`KnowledgeBasePage.tsx`/`LogAuditPage.tsx`/`SettingsPage.tsx`。另含子目录 `ai/`、`kb/`（页内子组件）。
+- 注：v1.1 经验功能**无独立 ExperiencePage**，宿主在 `KnowledgeBasePage.tsx` 的 `Tabs`（antd），经验 Tab 懒加载挂载 `../knowledge/ExperienceTab`（`KnowledgeBasePage.tsx:7,121,380-483`）。
+
+
+**`src/components/knowledge/`（经验功能组件，v1.1）:**
+- Purpose: 经验沉淀 UI，不构成独立路由页，由 `KnowledgeBasePage` Tabs 嵌入。
+- Key files: `ExperienceTab.tsx`（经验列表/筛选/排序，宿主 KB Tabs 的「经验」面板）、`ExperienceEditForm.tsx`（创建/编辑表单）、`ExperienceDetailModal.tsx`（详情/软失效/恢复/引用溯源展示）。
 
 **`src/components/topology/`（拓扑画布）:**
 - Purpose: React Flow 拓扑渲染与交互。
@@ -85,11 +94,11 @@ network_toplogy/
 
 **`src/types/`（共享类型）:**
 - Purpose: TS 类型定义，含 IPC 契约。
-- Key files: `electron.d.ts`（`window.api` 类型声明）、`device.ts`/`topology.ts`/`network.ts`/`arp.ts`/`anomaly.ts`/`oui.ts`/`backup.ts`/`ai.ts`/`kb.ts`/`pagination.ts`。
+- Key files: `electron.d.ts`（`window.api` 类型声明）、`device.ts`/`topology.ts`/`network.ts`/`arp.ts`/`anomaly.ts`/`oui.ts`/`backup.ts`/`ai.ts`/`kb.ts`/`pagination.ts`/`experience.ts`（v1.1，经验子系统 TS 契约）。
 
 **`tests/unit/`（单测）:**
-- Purpose: vitest 单元测试。
-- Key files: `crypto.test.ts`/`auth.test.ts`/`migrationHelpers.test.ts`/`commandSafety.test.ts`/`keyManager.test.ts`/`authGuard.test.ts`/`pagination.test.ts`。
+- Purpose: vitest 单元测试（与 v1.1 引入的 co-located `*.test.ts` 并存；co-located 见 `electron/services/*.test.ts`、`electron/utils/piiMask.test.ts`）。
+- Key files: `crypto.test.ts`/`auth.test.ts`/`migrationHelpers.test.ts`/`commandSafety.test.ts`/`keyManager.test.ts`/`authGuard.test.ts`/`pagination.test.ts`。v1.1 经验域单测 co-located：`experienceService.test.ts`/`experienceRetrieval.test.ts`/`experienceDrafting.test.ts`/`draftingService.test.ts`/`duplicateDetector.test.ts`（`electron/services/`）。
 
 ## Key File Locations
 
@@ -126,7 +135,7 @@ network_toplogy/
 - 路由页面：`<Name>Page.tsx`（如 `TopologyPage.tsx`）。
 - 类型定义：`kebab/dot`（`electron.d.ts`）或领域名（`device.ts`、`topology.ts`）。
 - 测试：`<module>.test.ts`（如 `crypto.test.ts`）。
-- 加密列：`<field>_enc`（如 `password_enc`、`api_key_enc`、`name_enc`）。
+- 加密列：`<field>_enc`（如 `password_enc`、`api_key_enc`、`name_enc`；v1.1 `attrs_enc`/`content_enc`/`device_name_enc`/`vision_*_enc`）。
 
 **Directories:**
 - 业务域小写复数（`services`/`database`/`ipc`/`utils`/`stores`/`types`）。
@@ -155,7 +164,7 @@ network_toplogy/
 
 **新 DB 表/列:**
 - 基线表: 加到 `electron/database/init.ts` 的 `createTables()` DDL（`CREATE TABLE IF NOT EXISTS`）。
-- 增量列/数据迁移: 加到 `electron/database/migrations.ts` 新增 `v8` 步骤（包单事务 + `hasColumn` 幂等守卫），并 bump `MIGRATION_HEAD`。不得在 `init.ts` 散落 `ALTER`。
+- 增量列/数据迁移: 加到 `electron/database/migrations.ts` 新增 `v11` 步骤（包单事务 + 幂等守卫：`hasColumn` 或 `sqlite_master.sql` 特征串），并 bump `MIGRATION_HEAD`（当前 10）。不得在 `init.ts` 散落 `ALTER`。MK 依赖的回填（如 v10 severity 明文列需解密 attrs_enc）在 `main.ts` MK 注入 + 迁移后单独跑幂等钩子（范例 `backfillSeverityFromHistory()` @ `electron/main.ts:112`）。
 - 敏感字段: 列名 `<field>_enc`，读写用 `encField`/`decField`（`electron/utils/crypto.ts`）。
 
 **新 React 页面:**
@@ -170,7 +179,8 @@ network_toplogy/
 - `src/types/<domain>.ts`，并在需要处 import。
 
 **新单测:**
-- `tests/unit/<module>.test.ts`，vitest 风格。
+- 默认 `tests/unit/<module>.test.ts`，vitest 风格。
+- v1.1 起新增 service 层测试**鼓励 co-located**：`electron/services/<module>.test.ts`（与被测文件同目录，范例见 `experienceService.test.ts`）。vitest.config.ts include 已含 `electron/**/*.test.ts`。
 
 **Utilities / 共享 helper:**
 - 主进程横切: `electron/utils/`。
@@ -212,4 +222,4 @@ network_toplogy/
 
 ---
 
-*Structure analysis: 2026-07-26*
+*Structure analysis: 2026-08-07 (v1.1 经验子系统增量更新)*
