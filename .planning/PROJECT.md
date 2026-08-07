@@ -32,11 +32,13 @@ network_toplogy 是面向运维人员的网络拓扑管理桌面工具（Electro
 
 ### Active
 
-<!-- 本轮 milestone v1.1：AI 对话经验沉淀（详细 REQ-IDs 见 REQUIREMENTS.md） -->
+<!-- 本轮 milestone v1.2：安全与稳定性加固（详细 REQ-IDs 见 REQUIREMENTS.md） -->
 
-- [ ] 人工确认：弹窗逐条编辑/勾选 + 质量门硬校验 + 疑似重复提示 + 原始会话溯源回链
-- [ ] 经验板块页：知识库下新增「经验」Tab，多维筛选 + 关键词搜索 + 手动 CRUD + 标失效
-- [ ] AI 检索复用：SQL 粗筛 + LLM 精排 + read-time 即时验证(设备状态/commandSafety/有效期) + 引用溯源
+- [ ] DEP-1 ABI 缓解：electron-vite + vitest 集成跑 Electron 内测试，补 SSH/Telnet/DB 真路径自动化回归 + 句柄泄漏自动化
+- [ ] SSH 连通性加固：connection.ts 内联 algorithms 补 curve25519-sha256 等现代算法（与 sshConfig.ts 对齐）
+- [ ] pre-release hardening 收尾（14 项，安全优先 L1/L4/L6）
+- [ ] BUG-1 修复：anomalyService new_ip 计数恒零
+- [ ] 旧规划回退甄别+修：confirm 防重复 / ai_exec_logs / 会话标题 / H3C LLDP 重评估
 
 ### Out of Scope
 
@@ -77,18 +79,18 @@ network_toplogy 是面向运维人员的网络拓扑管理桌面工具（Electro
 - 后端 any 清理 + ai.ts/kbService 拆分（TD-1/TD-2）
 - BUG-3 before-quit 不等 in-flight backup（backupScheduler/main.ts 备份退出健壮性）
 
-## Current Milestone: v1.1 AI 对话经验沉淀
+## Current Milestone: v1.2 安全与稳定性加固
 
-**Goal:** 把一次性的 AI 运维对话沉淀为可检索、可溯源、防过期、防泄密的长期经验资产，供人工浏览与 AI 后续检索复用。
+**Goal:** 补齐测试基础设施（DEP-1 ABI 缓解解锁自动化回归）+ 收紧安全（SSH 算法 / IPC 入参 / 告警链）+ 清偿旧规划技术债，让 network_toplogy 在真机路径上可自动化验证、安全无盲点。
 
 **Target features:**
-- 经验数据层：结构化表（通用列 + `attrs` 模板区）+ 设备关联表 + bi-temporal 软失效 + 迁移
-- AI 经验起草：会话回顾 → PII 脱敏 → 查存量去重(ADD/UPDATE/NOOP) → 强 schema JSON 起草 → draft
-- 人工确认：弹窗逐条编辑/勾选 + 质量门硬校验 + 疑似重复提示 + 原始会话溯源回链
-- 经验板块页：知识库下新增「经验」Tab，多维筛选 + 关键词搜索 + 手动 CRUD + 标失效
-- AI 检索复用：SQL 粗筛 + LLM 精排 + read-time 即时验证 + 引用溯源
+- DEP-1 ABI 缓解：electron-vite + vitest 集成跑 Electron 内测试，补 SSH/Telnet/DB 真路径自动化回归 + 句柄泄漏自动化（告别人工 HV）
+- SSH 连通性加固：connection.ts 内联 algorithms 补 curve25519-sha256 等现代算法（与 sshConfig.ts SSH_ALGORITHMS 对齐）
+- pre-release hardening 收尾（14 项，安全优先）：L1 弱 SSH 算法 / L4 Login / L6 authGuard / L2 ai limit / L3 captcha 等
+- BUG-1 修复：anomalyService new_ip 计数恒零（processARPEntries 首次见 IP 写 new_ip 或移除字段）
+- 旧规划回退甄别+修：confirm 防重复点击 / ai_exec_logs 完整记录 / 会话标题更新 / H3C LLDP（vendor-commands 已删，重评估邻居发现路径）
 
-**Key context:** 三条红线（不上向量库 / 不引图数据库 / AI 产出必经人工确认）；复用现有 `saveChatMessage` / LLM 挑索引检索 / `****xxxx` 脱敏 / `commandSafety`。调研与设计见 `.planning/research/2026-08-01-experience-summary-research.md` + `.planning/designs/2026-08-01-experience-summary-design.md`。
+**Key context:** 三红线（IPC 鉴权 / 字段加密 / commandSafety）不可回退；迁移幂等（sqlite_master 特征串）；DEP-1 缓解后 Phase 03/06 真机 HV 可转自动化补回归。体检来源见 `.planning/audits/2026-08-07-health-audit.md`。package.json 发布版本独立（v1.2 milestone → 打包 0.3.0）。
 
 ## Deferred Milestone Goals
 
@@ -131,4 +133,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-08-06 — Phase 11（AI 检索复用）完成，v1.1 milestone 5/5 phase 全交付（feature-complete，待人工 UAT 收尾）*
+*Last updated: 2026-08-07 — v1.1 milestone shipped（含真机 HV-1/2/3/4 闭环），启动 v1.2 安全与稳定性加固 milestone*

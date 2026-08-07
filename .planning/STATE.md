@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.1
-milestone_name: AI 对话经验沉淀
-status: Awaiting next milestone
-last_updated: "2026-08-06T15:17:42.835Z"
-last_activity: 2026-08-07 — 真机 HV 闭环（HV-1/2/3/4 全过：Phase 08 起草 + 加密告警 + 命令粘连 + kb malformed；master.key 已还原）
+milestone: v1.2
+milestone_name: 安全与稳定性加固
+status: planning
+last_updated: "2026-08-07T13:56:54.898Z"
+last_activity: 2026-08-07
 progress:
-  total_phases: 5
-  completed_phases: 5
-  total_plans: 14
-  completed_plans: 14
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # STATE: network_toplogy
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-08-01)
 
 ## Current Position
 
-Phase: Milestone v1.1 complete
+Phase: Not started (defining requirements)
 Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-08-07 — 真机 HV 闭环（HV-1/2/3/4 全过；Phase 08 Deferred 转 passed；master.key 已还原）
+Status: Defining requirements
+Last activity: 2026-08-07 — Milestone v1.2 started
 
 ## Performance Metrics
 
