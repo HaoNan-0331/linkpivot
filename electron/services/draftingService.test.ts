@@ -359,3 +359,88 @@ describe('judgeVerdicts（W-4 两阶段复判）', () => {
     expect(callAIMock).toHaveBeenCalledTimes(0)
   })
 })
+
+describe('WR-01 反幻觉红线：validateDrafts [CMD]/[KB_SEARCH] 标记扫描（代码层强制）', () => {
+  beforeEach(() => {
+    callAIMock.mockReset()
+    getAiConfigMock.mockReset()
+    getAiConfigMock.mockReturnValue(validConfig)
+  })
+
+  // 14. content 含 [CMD] → ok:false
+  it('14. content 含 [CMD] → ok:false 且 error 含标记名 + 反幻觉红线', () => {
+    const r = validateDrafts(
+      JSON.stringify([{ ...troubDraft, content: '执行 [CMD]display version[/CMD] 解决' }])
+    )
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.error).toContain('[CMD]')
+      expect(r.error).toContain('反幻觉红线')
+      expect(r.error).toContain('第 1 条')
+    }
+  })
+
+  // 15. title 含 [KB_SEARCH] → ok:false
+  it('15. title 含 [KB_SEARCH] → ok:false', () => {
+    const r = validateDrafts(
+      JSON.stringify([{ ...troubDraft, title: '经验 [KB_SEARCH] 检索测试' }])
+    )
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.error).toContain('[KB_SEARCH]')
+      expect(r.error).toContain('反幻觉红线')
+    }
+  })
+
+  // 16. reasoning 含 [CMD] → ok:false
+  it('16. reasoning 含 [CMD] → ok:false', () => {
+    const r = validateDrafts(
+      JSON.stringify([{ ...troubDraft, reasoning: '推导：见 [CMD]show interface[/CMD] 输出' }])
+    )
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toContain('[CMD]')
+  })
+
+  // 17. reasoning 含 [KB_SEARCH] → ok:false（覆盖三字段 × 两标记的组合：reasoning + KB_SEARCH）
+  it('17. reasoning 含 [KB_SEARCH] → ok:false', () => {
+    const r = validateDrafts(
+      JSON.stringify([{ ...troubDraft, reasoning: '参考 [KB_SEARCH] 关键词检索' }])
+    )
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toContain('[KB_SEARCH]')
+  })
+
+  // 18. 不含标记的正常草稿 → ok:true（控制组，防误伤回归）
+  it('18. 正常 troubDraft/prodDraft（无标记）→ ok:true（控制组）', () => {
+    const r = validateDrafts(JSON.stringify([troubDraft, prodDraft]))
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.drafts).toHaveLength(2)
+  })
+
+  // 19. attrs.command 含 [CMD] 字面量不触发拒绝（attrs 不扫，二期结构化字段避免误伤）
+  it('19. attrs.command 含 [CMD] 字面量 → ok:true（attrs 不扫，避免误伤二期结构化命令）', () => {
+    const r = validateDrafts(
+      JSON.stringify([{ ...troubDraft, attrs: { severity: 'high', command: ['[CMD]display version[/CMD]'] } }])
+    )
+    expect(r.ok).toBe(true)
+  })
+
+  // 20. tags 数组含 [CMD] 字面量不触发拒绝（tags 不扫）
+  it('20. tags 含 [CMD] 字面量 → ok:true（tags 不扫）', () => {
+    const r = validateDrafts(
+      JSON.stringify([{ ...troubDraft, tags: ['[CMD]', 'switch'] }])
+    )
+    expect(r.ok).toBe(true)
+  })
+
+  // 21. draftSession 集成：callAI 连续 3 次返含 [CMD] 草稿 → 重试 3 次后 throw
+  it('21. draftSession 连续返含 [CMD] 草稿 → 重试 3 次后 throw（错误含禁止标记）', async () => {
+    callAIMock.mockResolvedValue(
+      JSON.stringify([{ ...troubDraft, content: '执行 [CMD]display version[/CMD]' }])
+    )
+    await expect(
+      draftSession({ maskedConversation: '对话', existingSummaries: [] })
+    ).rejects.toThrow(/AI 起草失败（已重试 3 次）.*\[CMD\]/)
+    expect(callAIMock).toHaveBeenCalledTimes(3)
+  })
+})

@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 2026-08-07 fix(security): validateDrafts 加 [CMD]/[KB_SEARCH] 标记门禁 + ai_system_logs.type CHECK 扩 security（quick 260807-gfk）
+
+体检报告 §1.1 真 high 第 4 项（WR-01 反幻觉红线 prompt→代码层强制）+ 第 5 项（type CHECK widen security，v11 迁移双路径一致）的安全 hardening B 闭环。三红线（IPC 鉴权 / 字段加密 / commandSafety）零触碰。
+
+- **#4 WR-01 反幻觉红线代码层强制（draftingService.ts）**：根因——`validateDrafts`（schema Gate）原只在 system prompt 文字禁止 `[CMD]`/`[KB_SEARCH]` 标记（draftingService.ts:61），校验函数本身不扫这些标记。LLM 不遵守提示时含执行标记的草稿静默落库，Phase 9 浏览页/未来执行层可能误执行。修复——模块顶加 `FORBIDDEN_MARKERS=['[CMD]','[KB_SEARCH]']`，`validateDrafts` 在 confidence 校验后扫 `title/content/reasoning` 三字段（`String.includes` 固定字面量，不引入正则），命中返 `ok:false`（error 含「第 N 条含禁止标记 X（反幻觉红线）」）进 `draftSession` MAX_DRAFT_RETRIES 重试。attrs/tags 不扫（attrs.command[] 二期结构化字段避免误伤）。prompt 文字禁止保留作双保险。
+- **#5 ai_system_logs.type CHECK widen security（v11 迁移双路径一致）**：根因——`ai_system_logs.type` 的 CHECK 约束在 fresh-install（init.ts:87）与 v6 重建（migrations.ts:143）两处均为 `('discovery','acl','migration','backup')`，不含 `'security'`。但 `main.ts:96-102 setDecryptFailureHandler`（R2 字段解密失败告警）+ `experienceDrafting.ts:130-145 relateDevice` 失败告警（WR-02 fix）写 `type:'security'` 撞 `SQLITE_CONSTRAINT_CHECK` 被外层 try/catch 吞 → 解密失败告警 + 经验关联失败告警**全部落空**（无声数据丢失，审计盲区）。修复——v11 迁移抄 v6 rebuild 范式（CREATE _new + INSERT…SELECT + DROP + RENAME，全包 `db.transaction` throw ROLLBACK），CHECK 扩为 `('discovery','acl','migration','backup','security')`；幂等守卫用 `sqlite_master sql` 含 `'security'` 判定 no-op（与 v5 查 'rdp'、v6 查 'warning' 同构第二形式，不靠 `user_version`）；init.ts:87 fresh-install DDL 同步加 `'security'`（双路径逐字一致，CONVENTIONS 红线）；`MIGRATION_HEAD` 10→11；注册表加 v11 项；v11 加 `export` 关键字供测试 import。迁移在 MK 注入前跑不解密（不碰加密列，仅改 CHECK 约束）。
+- **测试**：新增 `electron/database/migrations.test.ts`（4 cases：v11 幂等 no-op + v11 执行 5 步 DDL 序含 CREATE _new CHECK widen/INSERT…SELECT 10 列/DROP/RENAME + user_version=11 + 双路径 DDL 特征逐字一致静态守卫 + MIGRATION_HEAD=11 注册完整性）mock-DB 桩复刻 v11 用到的 db 子集 API 规避 DEP-1 native ABI 冲突；扩 `electron/services/draftingService.test.ts`（8 cases：[CMD] 三字段覆盖 content/title/reasoning + [KB_SEARCH] title/reasoning 覆盖 + 控制组正常草稿不回归 + attrs/tags 含标记字面量不误伤 + draftSession 集成连续 3 次返含标记草稿重试后 throw）。
+- **四绿门禁全绿零回归**：`tsc -p tsconfig.web.json`（strict + noUnusedLocals）/ `npx vitest run`（**244/244** = 原 232 + v11 新 4 + validateDrafts 新 8）/ `npm run build:electron-main`（esbuild main bundle 1.9mb）/ `npx vite build`（renderer）。
+- **证据**：`.planning/audits/2026-08-07-health-audit.md` §1.1 #4/#5 + `.planning/phases/08-ai-drafting-pipeline/08-REVIEW.md` WR-01（行 111-126）。
+
 ## 2026-08-07 chore: dead code 清理（quick 260807-fzd）
 
 体检报告 §2.1 标记的三项零引用死代码清理（codegraph_callers=0 + grep 双验证零引用，planner 又独立甄别过）。纯删除，不引入新代码，三红线（IPC 鉴权 / 字段加密 / commandSafety）零触碰。
