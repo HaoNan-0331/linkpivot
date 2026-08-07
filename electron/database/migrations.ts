@@ -13,7 +13,7 @@ import { createSystemLog } from '../services/systemLog'
  *      在 createTables() 建好基线表之后、premigration 备份之后执行（D-06）。
  *      init.ts 不直接调用 runMigrations（单一调用点原则）。
  */
-export const MIGRATION_HEAD = 10
+export const MIGRATION_HEAD = 11
 
 interface MigrationStep {
   version: number
@@ -280,6 +280,59 @@ const v10 = (db: Database.Database): void => {
   step()
 }
 
+/**
+ * v11：ai_system_logs.type CHECK widen security（反审计盲区修复）。
+ *
+ * 根因（体检报告 2026-08-07 §1.1 #5）：v6 当年仅放开 type('discovery','acl','migration','backup') + status 'warning'，
+ * **未含 'security'**。但代码层已有两处写 type:'security' 日志：
+ *   - electron/main.ts setDecryptFailureHandler（R2 字段解密失败告警）
+ *   - electron/services/experienceDrafting.ts relateDevice 失败告警（WR-02 fix）
+ * 这两条 INSERT 全撞 SQLITE_CONSTRAINT_CHECK，被外层 try/catch 静默吞 → R2 解密失败 + 经验关联失败
+ * 告警**全部落空**，无声数据丢失，审计盲区。本迁移把 type CHECK 扩为含 'security'，让告警真正落库可观测。
+ *
+ * caveat 同 v10：迁移在 MK 注入前跑（migrateAndSecure 早于 setXxxMasterKey），**不解密**（本迁移也不碰
+ * 加密列，只改 CHECK 约束，与 v6 同款纯 DDL 重建表）。
+ *
+ * 幂等守卫 D-14 第二形式：sqlite_master sql 含 "'security'" 则 no-op 早返
+ * （与 v5 查 'rdp'、v6 查 'warning'、v7 查 'WHEN' 同构，不靠 user_version 判定）。
+ *
+ * 执行体包 db.transaction（throw 即 ROLLBACK）：DROP _new → CREATE _new（CHECK widen）→
+ * INSERT…SELECT copy 全 10 列 → DROP old → RENAME → user_version=11。
+ * CREATE _new DDL 与 init.ts:87 fresh-install ai_system_logs DDL 逐字一致（双路径一致红线）。
+ */
+export const v11 = (db: Database.Database): void => {
+  const logSchema = (db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='ai_system_logs'"
+  ).get() as { sql?: string } | undefined)?.sql || ''
+  if (logSchema.includes("'security'")) {
+    return // CHECK 已含 security，no-op（幂等重跑 D-14）
+  }
+  const step = db.transaction(() => {
+    db.exec("DROP TABLE IF EXISTS ai_system_logs_new")
+    db.exec(`
+      CREATE TABLE ai_system_logs_new (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL DEFAULT 'discovery' CHECK(type IN ('discovery','acl','migration','backup','security')),
+        status TEXT NOT NULL CHECK(status IN ('success','failed','warning')),
+        device_ids TEXT,
+        device_names TEXT,
+        prompt_text TEXT,
+        ai_response TEXT,
+        parsed_result TEXT,
+        error_message TEXT,
+        created_at TEXT DEFAULT (datetime('now','localtime'))
+      );
+      INSERT INTO ai_system_logs_new
+        SELECT id, type, status, device_ids, device_names, prompt_text, ai_response, parsed_result, error_message, created_at
+        FROM ai_system_logs;
+      DROP TABLE ai_system_logs;
+      ALTER TABLE ai_system_logs_new RENAME TO ai_system_logs;
+    `)
+    db.pragma('user_version = 11')
+  })
+  step()
+}
+
 const MIGRATIONS: MigrationStep[] = [
   { version: 1, name: 'chat_history.session_id', run: v1 },
   { version: 2, name: 'ai_exec_logs.prompt_text+ai_response', run: v2 },
@@ -291,6 +344,7 @@ const MIGRATIONS: MigrationStep[] = [
   { version: 8, name: 'experiences + exp_device_rel create (Phase 7 experience data layer)', run: v8 },
   { version: 9, name: 'experiences.duplicate_of_exp_id (Phase 8 drafting UPDATE hit link)', run: v9 },
   { version: 10, name: 'experiences.severity (Phase 10 browse filter/sort)', run: v10 },
+  { version: 11, name: 'ai_system_logs CHECK widen security (R2 decrypt-failure + exp relate-failure log)', run: v11 },
 ]
 
 /**
