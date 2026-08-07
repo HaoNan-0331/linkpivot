@@ -4,7 +4,7 @@ milestone: v1.1
 milestone_name: AI 对话经验沉淀
 status: Awaiting next milestone
 last_updated: "2026-08-06T15:17:42.835Z"
-last_activity: 2026-08-06 — Milestone v1.1 completed and archived
+last_activity: 2026-08-07 — Completed quick task 260807-fzd: 清理 dead code
 progress:
   total_phases: 5
   completed_phases: 5
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-08-01)
 Phase: Milestone v1.1 complete
 Plan: —
 Status: Awaiting next milestone
-Last activity: 2026-08-06 — Milestone v1.1 completed and archived
+Last activity: 2026-08-07 — Completed quick task 260807-fzd: 清理 dead code
 
 ## Performance Metrics
 
@@ -185,6 +185,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 | Phase 10 P04 | ~14min | 3 tasks (2 tdd + 1 验证) | 10 files |
 | Phase 11 P01 | ~12min | 2 tasks (tdd) | 4 files |
 | Phase 11 P02 | ~6min | 2 tasks | 3 files |
+| 260807-fzd | 清理 dead code：删 @types/uuid + vendor-commands.ts + ai.ts 单数 wrapper | 2026-08-07 | 0bd4dbd/287e26c/d3f5e08 | [260807-fzd-dead-code-types-uuid-vendor-commands-ts-](./quick/260807-fzd-dead-code-types-uuid-vendor-commands-ts-/) |
 
 ### Risk Watch
 
