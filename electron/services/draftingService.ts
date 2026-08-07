@@ -24,6 +24,16 @@ const VALID_CATEGORIES: ExperienceCategory[] = ['troubleshooting', 'best_practic
 const VALID_SEVERITIES = ['critical', 'high', 'medium', 'low', 'info']
 const VALID_VERDICTS = ['ADD', 'UPDATE', 'NOOP'] as const
 
+/**
+ * WR-01 反幻觉红线代码层强制：经验草稿正文绝不应含 [CMD]/[KB_SEARCH] 执行/检索标记
+ * （这是 AI 对话层的执行/检索协议标记，LLM 不遵守 system prompt 文字禁止时，
+ * 含执行标记的草稿静默落库 → Phase 9 浏览页/未来执行层可能误执行）。
+ * validateDrafts 对 title/content/reasoning 三正文字段做 String.includes 兜底扫描，
+ * 命中即 ok:false 进 draftSession MAX_DRAFT_RETRIES 重试。attrs/tags 不扫
+ * （attrs.command[] 二期结构化字段可能含合法命令，避免误伤）。
+ */
+const FORBIDDEN_MARKERS = ['[CMD]', '[KB_SEARCH]']
+
 export interface ExistingExperienceSummary {
   exp_id: string
   title: string
@@ -147,6 +157,15 @@ export function validateDrafts(raw: string): { ok: true; drafts: DraftDraft[] } 
     }
     if (typeof confidence !== 'number' || isNaN(confidence) || confidence < 0 || confidence > 1) {
       return { ok: false, error: `第 ${i + 1} 条 confidence 非法（须 0-1 数值，支持 '85%' 百分比或 '0.85' 字符串）: ${d.confidence}` }
+    }
+    // WR-01：反幻觉红线代码层强制——[CMD]/[KB_SEARCH] 是 AI 对话层执行/检索标记，
+    // 经验草稿正文绝不应含（prompt 已文字禁止，此处为强 schema 门兜底）。
+    // LLM 不遵守提示时含执行标记的草稿拒绝落库，纳入 MAX_DRAFT_RETRIES 重试。
+    const markerHaystack = `${d.title}\n${d.content}\n${d.reasoning ?? ''}`
+    for (const mk of FORBIDDEN_MARKERS) {
+      if (markerHaystack.includes(mk)) {
+        return { ok: false, error: `第 ${i + 1} 条含禁止标记 ${mk}（反幻觉红线）` }
+      }
     }
     drafts.push({
       category: d.category,
