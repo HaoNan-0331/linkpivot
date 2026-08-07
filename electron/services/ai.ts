@@ -513,14 +513,6 @@ function execOne(client: Client, command: string, perCmdTimeoutMs = 15000, silen
   })
 }
 
-export function executeCommandOnDevice(device: any, command: string): Promise<string> {
-  return executeCommandsOnDevice(device, [command]).then(results => {
-    if (results.length === 0) throw new Error('命令执行失败: 无结果')
-    if (!results[0].success) throw new Error(results[0].output)
-    return results[0].output
-  })
-}
-
 // ---------- Device query helper ----------
 
 export function getDeviceByIdInternal(id: string): any {
