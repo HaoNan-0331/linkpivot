@@ -57,10 +57,12 @@
   2. SSH/Telnet/DB 真路径有自动化回归用例（execOne / executeCommandsOnDevice / executeTelnet / DB 读写经 getDatabase() 单例），无需真实设备即可在 CI/本地绿
   3. 句柄泄漏有自动化检测（arpCollector/ai/execOne 的 try/finally cleanup 路径回归，替代 Phase 6 SC#4 + Phase 3 真机 HV 长期 defer 项）
   4. DEP-1 缓解不改动生产代码路径（只加测试通道 + 测试工具配置），生产 better-sqlite3/ssh2/telnet-client 依赖与打包路径不变
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 12-01: TBD（plan-phase 补充）
+- [ ] 12-01-PLAN.md — 测试基础设施主干（双 vitest config + test:electron script + 四个 helper + DB 真路径 + SC4 git diff 兜底）
+- [ ] 12-02-PLAN.md — SSH/Telnet 真路径回归（executeCommandsOnDevice/execOne/executeSSH/executeTelnetCommand + 四条 cleanup 句柄检测）
+- [ ] 12-03-PLAN.md — 句柄泄漏专项（异常场景）+ build-smoke.yml CI 扩展（CI-A/B/C 用户决策 + GHA 实跑确认）
 
 **Risk / 红线:**
 - DEP-1 缓解不改生产代码路径，只加测试通道与工具配置（三红线之 IPC/commandSafety/加密不可回退的前提不变）
@@ -125,7 +127,7 @@ Phases execute in numeric order: 12 → 13 → 14
 | 9. Human Review & Confirmation | v1.1 | 3/3 | Complete | 2026-08-05 |
 | 10. Experience Browse Page | v1.1 | 4/4 | Complete | 2026-08-06 |
 | 11. AI Retrieval & Reuse | v1.1 | 2/2 | Complete | 2026-08-06 |
-| 12. Test Infrastructure (DEP-1 ABI 缓解) | v1.2 | 0/TBD | Not started | - |
+| 12. Test Infrastructure (DEP-1 ABI 缓解) | v1.2 | 0/3 | Not started | - |
 | 13. Security Hardening Cluster | v1.2 | 0/TBD | Not started | - |
 | 14. Defect & Legacy Rollback Closure | v1.2 | 0/TBD | Not started | - |
 
