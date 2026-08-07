@@ -6,7 +6,7 @@ status: planning
 last_updated: "2026-08-07T13:56:54.898Z"
 last_activity: 2026-08-07
 progress:
-  total_phases: 0
+  total_phases: 3
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -20,15 +20,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-01)
 
 - **Core Value**: 让运维人员在一个桌面工具内安全地掌握网络拓扑、远程操控设备并获得 AI 辅助分析。拓扑准确呈现与设备安全可控为最高优先级。
-- **Current Focus**: v1.1 AI 对话经验沉淀 shipped（2026-08-06，Phases 7-11 / 14 plans / 20 REQ 全交付，三红线未破，四绿门禁 232/232，Phase 11 UAT 3/3 通过）。已归档 milestones/v1.1-ROADMAP.md。下一步 `/gsd:new-milestone` 规划下一版本。
-- **Mode**: Vertical Feature Slices（按功能层分 phase：数据→起草→确认→浏览→检索，非 v1.0 的 Horizontal Layers）
+- **Current Focus**: v1.2 安全与稳定性加固（Phases 12-14，7 REQ：TEST-01/02 + SEC-03/04/05 + FIX-01/02）。Phase 12 测试基础设施（DEP-1 ABI 缓解）→ Phase 13 安全加固 cluster（SSH 算法 + pre-release + IPC 校验）→ Phase 14 缺陷+旧规划回退闭环。ROADMAP.md 已重写为 v1.2，下一步 `/gsd:plan-phase 12`。
+- **Mode**: Cluster Slices（按体检来源聚类分 phase：测试基础设施 → 安全加固 → 缺陷/回退闭环，续 v1.1 Phase 11 从 Phase 12 起 sequential naming）
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 12 of 14 (Test Infrastructure — DEP-1 ABI 缓解)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-08-07 — Milestone v1.2 started
+Status: Ready to plan（ROADMAP.md v1.2 已写，待 /gsd:plan-phase 12）
+Last activity: 2026-08-07 — ROADMAP.md 重写为 v1.2（Phases 12-14，7 REQ 全映射，覆盖率 7/7），REQUIREMENTS.md traceability 填好
 
 ## Performance Metrics
 
@@ -229,8 +229,8 @@ v1.1 明确 defer 到二期（4 FUTURE，不进 roadmap）：
 
 ## Session Continuity
 
-- **Last action**: Phase 11 Plan 02 完成（renderer 层引用溯源：types.ts ReferenceItem 联合 kb/experience/session + ChatMsg.references 扩联合 + useAIChat exp_answer 消费 camelCase 对齐 ai.ts:835 + kb kind 补全 + session 引用从 sourceSessionId 拆出 + ChatMessageList renderRef 按 kind 分流 + 复用 Phase 10/9 Modal 零新建 + 命令失支持 warning Tag；2 commits 987b9c4/b683b84，四绿门禁 tsc+build+build:electron-main+vitest 230/230 全绿零回归，RETRIEVE-03 UI 层全落地）
-- **Next action**: Phase 11 verify（人工 checkpoint：与 published 经验对话提问 → AI 回答末尾显来源列表 → 点击经验引用开 ExperienceDetailModal → 点击会话引用开 SessionMessagesModal → 命令失支持经验显 warning Tag；RETRIEVE-01/02/03 三 REQ 整体验收）
+- **Last action**: v1.2 roadmap 创建（ROADMAP.md 重写为 v1.2：Phases 12-14 续 v1.1 sequential naming，7 REQ 全映射覆盖率 7/7；Phase 12 TEST-01/02 测试基础设施 → Phase 13 SEC-03/04/05 安全加固 cluster → Phase 14 FIX-01/02 缺陷+旧规划回退闭环；REQUIREMENTS.md traceability 段填好 REQ→Phase 映射）
+- **Next action**: `/gsd:plan-phase 12`（Test Infrastructure — DEP-1 ABI 缓解：electron-vite + vitest 集成跑 Electron 内测试，补 SSH/Telnet/DB 真路径自动化回归 + 句柄泄漏自动化；4 SC：native binding ABI 冲突消除 / 真路径回归用例 / 句柄自动化检测 / 不改生产代码路径）
 - **Resume command**: `/gsd-status`
 
 ## Phase → Requirement Map
@@ -242,7 +242,10 @@ v1.1 明确 defer 到二期（4 FUTURE，不进 roadmap）：
 | 9. Human Review & Confirmation | REVIEW-01, REVIEW-02, REVIEW-03 |
 | 10. Experience Browse Page | BROWSE-01, BROWSE-02, BROWSE-03, BROWSE-04 |
 | 11. AI Retrieval & Reuse | RETRIEVE-01, RETRIEVE-02, RETRIEVE-03 |
+| 12. Test Infrastructure (DEP-1 ABI 缓解) | TEST-01, TEST-02 |
+| 13. Security Hardening Cluster | SEC-03, SEC-04, SEC-05 |
+| 14. Defect & Legacy Rollback Closure | FIX-01, FIX-02 |
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- `/gsd:plan-phase 12`（v1.2 第一个 phase：Test Infrastructure — DEP-1 ABI 缓解）

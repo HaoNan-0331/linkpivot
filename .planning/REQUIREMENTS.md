@@ -48,4 +48,24 @@
 
 ## Traceability
 
-（由 roadmapper 填：REQ-ID → Phase 映射，要求每个 REQ 唯一 phase，100% 覆盖）
+Phase 编号续 v1.1（止于 Phase 11）→ v1.2 从 **Phase 12** 起（不 reset，sequential naming）。每个 REQ 唯一 phase，100% 覆盖无重叠无遗漏。
+
+| Requirement | Phase | Status | Notes |
+|-------------|-------|--------|-------|
+| TEST-01 | Phase 12 | Pending | DEP-1 ABI 缓解基础设施，下游 phase 回归网 |
+| TEST-02 | Phase 12 | Pending | 依赖 TEST-01 electron-vite+vitest 通道，同 phase |
+| SEC-03 | Phase 13 | Pending | connection.ts 内联 algorithms 补 curve25519 |
+| SEC-04 | Phase 13 | Pending | pre-release 安全项 L1/L4/L6/L2/L3 收尾 |
+| SEC-05 | Phase 13 | Pending | experience:list 入参校验防廉价 DoS（WR-06） |
+| FIX-01 | Phase 14 | Pending | BUG-1 anomaly new_ip 计数恒零 |
+| FIX-02 | Phase 14 | Pending | 旧规划回退 4 项甄别修复（confirm/ai_exec_logs/会话标题/H3C LLDP） |
+
+**Coverage:** 7/7 v1 requirements mapped ✓
+
+**Phase → Requirement Map:**
+
+| Phase | Requirements | Cluster |
+|-------|--------------|---------|
+| 12. Test Infrastructure (DEP-1 ABI 缓解) | TEST-01, TEST-02 | 测试基础设施（v1.2 foundation，下游回归网） |
+| 13. Security Hardening Cluster | SEC-03, SEC-04, SEC-05 | 安全加固（SSH 算法 + pre-release + IPC 校验） |
+| 14. Defect & Legacy Rollback Closure | FIX-01, FIX-02 | 缺陷 + 旧规划回退闭环 |
