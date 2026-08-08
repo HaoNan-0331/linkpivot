@@ -35,5 +35,12 @@ jobs:
         shell: bash
         run: |
           test -f node_modules/better-sqlite3/build/Release/better_sqlite3.node
+          # CR-03 修复：cpu-features 是 ssh2 1.17 的 optionalDependencies（ssh2 自身纯 JS 无 .node），
+          # electron-rebuild -w ssh2 不递归到 cpu-features，故 -w cpu-features 显式重建（见 package.json rebuild:native）。
+          # 若 cpu-features 装了（npm ci 触发 optionalDep 编译）则必须验其 .node 为 electron-ABI，
+          # 否则 test:electron 跑时 require('ssh2') → require('cpu-features') 会 NODE_MODULE_VERSION mismatch 崩。
+          # 用 test ! -d || test -f 模式：cpu-features 未装（如 Linux 跳过 optionalDep）时放行，装了则强制验产物。
+          test ! -d node_modules/cpu-features || \
+            test -f node_modules/cpu-features/build/Release/cpufeatures.node
           test -f dist-electron/main.js
           echo "native binding + main bundle OK"

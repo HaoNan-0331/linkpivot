@@ -10,7 +10,7 @@
     "build:electron": "npm run build:electron-main && npm run build:preload && node scripts/build-electron.cjs",
     "build": "tsc -p tsconfig.web.json && vite build && npm run build:electron",
     "electron:dev": "npm run build:electron && concurrently \"vite\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .\"",
-    "rebuild:native": "electron-rebuild -f -w better-sqlite3 -w ssh2",
+    "rebuild:native": "electron-rebuild -f -w better-sqlite3 -w ssh2 -w cpu-features",
     "electron:build": "npm run rebuild:native && npm run build && electron-builder",
     "test": "vitest run",
     "test:watch": "vitest",
