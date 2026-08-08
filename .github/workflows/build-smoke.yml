@@ -21,10 +21,16 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      # mock 套件（plain node vitest，244 用例，不碰 native binding）必须在 rebuild:native 之前跑
+      # —— rebuild 后 better-sqlite3/ssh2 切 electron-ABI，plain node 加载必触发 NODE_MODULE_VERSION 冲突（DEP-1 在 CI 的体现）
+      - run: npm test
       # 显式 native rebuild（接入 electron:build 前置；本地同样经 npm run rebuild:native）
       - run: npm run rebuild:native
       - run: npm run build
-      - run: npm test
+      # 真路径回归套件（tests/electron/**）经 electron.exe + ELECTRON_RUN_AS_NODE 跑
+      # 必须 rebuild:native 之后（需 electron-ABI native binding）+ build 之后（需 dist-electron/main.js）
+      # —— cross-env 跨平台设 ELECTRON_RUN_AS_NODE=1；windows-latest runner 跑 electron.exe（RUN_AS_NODE 模式不走 Chromium，不需 xvfb/--no-sandbox）
+      - run: npm run test:electron
       - name: verify native binding built for electron ABI
         shell: bash
         run: |
