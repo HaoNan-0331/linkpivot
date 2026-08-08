@@ -97,9 +97,12 @@ function handleIac(socket: net.Socket, buf: Buffer): void {
     if (i + 1 >= buf.length) break
     const cmd = buf[i + 1]
     if (cmd === WILL || cmd === DO) {
+      // WR-02 修复：长度守卫防畸形 WILL/DO（末尾缺 option 字节）—— 之前 buf[i+2] ?? 0
+      // 在缺字节时发 option=0（Binary Transmission）的 DONT/WONT，语义错误；应跳过不响应。
+      if (i + 2 >= buf.length) break // 畸形：缺 option 字节，跳过不响应
       // 回 DONT/WONT（拒绝选项）
       const resp = cmd === WILL ? DONT : WONT
-      socket.write(Buffer.from([IAC, resp, buf[i + 2] ?? 0]))
+      socket.write(Buffer.from([IAC, resp, buf[i + 2]]))
       i += 3 // IAC + cmd + option
     } else if (cmd === WONT || cmd === DONT) {
       i += 3
