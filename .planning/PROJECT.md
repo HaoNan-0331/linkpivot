@@ -29,12 +29,12 @@ network_toplogy 是面向运维人员的网络拓扑管理桌面工具（Electro
 - ✓ 健壮性/资源安全：arpCollector.executeSSH/executeTelnet + ai.executeCommandsOnDevice + execOne 句柄 try/finally 统一回收（cleanup 统一出口 clearTimeout+end，timeout 路径 destroy，executeTelnet 补自有 setTimeout，execOne 补 stream.on('error') 兜底）；discovery 两处 JSON parse enriched Error（原始片段 slice 0,200 + err.message）+ 5 处 createSystemLog 经 safeLog 非致命包裹（console.warn 兜底，line 258 嵌套陷阱切断）— Validated in Phase 6: Robustness & Resource Safety（ROBUST-01, ROBUST-02）
 - ✓ 经验数据层与安全基线：experiences + exp_device_rel 两表（通用列 + attrs_enc 模板 JSON 区 + bi-temporal valid_at/invalid_at 软失效 + 预埋 status/source_session_id/last_verified_at/reuse_count/relation_type）+ v8 幂等迁移（sqlite_master.sql 特征串守卫）；ExperienceService 函数式（CRUD/设备多对多关联/bi-temporal 软失效/attrs 模板校验/AES-256-GCM attrs_enc 加密/MAX_BATCH）；10 个 experience:* IPC channel 全 secure 包装 + stripEncColumns/白名单正向投影边界脱敏 + main.ts setExperienceMasterKey 注入 — Validated in Phase 7: Experience Data Layer & Security Baseline（EXP-01, EXP-02, EXP-03, EXP-04, SEC-01, SEC-02）
 - ✓ AI 经验起草管道：v9 迁移加 `duplicate_of_exp_id` 列 + piiMask 分级脱敏（凭证全脱敏 / IPv4 尾4 / MAC 尾4；CR-01 自然语言连接词绕过 + CR-02 key 词界 2 critical 修复）+ duplicateDetector 同分类+设备查重喂起草 LLM + draftingService 两阶段起草（阶段A `draftSession` 纯起草 + 阶段B `judgeVerdicts` W-4 窄化复判 + `validateDrafts` 强 schema 枚举锁/confidence 边界）+ experienceDrafting 两阶段编排 + `experience:summarizeSession` secure IPC + `createExperience({duplicateOfExpId})` 单语句原子（B-1 门面 + B-2 共存亡）+ AIPage「经验总结」按钮 — Validated in Phase 8: AI Drafting Pipeline（DRAFT-01, DRAFT-02, DRAFT-03, DRAFT-04）
+- ✓ 测试基础设施 / DEP-1 ABI 缓解：electron.exe + ELECTRON_RUN_AS_NODE 跑 vitest 加载 @electron/rebuild 重建的 native binding（SC1 路径修正——弃 electron-vite 因全版本不支持 vite 8，改 electron.exe + 双 vitest config 物理隔离，不迁生产构建）+ test:electron 真路径套件（DB + SSH executeCommandsOnDevice/execOne/executeSSH + Telnet executeTelnetCommand 经 ssh2.Server/net.Server mock 对端回显，无需真实设备）+ handleLeakDetector 句柄泄漏自动化（getActiveResourcesInfo + wtfnode，四条 try/finally cleanup 全覆盖，替代 Phase 6 SC#4 + Phase 3 真机 HV defer）+ build-smoke CI-A 扩展（mock 段 rebuild 前 plain node + 真路径段 rebuild 后 electron.exe）— Validated in Phase 12: Test Infrastructure（TEST-01, TEST-02）
 
 ### Active
 
 <!-- 本轮 milestone v1.2：安全与稳定性加固（详细 REQ-IDs 见 REQUIREMENTS.md） -->
 
-- [ ] DEP-1 ABI 缓解：electron-vite + vitest 集成跑 Electron 内测试，补 SSH/Telnet/DB 真路径自动化回归 + 句柄泄漏自动化
 - [ ] SSH 连通性加固：connection.ts 内联 algorithms 补 curve25519-sha256 等现代算法（与 sshConfig.ts 对齐）
 - [ ] pre-release hardening 收尾（14 项，安全优先 L1/L4/L6）
 - [ ] BUG-1 修复：anomalyService new_ip 计数恒零
@@ -64,6 +64,7 @@ network_toplogy 是面向运维人员的网络拓扑管理桌面工具（Electro
 - **Phase 9 complete (2026-08-05)**：人工确认闸口交付（REVIEW-01/02/03）— experienceService 扩 confirmDrafts 单事务原子（adopt draft→published + 可选 supersede 旧条目 invalidate + discard hard delete + 设备关联 diff）+ listDrafts/getSessionMessages + IPC 网关层 MAX_BATCH 双层防御 + preload bridge + renderer ReviewConfirmModal/SessionMessagesModal/ReviewConfirmEditForm 弹窗 + 待确认 Badge 角标。3 plans / 验证全 SC + 3 REQ passed / 三绿门禁 175 测试全过 / 人工 checkpoint approved。
 - **Phase 10 complete (2026-08-06)**：经验浏览页交付（BROWSE-01/02/03/04）— severity v10 明文列迁移 + restoreExperience 受控接口 + listExperiences 多维筛选（search/severity/tags/deviceId 多选 IN 占位 OR-join + device_count 子查询零 N+1）+ ExperienceEditForm/validateDraft 抽出 + KnowledgeBasePage Tabs 文档|经验 + ExperienceTab 列表/手动 CRUD/标失效恢复软硬区分 + ExperienceDetailModal + gap closure（CR-01 restore 双层守卫 + CR-02 backfillSeverityFromHistory 幂等回填 + WR-01 tags LIKE ESCAPE + WR-02 setExperienceDevices 单事务原子）。4 plans / 三绿门禁 200 测试全过零回归 / 人工 checkpoint approved 信任门禁。
 - **Phase 11 complete (2026-08-06)**：AI 检索复用交付（RETRIEVE-01/02/03）— experienceRerank.ts 精排 LLM 强 schema 评分（validateRerank exp_id 防编造 + score 边界归一化 + 3 次重试 + 反幻觉 prompt + RELEVANCE_THRESHOLD=0.6）+ experienceRetrieval.ts 编排 retrieveForAnswer（粗筛 status:'published' 双分支 → 精排 → 阈值 → read-time 两项验证 commandSafety+有效期 → 命中刷新 incReuseCount/touchLastVerifiedAt 不阻塞主路径）+ ai.ts chat() b 自动预取串联注入 + exp_answer references 联合返回 + renderer ReferenceItem 联合类型 + ChatMessageList 按 kind 分流渲染 + 点击回查复用 ExperienceDetailModal/SessionMessagesModal + 命令失支持 warning Tag。2 plans / 验证 10/10 truths VERIFIED + 3 REQ passed / code review 2 BLOCKER（CR-01 draft 泄漏检索池违反红线③ / CR-02 reuse_count 重复累加）+ 4 关键 WARNING（WR-01/03/06/07）全修复 / 四绿门禁 231 测试全过零回归 / 3 项 E2E UX 人工核实 defer（11-HUMAN-UAT.md，信任门禁 approved，/gsd-verify-work 11 后续补真机）。**v1.1 milestone 5 phase 全完成。**
+- **Phase 12 complete (2026-08-08)**：测试基础设施 / DEP-1 ABI 缓解交付（TEST-01/02）— electron.exe + ELECTRON_RUN_AS_NODE 跑 vitest 加载 @electron/rebuild 重建的 native binding（SC1 路径修正：弃 electron-vite 因全版本不支持 vite 8，改 electron.exe + 双 vitest config 物理隔离，不迁生产构建）+ test:electron 真路径套件 22 it（DB + SSH executeCommandsOnDevice/execOne/executeSSH + Telnet executeTelnetCommand，经 ssh2.Server/net.Server mock 对端回显，无需真实设备）+ handleLeakDetector 句柄泄漏自动化（getActiveResourcesInfo + wtfnode，四条 try/finally cleanup 全覆盖，替代 Phase 6 SC#4 + Phase 3 真机 HV defer）+ build-smoke CI-A 扩展（mock 段 rebuild 前 plain node + 真路径段 rebuild 后 electron.exe）。3 plans / 验证 4/4 SC + 2 REQ passed / code review 3 Critical（CR-01 baseline 共享 / CR-02 mock error handler 时序 / CR-03 cpu-features native dep）+ 7 Warning advisory（交 /gsd:code-review --fix）/ 三绿门禁 244 mock + 22 真路径全过零回归 / SC4 生产零改动实测 / 3 项 GHA 实跑 + CR 修复 defer（12-HUMAN-UAT.md）。
 
 ## Current State
 
@@ -84,7 +85,7 @@ network_toplogy 是面向运维人员的网络拓扑管理桌面工具（Electro
 **Goal:** 补齐测试基础设施（DEP-1 ABI 缓解解锁自动化回归）+ 收紧安全（SSH 算法 / IPC 入参 / 告警链）+ 清偿旧规划技术债，让 network_toplogy 在真机路径上可自动化验证、安全无盲点。
 
 **Target features:**
-- DEP-1 ABI 缓解：electron-vite + vitest 集成跑 Electron 内测试，补 SSH/Telnet/DB 真路径自动化回归 + 句柄泄漏自动化（告别人工 HV）
+- ✅ DEP-1 ABI 缓解（已交付 Phase 12）：electron.exe + ELECTRON_RUN_AS_NODE 跑 vitest（弃 electron-vite，不支持 vite 8）+ test:electron 真路径套件 + handleLeakDetector 句柄泄漏自动化（告别人工 HV）
 - SSH 连通性加固：connection.ts 内联 algorithms 补 curve25519-sha256 等现代算法（与 sshConfig.ts SSH_ALGORITHMS 对齐）
 - pre-release hardening 收尾（14 项，安全优先）：L1 弱 SSH 算法 / L4 Login / L6 authGuard / L2 ai limit / L3 captcha 等
 - BUG-1 修复：anomalyService new_ip 计数恒零（processARPEntries 首次见 IP 写 new_ip 或移除字段）
@@ -96,7 +97,6 @@ network_toplogy 是面向运维人员的网络拓扑管理桌面工具（Electro
 
 后续 milestone 候选：
 - IPv6 支持（现有 ipToNumber/CIDR 仅 IPv4）
-- DEP-1 缓解（@electron/rebuild + electron-vite 集成 vitest 跑 Electron 内测试，补句柄回归测试自动化）
 - FRAG-2/3 + TD-1/TD-2 后端 cleanup
 
 ## Constraints
@@ -133,4 +133,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-08-07 — v1.1 milestone shipped（含真机 HV-1/2/3/4 闭环），启动 v1.2 安全与稳定性加固 milestone*
+*Last updated: 2026-08-08 — v1.2 Phase 12 测试基础设施（DEP-1 ABI 缓解）交付，Phase 13（安全加固）/ 14（缺陷修复）待续*
