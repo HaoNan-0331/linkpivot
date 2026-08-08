@@ -4,7 +4,7 @@ milestone: v1.2
 milestone_name: 安全与稳定性加固
 status: executing
 last_updated: "2026-08-08T03:25:00.000Z"
-last_activity: 2026-08-08 -- Phase 12 Plan 02 complete（SSH/Telnet 真路径回归）
+last_activity: 2026-08-08 -- Phase 12 Plan 03 Task 1 complete（句柄泄漏专项），Task 2 CI 决策 checkpoint 待用户选 ci-a/ci-b/ci-c
 progress:
   total_phases: 3
   completed_phases: 0
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (updated 2026-08-01)
 ## Current Position
 
 Phase: 12 (test-infrastructure-dep-1-abi) — EXECUTING
-Plan: 3 of 3（Plan 01 测试基础设施主干 + Plan 02 SSH/Telnet 真路径 complete，待 Plan 03 句柄泄漏专项 + CI 扩展）
-Status: Plan 12-02 complete（SSH/Telnet 真路径回归 + A2/IAC 双 checkpoint PASS + TEST-02 四条 cleanup 路径泄漏检测全绿），三绿门禁全绿 + SC4 兜底通过
-Last activity: 2026-08-08 -- Plan 12-02 complete（ai executeCommandsOnDevice/execOne + arpCollector executeSSH + telnetExec executeTelnetCommand 真路径 + handleLeakDetector 默认白名单反馈环）
+Plan: 3 of 3（Plan 01 测试基础设施主干 + Plan 02 SSH/Telnet 真路径 + Plan 03 Task 1 句柄专项 complete，Task 2 CI 决策 checkpoint 待用户选 ci-a/ci-b/ci-c）
+Status: Plan 12-03 Task 1 complete（句柄泄漏专项异常场景 5 it：SSH RST / exec stream error / telnet 断连 / 长时间循环累积 5 次 / 混合 timeout+正常，闭合 Phase 3 长时间运行 defer + Phase 6 SC#4），Task 2 = CI 扩展方案决策 checkpoint（CI-A 推荐 / CI-B / CI-C 三选一）等待用户 plan review 决策
+Last activity: 2026-08-08 -- Plan 12-03 Task 1 complete（handleLeak.real.test.ts 5 it + A4 wtfnode.dump 未触发 + 三绿门禁 test:electron 22/22 + npm test 244/244 + build:electron-main OK + SC4 git diff electron/ exit 0）
 
 ## Performance Metrics
 
