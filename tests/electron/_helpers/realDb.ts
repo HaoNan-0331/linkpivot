@@ -97,7 +97,14 @@ function runStandaloneMigrations(db: Database.Database): void {
   step()
 }
 
-/** 复刻 electron/database/migrationHelpers.ts hasColumn（避免 import 生产模块牵连 getDatabase）。 */
+/**
+ * 复刻 electron/database/migrationHelpers.ts hasColumn（避免 import 生产模块牵连 getDatabase）。
+ *
+ * WR-03 边界说明：PRAGMA 不支持参数绑定（SQLite 限制，非本项目约定偏离），故 table 名
+ * 必须为代码常量（不可来自外部输入）。生产侧 migrationHelpers.ts 同样模式，本 helper
+ * table 仅传字面量 'experiences'（runStandaloneMigrations 内硬编码），无注入风险。
+ * 照抄者注意：table 参数必须为代码字面量，不可来自用户输入或动态拼接。
+ */
 function hasColumn(db: Database.Database, table: string, column: string): boolean {
   const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
   return rows.some((r) => r.name === column)
