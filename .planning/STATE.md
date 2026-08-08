@@ -2,8 +2,8 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: 安全与稳定性加固
-status: verifying
-last_updated: "2026-08-08T04:35:08.236Z"
+status: ready_to_plan
+last_updated: 2026-08-08T05:26:32.255Z
 last_activity: 2026-08-08
 progress:
   total_phases: 3
@@ -11,6 +11,7 @@ progress:
   total_plans: 3
   completed_plans: 3
   percent: 33
+stopped_at: Phase 12 complete (3/3) — ready to discuss Phase 13
 ---
 
 # STATE: network_toplogy
@@ -25,10 +26,10 @@ See: .planning/PROJECT.md (updated 2026-08-01)
 
 ## Current Position
 
-Phase: 12 (test-infrastructure-dep-1-abi) — COMPLETE (ready for verification)
-Plan: 3 of 3 complete（Plan 01 测试基础设施主干 + Plan 02 SSH/Telnet 真路径 + Plan 03 句柄泄漏专项 + CI-A 扩展全落地）
-Status: Phase 12 三 plan 全完成，ready for verification（GHA 实跑 defer 到下次 push）
-Last activity: 2026-08-08 -- Plan 12-03 complete（handleLeak.real 异常场景 5 it + CI-A build-smoke.yml 重排 npm test 移 rebuild 前 + test:electron 挂 rebuild 后；A4 wtfnode.dump 未触发；三绿门禁 test:electron 22/22 + npm test 244/244 + build:electron-main OK + SC4 git diff electron/ exit 0；Phase 6 SC#4 + Phase 3 长时间运行 defer 可标 resolved）
+Phase: 13
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-08-08
 
 ## Performance Metrics
 
