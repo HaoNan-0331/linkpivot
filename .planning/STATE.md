@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: 安全与稳定性加固
-status: executing
-last_updated: "2026-08-08T03:25:00.000Z"
-last_activity: 2026-08-08 -- Phase 12 Plan 03 Task 1 complete（句柄泄漏专项），Task 2 CI 决策 checkpoint 待用户选 ci-a/ci-b/ci-c
+status: verifying
+last_updated: "2026-08-08T04:35:08.236Z"
+last_activity: 2026-08-08
 progress:
   total_phases: 3
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 3
-  completed_plans: 2
-  percent: 22
+  completed_plans: 3
+  percent: 33
 ---
 
 # STATE: network_toplogy
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-08-01)
 
 ## Current Position
 
-Phase: 12 (test-infrastructure-dep-1-abi) — EXECUTING
-Plan: 3 of 3（Plan 01 测试基础设施主干 + Plan 02 SSH/Telnet 真路径 + Plan 03 Task 1 句柄专项 complete，Task 2 CI 决策 checkpoint 待用户选 ci-a/ci-b/ci-c）
-Status: Plan 12-03 Task 1 complete（句柄泄漏专项异常场景 5 it：SSH RST / exec stream error / telnet 断连 / 长时间循环累积 5 次 / 混合 timeout+正常，闭合 Phase 3 长时间运行 defer + Phase 6 SC#4），Task 2 = CI 扩展方案决策 checkpoint（CI-A 推荐 / CI-B / CI-C 三选一）等待用户 plan review 决策
-Last activity: 2026-08-08 -- Plan 12-03 Task 1 complete（handleLeak.real.test.ts 5 it + A4 wtfnode.dump 未触发 + 三绿门禁 test:electron 22/22 + npm test 244/244 + build:electron-main OK + SC4 git diff electron/ exit 0）
+Phase: 12 (test-infrastructure-dep-1-abi) — COMPLETE (ready for verification)
+Plan: 3 of 3 complete（Plan 01 测试基础设施主干 + Plan 02 SSH/Telnet 真路径 + Plan 03 句柄泄漏专项 + CI-A 扩展全落地）
+Status: Phase 12 三 plan 全完成，ready for verification（GHA 实跑 defer 到下次 push）
+Last activity: 2026-08-08 -- Plan 12-03 complete（handleLeak.real 异常场景 5 it + CI-A build-smoke.yml 重排 npm test 移 rebuild 前 + test:electron 挂 rebuild 后；A4 wtfnode.dump 未触发；三绿门禁 test:electron 22/22 + npm test 244/244 + build:electron-main OK + SC4 git diff electron/ exit 0；Phase 6 SC#4 + Phase 3 长时间运行 defer 可标 resolved）
 
 ## Performance Metrics
 
@@ -139,6 +139,7 @@ Phase 12 执行期决策（12-01 落地）：
 - [Phase 12]: 12-01 OQ#1 注入策略方案 A（零生产改动）——DB 真路径测试直持 makeRealDb() 返回的真实 better-sqlite3 实例跑 CRUD/迁移，不调 getDatabase() 单例（connection.ts import electron app/backupScheduler 重依赖 vi.mock 牵连过广）；realDb 不 import 生产 init.ts/migrations.ts（createTables/runMigrations 用 getDatabase() 单例无 db 参数），runMigrations 选项跑独立幂等 DDL（hasColumn 守卫模式验证，Rule 2 关键功能 fallback）；Plan 12-02 service 真路径测试用 vi.mock 注入 realDb 实例
 - [Phase 12]: 12-01 四 helper 接口契约落地（Plan 12-02/12-03 复用）——realDb { db, dbPath, close }（os.tmpdir 唯一名 + pragma WAL/foreign_keys/busy_timeout/wal_autocheckpoint + close 严格删主文件/-wal/-shm try/catch ENOENT）/ mockSshServer { port, close }（ssh2.Server + crypto.generateKeyPairSync 随机 hostKey T-12-01 + listen(0,'127.0.0.1') loopback T-12-02 + close 返回 Promise Pitfall 4）/ mockTelnetServer { port, close }（net.Server + IAC 协商 checkpoint：识别 0xFF 回 DONT/WONT + stripIac）/ handleLeakDetector expectNoHandleLeak(extraAllow?)（getActiveResourcesInfo snapshot + afterEach sleep(50) Pitfall 4 + 默认放行 Timeout/GetAddrInfoReqWrap Pitfall 5 + wtfnode.dump best-effort A4）
 - [Phase 12]: 12-01 wtfnode@0.10.1 装入 devDep（不进生产打包）——npm_config_proxy="" npm_config_https_proxy="" --registry=npmjs.org --userconfig=/dev/null 四件套绕开 ~/.npmrc 配的 npmmirror proxy 127.0.0.1:10809 ECONNREFUSED（Rule 3 阻塞性，proxy 配置覆盖 registry 单 --registry flag 不够）
+
 Phase 12 执行期决策（12-02 落地）：
 
 - [Phase 12]: 12-02 A2 checkpoint PASS——ssh2.Server 在 ELECTRON_RUN_AS_NODE=1 下经 electron.exe 正常 listen + accept 任意凭证 + authentication.accept + exec stream 回显全链路实跑确认（ai.execCommands.real 5 it + arpCollector.real 4 it 全绿佐证，RESEARCH Assumptions Log A2 闭合）
@@ -148,6 +149,12 @@ Phase 12 执行期决策（12-02 落地）：
 - [Phase 12]: 12-02 handleLeakDetector 默认白名单反馈环（Rule 2 关键功能）——12-01 仅基于 db.real（无网络）设默认白名单 [Timeout,GetAddrInfoReqWrap]，SSH/Telnet 真路径暴露 TCPServerWrap（mock server listen socket）+ TCPWrap/SimpleWriteWrap（ssh2/telnet-client native stream libuv 释放延迟）跨文件漂移误报，补入默认白名单让 12-03 句柄专项不用每文件重复加；三个测试 expectNoHandleLeak() 调用同步简化不传 extraAllow
 - [Phase 12]: 12-02 TEST-02 四条 cleanup 路径全覆盖——executeCommandsOnDevice cleanup（client.end + clearTimeout perCmdTimer）+ execOne cleanup（stream.close/destroy + clearTimeout timer/silenceTimer）+ executeSSH cleanup（client.end + timeout 路径 client.destroy）+ executeTelnetCommand finally cleanup（clearTimeout + connection.end/destroy）句柄泄漏自动化检测全绿（替代 Phase 6 SC#4 + Phase 3 defer 人工 HV，CONTEXT decision #4）；3 被测模块从 0 测试到有真路径（arpCollector 0→4 / telnetExec 0→5 / ai.executeCommandsOnDevice+execOne 0→5）
 - [Phase 12]: 12-02 timeout 场景偏离（Rule 1 bug）——arpCollector executeSSH timeout 改用 connection refused（端口未监听，ssh2 banner-wait timeout 在库内部行为下不可靠触发挂满 testTimeout），telnet timeout 改用裸 net.Server（accept 不发 prompt，mockTelnetServer onCmd 返空仍回 shellPrompt 不触发 timeout），两处均同样验证 cleanup 句柄回收路径
+
+Phase 12 执行期决策（12-03 落地）：
+
+- [Phase 12]: 12-03 句柄泄漏专项覆盖异常场景（闭合 Phase 3 长时间运行 defer + Phase 6 SC#4）——handleLeak.real.test.ts 5 it（SSH RST stream.destroy + exec stream error + telnet socket.end 断连 + 循环 N=5 次累积 TCPWrap + 混合 timeout+正常），复用 12-01/12-02 helper 契约（mockSshServer/mockTelnetServer/handleLeakDetector），vi.mock 非被测重依赖让 service 干净加载，A4 wtfnode.dump 未触发（5 it 全绿无泄漏）
+- [Phase 12]: 12-03 CI-A 分段方案落地（用户 plan review 选定，RESEARCH 推荐）——build-smoke.yml 重排 step：npm test 移 rebuild:native 之前（plain node 跑 mock 244 套件不碰 native 避免 ABI 崩 DEP-1 隐患）+ 新增 npm run test:electron 挂 rebuild + build 之后（electron.exe 跑真路径 22 it，需 electron-ABI binding + dist-electron/main.js）；CI-B（改 mock 套件运行环境）+ CI-C（违背 SC2 CI/本地绿）否决
+- [Phase 12]: 12-03 GHA windows-latest 实跑 defer——本地静态验证通过（YAML 语法合法 + step 顺序逻辑正确 npm test L26 < rebuild L28 < test:electron L33 + cross-env 跨平台兼容），RESEARCH 三 ASSUMED（xvfb 不需 / antivirus 误报 / CI 时长 +30-60s）记 SUMMARY defer 待 push 实跑确认；RUN_AS_NODE 模式不走 Chromium 语义判断不需 xvfb/--no-sandbox
 
 v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 
@@ -172,6 +179,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 - [x] 11-02-PLAN.md — Phase 11 renderer 层引用溯源（types.ts ReferenceItem 联合类型 kb/experience/session + ChatMsg.references 扩联合 + useAIChat exp_answer 消费 camelCase 字段对齐 ai.ts:835 实际契约非 plan 文档笔误 snake_case + kb_answer 分支 map 补 kind:'kb' + session 引用从 experience.sourceSessionId 拆出 D-11-10 + ChatMessageList renderRef 按 kind 分流渲染 + 复用 Phase 10 ExperienceDetailModal/Phase 9 SessionMessagesModal 零新建 D-11-12 + 命令失支持 antd Tag color=warning 既有色 D-11-7，2 commits 987b9c4/b683b84，四绿门禁 tsc+vite build+build:electron-main+vitest 230/230 全绿零回归，acceptance grep 全断言通过，RETRIEVE-03 UI 层全落地）
 - [x] 12-01-PLAN.md — Phase 12 测试基础设施主干（DEP-1 ABI 缓解：test:electron 通道 cross-env ELECTRON_RUN_AS_NODE=1 electron.exe vitest.mjs + 双 vitest config 物理隔离 Pitfall 6 + wtfnode@0.10.1 devDep + 4 helper 契约 realDb/mockSshServer/mockTelnetServer/handleLeakDetector + db.real.test.ts 真路径 CRUD/迁移幂等/WAL，3 commits aea9154/3022350/dae9f18，A1 实跑确认 vitest/4.1.5，OQ#1 方案 A 零生产改动，4 deviations 全 auto-fixed（2 Rule 3 阻塞性 + 2 Rule 2 关键功能），三绿门禁 test:electron 3/3 + npm test 244/244 + build:electron-main 全绿零回归，SC4 git diff electron/ 退出 0）
 - [x] 12-02-PLAN.md — Phase 12 SSH/Telnet 真路径回归（ai executeCommandsOnDevice/execOne + arpCollector executeSSH + telnetExec executeTelnetCommand 真路径，复用 12-01 mockSshServer/mockTelnetServer/handleLeakDetector 契约，vi.mock 反向范式被测协议走真 binding 仅 mock 非被测重依赖，2 commits 37f5cca/40f13e5，A2 checkpoint PASS + telnet IAC checkpoint PASS，TEST-02 四条 cleanup 路径泄漏检测全绿，handleLeakDetector 默认白名单反馈环，5 deviations 全 auto-fixed，三绿门禁 test:electron 17/17 + npm test 244/244 全绿零回归，SC4 git diff electron/ 退出 0）
+- [x] 12-03-PLAN.md — Phase 12 句柄泄漏专项 + CI 扩展（handleLeak.real.test.ts 异常场景 5 it：SSH RST/exec stream error/telnet 断连/循环累积 N=5/混合 timeout+正常，闭合 Phase 3 长时间运行 defer + Phase 6 SC#4；CI-A 用户选定 build-smoke.yml 重排 npm test 移 rebuild 前 + 新增 test:electron 挂 rebuild 后，CI 锁两条回归网；A4 wtfnode.dump 未触发，3 commits d8a8d34/bbdbe6d/98d8aca，零偏差，三绿门禁 test:electron 22/22 + npm test 244/244 + build:electron-main 全绿零回归，SC4 git diff electron/ 退出 0，GHA 实跑 defer 待 push）
 
 ### Blockers/Concerns
 
@@ -207,6 +215,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 | 260807-fzd | 清理 dead code：删 @types/uuid + vendor-commands.ts + ai.ts 单数 wrapper | 2026-08-07 | 0bd4dbd/287e26c/d3f5e08 | [260807-fzd-dead-code-types-uuid-vendor-commands-ts-](./quick/260807-fzd-dead-code-types-uuid-vendor-commands-ts-/) |
 | 260807-gfk | 安全 hardening B：validateDrafts 标记扫描 + ai_system_logs CHECK 扩 security v11 | 2026-08-07 | 5a824cd/8af620b/11f8f57 | [260807-gfk-hardening-b-validatedrafts-cmd-kb-search](./quick/260807-gfk-hardening-b-validatedrafts-cmd-kb-search/) |
 | Phase 12 P01 | ~76min | 3 tasks | 10 files |
+| Phase 12 P03 | ~95s（continuation Task 3）+ Task 1 前置 | 3 tasks（1 auto + 1 checkpoint + 1 auto）| 2 files |
 
 ### Risk Watch
 
@@ -249,8 +258,8 @@ v1.1 明确 defer 到二期（4 FUTURE，不进 roadmap）：
 
 ## Session Continuity
 
-- **Last action**: Phase 12 Plan 02 complete（SSH/Telnet 真路径回归：ai executeCommandsOnDevice/execOne + arpCollector executeSSH + telnetExec executeTelnetCommand 真路径 + handleLeakDetector 默认白名单反馈环；A2/telnet IAC 双 checkpoint PASS；TEST-02 四条 cleanup 路径泄漏检测全绿；三绿门禁全绿 + SC4 兜底通过）
-- **Next action**: 继续 Phase 12 Plan 03（句柄泄漏专项 + CI 扩展，handleLeakDetector 默认白名单已含 native stream 句柄类型可直接复用，CI-A/B/C 三方案 RESEARCH 推荐 CI-A mock 套件放 rebuild 前真路径放 rebuild 后；A4 wtfnode dump 调用栈定位待评估是否需 top-level require）
+- **Last action**: Phase 12 Plan 03 complete（句柄泄漏专项 5 it 异常场景 + CI-A build-smoke.yml 重排：handleLeak.real.test SSH RST/exec stream error/telnet 断连/循环累积/混合 timeout 全绿闭合 Phase 3 长时间运行 defer + Phase 6 SC#4；CI-A npm test 移 rebuild 前 + test:electron 挂 rebuild 后；三绿门禁全绿 + SC4 兜底通过；Phase 12 三 plan 全完成 ready for verification）
+- **Next action**: `/gsd:verify-phase 12`（Phase 12 全部 SC1-4 + TEST-01/02 覆盖完毕，进入 verify；GHA 实跑 defer 项待下次 push 到 master 或开 PR 触发 build-smoke workflow 验证 test:electron step 在 windows-latest 退出码 0 + CI 时长增量 + antivirus 误报三项 ASSUMED）
 - **Resume command**: `/gsd-status`
 
 ## Phase → Requirement Map
