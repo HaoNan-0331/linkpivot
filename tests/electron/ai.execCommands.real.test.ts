@@ -1,5 +1,6 @@
 import { describe, it, expect, afterAll, beforeAll, vi } from 'vitest'
 import { Client } from 'ssh2'
+import net from 'net'
 
 /**
  * SSH 真路径回归测试（Phase 12 Plan 12-02 Task 1，TEST-01 SSH 部分 + TEST-02 cleanup）。
@@ -188,19 +189,33 @@ describe('executeCommandsOnDevice — SSH 真路径回归（executeCommandsOnDev
     // afterEach 经 expectNoHandleLeak 自动断言无句柄泄漏（若泄漏会 throw `句柄泄漏: [...]`）
   })
 
-  it('异常路径 cleanup：连接不可达时 client.on(error) 触发 reject，cleanup 仍回收 client（首条 reject 整批）', async () => {
-    // 指向一个无 SSH server 的端口（sshHandle.port + 1 假定无监听），触发 connection refused
-    const device = {
-      ipAddress: '127.0.0.1',
-      connectionType: 'ssh',
-      port: sshHandle.port + 1, // 故意指向未监听端口
-      username: 'test',
-      password: 'test',
+  it('异常路径 cleanup：对端 RST 触发 client.on(error) reject，cleanup 仍回收 client（首条 reject 整批）', async () => {
+    // WR-01 修复：之前用 sshHandle.port + 1（随机端口 +1）假定无监听，但 +1 端口在 CI runner 共享环境
+    // 可能被其他进程占用 → 偶发连上非预期 server → banner 等待 → timeout 而非立即 reject，testTimeout 内可能挂满。
+    // 改用一次性 RST server（accept 后立即 destroy）确定性触发 client 'error'（ECONNRESET / socket hang up），
+    // 同 handleLeak.real.test.ts it1 / arpCollector.real.test.ts 异常路径 it 同构。
+    const rstServer = net.createServer((socket) => {
+      socket.on('error', () => { /* ignore client reset */ })
+      socket.destroy() // accept 后立即 destroy 触发 client 端 'error'
+    })
+    await new Promise<void>((resolve) => rstServer.listen(0, '127.0.0.1', () => resolve()))
+    const rstPort = (rstServer.address() as net.AddressInfo).port
+
+    try {
+      const device = {
+        ipAddress: '127.0.0.1',
+        connectionType: 'ssh',
+        port: rstPort, // RST server 确定性触发 client.on('error')
+        username: 'test',
+        password: 'test',
+      }
+
+      // 首条命令连接失败 → reject 整批（ai.ts:437-439 语义）
+      await expect(executeCommandsOnDevice(device, ['show version'])).rejects.toThrow()
+
+      // cleanup 仍触发：client.end() 回收 socket，afterEach expectNoHandleLeak 验无泄漏
+    } finally {
+      await new Promise<void>((resolve) => rstServer.close(() => resolve()))
     }
-
-    // 首条命令连接失败 → reject 整批（ai.ts:437-439 语义）
-    await expect(executeCommandsOnDevice(device, ['show version'])).rejects.toThrow()
-
-    // cleanup 仍触发：client.end() 回收 socket，afterEach expectNoHandleLeak 验无泄漏
   })
 })

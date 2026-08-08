@@ -215,29 +215,42 @@ describe('句柄泄漏专项（异常场景 cleanup）', () => {
   })
 
   // ---- it 5: 混合 timeout + 正常连接（timeout 路径 cleanup 不影响后续连接） ----
-  it('混合 timeout + 正常：先触发一次 timeout cleanup（不可达端口），再跑正常连接验后续句柄干净', async () => {
-    // 第一次：指向未监听端口触发 connection refused（快速触发 client.on('error') cleanup）
-    const unreachableDevice = {
-      ipAddress: '127.0.0.1',
-      connectionType: 'ssh',
-      port: 1, // 端口 1 通常未监听 → ECONNREFUSED
-      username: 'test',
-      password: 'test',
-    }
-    await expect(executeCommandsOnDevice(unreachableDevice, ['show version'])).rejects.toThrow()
-    // timeout/error 路径 cleanup（client.end + clearTimeout）应已回收
+  it('混合 timeout + 正常：先触发一次 timeout cleanup（对端 RST），再跑正常连接验后续句柄干净', async () => {
+    // WR-01 修复：之前用 port: 1（保留端口）触发 ECONNREFUSED，Windows 上 1-1023 是保留端口，
+    // 可能返回 EACCES（permission）而非 ECONNREFUSED，断言不稳定；改用一次性 RST server 确定性触发。
+    const rstServer = net.createServer((socket) => {
+      socket.on('error', () => { /* ignore client reset */ })
+      socket.destroy() // accept 后立即 destroy 触发 client 端 'error'
+    })
+    await new Promise<void>((resolve) => rstServer.listen(0, '127.0.0.1', () => resolve()))
+    const rstPort = (rstServer.address() as net.AddressInfo).port
 
-    // 第二次：正常连接（验前一次的 cleanup 不影响后续连接，句柄干净）
-    const normalDevice = {
-      ipAddress: '127.0.0.1',
-      connectionType: 'ssh',
-      port: sshHandle.port,
-      username: 'test',
-      password: 'test',
+    try {
+      // 第一次：指向 RST server 触发 client.on('error') cleanup（确定性 ECONNRESET / socket hang up）
+      const unreachableDevice = {
+        ipAddress: '127.0.0.1',
+        connectionType: 'ssh',
+        port: rstPort, // RST server 确定性触发 client.on('error')
+        username: 'test',
+        password: 'test',
+      }
+      await expect(executeCommandsOnDevice(unreachableDevice, ['show version'])).rejects.toThrow()
+      // timeout/error 路径 cleanup（client.end + clearTimeout）应已回收
+
+      // 第二次：正常连接（验前一次的 cleanup 不影响后续连接，句柄干净）
+      const normalDevice = {
+        ipAddress: '127.0.0.1',
+        connectionType: 'ssh',
+        port: sshHandle.port,
+        username: 'test',
+        password: 'test',
+      }
+      const results = await executeCommandsOnDevice(normalDevice, ['show version'])
+      expect(results[0].success).toBe(true)
+      expect(results[0].output).toContain('Version 1.0-mock')
+      // afterEach expectNoHandleLeak 验混合场景下两条 cleanup 路径都无残留
+    } finally {
+      await new Promise<void>((resolve) => rstServer.close(() => resolve()))
     }
-    const results = await executeCommandsOnDevice(normalDevice, ['show version'])
-    expect(results[0].success).toBe(true)
-    expect(results[0].output).toContain('Version 1.0-mock')
-    // afterEach expectNoHandleLeak 验混合场景下两条 cleanup 路径都无残留
   })
 })

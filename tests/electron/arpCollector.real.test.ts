@@ -1,4 +1,5 @@
 import { describe, it, expect, afterAll, beforeAll, vi } from 'vitest'
+import net from 'net'
 
 /**
  * arpCollector SSH 真路径回归测试（Phase 12 Plan 12-02 Task 1，TEST-01 + TEST-02 executeSSH cleanup）。
@@ -128,29 +129,41 @@ describe('arpCollector — SSH 真路径回归（executeSSH + ARPParser + cleanu
     // afterEach 经 expectNoHandleLeak 自动断言 executeSSH cleanup 无泄漏（TCPWrap/Timeout）
   })
 
-  it('executeSSH 异常路径 cleanup：对端不可达触发 client.on(error)，cleanup 回收 client + 收入 error（TEST-02）', async () => {
-    // Rule 1 偏离（plan 原文 timeout 路径）：ssh2 真实 banner-wait timeout 在库内部行为下不可靠触发
-    //（silentServer accept 不握手会挂满 testTimeout），改用「端口未监听」触发 connection refused，
-    // 同样验证 executeSSH 的 client.on('error') → finish → cleanup(client.end) → reject 路径的句柄回收。
-    // 此路径与 ai.execCommands.real.test.ts 异常路径 it 同构（cleanup 在异常路径触发）。
-    const collector = new ARPCollector({ timeout: 5000 })
-    const device = {
-      id: 'dev-3',
-      name: 'UnreachableDev',
-      ipAddress: '127.0.0.1',
-      vendor: 'h3c',
-      connectionType: 'ssh',
-      port: 1, // 端口 1 通常未监听 → ECONNREFUSED 快速触发 client.on('error')
-      username: 'test',
-      password: 'test',
+  it('executeSSH 异常路径 cleanup：对端 RST 触发 client.on(error)，cleanup 回收 client + 收入 error（TEST-02）', async () => {
+    // WR-01 修复：之前用 port: 1（保留端口）触发 ECONNREFUSED，但 Windows 上 1-1023 是保留端口，
+    // 连接尝试可能返回 EACCES（permission）而非 ECONNREFUSED，ssh2 client 的 error 分支触发不稳定；
+    // 某些 Windows 配置下 1 端口可能被分配 → 反而连上未知服务，断言 error.truthy() 失败。
+    // 改用一次性 RST server（accept 后立即 destroy）确定性触发 client 'error'（ECONNRESET / socket hang up），
+    // 同 handleLeak.real.test.ts it1 / ai.execCommands.real.test.ts 异常路径 it 同构。
+    const rstServer = net.createServer((socket) => {
+      socket.on('error', () => { /* ignore client reset */ })
+      socket.destroy() // accept 后立即 destroy 触发 client 端 'error'
+    })
+    await new Promise<void>((resolve) => rstServer.listen(0, '127.0.0.1', () => resolve()))
+    const rstPort = (rstServer.address() as net.AddressInfo).port
+
+    try {
+      const collector = new ARPCollector({ timeout: 5000 })
+      const device = {
+        id: 'dev-3',
+        name: 'UnreachableDev',
+        ipAddress: '127.0.0.1',
+        vendor: 'h3c',
+        connectionType: 'ssh',
+        port: rstPort, // RST server 确定性触发 client.on('error')
+        username: 'test',
+        password: 'test',
+      }
+
+      const result = await collector.collectFromDevice(device)
+
+      // executeSSH client.on('error') → reject → collectFromDevice try/catch 收入 error
+      expect(result.error).toBeTruthy()
+      expect(result.entries).toEqual([])
+      // cleanup 触发 client.end()，afterEach expectNoHandleLeak 验无泄漏
+    } finally {
+      await new Promise<void>((resolve) => rstServer.close(() => resolve()))
     }
-
-    const result = await collector.collectFromDevice(device)
-
-    // executeSSH client.on('error') → reject → collectFromDevice try/catch 收入 error
-    expect(result.error).toBeTruthy()
-    expect(result.entries).toEqual([])
-    // cleanup 触发 client.end()，afterEach expectNoHandleLeak 验无泄漏
   })
 
   it('ARPParser.parse 业务逻辑回归：mock H3C 输出解析（独立单测，验证 ARPParser 与真路径一致）', () => {
