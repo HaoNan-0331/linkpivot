@@ -1,5 +1,20 @@
 # CHANGELOG
 
+## 2026-08-08 test(12-02): SSH/Telnet 真路径回归测试 + TEST-02 四条 cleanup 路径句柄泄漏自动化检测
+
+Phase 12 Plan 12-02 落地。DEP-1 ABI 缓解后，SSH（ai executeCommandsOnDevice/execOne + arpCollector executeSSH）与 Telnet（telnetExec executeTelnetCommand）经真实 ssh2/telnet-client 连 mock 对端回显，首次建立协议链路真路径回归网（此前仅 mock）。同时把 Phase 6 SC#4 + Phase 3 长期 defer 的人工 HV 句柄泄漏项转自动化（CONTEXT decision #4）。TEST-01（SSH/Telnet/DB 真路径）+ TEST-02（句柄泄漏检测）双 REQ 达成。零生产代码改动（SC4）。
+
+- **SSH 真路径（ai.execCommands.real.test.ts，5 it）**：真实 ssh2.Client 连 mockSshServer（ssh2.Server 内存级对端，crypto.generateKeyPairSync 随机 hostKey + listen(0,'127.0.0.1') loopback）。覆盖 executeCommandsOnDevice SSH 正常/多命令批量/telnet 反向分流（spy 断言 ssh2.Client 不参与）/execOne stream cleanup 句柄检测/异常路径（connection refused → client.on(error) → cleanup → reject）。
+- **SSH 真路径（arpCollector.real.test.ts，4 it）**：collectFromDevice ssh 路径经 mockSshServer 回显 H3C ARP 表 + ARPParser.parse 解析 + executeSSH cleanup 句柄检测 + 异常路径 cleanup。arpCollector 从 0 测试到有真路径。setArpMasterKey(MK_TEST) 注入不用真实 masterKey。
+- **Telnet 真路径（telnetExec.real.test.ts，5 it）**：真实 telnet-client 连 mockTelnetServer（net.Server echo + IAC 协商 DONT/WONT + stripIac）。覆盖 executeTelnetCommand 正常路径回显/finally cleanup 句柄检测/timeout cleanup（裸 net.Server accept 不发 prompt 触发外层 timer）+ pickDisablePaginationCmd/pickShellPrompt vendor 分流业务逻辑。telnetExec 从 0 测试到有真路径。
+- **TEST-02 四条 cleanup 路径全覆盖**：executeCommandsOnDevice cleanup（client.end + clearTimeout perCmdTimer）+ execOne cleanup（stream.close/destroy + clearTimeout timer/silenceTimer）+ executeSSH cleanup（client.end + timeout 路径 client.destroy）+ executeTelnetCommand finally cleanup（clearTimeout + connection.end/destroy）—— 经 handleLeakDetector（process.getActiveResourcesInfo snapshot 对比 + afterEach sleep(50) + wtfnode.dump best-effort 诊断）自动化检测无泄漏。
+- **A2 + telnet IAC 双 checkpoint 实跑 PASS**：A2 = ssh2.Server 在 ELECTRON_RUN_AS_NODE=1 下经 electron.exe 正常 listen/accept/authentication.accept/exec stream 回显全链路（RESEARCH Assumptions Log A2 闭合）；telnet IAC = mockTelnetServer 经真实 telnet-client connect 实跑确认不卡住（DONT/WONT 协商 + shellPrompt 匹配，RESEARCH+PATTERNS 未完全展开 checkpoint 闭合）。
+- **vi.mock 反向范式确立**：真路径测试对被测协议（ssh2/telnet-client）走真 binding 连 mock 对端，仅 vi.mock 非被测重依赖（commandSafety 让 service 干净加载 + connection 防 electron app 牵连 + device/telnetExec spy 防级联）。与 ai.telnetRouting.test.ts 的 vi.mock('ssh2') 形成正向/反向对照。
+- **handleLeakDetector 默认白名单反馈环（12-01 helper 改进）**：12-01 仅基于 db.real（无网络）设默认白名单 [Timeout, GetAddrInfoReqWrap]，SSH/Telnet 真路径暴露 TCPServerWrap（mock server listen socket）+ TCPWrap/SimpleWriteWrap（ssh2/telnet-client native stream libuv 释放延迟）跨文件漂移误报，补入默认白名单让 12-03 句柄专项不用每文件重复加。
+- **偏离记录（5 全 auto-fixed）**：4 Rule 1 bug（beforeAll import 漏 / MAC 归一化正则不匹配 / arpCollector+telnet 两处 timeout 场景构造因 ssh2/telnet-client 库内部行为不可靠触发改用 connection refused/裸 net.Server）+ 1 Rule 2 反馈环（handleLeakDetector 默认白名单补 native stream 句柄类型）。
+- **三绿门禁全绿零回归**：`npm run test:electron`（17/17 = db.real 3 + ai 5 + arpCollector 4 + telnetExec 5）/ `npm test`（244/244 17 文件无回归）/ `npm run build:electron-main`（esbuild main bundle OK）。SC4 `git diff --exit-code electron/` 退出 0（生产零改动，仅改 tests/ + helper）。
+- **证据**：`.planning/phases/12-test-infrastructure-dep-1-abi/12-02-SUMMARY.md` + 12-01-SUMMARY.md（4 helper 契约）+ 12-RESEARCH.md（A2/IAC checkpoint）+ 12-PATTERNS.md（vi.mock 反向范式）。
+
 ## 2026-08-07 fix(security): validateDrafts 加 [CMD]/[KB_SEARCH] 标记门禁 + ai_system_logs.type CHECK 扩 security（quick 260807-gfk）
 
 体检报告 §1.1 真 high 第 4 项（WR-01 反幻觉红线 prompt→代码层强制）+ 第 5 项（type CHECK widen security，v11 迁移双路径一致）的安全 hardening B 闭环。三红线（IPC 鉴权 / 字段加密 / commandSafety）零触碰。

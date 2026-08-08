@@ -70,7 +70,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 12-02-PLAN.md — SSH/Telnet 真路径回归（executeCommandsOnDevice/execOne/executeSSH/executeTelnetCommand + 四条 cleanup 句柄检测）
+- [x] 12-02-PLAN.md — SSH/Telnet 真路径回归（executeCommandsOnDevice/execOne/executeSSH/executeTelnetCommand + 四条 cleanup 句柄检测 + A2/IAC 双 checkpoint PASS）
 - [ ] 12-03-PLAN.md — 句柄泄漏专项（异常场景）+ build-smoke.yml CI 扩展（CI-A/B/C 用户决策 + GHA 实跑确认）
 
 **Risk / 红线:**
@@ -155,8 +155,8 @@ Phases execute in numeric order: 12 → 13 → 14
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TEST-01 | Phase 12 | Pending |
-| TEST-02 | Phase 12 | Pending |
+| TEST-01 | Phase 12 | Done (12-01 DB + 12-02 SSH/Telnet 真路径全绿) |
+| TEST-02 | Phase 12 | Done (12-02 四条 cleanup 路径泄漏检测全绿) |
 | SEC-03 | Phase 13 | Pending |
 | SEC-04 | Phase 13 | Pending |
 | SEC-05 | Phase 13 | Pending |

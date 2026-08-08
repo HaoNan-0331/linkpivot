@@ -12,8 +12,8 @@
 
 ### TEST（测试基础设施）
 
-- [ ] **TEST-01**: SSH/Telnet/DB/better-sqlite3 真路径可自动化回归 — DEP-1 ABI 缓解：electron-vite + vitest 集成跑 Electron 内测试，消除 plain Node 无法加载 @electron/rebuild 重建的 native binding 限制
-- [ ] **TEST-02**: 句柄泄漏可自动化检测 — execOne / executeCommandsOnDevice / executeTelnet 的 try/finally 句柄回收回归（替代 Phase 6 SC#4 人工 HV，闭合 DEP-1 长期 defer 项）
+- [x] **TEST-01**: SSH/Telnet/DB/better-sqlite3 真路径可自动化回归 — DEP-1 ABI 缓解：electron-vite + vitest 集成跑 Electron 内测试，消除 plain Node 无法加载 @electron/rebuild 重建的 native binding 限制 *(Done 2026-08-08: 12-01 DB 真路径 + 12-02 SSH/Telnet 真路径全绿，落地形式修正为 ELECTRON_RUN_AS_NODE electron.exe 跑 vitest 非 electron-vite)*
+- [x] **TEST-02**: 句柄泄漏可自动化检测 — execOne / executeCommandsOnDevice / executeTelnet 的 try/finally 句柄回收回归（替代 Phase 6 SC#4 人工 HV，闭合 DEP-1 长期 defer 项） *(Done 2026-08-08: 12-02 四条 cleanup 路径 executeCommandsOnDevice/execOne/executeSSH/executeTelnetCommand 句柄泄漏自动化检测全绿)*
 
 ### SEC（安全加固，继 v1.1 SEC-01/02）
 
@@ -52,8 +52,8 @@ Phase 编号续 v1.1（止于 Phase 11）→ v1.2 从 **Phase 12** 起（不 res
 
 | Requirement | Phase | Status | Notes |
 |-------------|-------|--------|-------|
-| TEST-01 | Phase 12 | Pending | DEP-1 ABI 缓解基础设施，下游 phase 回归网 |
-| TEST-02 | Phase 12 | Pending | 依赖 TEST-01 electron-vite+vitest 通道，同 phase |
+| TEST-01 | Phase 12 | Done | DEP-1 ABI 缓解基础设施（ELECTRON_RUN_AS_NODE electron.exe 跑 vitest），12-01 DB + 12-02 SSH/Telnet 真路径全绿 |
+| TEST-02 | Phase 12 | Done | 12-02 四条 cleanup 路径泄漏检测全绿（executeCommandsOnDevice/execOne/executeSSH/executeTelnetCommand） |
 | SEC-03 | Phase 13 | Pending | connection.ts 内联 algorithms 补 curve25519 |
 | SEC-04 | Phase 13 | Pending | pre-release 安全项 L1/L4/L6/L2/L3 收尾 |
 | SEC-05 | Phase 13 | Pending | experience:list 入参校验防廉价 DoS（WR-06） |
