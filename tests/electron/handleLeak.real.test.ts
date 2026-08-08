@@ -6,15 +6,16 @@ import net from 'net'
  *
  * 与 Plan 12-02 的真路径回归测试（ai.execCommands.real / arpCollector.real / telnetExec.real）的差异：
  *   - 12-02 覆盖四条 cleanup 路径的「正常 + 单异常」入口（连接不可达 / timeout）；
- *   - 本文件聚焦「异常场景专项」——构造对端 RST / stream error / telnet 断连不响应 / 长时间循环累积
+ *   - 本文件聚焦「异常场景专项」——构造对端 RST / stream error / 长时间循环累积
  *     / 混合 timeout + 正常连接等更极端/累积场景，验各 service cleanup 在异常路径下仍无句柄泄漏。
+ *     （WR-07：原 telnet 断连 timeout it 已删除，telnetExec.real.test.ts it3 干净覆盖同场景）
  *
  * 闭合 Phase 3 长时间运行 defer 项 + Phase 6 SC#4 人工 HV 句柄检测（CONTEXT decision #4）。
  *
  * 复用 12-01/12-02 helper：
  *   - startMockSshServer: ssh2.Server 内存级 SSH 对端（随机 hostKey + loopback）
- *   - startMockTelnetServer: net.Server telnet echo + IAC 协商响应
  *   - expectNoHandleLeak(): afterEach 句柄泄漏检测（默认白名单已含 TCPServerWrap/TCPWrap/SimpleWriteWrap 反馈环）
+ *   （WR-07：startMockTelnetServer 不再 import，原 telnet it3 删除后聚焦 SSH 异常 + 累积场景）
  *
  * Mock 策略（同 12-02 ai.execCommands.real.test.ts —— 让 ai.ts 干净加载，仅 mock 非被测重依赖）：
  *   - commandSafety / knowledgeBaseService / aiExecLogger / experienceRetrieval / getDatabase / telnetExec 全 mock
@@ -70,10 +71,11 @@ vi.mock('../../electron/utils/telnetExec', async () => {
 })
 
 // ssh2 不 mock —— 真实 import（被测协议走真 binding，异常场景在 mock 对端侧构造）
-// 注意：executeTelnetCommand 经 vi.importActual 在 it 3 内取真实实现（顶部 spy mock 不能直接用）
+// ssh2 不 mock —— 真实 import（被测协议走真 binding，异常场景在 mock 对端侧构造）
+// WR-07：原 it3 经 vi.importActual 取真实 executeTelnetCommand 已删除（嵌套脆弱 + telnetExec.real.test.ts it3 已覆盖），
+// 故 startMockTelnetServer 不再 import（本文件聚焦 SSH 异常 + 累积场景）。
 import { executeCommandsOnDevice } from '../../electron/services/ai'
 import { startMockSshServer } from './_helpers/mockSshServer'
-import { startMockTelnetServer } from './_helpers/mockTelnetServer'
 import { expectNoHandleLeak } from './_helpers/handleLeakDetector'
 
 // 句柄泄漏检测：默认白名单（handleLeakDetector 12-01 落地 + 12-02 反馈环补入 TCPServerWrap/TCPWrap/SimpleWriteWrap）
@@ -83,24 +85,19 @@ expectNoHandleLeak()
 
 describe('句柄泄漏专项（异常场景 cleanup）', () => {
   let sshHandle: { port: number; close: () => Promise<void> }
-  let telnetHandle: { port: number; close: () => Promise<void> }
 
   beforeAll(async () => {
-    // 正常回显的 mock SSH / Telnet 对端（多个 it 复用，循环 + 混合场景用）
+    // 正常回显的 mock SSH 对端（it2/it4/it5 复用，循环 + 混合场景用）
+    // WR-07：原 telnetHandle 已移除（it3 删除后无 it 用 telnet 真路径，聚焦 SSH 异常 + 累积）
     sshHandle = await startMockSshServer((cmd) => {
       if (cmd.includes('show version')) return 'MockDevice# show version\nVersion 1.0-mock\n'
       return `MockDevice# ${cmd}\nok\n`
     })
-    telnetHandle = await startMockTelnetServer((cmd) => {
-      if (cmd.includes('show version')) return 'Version 1.0-mock'
-      return `ok: ${cmd}`
-    }, 'mock#')
   })
 
   afterAll(async () => {
     // Pitfall 4：mock server 异步 close，await 等 close 回调（否则句柄泄漏误报）
     await sshHandle.close()
-    await telnetHandle.close()
   })
 
   // ---- it 1: SSH 对端 RST —— server accept 连接后立即 destroy 模拟 RST，验 client.on(error) cleanup ----
@@ -158,42 +155,11 @@ describe('句柄泄漏专项（异常场景 cleanup）', () => {
     }
   })
 
-  // ---- it 3: telnet 对端断连 / 连接不响应 —— server accept 后不发任何数据，触发 finally timeout cleanup ----
-  // Rule 1 偏离（plan 原文「对端 EOF / socket.end()」）：实测发现对端立即 socket.end() 发 FIN 时，
-  // telnet-client connect 会收到空数据并 resolve 空字符串（而非 reject），无法触发 finally 的 destroy 路径。
-  // 改用裸 net.Server accept 后不发任何数据（不发 shellPrompt 也不发 FIN），与 12-02 telnetExec.real.test.ts it 3
-  // timeout 场景同构：telnet-client connect 等不到 shellPrompt → 外层 setTimeout 兜底触发 reject → finally destroy。
-  // 同样验证 executeTelnetCommand finally cleanup（clearTimeout + connection.destroy）的句柄回收。
-  //
-  // 注意：顶部对 '../../electron/utils/telnetExec' 做了 importActual+spy mock（防 ai.ts 级联），
-  // 故本 it 经 vi.importActual 取真实 executeTelnetCommand（不能直接用顶部 import 的 spy，它会返回 undefined）。
-  it('telnet 对端断连：server accept 不发数据触发 connect timeout，finally destroy cleanup 无泄漏', async () => {
-    const silentServer = net.createServer((socket) => {
-      // 故意不写任何数据，socket 保持打开但不发 prompt（也不主动 end/destroy）
-      socket.on('error', () => { /* ignore client reset on destroy */ })
-    })
-    await new Promise<void>((resolve) => silentServer.listen(0, '127.0.0.1', () => resolve()))
-    const silentPort = (silentServer.address() as net.AddressInfo).port
-
-    // 取真实 executeTelnetCommand（绕过顶部 spy mock，连真实 telnet-client）
-    const telnetExecReal = await vi.importActual<typeof import('../../electron/utils/telnetExec')>(
-      '../../electron/utils/telnetExec'
-    )
-
-    try {
-      await expect(
-        telnetExecReal.executeTelnetCommand(
-          '127.0.0.1', silentPort,
-          'test', 'test',
-          'show version',
-          { timeout: 500, shellPrompt: /silent#/ }
-        )
-      ).rejects.toThrow(/timeout/i)
-      // afterEach expectNoHandleLeak 验 finally cleanup（clearTimeout + connection.destroy）无残留
-    } finally {
-      await new Promise<void>((resolve) => silentServer.close(() => resolve()))
-    }
-  })
+  // ---- it 3 已删除（WR-07 修复）：原 it3 经 vi.importActual 取真实 executeTelnetCommand 验 telnet
+  // silent server timeout cleanup，但顶部已 vi.mock telnetExec（importActual+spy），importActual
+  // 嵌套在 mock factory 内在 vitest 4 + ESM + Electron RUN_AS_NODE 下行为脆弱。telnetExec.real.test.ts
+  // it3（顶部不 mock telnetExec）已干净覆盖同场景（silent server + short timeout → finally destroy cleanup），
+  // 故删此 it 避免重复 + 嵌套脆弱性。本文件聚焦 SSH 异常 + 累积场景即可。
 
   // ---- it 4: 长时间运行多次连接循环累积（Phase 3 长时间运行 defer 场景） ----
   it('长时间运行循环累积：连续 5 次连 mockSshServer 跑短命令，每次 cleanup 后无累积 TCPWrap（Phase 3 defer）', async () => {
