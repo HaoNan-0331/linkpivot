@@ -59,12 +59,19 @@ export function startMockTelnetServer(
       })
     })
 
-    server.on('error', (err: unknown) => {
-      reject(err)
-    })
+    // CR-02 修复：error handler 分两阶段 —— listen 阶段用 once + reject（仅 listen/early error 有效），
+    // listen 成功后解绑 reject 改挂运行期 error → console.error（不再静默吞）。
+    // 之前 server.on('error')→reject 在 listen resolve 之后是 no-op，运行期 accept/connection error 全被吞。
+    const onListenError = (err: unknown) => reject(err)
+    server.once('error', onListenError)
 
     // 严格 loopback + 端口 0 随机分配（T-12-02 mitigate）
     server.listen(0, '127.0.0.1', () => {
+      // listen 成功：解绑 listen 阶段 reject，改挂运行期 error → console.error（让 CI 日志可见，不静默吞）
+      server.off('error', onListenError)
+      server.on('error', (err) => {
+        console.error('[mockTelnetServer] runtime error:', err)
+      })
       const addr = server.address()
       const port = typeof addr === 'object' && addr ? addr.port : -1
       resolve({

@@ -51,12 +51,22 @@ export function startMockSshServer(onExec: (cmd: string) => string): Promise<Moc
       })
     })
 
-    server.on('error', (err: unknown) => {
-      reject(err)
-    })
+    // CR-02 修复：error handler 分两阶段 —— listen 阶段用 once + reject（仅 listen/early error 有效），
+    // listen 成功后解绑 reject 改挂运行期 error → console.error（不再静默吞）。
+    // 之前 server.on('error')→reject 在 listen resolve 之后是 no-op，运行期 accept/connection error 全被吞，
+    // CI 上表现为「测试间歇性静默挂起或断言失败但无 error 线索」。
+    const onListenError = (err: unknown) => reject(err)
+    server.once('error', onListenError)
 
     // 严格 loopback + 端口 0 随机分配（T-12-02 mitigate）
     server.listen(0, '127.0.0.1', () => {
+      // listen 成功：解绑 listen 阶段 reject，改挂运行期 error → console.error（让 CI 日志可见，不静默吞）
+      server.off('error', onListenError)
+      server.on('error', (err) => {
+        // 运行期 error（accept 阶段 connection error / ssh2 内部 stream error 传播到 server）
+        // 不应静默 —— 打到 stderr 让 CI 日志可见，便于定位「测试间歇性静默挂起」类问题
+        console.error('[mockSshServer] runtime error:', err)
+      })
       const addr = server.address()
       const port = typeof addr === 'object' && addr ? addr.port : -1
       resolve({
