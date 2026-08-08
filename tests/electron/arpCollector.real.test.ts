@@ -59,11 +59,10 @@ import { expectNoHandleLeak } from './_helpers/handleLeakDetector'
 const MK_TEST = 'test-master-key-32-bytes-ok!!'
 setArpMasterKey(MK_TEST)
 
-// 放行说明：
-//   - TCPServerWrap: mockSshServer 自身的 listen socket（beforeAll 起 afterAll 关，afterEach 时仍在 listen = 预期）
-//                    + timeout it 内 silentNetServer 的 listen socket（it 内 close 但 afterEach 可能时序残留）
-//   - TCPWrap: ssh2.Client connect 短暂持 socket，afterEach sleep(50) 内应释放；放行防偶发误报
-expectNoHandleLeak(['TCPServerWrap', 'TCPWrap'])
+// 句柄泄漏检测：默认白名单（handleLeakDetector 12-01 落地 + 12-02 反馈环补入 TCPServerWrap/TCPWrap/SimpleWriteWrap）
+// 已覆盖 mock server listen socket + ssh2/telnet-client native stream libuv 句柄释放延迟，
+// 此处不传 extraAllow，仅检测被测代码（executeSSH cleanup）的真实泄漏。
+expectNoHandleLeak()
 
 // H3C ARP 表样例输出（ARPParser.parseH3C 解析格式：IP MAC Type Interface Aging）
 // MAC 在源数据用 H3C 原生格式 0000-5e00-0101，ARPParser.parseH3C 经 normalizeMAC 归一化为冒号格式 00:00:5e:00:01:01

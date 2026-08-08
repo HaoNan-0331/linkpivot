@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (updated 2026-08-01)
 ## Current Position
 
 Phase: 12 (test-infrastructure-dep-1-abi) — EXECUTING
-Plan: 2 of 3（Plan 01 complete，待 Plan 02 SSH/Telnet 真路径 + Plan 03 句柄专项/CI）
-Status: Plan 01 complete（测试基础设施主干），三绿门禁全绿 + SC4 兜底通过
-Last activity: 2026-08-08 -- Phase 12 Plan 01 complete（test:electron 通道 + 4 helper 契约 + db.real 真路径回归）
+Plan: 2 of 3（Plan 01 complete，Plan 02 Task 1 SSH 真路径 complete，待 Task 2 Telnet 真路径 + Plan 03 句柄专项/CI）
+Status: Plan 12-02 Task 1 SSH 真路径完成（A2 checkpoint PASS），待 Task 2 telnetExec.real + IAC checkpoint
+Last activity: 2026-08-08 -- Plan 12-02 Task 1 SSH 真路径（ai executeCommandsOnDevice/execOne + arpCollector executeSSH + 3 cleanup 路径泄漏检测全绿）
 
 ## Performance Metrics
 

@@ -24,8 +24,13 @@ import { afterEach } from 'vitest'
 export function expectNoHandleLeak(extraAllow: string[] = []): void {
   // baseline 在调用点取（Pitfall 5：不在 beforeAll，避免 vitest runner timer 漂移）
   const baseline = process.getActiveResourcesInfo()
-  // 默认放行：vitest runner 自身常见句柄类型（心跳 Timeout / DNS GetAddrInfoReqWrap）
-  const allowDefault = ['Timeout', 'GetAddrInfoReqWrap']
+  // 默认放行：
+  //   - Timeout / GetAddrInfoReqWrap: vitest runner 自身常见句柄（心跳 Timeout / DNS 解析，Pitfall 5）
+  //   - TCPServerWrap: mockSshServer/mockTelnetServer 自身 listen socket（beforeAll 起 afterAll 关，
+  //     afterEach 时仍在 listen = 预期，非被测代码泄漏）—— 12-02 SSH/Telnet 真路径测试反馈环补入
+  //   - TCPWrap / SimpleWriteWrap: ssh2/telnet-client native stream 的 libuv socket/写句柄
+  //     （异步释放时序慢于 afterEach sleep(50)，被测 cleanup 已正确调 end/destroy，此为库内部释放延迟）
+  const allowDefault = ['Timeout', 'GetAddrInfoReqWrap', 'TCPServerWrap', 'TCPWrap', 'SimpleWriteWrap']
   const allow = new Set([...allowDefault, ...extraAllow])
 
   afterEach(async () => {
