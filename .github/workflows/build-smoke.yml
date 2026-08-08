@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
       - run: npm ci
       # mock 套件（plain node vitest，244 用例，不碰 native binding）必须在 rebuild:native 之前跑
