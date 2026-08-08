@@ -66,7 +66,7 @@
 Plans:
 **Wave 1**
 
-- [ ] 12-01-PLAN.md — 测试基础设施主干（双 vitest config + test:electron script + 四个 helper + DB 真路径 + SC4 git diff 兜底）
+- [x] 12-01-PLAN.md — 测试基础设施主干（双 vitest config + test:electron script + 四个 helper + DB 真路径 + SC4 git diff 兜底）
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -147,7 +147,7 @@ Phases execute in numeric order: 12 → 13 → 14
 | 9. Human Review & Confirmation | v1.1 | 3/3 | Complete | 2026-08-05 |
 | 10. Experience Browse Page | v1.1 | 4/4 | Complete | 2026-08-06 |
 | 11. AI Retrieval & Reuse | v1.1 | 2/2 | Complete | 2026-08-06 |
-| 12. Test Infrastructure (DEP-1 ABI 缓解) | v1.2 | 0/3 | Not started | - |
+| 12. Test Infrastructure (DEP-1 ABI 缓解) | v1.2 | 1/3 | In Progress|  |
 | 13. Security Hardening Cluster | v1.2 | 0/TBD | Not started | - |
 | 14. Defect & Legacy Rollback Closure | v1.2 | 0/TBD | Not started | - |
 

@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: 安全与稳定性加固
 status: executing
-last_updated: "2026-08-07T15:32:43.711Z"
-last_activity: 2026-08-07 -- Phase 12 planning complete
+last_updated: "2026-08-08T02:56:10.000Z"
+last_activity: 2026-08-08 -- Phase 12 Plan 01 complete（测试基础设施主干）
 progress:
   total_phases: 3
   completed_phases: 0
   total_plans: 3
-  completed_plans: 0
-  percent: 0
+  completed_plans: 1
+  percent: 11
 ---
 
 # STATE: network_toplogy
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-08-01)
 
 ## Current Position
 
-Phase: 12 of 14 (Test Infrastructure — DEP-1 ABI 缓解)
-Plan: —
-Status: Ready to execute
-Last activity: 2026-08-07 -- Phase 12 planning complete
+Phase: 12 (test-infrastructure-dep-1-abi) — EXECUTING
+Plan: 2 of 3（Plan 01 complete，待 Plan 02 SSH/Telnet 真路径 + Plan 03 句柄专项/CI）
+Status: Plan 01 complete（测试基础设施主干），三绿门禁全绿 + SC4 兜底通过
+Last activity: 2026-08-08 -- Phase 12 Plan 01 complete（test:electron 通道 + 4 helper 契约 + db.real 真路径回归）
 
 ## Performance Metrics
 
@@ -132,6 +132,15 @@ Phase 11 执行期决策（11-02 落地）：
 - [Phase 11]: 11-02 kb_answer 分支 map 补 kind:'kb'——ai.ts KB_SEARCH 返的 kbReferences 无 kind 字段，ReferenceItem 联合类型需显式 kind 类型安全（运行时已有 kind 直接透传）
 - [Phase 11]: 11-02 ChatMessageList renderRef 按 ref.kind 分流（kb 保持既有 BookOutlined / experience 可点开 ExperienceDetailModal / session 可点开 SessionMessagesModal），session 走末尾 else 不写显式条件；D-11-7 命令失支持用 antd Tag color='warning' 既有色枚举不引 hex 新色；D-11-12 复用 Phase 10/9 既有 Modal 零新建浏览只读场景不传 onEdit 等回调
 
+Phase 12 执行期决策（12-01 落地）：
+
+- [Phase 12]: 12-01 test:electron 通道落地——cross-env ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/electron.exe node_modules/vitest/vitest.mjs run --config vitest.electron.config.ts（直连 electron.exe 路径非 CLI，Pitfall 2）；A1 checkpoint 实跑确认 vitest/4.1.5 经此入口可调起（Node v24.14.0 内嵌，NODE_MODULE_VERSION 与 @electron/rebuild 重建后一致）；不装 electron-vite/electron-vitest（vite 8 peer 不兼容 + alpha 死包，RESEARCH 已否决）
+- [Phase 12]: 12-01 双 vitest config 物理隔离（Pitfall 6）——plain vitest.config.ts 加 exclude tests/electron/**（Rule 3 阻塞性修复：原 include tests/**/*.test.ts 会采集 db.real.test.ts 致 plain node npm test 加载 electron-ABI better-sqlite3 触发 NODE_MODULE_VERSION 145≠137 ABI 崩 DEP-1），新 vitest.electron.config.ts include 仅 tests/electron/**；此修改非 SC4 触发（vitest.config.ts 是 root 测试配置非 electron/ 生产代码，git diff electron/ 退出 0）
+- [Phase 12]: 12-01 OQ#1 注入策略方案 A（零生产改动）——DB 真路径测试直持 makeRealDb() 返回的真实 better-sqlite3 实例跑 CRUD/迁移，不调 getDatabase() 单例（connection.ts import electron app/backupScheduler 重依赖 vi.mock 牵连过广）；realDb 不 import 生产 init.ts/migrations.ts（createTables/runMigrations 用 getDatabase() 单例无 db 参数），runMigrations 选项跑独立幂等 DDL（hasColumn 守卫模式验证，Rule 2 关键功能 fallback）；Plan 12-02 service 真路径测试用 vi.mock 注入 realDb 实例
+- [Phase 12]: 12-01 四 helper 接口契约落地（Plan 12-02/12-03 复用）——realDb { db, dbPath, close }（os.tmpdir 唯一名 + pragma WAL/foreign_keys/busy_timeout/wal_autocheckpoint + close 严格删主文件/-wal/-shm try/catch ENOENT）/ mockSshServer { port, close }（ssh2.Server + crypto.generateKeyPairSync 随机 hostKey T-12-01 + listen(0,'127.0.0.1') loopback T-12-02 + close 返回 Promise Pitfall 4）/ mockTelnetServer { port, close }（net.Server + IAC 协商 checkpoint：识别 0xFF 回 DONT/WONT + stripIac）/ handleLeakDetector expectNoHandleLeak(extraAllow?)（getActiveResourcesInfo snapshot + afterEach sleep(50) Pitfall 4 + 默认放行 Timeout/GetAddrInfoReqWrap Pitfall 5 + wtfnode.dump best-effort A4）
+- [Phase 12]: 12-01 wtfnode@0.10.1 装入 devDep（不进生产打包）——npm_config_proxy="" npm_config_https_proxy="" --registry=npmjs.org --userconfig=/dev/null 四件套绕开 ~/.npmrc 配的 npmmirror proxy 127.0.0.1:10809 ECONNREFUSED（Rule 3 阻塞性，proxy 配置覆盖 registry 单 --registry flag 不够）
+- [Phase 12]: 12-01 三绿门禁全绿 + SC4 兜底通过——test:electron 3/3（db.real CRUD/迁移幂等/WAL）+ npm test 244/244（17 文件无回归）+ build:electron-main esbuild OK（native 外部化清单未破坏）+ git diff --exit-code electron/ 退出 0（生产零改动）；A2/A4/telnet IAC checkpoint 待 Plan 12-02/12-03 实跑闭合
+
 v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 
 - 加密/迁移改动必须向后兼容历史数据（v1/v2 IV 兼容、迁移幂等守卫靠 sqlite_master 特征串不靠 user_version、throw 即 ROLLBACK）
@@ -153,6 +162,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 - [x] 10-04-PLAN.md — Phase 10 gap closure（5 项必修：CR-01 restoreExperience 双层守卫 service+SQL + CR-02 backfillSeverityFromHistory 幂等回填钩子 main.ts post-MK 调用 + WR-01 tags LIKE ESCAPE 转义 + WR-02 setExperienceDevices 单事务原子 IPC 三向一致 + 问题 2 状态 Select 联动 includeInvalid + invalidOnly service 路径 + 问题 1a ExperienceEditForm 设备 filter 放开全类型 + WR-05 两处 formatTs 兼容 ISO + WR-03 顺手清，2 fix commits 29021cc/411b8e5，9 新 vitest 用例 CR-01 4+CR-02 2+WR-01 1+WR-02 2，三绿门禁 tsc+vite build+electron-main+vitest 200/200 全绿零回归，IPC experience:setDevices 三向一致，5 gap grep 全断言通过）
 - [x] 11-01-PLAN.md — Phase 11 main 进程 service 层（experienceRerank.ts 精排强 schema LLM 评分 exp_id 防编造 + score 边界归一化 + 3 次重试 + 反幻觉 prompt + experienceRetrieval.ts 编排 retrieveForAnswer 粗筛窄查/宽匹配双分支 + 阈值过滤 + read-time 两项验证有效期剔除/命令失支持降权 + 命中刷新计数不阻塞 + ai.ts chat() b 自动预取串联 retrieveForAnswer + 经验正文注入 systemPrompt + exp_answer 返回类型 references 联合，2 commits e4c0809/8653f90，30 新 vitest 用例，三绿门禁 tsc+build+build:electron-main+vitest 230/230 全绿零回归，零迁移零新表零加密列触碰，renderer 永不收 attrs 密文）
 - [x] 11-02-PLAN.md — Phase 11 renderer 层引用溯源（types.ts ReferenceItem 联合类型 kb/experience/session + ChatMsg.references 扩联合 + useAIChat exp_answer 消费 camelCase 字段对齐 ai.ts:835 实际契约非 plan 文档笔误 snake_case + kb_answer 分支 map 补 kind:'kb' + session 引用从 experience.sourceSessionId 拆出 D-11-10 + ChatMessageList renderRef 按 kind 分流渲染 + 复用 Phase 10 ExperienceDetailModal/Phase 9 SessionMessagesModal 零新建 D-11-12 + 命令失支持 antd Tag color=warning 既有色 D-11-7，2 commits 987b9c4/b683b84，四绿门禁 tsc+vite build+build:electron-main+vitest 230/230 全绿零回归，acceptance grep 全断言通过，RETRIEVE-03 UI 层全落地）
+- [x] 12-01-PLAN.md — Phase 12 测试基础设施主干（DEP-1 ABI 缓解：test:electron 通道 cross-env ELECTRON_RUN_AS_NODE=1 electron.exe vitest.mjs + 双 vitest config 物理隔离 Pitfall 6 + wtfnode@0.10.1 devDep + 4 helper 契约 realDb/mockSshServer/mockTelnetServer/handleLeakDetector + db.real.test.ts 真路径 CRUD/迁移幂等/WAL，3 commits aea9154/3022350/dae9f18，A1 实跑确认 vitest/4.1.5，OQ#1 方案 A 零生产改动，4 deviations 全 auto-fixed（2 Rule 3 阻塞性 + 2 Rule 2 关键功能），三绿门禁 test:electron 3/3 + npm test 244/244 + build:electron-main 全绿零回归，SC4 git diff electron/ 退出 0）
 
 ### Blockers/Concerns
 
@@ -187,6 +197,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 | Phase 11 P02 | ~6min | 2 tasks | 3 files |
 | 260807-fzd | 清理 dead code：删 @types/uuid + vendor-commands.ts + ai.ts 单数 wrapper | 2026-08-07 | 0bd4dbd/287e26c/d3f5e08 | [260807-fzd-dead-code-types-uuid-vendor-commands-ts-](./quick/260807-fzd-dead-code-types-uuid-vendor-commands-ts-/) |
 | 260807-gfk | 安全 hardening B：validateDrafts 标记扫描 + ai_system_logs CHECK 扩 security v11 | 2026-08-07 | 5a824cd/8af620b/11f8f57 | [260807-gfk-hardening-b-validatedrafts-cmd-kb-search](./quick/260807-gfk-hardening-b-validatedrafts-cmd-kb-search/) |
+| Phase 12 P01 | ~76min | 3 tasks | 10 files |
 
 ### Risk Watch
 
@@ -229,8 +240,8 @@ v1.1 明确 defer 到二期（4 FUTURE，不进 roadmap）：
 
 ## Session Continuity
 
-- **Last action**: v1.2 roadmap 创建（ROADMAP.md 重写为 v1.2：Phases 12-14 续 v1.1 sequential naming，7 REQ 全映射覆盖率 7/7；Phase 12 TEST-01/02 测试基础设施 → Phase 13 SEC-03/04/05 安全加固 cluster → Phase 14 FIX-01/02 缺陷+旧规划回退闭环；REQUIREMENTS.md traceability 段填好 REQ→Phase 映射）
-- **Next action**: `/gsd:plan-phase 12`（Test Infrastructure — DEP-1 ABI 缓解：electron-vite + vitest 集成跑 Electron 内测试，补 SSH/Telnet/DB 真路径自动化回归 + 句柄泄漏自动化；4 SC：native binding ABI 冲突消除 / 真路径回归用例 / 句柄自动化检测 / 不改生产代码路径）
+- **Last action**: Phase 12 Plan 01 complete（测试基础设施主干：test:electron 通道 + 双 vitest config 物理隔离 + 4 helper 契约 + db.real 真路径回归 + wtfnode devDep；A1 实跑确认 vitest/4.1.5 经 electron.exe 可调起；OQ#1 方案 A 零生产改动；三绿门禁全绿 + SC4 兜底通过）
+- **Next action**: 继续 Phase 12 Plan 02（SSH/Telnet 真路径测试，复用 12-01 的 mockSshServer/mockTelnetServer/realDb/handleLeakDetector 契约；A2 checkpoint 待 ssh2.Server 在 ELECTRON_RUN_AS_NODE 下 listen 实跑确认；telnet IAC 协商待 telnetExec.real 连真实 telnet-client 实跑确认）+ Plan 03（句柄泄漏专项 + CI 扩展）
 - **Resume command**: `/gsd-status`
 
 ## Phase → Requirement Map
