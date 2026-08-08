@@ -13,7 +13,8 @@
     "rebuild:native": "electron-rebuild -f -w better-sqlite3 -w ssh2",
     "electron:build": "npm run rebuild:native && npm run build && electron-builder",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:electron": "cross-env ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/electron.exe node_modules/vitest/vitest.mjs run --config vitest.electron.config.ts"
   },
   "dependencies": {
     "@ant-design/icons": "^6.2.2",
@@ -48,7 +49,8 @@
     "typescript": "^6.0.3",
     "vite": "^8.0.11",
     "vitest": "^4.1.5",
-    "wait-on": "^9.0.5"
+    "wait-on": "^9.0.5",
+    "wtfnode": "^0.10.1"
   },
   "keywords": [],
   "author": "wanghaonan",

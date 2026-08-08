@@ -21,3 +21,6 @@ master.key
 
 # GSD debug 笔记（bug 复盘含真实场景数据，过程产物不公开上传）
 .planning/debug/
+
+# 百度云同步客户端临时上传标记（运行时产物，不应提交）
+*.baiduyun.uploading.cfg
