@@ -15,7 +15,7 @@
 //   零生产代码改动（SC4 红线最优解）。
 
 import { describe, it, expect, afterEach } from 'vitest'
-import { makeRealDb } from './_helpers/realDb'
+import { makeRealDb, runStandaloneMigrations } from './_helpers/realDb'
 
 // 集中持有本次测试的 db handle，afterEach 统一 close 清理（realDb.close 自带 db.close + unlink 侧车）
 let handle: ReturnType<typeof makeRealDb> | null = null
@@ -60,7 +60,7 @@ describe('DB 真路径回归（electron-ABI better-sqlite3）', () => {
     expect(remaining.cnt).toBe(1)
   })
 
-  it('迁移幂等：makeRealDb runMigrations 连跑两次第二次 no-op（hasColumn 守卫）', () => {
+  it('迁移幂等：runStandaloneMigrations 真二次调用 no-op（hasColumn 守卫，WR-06）', () => {
     // 第一次：fresh-install 跑迁移（建 experiences 表 + ALTER ADD severity 守卫）
     handle = makeRealDb({ runMigrations: true })
     const { db } = handle
@@ -79,14 +79,11 @@ describe('DB 真路径回归（electron-ABI better-sqlite3）', () => {
     expect(colNames).toContain('id')
     expect(colNames).toContain('title')
 
-    // 在同 db 上「再跑一次迁移」（模拟二次启动 no-op）：直接再调 makeRealDb 的 runMigrations 逻辑等价
+    // 在同 db 上「真二次调用 runStandaloneMigrations」（WR-06 修复：之前手写裸 SQL 等价，
+    // 没真验 helper 的 hasColumn 守卫逻辑，若守卫写错如 !hasColumn 误为 hasColumn 致重复 ALTER
+    // 抛 duplicate column，本测试测不出来）。现在真调 helper 第二次，验 no-op（不抛）+ 表结构未变。
     // —— 复刻生产迁移幂等守卫：CREATE TABLE IF NOT EXISTS + hasColumn 守卫 ALTER，第二次不抛、表结构未变
-    db.transaction(() => {
-      db.exec('CREATE TABLE IF NOT EXISTS experiences (id TEXT PRIMARY KEY, title TEXT NOT NULL, severity TEXT, created_at TEXT DEFAULT (datetime(\'now\',\'localtime\')))')
-      // hasColumn 守卫命中（severity 已存在）→ 不 ALTER
-      const hasSev = (db.prepare('PRAGMA table_info(experiences)').all() as Array<{ name: string }>).some((c) => c.name === 'severity')
-      expect(hasSev).toBe(true) // 守卫命中，跳过 ALTER（幂等 no-op）
-    })()
+    expect(() => runStandaloneMigrations(db)).not.toThrow()
 
     // 二次跑后表结构未变：experiences 仍 4 列（id/title/severity/created_at）
     const colsAfter = db.prepare('PRAGMA table_info(experiences)').all() as Array<{ name: string }>

@@ -77,7 +77,7 @@ export function makeRealDb(opts?: MakeRealDbOpts): RealDbHandle {
  * 幂等性：每次调用都安全重跑（CREATE TABLE IF NOT EXISTS + hasColumn 守卫 ALTER），
  *   第二次调用为 no-op（表/列已存在），不抛异常 —— 复刻生产迁移的幂等语义。
  */
-function runStandaloneMigrations(db: Database.Database): void {
+export function runStandaloneMigrations(db: Database.Database): void {
   const step = db.transaction(() => {
     // 建一张测试表（模拟 fresh-install DDL）
     db.exec(`
