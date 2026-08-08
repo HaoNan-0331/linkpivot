@@ -20,7 +20,10 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      # npm install（非 npm ci）：项目 lock 含 @rolldown/binding-wasm32-wasi 的 optionalDep @emnapi/runtime
+      # 平台特定解析差异（本地 Win-x64 装 binding-win32-x64-msvc，不装 wasm 版 + @emnapi），
+      # 致 lock 缺 @emnapi/runtime@1.11.3 独立条目，npm ci 严格同步检查 fail。npm install 宽容（自动补缺）。
+      - run: npm install --no-fund --no-audit
       # mock 套件（plain node vitest，244 用例，不碰 native binding）必须在 rebuild:native 之前跑
       # —— rebuild 后 better-sqlite3/ssh2 切 electron-ABI，plain node 加载必触发 NODE_MODULE_VERSION 冲突（DEP-1 在 CI 的体现）
       - run: npm test
