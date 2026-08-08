@@ -20,7 +20,8 @@ import net from 'net'
  *   - telnetExec: arpCollector 顶层 import，仅 telnet 分支用；本文件测 ssh 分支，mock 防级联
  *   - **ssh2: 不 mock**（被测协议 executeSSH 走真 binding）
  *
- * MK 注入（PATTERNS §masterKey 注入 516-526）：setArpMasterKey(MK_TEST) —— arpCollector 顶层 let MK，dec() 用之。
+ * MK 注入：已移除（WR-05 修复）—— arpCollector.collectFromDevice SSH 路径直接传 device.password
+ * （明文）给 executeSSH，整条路径不调 dec()，setArpMasterKey 是 dead injection。
  *
  * arpCollector 注意（与 plan 原文校准）：arpCollector.collectFromDevice **不持久化 arp_entries 到 DB**
  *   （源码 arpCollector.ts:89-117 只返回 ARPCollectionResult，不写 arp_entries 表），故无需 makeRealDb 真实 DB，
@@ -51,14 +52,14 @@ vi.mock('../../electron/utils/telnetExec', () => ({
 }))
 
 // ssh2 不 mock —— 真实 import（executeSSH 走真 ssh2.Client）
-import { ARPCollector, setArpMasterKey } from '../../electron/services/arpCollector'
+// WR-05 修复：移除 setArpMasterKey(MK_TEST) dead injection —— arpCollector.collectFromDevice
+// SSH 路径直接传 device.password（明文）给 executeSSH，整条路径不调 dec()（arpCollector.ts
+// 定义了 dec() 但代码内从未调用，是 dead code）。MK 注入在 SSH 路径测试中永不被消费，
+// 且 arpCollector.ts 顶层 let MK='' 不在 import 时触发 dec，故删除安全不致模块加载失败。
+import { ARPCollector } from '../../electron/services/arpCollector'
 import { ARPParser } from '../../electron/services/arpParser'
 import { startMockSshServer } from './_helpers/mockSshServer'
 import { expectNoHandleLeak } from './_helpers/handleLeakDetector'
-
-// MK 注入（PATTERNS §masterKey 注入 范式，不用真实 masterKey）
-const MK_TEST = 'test-master-key-32-bytes-ok!!'
-setArpMasterKey(MK_TEST)
 
 // 句柄泄漏检测：默认白名单（handleLeakDetector 12-01 落地 + 12-02 反馈环补入 TCPServerWrap/TCPWrap/SimpleWriteWrap）
 // 已覆盖 mock server listen socket + ssh2/telnet-client native stream libuv 句柄释放延迟，
