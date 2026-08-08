@@ -1,0 +1,52 @@
+// tests/electron/_helpers/handleLeakDetector.ts
+//
+// 句柄泄漏检测器（Phase 12 DEP-1 ABI 缓解，TEST-02 句柄自动化检测）。
+// 用 process.getActiveResourcesInfo()（Node 17.3+ 内置，Electron 41 内嵌 Node 满足）snapshot 对比，
+// afterEach 检测新增非放行句柄 → 触发 wtfnode.dump() 打印调用栈（best-effort 诊断，A4）→ fail 测试。
+// 替代 Phase 6 SC#4 + Phase 3 defer 的人工 HV 项（ai/arpCollector/telnetExec 的 try/finally cleanup 路径）。
+//
+// 关键 pitfall：
+//   - baseline 在「调用点（expectNoHandleLeak 调用时）」取，紧贴被测代码执行前（Pitfall 5：vitest runner 自身 timer 会漂移）
+//   - 默认 allowlist 放行 vitest 自身常见句柄（Timeout/GetAddrInfoReqWrap，Pitfall 5）
+//   - afterEach 前 await sleep(50) 给 ssh2.end() 异步 EOF 时间（Pitfall 4：mock server 异步 close）
+//   - wtfnode best-effort import（装失败/异步失败不阻塞，A4 fallback）
+
+import { afterEach } from 'vitest'
+
+/**
+ * 注册 afterEach 句柄泄漏检测。
+ * 调用点取 baseline（紧贴被测代码执行前），afterEach 对比新增非放行句柄。
+ *
+ * @param extraAllow 额外放行的句柄类型（如 mock server 偶发残留 TCPWrap）
+ *
+ * 用法：在 describe 内顶部调用 expectNoHandleLeak()，每个 it 执行后自动检测泄漏。
+ */
+export function expectNoHandleLeak(extraAllow: string[] = []): void {
+  // baseline 在调用点取（Pitfall 5：不在 beforeAll，避免 vitest runner timer 漂移）
+  const baseline = process.getActiveResourcesInfo()
+  // 默认放行：vitest runner 自身常见句柄类型（心跳 Timeout / DNS GetAddrInfoReqWrap）
+  const allowDefault = ['Timeout', 'GetAddrInfoReqWrap']
+  const allow = new Set([...allowDefault, ...extraAllow])
+
+  afterEach(async () => {
+    // 给 cleanup 异步时间（ssh2.end() 异步发 EOF，mock server 异步 close，Pitfall 4）
+    await new Promise((r) => setTimeout(r, 50))
+    const after = process.getActiveResourcesInfo()
+    // 泄漏 = after 中存在但 (不在 allow 白名单) 且 (不在 baseline 基线) 的句柄
+    const leaked = after.filter((h) => !allow.has(h) && !baseline.includes(h))
+    if (leaked.length > 0) {
+      // 触发 wtfnode 诊断（打印泄漏句柄调用栈），方便定位（best-effort，装失败不阻塞，A4）
+      // wtfnode 无 @types 声明，import 经 // @ts-expect-error 抑制隐式 any；catch 兜底装失败/异步失败
+      // @ts-expect-error wtfnode 无 @types/wtfnode，best-effort 动态 import
+      const wtf = (await import('wtfnode').catch(() => null)) as { dump?: () => void } | null
+      if (wtf) {
+        try {
+          wtf.dump?.()
+        } catch {
+          /* wtfnode.dump 失败不影响 fail 信号 */
+        }
+      }
+      throw new Error(`句柄泄漏: ${JSON.stringify(leaked)}`)
+    }
+  })
+}
