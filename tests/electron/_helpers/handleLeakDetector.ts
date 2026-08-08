@@ -6,24 +6,35 @@
 // 替代 Phase 6 SC#4 + Phase 3 defer 的人工 HV 项（ai/arpCollector/telnetExec 的 try/finally cleanup 路径）。
 //
 // 关键 pitfall：
-//   - baseline 在「调用点（expectNoHandleLeak 调用时）」取，紧贴被测代码执行前（Pitfall 5：vitest runner 自身 timer 会漂移）
+//   - baseline 在「beforeEach（每个 it 紧贴被测代码执行前）」取，**每 it 独立基线**（CR-01 修复）
+//     —— 之前在「调用点（describe 顶层，首个 it 前）」取一份共享基线，跨多 it 共享，
+//        会让累积泄漏检测（Plan 12-03 it4 5 次循环无累积）失效：首个 it 漂移的临时句柄污染基线，
+//        后续 it 即使泄漏同类型也被 baseline.includes(h) 放行。
 //   - 默认 allowlist 放行 vitest 自身常见句柄（Timeout/GetAddrInfoReqWrap，Pitfall 5）
 //   - afterEach 前 await sleep(50) 给 ssh2.end() 异步 EOF 时间（Pitfall 4：mock server 异步 close）
 //   - wtfnode best-effort import（装失败/异步失败不阻塞，A4 fallback）
 
-import { afterEach } from 'vitest'
+import { beforeEach, afterEach } from 'vitest'
 
 /**
- * 注册 afterEach 句柄泄漏检测。
- * 调用点取 baseline（紧贴被测代码执行前），afterEach 对比新增非放行句柄。
+ * 注册句柄泄漏检测（beforeEach 取基线 + afterEach 比对）。
+ *
+ * baseline 在 beforeEach 取（紧贴每个 it 执行前），afterEach 对比新增非放行句柄。
+ * 每 it 独立基线，避免跨 it 共享基线致累积泄漏检测失效（CR-01）。
  *
  * @param extraAllow 额外放行的句柄类型（如 mock server 偶发残留 TCPWrap）
  *
  * 用法：在 describe 内顶部调用 expectNoHandleLeak()，每个 it 执行后自动检测泄漏。
  */
 export function expectNoHandleLeak(extraAllow: string[] = []): void {
-  // baseline 在调用点取（Pitfall 5：不在 beforeAll，避免 vitest runner timer 漂移）
-  const baseline = process.getActiveResourcesInfo()
+  // baseline 在 beforeEach 取（CR-01：每 it 独立基线，避免跨 it 共享致累积泄漏检测失效）
+  // —— Pitfall 5 注意：不取在 beforeAll（avoid vitest runner timer 漂移），beforeEach 取在每个 it 紧贴执行前，
+  //    it 间漂移的临时句柄（如 vitest runner 心跳 Timeout）会进入当 it 基线，不会污染下一 it。
+  let baseline: string[] = []
+  beforeEach(() => {
+    baseline = process.getActiveResourcesInfo()
+  })
+
   // 默认放行：
   //   - Timeout / GetAddrInfoReqWrap: vitest runner 自身常见句柄（心跳 Timeout / DNS 解析，Pitfall 5）
   //   - TCPServerWrap: mockSshServer/mockTelnetServer 自身 listen socket（beforeAll 起 afterAll 关，
