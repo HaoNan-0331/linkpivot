@@ -11,6 +11,14 @@
 //   Plan 12-02 telnetExec.real.test 连真实 telnet-client 实跑验证；若 connect 卡住超 testTimeout，回此修。
 //
 // 安全域（threat_model T-12-02）：listen(0, '127.0.0.1') 严格 loopback，端口 0 随机分配。
+//
+// WR-04 隐式契约固化：executeTelnetCommand connect 配置含 loginPrompt/passwordPrompt
+// （telnetExec.ts:129-135），但 telnet-client@2.2.13 的 getprompt 状态机在 shellPrompt
+// 优先匹配时跳过 login/password（直接进 standby emit ready，不发凭证）—— 故本 mock 只发
+// shellPrompt 不发 Username:/Password: 也能 work（username/password 参数被忽略）。
+// 假设 telnet-client@2.2.13 此状态机顺序不变（package.json 已 pin 2.2.13）；若库升级改了
+// 状态机顺序（如要求 login 先于 shellPrompt），需补 login/password prompt 状态机
+// （参考 telnet-client/lib/index.js:356 getprompt 分支）。
 
 import net from 'net'
 
