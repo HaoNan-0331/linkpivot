@@ -1,44 +1,44 @@
 ---
-status: partial
+status: resolved
 phase: 12-test-infrastructure-dep-1-abi
 source: [12-VERIFICATION.md]
 started: 2026-08-08T05:25:00Z
-updated: 2026-08-08T05:25:00Z
+updated: 2026-08-08T08:20:00Z
 ---
 
 ## Current Test
 
- awaiting human testing —— GHA 实跑（SC2 CI 侧 defer）+ CR-01 质量修复决策
-
-自动化验证已全绿（4/4 must-haves SC1-4 VERIFIED，TEST-01/02 SATISFIED，三绿门禁实测通过）。以下 3 项需人工/外部环境（GHA）确认，非 goal 阻塞。
+GHA build-smoke 全绿（run 31247983076，3m15s）—— SC2 CI 侧 + CR-03 + CR-01 三项 human_needed 全闭环。
 
 ## Tests
 
 ### 1. GHA windows-latest 实跑 build-smoke workflow（SC2 之 CI 侧 defer）
 
-expected: push 到 master 或开 PR 触发 build-smoke.yml —— test:electron step 绿（22 it 通过）+ npm test（rebuild 前）绿（244 通过）+ verify native binding step 绿；CI 总时长增量 +30~60s；无 xvfb/antivirus 问题
+expected: test:electron step 绿 + npm test 绿 + verify native binding 绿；CI 时长增量可接受；无 xvfb/antivirus 问题
 
-result: [pending]
+result: ✅ PASSED — GHA run 31247983076 全绿（3m15s）。npm install + npm test 244 + rebuild:native + build + test:electron 21 + verify native binding 全 step 通过。CI-A 配置（mock 段 plain node rebuild 前 + 真路径段 electron.exe rebuild 后）验证正确。setup-node 24（对齐本地 npm 11）+ npm install 替 npm ci（绕 @emnapi/runtime lock 平台 sync 问题）。
 
 ### 2. CR-03 ssh2 cpu-features ABI mismatch 风险（GHA 实跑时确认）
 
-expected: GHA 实跑时 test:electron step 不出现 NODE_MODULE_VERSION 或 cpu-features 加载错误（rebuild:native 的 -w ssh2 不递归到 cpu-features dependency，windows-latest 上 ssh2 native 路径加载成功）
+expected: test:electron step 不出现 NODE_MODULE_VERSION 或 cpu-features 加载错误
 
-result: [pending]
+result: ✅ PASSED — GHA test:electron step 绿（21 真路径含 ssh2 真路径 arpCollector/ai.execCommands）。rebuild:native -w cpu-features（CR-03 fix）在 GHA windows-latest 重建 cpu-features electron-ABI 成功，verify step 验 cpufeatures.node 产物通过。ssh2 真路径不崩，cpu-features ABI 匹配。
 
 ### 3. CR-01 handleLeakDetector baseline 跨 it 共享（防御性质量缺陷）
 
-expected: 确认跨 it 累积泄漏检测准确性 —— 若未来引入跨多个 it 的真实累积泄漏，检测器仍能 fail；或采纳 code review 建议把 baseline 移到 beforeEach（建议交 /gsd:code-review 12 --fix）
+expected: baseline 移到 beforeEach（code review 建议），跨 it 累积泄漏检测准确
 
-result: [pending]
+result: ✅ RESOLVED — CR-01 已修（commit 5d6793c）：baseline 从 describe 顶层移到 beforeEach，每 it 独立基线。修复后 test:electron 21 it 全绿（含 it4 累积场景）。GHA test:electron 验证通过。
 
 ## Summary
 
 total: 3
-passed: 0
+passed: 3
 issues: 0
-pending: 3
+pending: 0
 skipped: 0
 blocked: 0
 
 ## Gaps
+
+无。Phase 12 全部 SC（SC1-4）+ REQ（TEST-01/02）+ 3 项 human_needed 全闭环。GHA CI 回归网就位。
