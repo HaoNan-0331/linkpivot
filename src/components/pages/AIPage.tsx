@@ -99,7 +99,7 @@ export default function AIPage() {
           onOpenReview={chat.openReviewFromBadge}
         />
       </div>
-      <CommandConfirmModal pendingConfirm={chat.pendingConfirm} onConfirm={chat.handleConfirm} />
+      <CommandConfirmModal pendingConfirm={chat.pendingConfirm} onConfirm={chat.handleConfirm} confirmInFlight={chat.confirmInFlight} />
       <ReviewConfirmModal
         open={chat.reviewOpen}
         onClose={() => chat.setReviewOpen(false)}

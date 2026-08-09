@@ -4,19 +4,21 @@ import type { ConfirmData } from './types'
 interface CommandConfirmModalProps {
   pendingConfirm: ConfirmData | null
   onConfirm: (approved: boolean) => void
+  // Phase 14 Plan 02：confirm IPC 在途视觉锁（FIX-02 #1 视觉层），双按钮 loading+disabled
+  confirmInFlight: boolean
 }
 
-export default function CommandConfirmModal({ pendingConfirm, onConfirm }: CommandConfirmModalProps) {
+export default function CommandConfirmModal({ pendingConfirm, onConfirm, confirmInFlight }: CommandConfirmModalProps) {
   return (
     <Modal
       open={!!pendingConfirm}
       title={`命令执行确认（${pendingConfirm?.commands?.length || 0} 条命令）`}
       onCancel={() => onConfirm(false)}
       footer={[
-        <Button key="reject" danger onClick={() => onConfirm(false)}>
+        <Button key="reject" danger onClick={() => onConfirm(false)} loading={confirmInFlight} disabled={confirmInFlight}>
           拒绝执行
         </Button>,
-        <Button key="approve" type="primary" onClick={() => onConfirm(true)}>
+        <Button key="approve" type="primary" onClick={() => onConfirm(true)} loading={confirmInFlight} disabled={confirmInFlight}>
           确认执行
         </Button>,
       ]}

@@ -29,6 +29,10 @@ export function useAIChat(): UseAIChatReturn {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [pendingConfirm, setPendingConfirm] = useState<ConfirmData | null>(null)
+  // Phase 14 Plan 02：confirm IPC 在途视觉锁（FIX-02 #1 视觉层增强）
+  // 与既有 setPendingConfirm(null) 关窗锁双保险——关窗锁防重复 IPC 主防线不变，
+  // confirmInFlight 仅控制 CommandConfirmModal 按钮 loading+disabled 给用户在途反馈
+  const [confirmInFlight, setConfirmInFlight] = useState(false)
   const [summarizing, setSummarizing] = useState(false)
   // Phase 9 Plan 03：人工确认弹窗状态 + 待确认角标计数（D-9-7）
   const [reviewOpen, setReviewOpen] = useState(false)
@@ -197,6 +201,7 @@ export function useAIChat(): UseAIChatReturn {
     const confirmData = pendingConfirm
     setPendingConfirm(null) // 立即关闭弹窗，防止重复点击
     setLoading(true)
+    setConfirmInFlight(true) // Phase 14-02：视觉锁在途（按钮 loading+disabled）
     try {
       const result = await window.api.ai.confirmCommand(confirmData.execId, approved)
       // Phase 11 UAT fix：命令路径也返 exp_answer/kb_answer JSON → 解析 references（与 handleSend 同语义）
@@ -221,6 +226,7 @@ export function useAIChat(): UseAIChatReturn {
     } catch (e: unknown) {
       message.error(e instanceof Error ? e.message : String(e))
     }
+    setConfirmInFlight(false) // Phase 14-02：IPC 完成（含异常）释放视觉锁
     setLoading(false)
   }, [pendingConfirm, currentSessionId])
 
@@ -284,6 +290,7 @@ export function useAIChat(): UseAIChatReturn {
     input,
     loading,
     pendingConfirm,
+    confirmInFlight, // Phase 14-02：confirm IPC 在途视觉锁（CommandConfirmModal 按钮 loading+disabled）
     setSelectedDevices,
     setInput,
     loadData,

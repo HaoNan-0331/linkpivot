@@ -56,6 +56,8 @@ export interface UseAIChatReturn {
   input: string
   loading: boolean
   pendingConfirm: ConfirmData | null
+  // Phase 14 Plan 02：confirm IPC 在途视觉锁（CommandConfirmModal 按钮 loading+disabled 消费）
+  confirmInFlight: boolean
   setSelectedDevices: (ids: string[]) => void
   setInput: (v: string) => void
   loadData: (hasConfig: boolean) => Promise<void>
