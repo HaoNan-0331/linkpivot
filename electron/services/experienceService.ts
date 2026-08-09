@@ -48,7 +48,10 @@ export type ExperienceCategory = 'troubleshooting' | 'best_practices' | 'product
 export type ExperienceStatus = 'draft' | 'confirmed' | 'published' | 'invalid'
 
 const VALID_CATEGORIES: ExperienceCategory[] = ['troubleshooting', 'best_practices', 'product', 'env']
-const VALID_SEVERITIES = ['critical', 'high', 'medium', 'low', 'info']
+// SEC-05（Phase 13 Plan 03）：severity 合法枚举单一来源 export（D-13-5 + PATTERNS 范式）。
+// IPC 网关层 experienceIpc.ts sanitizeListInput 复用此常量做 severity throw 校验，
+// 消除 IPC/service 两份手写枚举 drift 风险（一处改另一处漏改）。as const 让 TS 推断字面量联合类型。
+export const VALID_SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'] as const
 
 /**
  * WR-04：troubleshooting 类 attrs 质量门单一来源。

@@ -19,6 +19,9 @@ import {
   // Phase 10 Plan 04 WR-02：单事务原子设置关联设备（替代 renderer Promise.all N IPC）
   setExperienceDevices,
   MAX_BATCH,
+  // SEC-05（Phase 13 Plan 03）：severity 合法枚举单一来源 import（D-13-5 + PATTERNS 范式，
+  // 非第二份手写避 drift）。sanitizeListInput 复用此常量做 severity throw 校验。
+  VALID_SEVERITIES,
 } from '../services/experienceService'
 import type { ExperienceInput, ExperienceUpdateInput, ExperienceListInput, ConfirmDraftsInput } from '../../src/types/experience'
 import { secure } from '../utils/authGuard'
@@ -59,10 +62,57 @@ function stripEncColumns(rows: any[]): any[] {
   })
 }
 
+/**
+ * SEC-05（Phase 13 Plan 03）：experience:list IPC 网关层入参校验纯函数。
+ *
+ * 防 untrusted renderer 廉价 DoS（体检 WR-06）：listExperiences 的 search LIKE 多词拆分
+ * OR-join（experienceService.ts:284-299）/ tags LIKE OR-join（experienceService.ts:311-318）
+ * 会因超长 search（如粘整段故障描述）或超量 tags 生成海量 LIKE 子句触发全表扫。
+ *
+ * 处置策略（D-13-5 混合 + D-13-6 阈值 100/20/30）：
+ * - search/tags 钳制（静默容错，用户输入场景，参照 validateLimit 落回默认/截断风格非 throw）：
+ *   search 截断到 ≤100 字符；tags 截取到前 20 个；单 tag 截断到 ≤30 字符。
+ * - severity 枚举 throw（固定集合非法值暴露调用方 bug，参照 confirmDrafts throw 风格）：
+ *   非空非 undefined 且非 VALID_SEVERITIES 集合内值 → throw 'severity 非法'。
+ *
+ * 设计为纯函数（不调 listExperiences）以最高 ROI 可测——单测直接调 sanitizeListInput 验
+ * 截断/throw，无需 setAuthenticated/secure 包装/ipcMain mock（D-13-8 测试范式）。
+ *
+ * 红线①：throw 路径在 secure(...) 包装内经 sanitizeMessage 脱敏透出 renderer，无需额外 try/catch。
+ * D-13-7：limit 不在此复查（service 层 listExperiences limit MAX_BATCH throw 兜底，双层第二层）。
+ */
+export function sanitizeListInput(opts: ExperienceListInput | undefined): ExperienceListInput {
+  const sanitized: ExperienceListInput = { ...(opts || {}) }
+  // search 钳制（D-13-6 ≤100 字符）：超长搜索串截断，阻断超长 LIKE 多词 OR-join 全表扫 DoS 面。
+  if (typeof sanitized.search === 'string' && sanitized.search.length > 100) {
+    sanitized.search = sanitized.search.slice(0, 100)
+  }
+  // tags 钳制（D-13-6 ≤20 个 + 单 tag ≤30 字符）：超量 tags 截取前 20 + 每个超长 tag 截断。
+  if (Array.isArray(sanitized.tags)) {
+    const capped = sanitized.tags.length > 20 ? sanitized.tags.slice(0, 20) : sanitized.tags
+    sanitized.tags = capped.map((tag) =>
+      typeof tag === 'string' && tag.length > 30 ? tag.slice(0, 30) : tag
+    )
+  }
+  // severity throw（D-13-5 固定集合非法值暴露 bug）：非空非 undefined 且非合法枚举 → throw。
+  // 复用 service 层 export 的 VALID_SEVERITIES 单一来源（D-13-6 + PATTERNS 范式），非第二份手写。
+  if (
+    sanitized.severity !== undefined &&
+    sanitized.severity !== '' &&
+    !(VALID_SEVERITIES as readonly string[]).includes(sanitized.severity)
+  ) {
+    throw new Error('severity 非法，合法值: critical/high/medium/low/info')
+  }
+  return sanitized
+}
+
 export function registerExperienceIpc() {
   // 经验属特权操作（涉敏感 attrs/凭证片段），全 secure 包装（鉴权 + 异常脱敏）
+  // SEC-05：入参经 sanitizeListInput 钳制 search/tags + throw 非法 severity（D-13-5/D-13-6/D-13-7），
+  // 防 untrusted renderer 廉价 DoS（体检 WR-06）。handler 仍包在 secure(...) 内（红线①不变），
+  // throw 经 sanitizeMessage 脱敏透出 renderer。
   ipcMain.handle('experience:list', secure((_e, opts?: ExperienceListInput) =>
-    listExperiences(opts || {})))
+    listExperiences(sanitizeListInput(opts))))
 
   ipcMain.handle('experience:get', secure((_e, id: string) =>
     getExperience(id)))
