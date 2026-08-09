@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { message } from 'antd'
 import type { ChatSession } from '@/types/ai'
 import type { ConfirmDraftsResult } from '@/types/experience'
@@ -33,6 +33,10 @@ export function useAIChat(): UseAIChatReturn {
   // 与既有 setPendingConfirm(null) 关窗锁双保险——关窗锁防重复 IPC 主防线不变，
   // confirmInFlight 仅控制 CommandConfirmModal 按钮 loading+disabled 给用户在途反馈
   const [confirmInFlight, setConfirmInFlight] = useState(false)
+  // WR-01 fix（code-review）：useRef 同步锁根治连点竞态——React state（confirmInFlight）异步刷新，
+  // 同渲染周期连点第二次时 confirmInFlight 仍为 false（未刷新）→ 通过守卫发起重复 IPC（main 兜底 confirmCommand
+  // 取后即删 throw 误导 toast）。ref.current 同步赋值，第二次连点同步检查立即跳过。与 setPendingConfirm(null) 关窗锁三保险。
+  const confirmInFlightRef = useRef(false)
   const [summarizing, setSummarizing] = useState(false)
   // Phase 9 Plan 03：人工确认弹窗状态 + 待确认角标计数（D-9-7）
   const [reviewOpen, setReviewOpen] = useState(false)
@@ -198,6 +202,9 @@ export function useAIChat(): UseAIChatReturn {
 
   const handleConfirm = useCallback(async (approved: boolean) => {
     if (!pendingConfirm || !currentSessionId) return
+    // WR-01 fix：同步锁——同渲染周期连点第二次立即跳过（ref.current 同步生效，不等 React state 刷新）
+    if (confirmInFlightRef.current) return
+    confirmInFlightRef.current = true
     const confirmData = pendingConfirm
     setPendingConfirm(null) // 立即关闭弹窗，防止重复点击
     setLoading(true)
@@ -226,6 +233,7 @@ export function useAIChat(): UseAIChatReturn {
     } catch (e: unknown) {
       message.error(e instanceof Error ? e.message : String(e))
     }
+    confirmInFlightRef.current = false // WR-01 fix：释放同步锁（正常 + 异常路径均到此）
     setConfirmInFlight(false) // Phase 14-02：IPC 完成（含异常）释放视觉锁
     setLoading(false)
   }, [pendingConfirm, currentSessionId])

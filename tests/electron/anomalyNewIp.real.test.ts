@@ -145,7 +145,7 @@ describe('BUG-1 anomaly new_ip 修复（真路径 realDb）', () => {
     expect(newIpBaseline).toBe(0)
   })
 
-  it('Test 3：基线内已知 IP 不报（仅 update last_seen）', () => {
+  it('Test 3：基线内已知 IP 不报（仅 update last_seen）', async () => {
     // 建基线
     AnomalyService.processARPEntries([{ ip: '10.0.0.1', mac: 'AA:BB:CC:DD:EE:01' }])
     const beforeLastSeen = (
@@ -154,9 +154,9 @@ describe('BUG-1 anomaly new_ip 修复（真路径 realDb）', () => {
         .get() as { l: string }
     ).l
 
-    // 等一点时间让 last_seen 时间戳变化
+    // WR-02 fix：await 真等待（原 void wait(50) 未 await 实际未等），让 last_seen 时间戳必变化
     const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
-    void wait(50)
+    await wait(50)
 
     // 第二次扫描喂基线内 IP 10.0.0.1（mac 相同）→ 走 currentBinding 分支只 update last_seen
     const changes = AnomalyService.processARPEntries([
@@ -178,9 +178,8 @@ describe('BUG-1 anomaly new_ip 修复（真路径 realDb）', () => {
         .prepare("SELECT last_seen as l FROM ip_mac_bindings WHERE ip = '10.0.0.1'")
         .get() as { l: string }
     ).l
-    // last_seen 是 ISO 时间戳，processARPEntries 用 new Date().toISOString()，
-    // 两次扫描间隔即便很近，时间戳至少不会更早（>= before）。断言更新（不严格等值，避免时钟精度抖动）
-    expect(afterLastSeen >= beforeLastSeen).toBe(true)
+    // WR-02 fix：await wait(50) 后 last_seen 必变化（50ms > 毫秒精度），强断言 >（原 >= 在未 await 时可能误绿）
+    expect(afterLastSeen > beforeLastSeen).toBe(true)
 
     // is_baseline 保持 1（基线内已知 IP 不被后置 UPDATE 动，本就 is_baseline=1）
     const baseline = (
@@ -284,5 +283,63 @@ describe('BUG-1 anomaly new_ip 修复（真路径 realDb）', () => {
         .get() as { b: number }
     ).b
     expect(baseline).toBe(1)
+  })
+
+  it('Test 7：混合批次（基线后单批含已知 IP + 全新 IP）— WR-04 补覆盖', () => {
+    // 建基线（10.0.0.1）
+    AnomalyService.processARPEntries([{ ip: '10.0.0.1', mac: 'AA:BB:CC:DD:EE:01' }])
+
+    // 单批含已知 IP（10.0.0.1 mac 不变 → update last_seen）+ 全新 IP（10.0.0.4 → new_ip）
+    const changes = AnomalyService.processARPEntries([
+      { ip: '10.0.0.1', mac: 'AA:BB:CC:DD:EE:01' },
+      { ip: '10.0.0.4', mac: 'AA:BB:CC:DD:EE:04' },
+    ])
+
+    // 仅全新 IP 报 new_ip（已知 IP mac 不变只 update last_seen，不报）
+    expect(changes).toHaveLength(1)
+    expect(changes[0].changeType).toBe('new_ip')
+    expect(changes[0].ip).toBe('10.0.0.4')
+
+    // ip_mac_changes 仅 1 行 new_ip（10.0.0.4），无 mac_changed/ip_reused 混入
+    const newIpRows = (
+      handle!.db
+        .prepare("SELECT COUNT(*) as c FROM ip_mac_changes WHERE change_type = 'new_ip'")
+        .get() as { c: number }
+    ).c
+    expect(newIpRows).toBe(1)
+    const totalChanges = (
+      handle!.db.prepare('SELECT COUNT(*) as c FROM ip_mac_changes').get() as { c: number }
+    ).c
+    expect(totalChanges).toBe(1)
+  })
+
+  it('Test 8：createBinding UNIQUE fallback 重激活路径 — WR-04 补覆盖', () => {
+    // 建基线（10.0.0.1 mac=EE:01 active）
+    AnomalyService.processARPEntries([{ ip: '10.0.0.1', mac: 'AA:BB:CC:DD:EE:01' }])
+    // mac 变更：停用 EE:01，建 EE:02 active（mac_changed）
+    AnomalyService.processARPEntries([{ ip: '10.0.0.1', mac: 'AA:BB:CC:DD:EE:02' }])
+    // 此时 bindings：EE:01(is_active=0) + EE:02(is_active=1)
+
+    // 喂回原 mac EE:01 → currentBinding 命中 EE:02(active) mac 变 → mac_changed + 停用 EE:02
+    // + createBinding(EE:01) INSERT 撞 UNIQUE(ip,mac EE:01 已存在 inactive) → fallback UPDATE 重激活 EE:01
+    const changes = AnomalyService.processARPEntries([{ ip: '10.0.0.1', mac: 'AA:BB:CC:DD:EE:01' }])
+    expect(changes).toHaveLength(1)
+    expect(changes[0].changeType).toBe('mac_changed')
+    expect(changes[0].oldMac).toBe('AA:BB:CC:DD:EE:02')
+    expect(changes[0].newMac).toBe('AA:BB:CC:DD:EE:01')
+
+    // EE:01 重激活（fallback UPDATE is_active=1），EE:02 停用（stmtDeactivate is_active=0）
+    const ee01 = (
+      handle!.db
+        .prepare("SELECT is_active as a FROM ip_mac_bindings WHERE ip = '10.0.0.1' AND mac = 'AA:BB:CC:DD:EE:01'")
+        .get() as { a: number }
+    ).a
+    const ee02 = (
+      handle!.db
+        .prepare("SELECT is_active as a FROM ip_mac_bindings WHERE ip = '10.0.0.1' AND mac = 'AA:BB:CC:DD:EE:02'")
+        .get() as { a: number }
+    ).a
+    expect(ee01).toBe(1)
+    expect(ee02).toBe(0)
   })
 })

@@ -149,18 +149,28 @@ export class AnomalyService {
           console.error('[anomaly] processARPEntries 条目处理失败:', entry.ip, e.message)
         }
       }
+      // CR-02 fix（code-review BLOCKER）：后置基线 UPDATE 移入 runBatch 事务体——与本次 changes/binding 同事务原子提交。
+      // 原实现 UPDATE 在 runBatch() COMMIT 之后 autocommit：UPDATE 失败则基线状态丢失但 changes/binding 已落库，
+      // 下次扫描 hasBaseline 仍 false → 基线窗口期新增 IP 静默漏报 new_ip（直接威胁 SC1）。移入事务后原子（全成或全回滚），
+      // 顺带消 WR-03（原整批 throw 时事务外 UPDATE 仍跑）。
+      // 遗留库向后兼容语义不变：WHERE is_baseline=0 把遗留库存量行也置 1（首次扫描把现存 IP 含遗留纳入基线，Test 6 (c) 佐证）。
+      if (!hasBaseline) {
+        db.prepare('UPDATE ip_mac_bindings SET is_baseline = 1 WHERE is_baseline = 0').run()
+      }
     })
     runBatch()
 
-    // BUG-1（D-14-1）后置基线 UPDATE：本次为首次扫描（入口 hasBaseline=false）则置基线。
-    // 遗留库（向后兼容核心语义）：本 UPDATE WHERE is_baseline=0 会把**遗留库所有现存存量 binding 行**（升级前已存在、
-    // v12 迁移加列默认 is_baseline=0）也置 1，即「首次扫描把当前所有现存 IP（含遗留存量）纳入基线，之后新增 IP 才报 new_ip」。
-    // 这是预期行为（老库升级后第一次扫描即确立基线，避免老库升级刷屏报全量 IP 为 new_ip），Test 6 (c) 佐证。
-    if (!hasBaseline) {
-      db.prepare('UPDATE ip_mac_bindings SET is_baseline = 1 WHERE is_baseline = 0').run()
-    }
-
     return changes
+  }
+
+  // CR-01 fix（code-review BLOCKER）：统一 localtime 时间戳（项目 datetime('now','localtime') 规约，
+  // experienceService.ts:78-79 警告——UTC 与 localtime 混用致 ORDER BY detected_at 字典序排序失真，
+  // 直接掩盖 BUG-1 修复成果：getChanges 面板时间线 / 导出 CSV 时间错乱）。
+  // JS 端生成 localtime 字符串 + SQL 参数绑定，确保 DB 存值与 recordChange 返回值逐字一致（无 1 秒漂移）。
+  private static localNow(): string {
+    const d = new Date()
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
   }
 
   private static createBinding(db: any, ip: string, mac: string, now: string): void {
@@ -176,8 +186,9 @@ export class AnomalyService {
     // processARPEntries 事务内的调用自动落入同一事务（better-sqlite3 单连接同步）
     const db = dbGetter()
     try {
-      const result = db.prepare('INSERT INTO ip_mac_changes (ip, old_mac, new_mac, change_type, detected_at) VALUES (?, ?, ?, ?, datetime(\'now\'))').run(ip, oldMac, newMac, changeType)
-      return { id: result.lastInsertRowid as number, ip, oldMac, newMac, changeType, detectedAt: new Date().toISOString(), acknowledged: false, acknowledgedAt: null, notes: null }
+      const ts = AnomalyService.localNow()
+      const result = db.prepare('INSERT INTO ip_mac_changes (ip, old_mac, new_mac, change_type, detected_at) VALUES (?, ?, ?, ?, ?)').run(ip, oldMac, newMac, changeType, ts)
+      return { id: result.lastInsertRowid as number, ip, oldMac, newMac, changeType, detectedAt: ts, acknowledged: false, acknowledgedAt: null, notes: null }
     } catch (e: any) { console.error('[anomaly] recordChange 插入失败:', ip, e.message); return null }
   }
 
@@ -197,11 +208,13 @@ export class AnomalyService {
   }
 
   static acknowledgeChange(id: number, notes?: string): void {
-    dbGetter().prepare('UPDATE ip_mac_changes SET acknowledged = 1, acknowledged_at = datetime(\'now\'), notes = ? WHERE id = ?').run(notes || null, id)
+    const ts = AnomalyService.localNow()
+    dbGetter().prepare('UPDATE ip_mac_changes SET acknowledged = 1, acknowledged_at = ?, notes = ? WHERE id = ?').run(ts, notes || null, id)
   }
 
   static acknowledgeAll(): number {
-    return dbGetter().prepare('UPDATE ip_mac_changes SET acknowledged = 1, acknowledged_at = datetime(\'now\') WHERE acknowledged = 0').run().changes
+    const ts = AnomalyService.localNow()
+    return dbGetter().prepare('UPDATE ip_mac_changes SET acknowledged = 1, acknowledged_at = ? WHERE acknowledged = 0').run(ts).changes
   }
 
   static deleteChange(id: number): void {
