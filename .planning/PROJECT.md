@@ -31,13 +31,13 @@ network_toplogy 是面向运维人员的网络拓扑管理桌面工具（Electro
 - ✓ AI 经验起草管道：v9 迁移加 `duplicate_of_exp_id` 列 + piiMask 分级脱敏（凭证全脱敏 / IPv4 尾4 / MAC 尾4；CR-01 自然语言连接词绕过 + CR-02 key 词界 2 critical 修复）+ duplicateDetector 同分类+设备查重喂起草 LLM + draftingService 两阶段起草（阶段A `draftSession` 纯起草 + 阶段B `judgeVerdicts` W-4 窄化复判 + `validateDrafts` 强 schema 枚举锁/confidence 边界）+ experienceDrafting 两阶段编排 + `experience:summarizeSession` secure IPC + `createExperience({duplicateOfExpId})` 单语句原子（B-1 门面 + B-2 共存亡）+ AIPage「经验总结」按钮 — Validated in Phase 8: AI Drafting Pipeline（DRAFT-01, DRAFT-02, DRAFT-03, DRAFT-04）
 - ✓ 测试基础设施 / DEP-1 ABI 缓解：electron.exe + ELECTRON_RUN_AS_NODE 跑 vitest 加载 @electron/rebuild 重建的 native binding（SC1 路径修正——弃 electron-vite 因全版本不支持 vite 8，改 electron.exe + 双 vitest config 物理隔离，不迁生产构建）+ test:electron 真路径套件（DB + SSH executeCommandsOnDevice/execOne/executeSSH + Telnet executeTelnetCommand 经 ssh2.Server/net.Server mock 对端回显，无需真实设备）+ handleLeakDetector 句柄泄漏自动化（getActiveResourcesInfo + wtfnode，四条 try/finally cleanup 全覆盖，替代 Phase 6 SC#4 + Phase 3 真机 HV defer）+ build-smoke CI-A 扩展（mock 段 rebuild 前 plain node + 真路径段 rebuild 后 electron.exe）— Validated in Phase 12: Test Infrastructure（TEST-01, TEST-02）
 - ✓ 安全加固 cluster：connection.ts connectSSH/testSSHConnection 删内联 algorithms 表复用 SSH_ALGORITHMS 常量（补 curve25519-sha256 连通现代 Linux + readyTimeout 对齐 30s，全仓 3 SSH 路径零 drift）+ pre-release 5 项 hardening 甄别登记（13-02-DEFER-LOG：L1 DEFER 运维兼容 / L6 FIXED authGuard 单测 + sanitizeMessage 收紧 CR-01 / L4 FIXED Login 锁定 / L3 FIXED captcha CSPRNG / L2 DEFER 单机无滥用面）+ experience:list IPC 网关层 sanitizeListInput 纯函数（search≤100/tags≤20/单tag≤30 截断 + 非法 severity throw）+ VALID_SEVERITIES export 单一来源 + service MAX_BATCH 双层兜底 — Validated in Phase 13: Security Hardening Cluster（SEC-03, SEC-04, SEC-05）
+- ✓ 缺陷修复 + 旧规划回退闭环：anomalyService.processARPEntries 全新 IP 分支补 recordChange('new_ip') + 首次基线机制（ip_mac_bindings is_baseline 列 v12 迁移 hasColumn 守卫 + hasBaseline 门控 + runBatch 事务内后置 UPDATE，CR-02 fix 事务边界）+ _setAnomalyDbGetter mock 注入口（realDb 8 it 含遗留库向后兼容 Test 6 + 混合批次 Test 7 + UNIQUE fallback Test 8）+ localNow localtime 统一（CR-01 fix 消 getChanges/CSV 时区错乱，DB 存值与返回值逐字一致）+ FIX-02 旧规划 4 项甄别（14-02-DEFER-LOG：confirm 视觉层 confirmInFlight + useRef 同步锁根治连点 WR-01 fix / ai_exec_logs FIXED 已满足 / 会话标题 FIXED 前提偏差 useAIChat.ts / H3C LLDP DEFER 作废 discovery.ts 已覆盖）— Validated in Phase 14: Defect & Legacy Rollback Closure（FIX-01, FIX-02）
 
 ### Active
 
-<!-- 本轮 milestone v1.2：安全与稳定性加固（详细 REQ-IDs 见 REQUIREMENTS.md） -->
+<!-- v1.2 milestone 7 REQ 全部 validated（TEST-01/02 + SEC-03/04/05 + FIX-01/02），无 Active 项 -->
 
-- [ ] BUG-1 修复：anomalyService new_ip 计数恒零
-- [ ] 旧规划回退甄别+修：confirm 防重复 / ai_exec_logs / 会话标题 / H3C LLDP 重评估
+（无 — v1.2 milestone 全部交付，待 /gsd:complete-milestone 归档）
 
 ### Out of Scope
 
@@ -68,6 +68,8 @@ network_toplogy 是面向运维人员的网络拓扑管理桌面工具（Electro
 
 ## Current State
 
+**Shipped:** v1.2 安全与稳定性加固（2026-08-10，feature-complete，待 confirm 真机 HV）— 3 phases / 7 plans / 7 REQ（TEST/SEC/FIX）全交付。测试基础设施（Phase 12，DEP-1 ABI 缓解解锁自动化回归）+ 安全加固 cluster（Phase 13，SSH 算法 + pre-release hardening + IPC 入参收紧）+ 缺陷修复闭环（Phase 14，BUG-1 new_ip 恒零 + 旧规划 4 项甄别）。三红线（IPC secure/safe + _enc + commandSafety）全程零回退；三绿门禁（tsc + build:electron-main + vitest 256 mock + 32 真路径）全绿零回归。剩余 1 项 Phase 14 confirm 视觉层真机 HV（14-HUMAN-UAT.md）defer 到 /gsd:verify-work 14 补。
+
 **Shipped:** v1.1 AI 对话经验沉淀（2026-08-06，feature-complete，待人工 UAT 收尾）— 5 phases / 14 plans / 20 REQ（EXP/DRAFT/REVIEW/BROWSE/RETRIEVE/SEC）全交付。一次性的 AI 运维对话现已沉淀为可检索、可溯源、防过期、防泄密的长期经验资产：经验数据层（Phase 7）→ AI 起草（Phase 8）→ 人工确认（Phase 9）→ 浏览页（Phase 10）→ AI 检索复用（Phase 11）全链路贯通。三条红线（不上向量库 / 不引图库 / AI 产出必经人工确认）全程未破。四绿门禁（tsc + vite build + electron-main build + vitest 231）全绿零回归。剩余 3 项 Phase 11 E2E UX 人工核实（11-HUMAN-UAT.md）+ Phase 8 4 项 live LLM HV（08-HUMAN-UAT.md）defer 到 `/gsd-verify-work` 真机补。
 
 **Shipped:** v1.0 技术债优化（2026-07-05）— 6 phases / 16 plans / 14 REQ 全交付。
@@ -88,8 +90,8 @@ network_toplogy 是面向运维人员的网络拓扑管理桌面工具（Electro
 - ✅ DEP-1 ABI 缓解（已交付 Phase 12）：electron.exe + ELECTRON_RUN_AS_NODE 跑 vitest（弃 electron-vite，不支持 vite 8）+ test:electron 真路径套件 + handleLeakDetector 句柄泄漏自动化（告别人工 HV）
 - SSH 连通性加固：connection.ts 内联 algorithms 补 curve25519-sha256 等现代算法（与 sshConfig.ts SSH_ALGORITHMS 对齐）
 - pre-release hardening 收尾（14 项，安全优先）：L1 弱 SSH 算法 / L4 Login / L6 authGuard / L2 ai limit / L3 captcha 等
-- BUG-1 修复：anomalyService new_ip 计数恒零（processARPEntries 首次见 IP 写 new_ip 或移除字段）
-- 旧规划回退甄别+修：confirm 防重复点击 / ai_exec_logs 完整记录 / 会话标题更新 / H3C LLDP（vendor-commands 已删，重评估邻居发现路径）
+- ✅ BUG-1 修复（已交付 Phase 14）：anomalyService processARPEntries 全新 IP 补 recordChange('new_ip') + 首次基线（is_baseline 列）+ localNow localtime 统一
+- ✅ 旧规划回退闭环（已交付 Phase 14）：confirm 防重复（confirmInFlight + useRef 锁 WR-01）/ ai_exec_logs FIXED / 会话标题 FIXED / H3C LLDP DEFER（14-02-DEFER-LOG）
 
 **Key context:** 三红线（IPC 鉴权 / 字段加密 / commandSafety）不可回退；迁移幂等（sqlite_master 特征串）；DEP-1 缓解后 Phase 03/06 真机 HV 可转自动化补回归。体检来源见 `.planning/audits/2026-08-07-health-audit.md`。package.json 发布版本独立（v1.2 milestone → 打包 0.3.0）。
 
@@ -133,4 +135,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-08-09 — v1.2 Phase 13 安全加固 cluster（SEC-03/04/05）交付，Phase 14（缺陷修复 FIX-01/02）待续*
+*Last updated: 2026-08-10 — v1.2 milestone 全完成（Phase 12 测试基础设施 + Phase 13 安全加固 + Phase 14 缺陷修复闭环，7 REQ 全 validated）*
