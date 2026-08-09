@@ -23,7 +23,7 @@
 
 ### FIX（缺陷修复）
 
-- [ ] **FIX-01**: anomaly new_ip 计数正确 — processARPEntries 首次见 IP 写 `change_type='new_ip'`，或从 getStats/AnomalyTab/exportService 移除恒零字段（审计 P3 BUG-1）
+- [x] **FIX-01**: anomaly new_ip 计数正确 — processARPEntries 首次见 IP 写 `change_type='new_ip'`，或从 getStats/AnomalyTab/exportService 移除恒零字段（审计 P3 BUG-1）
 - [ ] **FIX-02**: 旧规划回退闭环 — confirm 防重复点击保护 / ai_exec_logs 完整记录 prompt_text+ai_response / 会话标题更新逻辑移出 confirm_required early return / H3C LLDP 邻居发现重评估（vendor-commands.ts 已在本次 A 类删除，需重新评估正确路径，不回退已废弃命令集）
 
 ---
@@ -57,7 +57,7 @@ Phase 编号续 v1.1（止于 Phase 11）→ v1.2 从 **Phase 12** 起（不 res
 | SEC-03 | Phase 13 | Complete | connection.ts 内联 algorithms 补 curve25519 |
 | SEC-04 | Phase 13 | Complete | pre-release 安全项 L1/L4/L6/L2/L3 收尾 |
 | SEC-05 | Phase 13 | Complete | experience:list 入参校验防廉价 DoS（WR-06） |
-| FIX-01 | Phase 14 | Pending | BUG-1 anomaly new_ip 计数恒零 |
+| FIX-01 | Phase 14 | Complete | BUG-1 anomaly new_ip 计数恒零 |
 | FIX-02 | Phase 14 | Pending | 旧规划回退 4 项甄别修复（confirm/ai_exec_logs/会话标题/H3C LLDP） |
 
 **Coverage:** 7/7 v1 requirements mapped ✓

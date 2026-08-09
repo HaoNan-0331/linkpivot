@@ -126,7 +126,7 @@ Plans:
 
 **Wave 1**（FIX-01 BUG-1 后端 anomaly 域 / FIX-02 旧规划甄别 renderer+DEFER-LOG，files_modified 零重叠并行）
 
-- [ ] 14-01-PLAN.md — FIX-01 BUG-1：anomalyService processARPEntries 全新 IP 补 recordChange(new_ip) + 首次基线机制（ip_mac_bindings 加 is_baseline 列 v12 迁移 + init.ts 双路径同步 + _setAnomalyDbGetter mock 注入口 + realDb 真路径单测 5 it）
+- [x] 14-01-PLAN.md — FIX-01 BUG-1：anomalyService processARPEntries 全新 IP 补 recordChange(new_ip) + 首次基线机制（ip_mac_bindings 加 is_baseline 列 v12 迁移 + init.ts 双路径同步 + _setAnomalyDbGetter mock 注入口 + realDb 真路径单测 5 it）
 - [ ] 14-02-PLAN.md — FIX-02 旧规划 4 项甄别：#1 confirm 视觉层防重复增强（confirmInFlight 按钮 loading+disabled，核心关窗锁不变）+ #2 ai_exec_logs FIXED 已满足 + #3 会话标题 FIXED 前提偏差 + H3C LLDP 作废，产出 14-02-DEFER-LOG.md（复用 13-02 结构）
 
 **Risk / 红线:**
@@ -156,7 +156,7 @@ Phases execute in numeric order: 12 → 13 → 14
 | 11. AI Retrieval & Reuse | v1.1 | 2/2 | Complete | 2026-08-06 |
 | 12. Test Infrastructure (DEP-1 ABI 缓解) | v1.2 | 3/3 | Complete    | 2026-08-08 |
 | 13. Security Hardening Cluster | v1.2 | 3/3 | Complete    | 2026-08-09 |
-| 14. Defect & Legacy Rollback Closure | v1.2 | 0/TBD | Not started | - |
+| 14. Defect & Legacy Rollback Closure | v1.2 | 1/2 | In Progress|  |
 
 ## Coverage Validation
 

@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: 安全与稳定性加固
 status: executing
-last_updated: "2026-08-09T15:37:39.752Z"
-last_activity: 2026-08-09 -- Phase 14 planning complete
+last_updated: "2026-08-09T15:56:00.000Z"
+last_activity: 2026-08-09 -- 14-01 完成（BUG-1 fix + 6 it realDb 单测全绿）
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 8
-  completed_plans: 6
-  percent: 67
+  completed_plans: 7
+  percent: 88
 ---
 
 # STATE: network_toplogy
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-08-01)
 
 ## Current Position
 
-Phase: 14
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-08-09 -- Phase 14 planning complete
+Phase: 14 (defect-legacy-rollback-closure) — EXECUTING
+Plan: 2 of 2（14-01 已完成，14-02 待执行）
+Status: Ready to execute 14-02（FIX-02 旧规划 3 项甄别 + H3C 作废登记）
+Last activity: 2026-08-09 -- 14-01 完成（BUG-1 anomaly new_ip 恒零修复）
 
 ## Performance Metrics
 
@@ -173,6 +173,14 @@ Phase 13 执行期决策（13-03 落地）：
 - [Phase 13]: 13-03 SEC-05 experience:list IPC 网关层 DoS 校验——抽 sanitizeListInput 纯函数（plan Task 2 推荐方案，最高 ROI）做 search≤100 slice(0,100)/tags≤20 slice(0,20)+单tag≤30 slice(0,30) 钳制（D-13-5 Pattern A 静默容错 + D-13-6 阈值）+ 非法 severity throw（D-13-5 Pattern B 固定集合非法值暴露 bug，复用 service 层 export 的 VALID_SEVERITIES 单一来源消 drift D-13-6）；handler 改 secure((_e, opts?) => listExperiences(sanitizeListInput(opts))) 仍 secure 包装红线①不变 throw 经 sanitizeMessage 脱敏；service 层 listExperiences limit MAX_BATCH throw 兜底保留不删（D-13-7 双层第二层防绕 IPC 直调 service）；listExperiences 签名 ListExperiencesOpts 不变（D-13-7 避破坏既有 callers）；VALID_SEVERITIES const → export ... as const 让 TS 推断字面量联合，IPC 层 .includes() 用 as readonly string[] 宽化入参避免 strict 报错
 - [Phase 13]: 13-03 D-13-8 纯函数测试范式——sanitizeListInput 抽纯函数（不调 listExperiences）单测直接调验截断/throw，无需 setAuthenticated/secure 包装/ipcMain mock；experienceListGuard.test.ts 8 it（6 SEC-05 case 截断 search/tags/单tag + throw 非法 severity + 透传合法 severity + 不误伤正常 search + 2 补强 service 层 limit MAX_BATCH throw 兜底用 _setExperienceDbGetter mock DB 注入 + VALID_SEVERITIES deepEqual 枚举一致）；三绿门禁 vitest 8/8 + tsc web + build:electron-main + npm test 255/255 全绿零回归
 
+Phase 14 执行期决策（14-01 落地）：
+
+- [Phase 14]: 14-01 BUG-1 anomaly new_ip 恒零修复方案 A 落地——anomalyService.processARPEntries 全新 IP else 分支补 recordChange(ip,null,mac,'new_ip') 被 if(hasBaseline) 门控（首次扫描 hasBaseline=false 跳过仅 createBinding 建基线、基线后报 new_ip，D-14-1 修写入侧 + 首次基线机制防刷屏）+ 入口 hasBaseline 判定（库里有任意 is_baseline=1 行）+ runBatch 后置 UPDATE ip_mac_bindings SET is_baseline=1 WHERE is_baseline=0（首次扫描把现存 IP 含遗留存量纳入基线）
+- [Phase 14]: 14-01 v12 迁移加 ip_mac_bindings.is_baseline INTEGER NOT NULL DEFAULT 0 列（hasColumn 守卫沿用 v1/v2 第一形式纯 ALTER ADD COLUMN）+ MIGRATION_HEAD 11→12 + MIGRATIONS 数组注册 + init.ts fresh-install DDL 同步加列（双路径逐字一致红线）；getStats 读取侧 line 221 COUNT change_type='new_ip' D-14-1 锁定不动（本来就对，写入侧补齐后该数字反映真实新增数）
+- [Phase 14]: 14-01 遗留库向后兼容（CLAUDE.md「迁移改动必须向后兼容历史数据」硬约束）双保证——存量 IP 升级后首次扫描走 processARPEntries 的 currentBinding 分支（存量 active binding 命中）不进 else 全新 IP 分支故不误报 new_ip（Test 6 (a) 佐证）+ 后置基线 UPDATE 把遗留库所有现存存量 binding 行纳入基线（Test 6 (c) 佐证，首次扫描把现存 IP 全纳入基线后报新增 IP 才报 new_ip 预期行为）
+- [Phase 14]: 14-01 _setAnomalyDbGetter mock 注入口（镜像 experienceService._setExperienceDbGetter D-7-8 范式，D-14-4 借 Phase 12 realDb 真路径回归网）——anomalyService 全方法 getDatabase()→dbGetter()，生产 dbGetter 默认=getDatabase 单例行为零变化，@internal 测试专用无 IPC channel 暴露给 renderer；anomalyNewIp.real.test.ts 6 it 借 makeRealDb 真路径跑真 SQL（processARPEntries 内 INSERT/UPDATE/SELECT 全走真路径无需 mock 单条 SQL）
+- [Phase 14]: 14-01 三红线不回退论证——anomaly:* IPC 仍 secure 包装（service 层 + 迁移 + init DDL 改动不碰 IPC 网关 anomalyIpc.ts）/ ip_mac_changes 无 _enc 列本 plan 零 encField/decField 调用（红线②不涉及）/ 异常检测非 AI 命令执行路径 commandSafety 在 ai.ts:334/890 本 plan 零改动 ai.ts（红线③不涉及）
+
 v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 
 - 加密/迁移改动必须向后兼容历史数据（v1/v2 IV 兼容、迁移幂等守卫靠 sqlite_master 特征串不靠 user_version、throw 即 ROLLBACK）
@@ -200,6 +208,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 - [x] 13-01-PLAN.md — Phase 13 SEC-03 SSH 算法 drift 消除（connection.ts connectSSH 删 36 行内联 algorithms 表改 `algorithms: SSH_ALGORITHMS,` 单行 D-13-2 补 curve25519-sha256 + 全部老算法保留 D-13-1 + readyTimeout 10s → SSH_READY_TIMEOUT_MS(30s) D-13-3；Rule 1 补 testSSHConnection 第二处内联表同源 drift；新增 connectSSH.algorithms.real.test.ts 真路径回归 3 it：常量首项断言 + curve25519-only 协商成功 SEC-03 修复守卫 + 内联旧表协商失败 drift 危害反向回归守卫，内联 ssh2.Server 不调 startMockSshServer helper；D-13-8 绕开 BrowserWindow 直接验 ssh2.Client + algorithms 协商契约；2 commits c19c9f1/df0a0fc，1 deviation Rule 1 auto-fixed，三绿门禁 tsc web + build:electron-main + test:electron 24/24 + npm test 244/244 全绿零回归，SC4 三红线不回退）
 - [x] 13-02-PLAN.md — Phase 13 SEC-04 pre-release hardening 甄别收尾（authGuard.test.ts 既有 7 it 追加 3 it：safe 未登录不拒绝 + isAuthenticated 行为 + secure 脱敏 SQL 错误含路径，共 10 it 全绿；Rule 1+2 deviation 加固 sanitizeMessage Unix 路径正则枚举前缀→通用绝对路径匹配覆盖 SQLite /app /data /root 部署路径，红线①异常脱敏增强非削弱；DEFER-LOG 五项 L1/L2/L3/L4/L6 逐项结论+佐证+reason+重评估条件，L1 DEFER D-13-1 / L2 DEFER 命令安全层+单机无滥用面 / L3 FIXED 核心+renderSvg DEFER / L4 FIXED 核心 / L6 FIXED 核心，SC2 无静默跳过；isAuthenticated 0 caller 保留决定 health §2.2 investigate 收尾；2 commits 9096853/82d30b4，三绿门禁 vitest authGuard 10/10 + tsc web + npm test 247/247 全绿零回归，SC4 三红线不回退）
 - [x] 13-03-PLAN.md — Phase 13 SEC-05 experience:list IPC 网关层 DoS 校验（experienceIpc.ts 抽 sanitizeListInput 纯函数：search slice(0,100) + tags slice(0,20) + 单tag slice(0,30) 钳制 + 非法 severity throw 复用 service 层 export VALID_SEVERITIES 单一来源消 drift；experienceService.ts const VALID_SEVERITIES → export ... as const 单一来源；handler 改 secure((_e, opts?) => listExperiences(sanitizeListInput(opts))) 仍 secure 包装红线①不变；service 层 listExperiences limit MAX_BATCH throw 兜底保留 D-13-7 双层第二层 + 签名 ListExperiencesOpts 不变；experienceListGuard.test.ts 8 it 沿用 _setExperienceDbGetter mock 范式 D-13-8 纯函数最高 ROI 无需 setAuthenticated/secure/ipcMain mock；2 commits 25f380d/39d1fe3，1 deviation Rule 1 auto-fixed（as readonly string[] 宽化 .includes 入参避 strict 报错），三绿门禁 vitest 8/8 + tsc web + build:electron-main + npm test 255/255 全绿零回归，SC3 DoS 防御 + SC4 三红线不回退 + 双层防御论证）
+- [x] 14-01-PLAN.md — Phase 14 FIX-01 BUG-1 anomaly new_ip 恒零修复（方案 A：anomalyService.processARPEntries 全新 IP else 分支补 recordChange(ip,null,mac,'new_ip') 被 if(hasBaseline) 门控 + 入口 hasBaseline 判定 + runBatch 后置 UPDATE ip_mac_bindings SET is_baseline=1 WHERE is_baseline=0；migrations.ts v12 加 ip_mac_bindings.is_baseline INTEGER NOT NULL DEFAULT 0 列 hasColumn 守卫沿用 v1/v2 第一形式 + MIGRATION_HEAD 11→12 + MIGRATIONS 注册；init.ts fresh-install ip_mac_bindings DDL 同步加列双路径逐字一致；_setAnomalyDbGetter mock 注入口镜像 experienceService D-14-4 借 Phase 12 realDb 真路径范式；getStats 读取侧 D-14-1 锁定不动；遗留库向后兼容 CLAUDE.md 硬约束由存量 IP 走 currentBinding 分支不误报 + 后置 UPDATE 纳入存量行双保证 Test 6 佐证；2 commits 5845f35/5cdddd6，1 deviation Rule 1+3 auto-fixed（migrations.test.ts MIGRATION_HEAD 静态守卫 11→12 同步），三绿门禁 tsc web + build:electron-main + test:electron 6/6 + npm test 256/256 全绿零回归，SC1 new_ip 不恒零闭环 + SC4 三红线不回退 anomaly:* secure 不碰 / ip_mac_changes 无 _enc 不碰加密 / 异常检测非 AI 命令路径 commandSafety 不碰）
 
 ### Blockers/Concerns
 
@@ -238,6 +247,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 | Phase 12 P03 | ~95s（continuation Task 3）+ Task 1 前置 | 3 tasks（1 auto + 1 checkpoint + 1 auto）| 2 files |
 | Phase 13 P02 | ~6min | 2 tasks | 3 files |
 | Phase 13 P03 | ~6min | 2 tasks (tdd) | 3 files |
+| Phase 14 P01 | 6m33s | 2 tasks | 5 files |
 
 ### Risk Watch
 
@@ -280,8 +290,8 @@ v1.1 明确 defer 到二期（4 FUTURE，不进 roadmap）：
 
 ## Session Continuity
 
-- **Last action**: Phase 14 context gathered（14-CONTEXT.md：BUG-1 修写入侧+首次基线 D-14-1 / 旧规划 3 项 confirm防重复+ai_exec_logs+会话标题 researcher 全权甄别 D-14-2 / H3C LLDP 作废 D-14-3 用户真机已验证 discovery.ts AI 驱动对 H3C OK / 测试借 Phase 12 回归网 D-14-4）
-- **Next action**: `/gsd:plan-phase 14`（FIX-01 BUG-1 anomaly new_ip 修写入侧 + FIX-02 旧规划 3 项甄别）
+- **Last action**: 14-01 完成（BUG-1 anomaly new_ip 恒零修复：v12 ip_mac_bindings.is_baseline 列 + 双路径同步 + _setAnomalyDbGetter mock 注入口 + 首次基线机制 hasBaseline 门控 + 遗留库后置基线 UPDATE 纳入存量行，6 it realDb 单测全绿，三绿门禁 tsc web + build:electron-main + test:electron 6/6 + npm test 256/256 全绿零回归，2 commits 5845f35/5cdddd6）
+- **Next action**: 执行 14-02-PLAN.md（FIX-02 旧规划 3 项甄别 + H3C LLDP 作废登记，沿用 SEC-04 D-13-4 甄别退路模式产出 14-02-DEFER-LOG.md）
 - **Resume command**: `/gsd-status`
 
 ## Phase → Requirement Map
