@@ -19,7 +19,7 @@
 
 - [x] **SEC-03**: SSH 现代算法连通 — connection.ts 内联 algorithms 补 curve25519-sha256 等（与 sshConfig.ts SSH_ALGORITHMS 对齐，修体检 §1.0 半残留：ai.ts/arpCollector 已走 SSH_ALGORITHMS，connection.ts 终端连接内联配置仍缺）
 - [x] **SEC-04**: pre-release 安全 hardening 收尾 — 14 项里的安全相关：L1 弱 SSH 算法 / L4 Login / L6 authGuard / L2 ai limit / L3 captcha（审计 P3 `260726-p9e` 显式排除的发版后项）
-- [ ] **SEC-05**: experience:list IPC 入参校验防廉价 DoS — severity 枚举 + search 长度上限 + tags 数组上限（体检 WR-06，untrusted renderer 可廉价触发全表 LIKE）
+- [x] **SEC-05**: experience:list IPC 入参校验防廉价 DoS — severity 枚举 + search 长度上限 + tags 数组上限（体检 WR-06，untrusted renderer 可廉价触发全表 LIKE）
 
 ### FIX（缺陷修复）
 
@@ -56,7 +56,7 @@ Phase 编号续 v1.1（止于 Phase 11）→ v1.2 从 **Phase 12** 起（不 res
 | TEST-02 | Phase 12 | Done | 12-02 四条 cleanup 路径泄漏检测全绿（executeCommandsOnDevice/execOne/executeSSH/executeTelnetCommand） |
 | SEC-03 | Phase 13 | Complete | connection.ts 内联 algorithms 补 curve25519 |
 | SEC-04 | Phase 13 | Complete | pre-release 安全项 L1/L4/L6/L2/L3 收尾 |
-| SEC-05 | Phase 13 | Pending | experience:list 入参校验防廉价 DoS（WR-06） |
+| SEC-05 | Phase 13 | Complete | experience:list 入参校验防廉价 DoS（WR-06） |
 | FIX-01 | Phase 14 | Pending | BUG-1 anomaly new_ip 计数恒零 |
 | FIX-02 | Phase 14 | Pending | 旧规划回退 4 项甄别修复（confirm/ai_exec_logs/会话标题/H3C LLDP） |
 

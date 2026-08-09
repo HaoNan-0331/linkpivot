@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: 安全与稳定性加固
-status: executing
-last_updated: "2026-08-09T11:32:00.000Z"
-last_activity: 2026-08-09 -- Plan 13-02 SEC-04 pre-release hardening 甄别收尾完成
+status: verifying
+last_updated: "2026-08-09T11:44:26.046Z"
+last_activity: 2026-08-09
 progress:
   total_phases: 3
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 6
-  completed_plans: 5
-  percent: 83
+  completed_plans: 6
+  percent: 67
 ---
 
 # STATE: network_toplogy
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-08-01)
 
 ## Current Position
 
-Phase: 13 (security-hardening-cluster) — EXECUTING
+Phase: 13 (security-hardening-cluster) — COMPLETE (3/3 plans done), READY FOR VERIFICATION
 Plan: 3 of 3
-Status: Executing Phase 13（Plan 01 SEC-03 + Plan 02 SEC-04 完成，准备 Plan 03 SEC-05）
-Last activity: 2026-08-09 -- Plan 13-02 SEC-04 pre-release hardening 甄别收尾完成（authGuard 单测扩展 10 it + sanitizeMessage Unix 路径通用匹配加固覆盖 SQLite 部署路径 + DEFER-LOG 五项 L1/L2/L3/L4/L6 逐项结论+佐证+reason 登记；三绿门禁 vitest authGuard 10/10 + tsc web + npm test 247/247 全绿零回归；SC2 五项无静默跳过满足）
+Status: Phase 13 全部 3 plan 完成（13-01 SEC-03 + 13-02 SEC-04 + 13-03 SEC-05），待 `/gsd-verify-phase 13`
+Last activity: 2026-08-09 -- Plan 13-03 SEC-05 experience:list IPC 网关层 DoS 校验完成（sanitizeListInput 纯函数 search≤100/tags≤20/单tag≤30 钳制 + 非法 severity throw D-13-5 混合策略 + VALID_SEVERITIES export 单一来源消 drift D-13-6 + service 层 limit MAX_BATCH throw 兜底保留 D-13-7 双层第二层；experienceListGuard.test.ts 8 it 沿用 _setExperienceDbGetter mock 范式 D-13-8；三绿门禁 vitest 8/8 + tsc web + build:electron-main + npm test 255/255 全绿零回归；SC3 DoS 防御 + SC4 三红线不回退 + 双层防御论证）
 
 ## Performance Metrics
 
@@ -168,6 +168,11 @@ Phase 13 执行期决策（13-02 落地）：
 - [Phase 13]: 13-02 Rule 1+2 deviation——sanitizeMessage Unix 路径正则从枚举前缀（usr|home|Users|tmp|var|opt）扩展为通用绝对路径匹配（/[^\s'"()<>]*/），覆盖 SQLite 等库报告的 /app /data /root /private 等部署路径（plan Task1 it#3 用 /app/db/main.db 不被原正则脱敏致测试无法通过 + 红线①异常脱敏实际加固）；secure/safe 鉴权逻辑零改动，既有 secure 未登录拒绝 it 保持绿，SC4 红线①增强非削弱
 - [Phase 13]: 13-02 isAuthenticated 0 caller 保留决定（health §2.2 investigate 收尾）——经核对是预留查询入口（未来 renderer 检测登录态可暴露 auth:check IPC），非漏洞；Task 1 补单测确认行为正确；本 phase 不引入新 IPC 保留现状
 
+Phase 13 执行期决策（13-03 落地）：
+
+- [Phase 13]: 13-03 SEC-05 experience:list IPC 网关层 DoS 校验——抽 sanitizeListInput 纯函数（plan Task 2 推荐方案，最高 ROI）做 search≤100 slice(0,100)/tags≤20 slice(0,20)+单tag≤30 slice(0,30) 钳制（D-13-5 Pattern A 静默容错 + D-13-6 阈值）+ 非法 severity throw（D-13-5 Pattern B 固定集合非法值暴露 bug，复用 service 层 export 的 VALID_SEVERITIES 单一来源消 drift D-13-6）；handler 改 secure((_e, opts?) => listExperiences(sanitizeListInput(opts))) 仍 secure 包装红线①不变 throw 经 sanitizeMessage 脱敏；service 层 listExperiences limit MAX_BATCH throw 兜底保留不删（D-13-7 双层第二层防绕 IPC 直调 service）；listExperiences 签名 ListExperiencesOpts 不变（D-13-7 避破坏既有 callers）；VALID_SEVERITIES const → export ... as const 让 TS 推断字面量联合，IPC 层 .includes() 用 as readonly string[] 宽化入参避免 strict 报错
+- [Phase 13]: 13-03 D-13-8 纯函数测试范式——sanitizeListInput 抽纯函数（不调 listExperiences）单测直接调验截断/throw，无需 setAuthenticated/secure 包装/ipcMain mock；experienceListGuard.test.ts 8 it（6 SEC-05 case 截断 search/tags/单tag + throw 非法 severity + 透传合法 severity + 不误伤正常 search + 2 补强 service 层 limit MAX_BATCH throw 兜底用 _setExperienceDbGetter mock DB 注入 + VALID_SEVERITIES deepEqual 枚举一致）；三绿门禁 vitest 8/8 + tsc web + build:electron-main + npm test 255/255 全绿零回归
+
 v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 
 - 加密/迁移改动必须向后兼容历史数据（v1/v2 IV 兼容、迁移幂等守卫靠 sqlite_master 特征串不靠 user_version、throw 即 ROLLBACK）
@@ -194,6 +199,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 - [x] 12-03-PLAN.md — Phase 12 句柄泄漏专项 + CI 扩展（handleLeak.real.test.ts 异常场景 5 it：SSH RST/exec stream error/telnet 断连/循环累积 N=5/混合 timeout+正常，闭合 Phase 3 长时间运行 defer + Phase 6 SC#4；CI-A 用户选定 build-smoke.yml 重排 npm test 移 rebuild 前 + 新增 test:electron 挂 rebuild 后，CI 锁两条回归网；A4 wtfnode.dump 未触发，3 commits d8a8d34/bbdbe6d/98d8aca，零偏差，三绿门禁 test:electron 22/22 + npm test 244/244 + build:electron-main 全绿零回归，SC4 git diff electron/ 退出 0，GHA 实跑 defer 待 push）
 - [x] 13-01-PLAN.md — Phase 13 SEC-03 SSH 算法 drift 消除（connection.ts connectSSH 删 36 行内联 algorithms 表改 `algorithms: SSH_ALGORITHMS,` 单行 D-13-2 补 curve25519-sha256 + 全部老算法保留 D-13-1 + readyTimeout 10s → SSH_READY_TIMEOUT_MS(30s) D-13-3；Rule 1 补 testSSHConnection 第二处内联表同源 drift；新增 connectSSH.algorithms.real.test.ts 真路径回归 3 it：常量首项断言 + curve25519-only 协商成功 SEC-03 修复守卫 + 内联旧表协商失败 drift 危害反向回归守卫，内联 ssh2.Server 不调 startMockSshServer helper；D-13-8 绕开 BrowserWindow 直接验 ssh2.Client + algorithms 协商契约；2 commits c19c9f1/df0a0fc，1 deviation Rule 1 auto-fixed，三绿门禁 tsc web + build:electron-main + test:electron 24/24 + npm test 244/244 全绿零回归，SC4 三红线不回退）
 - [x] 13-02-PLAN.md — Phase 13 SEC-04 pre-release hardening 甄别收尾（authGuard.test.ts 既有 7 it 追加 3 it：safe 未登录不拒绝 + isAuthenticated 行为 + secure 脱敏 SQL 错误含路径，共 10 it 全绿；Rule 1+2 deviation 加固 sanitizeMessage Unix 路径正则枚举前缀→通用绝对路径匹配覆盖 SQLite /app /data /root 部署路径，红线①异常脱敏增强非削弱；DEFER-LOG 五项 L1/L2/L3/L4/L6 逐项结论+佐证+reason+重评估条件，L1 DEFER D-13-1 / L2 DEFER 命令安全层+单机无滥用面 / L3 FIXED 核心+renderSvg DEFER / L4 FIXED 核心 / L6 FIXED 核心，SC2 无静默跳过；isAuthenticated 0 caller 保留决定 health §2.2 investigate 收尾；2 commits 9096853/82d30b4，三绿门禁 vitest authGuard 10/10 + tsc web + npm test 247/247 全绿零回归，SC4 三红线不回退）
+- [x] 13-03-PLAN.md — Phase 13 SEC-05 experience:list IPC 网关层 DoS 校验（experienceIpc.ts 抽 sanitizeListInput 纯函数：search slice(0,100) + tags slice(0,20) + 单tag slice(0,30) 钳制 + 非法 severity throw 复用 service 层 export VALID_SEVERITIES 单一来源消 drift；experienceService.ts const VALID_SEVERITIES → export ... as const 单一来源；handler 改 secure((_e, opts?) => listExperiences(sanitizeListInput(opts))) 仍 secure 包装红线①不变；service 层 listExperiences limit MAX_BATCH throw 兜底保留 D-13-7 双层第二层 + 签名 ListExperiencesOpts 不变；experienceListGuard.test.ts 8 it 沿用 _setExperienceDbGetter mock 范式 D-13-8 纯函数最高 ROI 无需 setAuthenticated/secure/ipcMain mock；2 commits 25f380d/39d1fe3，1 deviation Rule 1 auto-fixed（as readonly string[] 宽化 .includes 入参避 strict 报错），三绿门禁 vitest 8/8 + tsc web + build:electron-main + npm test 255/255 全绿零回归，SC3 DoS 防御 + SC4 三红线不回退 + 双层防御论证）
 
 ### Blockers/Concerns
 
@@ -231,6 +237,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 | Phase 12 P01 | ~76min | 3 tasks | 10 files |
 | Phase 12 P03 | ~95s（continuation Task 3）+ Task 1 前置 | 3 tasks（1 auto + 1 checkpoint + 1 auto）| 2 files |
 | Phase 13 P02 | ~6min | 2 tasks | 3 files |
+| Phase 13 P03 | ~6min | 2 tasks (tdd) | 3 files |
 
 ### Risk Watch
 
@@ -273,8 +280,8 @@ v1.1 明确 defer 到二期（4 FUTURE，不进 roadmap）：
 
 ## Session Continuity
 
-- **Last action**: Phase 13 Plan 02 SEC-04 complete（pre-release 5 项 hardening 甄别收尾：authGuard 单测扩展 10 it 确认 secure/safe 未登录行为边界 + sanitizeMessage Unix 路径通用匹配加固覆盖 SQLite 部署路径 + DEFER-LOG 五项 L1/L2/L3/L4/L6 逐项结论+佐证+reason 登记；Rule 1+2 deviation 加固脱敏正则（红线①增强非削弱）；三绿门禁 vitest authGuard 10/10 + tsc web + npm test 247/247 全绿零回归；SC2 五项无静默跳过满足；SC4 三红线不回退）
-- **Next action**: 继续 Phase 13 Plan 03 SEC-05（experience:list IPC 入参校验防廉价 DoS：severity 枚举 throw + search/tags 钳制，双层防御职责分明 D-13-7）—— depends_on=[] 可独立执行
+- **Last action**: Phase 13 Plan 03 SEC-05 complete（experience:list IPC 网关层 DoS 校验：sanitizeListInput 纯函数 search≤100/tags≤20/单tag≤30 钳制 + 非法 severity throw D-13-5 混合策略 + VALID_SEVERITIES export 单一来源消 drift D-13-6 + service 层 limit MAX_BATCH throw 兜底保留 D-13-7 双层第二层；experienceListGuard.test.ts 8 it 沿用 _setExperienceDbGetter mock 范式 D-13-8；三绿门禁 vitest 8/8 + tsc web + build:electron-main + npm test 255/255 全绿零回归；SC3 DoS 防御 + SC4 三红线不回退 + 双层防御论证）
+- **Next action**: Phase 13 全部 3 plan 完成（13-01 SEC-03 + 13-02 SEC-04 + 13-03 SEC-05），运行 `/gsd-verify-phase 13`（SEC-03/04/05 三 REQ 验证收尾）后进入 Phase 14（FIX-01/02 缺陷+旧规划回退闭环）
 - **Resume command**: `/gsd-status`
 
 ## Phase → Requirement Map
