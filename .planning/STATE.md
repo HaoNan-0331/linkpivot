@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: 安全与稳定性加固
 status: executing
-last_updated: "2026-08-09T11:18:25.153Z"
-last_activity: 2026-08-09 -- Plan 13-01 SEC-03 SSH 算法 drift 消除完成
+last_updated: "2026-08-09T11:32:00.000Z"
+last_activity: 2026-08-09 -- Plan 13-02 SEC-04 pre-release hardening 甄别收尾完成
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 6
-  completed_plans: 4
-  percent: 67
+  completed_plans: 5
+  percent: 83
 ---
 
 # STATE: network_toplogy
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (updated 2026-08-01)
 ## Current Position
 
 Phase: 13 (security-hardening-cluster) — EXECUTING
-Plan: 2 of 3
-Status: Executing Phase 13（Plan 01 SEC-03 完成，准备 Plan 02 SEC-04）
-Last activity: 2026-08-09 -- Plan 13-01 SEC-03 SSH 算法 drift 消除完成（connection.ts 4 处 SSH 路径全走 SSH_ALGORITHMS + 真路径回归 3 it 全绿，三绿门禁 test:electron 24/24 + npm test 244/244 全绿）
+Plan: 3 of 3
+Status: Executing Phase 13（Plan 01 SEC-03 + Plan 02 SEC-04 完成，准备 Plan 03 SEC-05）
+Last activity: 2026-08-09 -- Plan 13-02 SEC-04 pre-release hardening 甄别收尾完成（authGuard 单测扩展 10 it + sanitizeMessage Unix 路径通用匹配加固覆盖 SQLite 部署路径 + DEFER-LOG 五项 L1/L2/L3/L4/L6 逐项结论+佐证+reason 登记；三绿门禁 vitest authGuard 10/10 + tsc web + npm test 247/247 全绿零回归；SC2 五项无静默跳过满足）
 
 ## Performance Metrics
 
@@ -162,6 +162,12 @@ Phase 13 执行期决策（13-01 落地）：
 - [Phase 13]: 13-01 D-13-8 真路径测试绕开 BrowserWindow——connectSSH 带 BrowserWindow 参数测试通道（ELECTRON_RUN_AS_NODE Electron app 未 ready）无法造真窗口，故不调 connectSSH 全函数，直接验核心契约 new ssh2.Client 用 { algorithms: SSH_ALGORITHMS } 与 curve25519-only 对端协商触发 'ready'；不调 startMockSshServer helper（不支持自定义对端 algorithms），直接内联 ssh2.Server({ hostKeys:[随机RSA], algorithms:{ kex:['curve25519-sha256'] } })；3 it（常量首项断言 + 协商成功 SEC-03 修复守卫 + 内联旧表协商失败 drift 危害反向回归守卫）；plan 文档「Phase 12 既有 22 it」与实际 21 it 计数偏差如实记 SUMMARY，全套件 24/24 全绿
 - [Phase 13]: 13-01 三绿门禁全绿 + SC4 三红线不回退——tsc web strict + build:electron-main + test:electron 24/24 + npm test 244/244 零回归；SEC-03 仅改 SSH 算法常量复用（algorithms/readyTimeout），不碰 IPC 鉴权（connectSSH 由 connection:ssh secure 触发不变）/ 字段加密（device 凭证读 encField/decField 不变）/ commandSafety（终端 shell 不经 AI 命令执行层），threat_model T-13-01-04 论证三红线改动后仍生效
 
+Phase 13 执行期决策（13-02 落地）：
+
+- [Phase 13]: 13-02 SEC-04 pre-release hardening 甄别收尾——authGuard.test.ts 既有 7 it 追加 3 it（safe 未登录不拒绝确认与 secure 区分 + isAuthenticated false→false/true→true 行为 + secure 脱敏 SQL 错误含 /app/db/main.db 路径）共 10 it 全绿；D-13-4 甄别退路落地：5 项逐项结论 L1 DEFER（D-13-1 运维兼容性优先连老设备）/L2 DEFER（commandSafety 红线③已强制+单机单用户无滥用面+审计 28 findings 无独立 finding）/L3 FIXED 核心（captcha 文本 CSPRNG+防重放）+renderSvg Math.random DEFER（非安全敏感）/L4 FIXED 核心（captcha 前置+失败锁定 5min+通用错误+口令强度+auth:* safe 包装五项全就位）/L6 FIXED 核心（secure/safe+脱敏+10 it 单测），SC2 五项无静默跳过满足
+- [Phase 13]: 13-02 Rule 1+2 deviation——sanitizeMessage Unix 路径正则从枚举前缀（usr|home|Users|tmp|var|opt）扩展为通用绝对路径匹配（/[^\s'"()<>]*/），覆盖 SQLite 等库报告的 /app /data /root /private 等部署路径（plan Task1 it#3 用 /app/db/main.db 不被原正则脱敏致测试无法通过 + 红线①异常脱敏实际加固）；secure/safe 鉴权逻辑零改动，既有 secure 未登录拒绝 it 保持绿，SC4 红线①增强非削弱
+- [Phase 13]: 13-02 isAuthenticated 0 caller 保留决定（health §2.2 investigate 收尾）——经核对是预留查询入口（未来 renderer 检测登录态可暴露 auth:check IPC），非漏洞；Task 1 补单测确认行为正确；本 phase 不引入新 IPC 保留现状
+
 v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 
 - 加密/迁移改动必须向后兼容历史数据（v1/v2 IV 兼容、迁移幂等守卫靠 sqlite_master 特征串不靠 user_version、throw 即 ROLLBACK）
@@ -187,6 +193,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 - [x] 12-02-PLAN.md — Phase 12 SSH/Telnet 真路径回归（ai executeCommandsOnDevice/execOne + arpCollector executeSSH + telnetExec executeTelnetCommand 真路径，复用 12-01 mockSshServer/mockTelnetServer/handleLeakDetector 契约，vi.mock 反向范式被测协议走真 binding 仅 mock 非被测重依赖，2 commits 37f5cca/40f13e5，A2 checkpoint PASS + telnet IAC checkpoint PASS，TEST-02 四条 cleanup 路径泄漏检测全绿，handleLeakDetector 默认白名单反馈环，5 deviations 全 auto-fixed，三绿门禁 test:electron 17/17 + npm test 244/244 全绿零回归，SC4 git diff electron/ 退出 0）
 - [x] 12-03-PLAN.md — Phase 12 句柄泄漏专项 + CI 扩展（handleLeak.real.test.ts 异常场景 5 it：SSH RST/exec stream error/telnet 断连/循环累积 N=5/混合 timeout+正常，闭合 Phase 3 长时间运行 defer + Phase 6 SC#4；CI-A 用户选定 build-smoke.yml 重排 npm test 移 rebuild 前 + 新增 test:electron 挂 rebuild 后，CI 锁两条回归网；A4 wtfnode.dump 未触发，3 commits d8a8d34/bbdbe6d/98d8aca，零偏差，三绿门禁 test:electron 22/22 + npm test 244/244 + build:electron-main 全绿零回归，SC4 git diff electron/ 退出 0，GHA 实跑 defer 待 push）
 - [x] 13-01-PLAN.md — Phase 13 SEC-03 SSH 算法 drift 消除（connection.ts connectSSH 删 36 行内联 algorithms 表改 `algorithms: SSH_ALGORITHMS,` 单行 D-13-2 补 curve25519-sha256 + 全部老算法保留 D-13-1 + readyTimeout 10s → SSH_READY_TIMEOUT_MS(30s) D-13-3；Rule 1 补 testSSHConnection 第二处内联表同源 drift；新增 connectSSH.algorithms.real.test.ts 真路径回归 3 it：常量首项断言 + curve25519-only 协商成功 SEC-03 修复守卫 + 内联旧表协商失败 drift 危害反向回归守卫，内联 ssh2.Server 不调 startMockSshServer helper；D-13-8 绕开 BrowserWindow 直接验 ssh2.Client + algorithms 协商契约；2 commits c19c9f1/df0a0fc，1 deviation Rule 1 auto-fixed，三绿门禁 tsc web + build:electron-main + test:electron 24/24 + npm test 244/244 全绿零回归，SC4 三红线不回退）
+- [x] 13-02-PLAN.md — Phase 13 SEC-04 pre-release hardening 甄别收尾（authGuard.test.ts 既有 7 it 追加 3 it：safe 未登录不拒绝 + isAuthenticated 行为 + secure 脱敏 SQL 错误含路径，共 10 it 全绿；Rule 1+2 deviation 加固 sanitizeMessage Unix 路径正则枚举前缀→通用绝对路径匹配覆盖 SQLite /app /data /root 部署路径，红线①异常脱敏增强非削弱；DEFER-LOG 五项 L1/L2/L3/L4/L6 逐项结论+佐证+reason+重评估条件，L1 DEFER D-13-1 / L2 DEFER 命令安全层+单机无滥用面 / L3 FIXED 核心+renderSvg DEFER / L4 FIXED 核心 / L6 FIXED 核心，SC2 无静默跳过；isAuthenticated 0 caller 保留决定 health §2.2 investigate 收尾；2 commits 9096853/82d30b4，三绿门禁 vitest authGuard 10/10 + tsc web + npm test 247/247 全绿零回归，SC4 三红线不回退）
 
 ### Blockers/Concerns
 
@@ -223,6 +230,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 | 260807-gfk | 安全 hardening B：validateDrafts 标记扫描 + ai_system_logs CHECK 扩 security v11 | 2026-08-07 | 5a824cd/8af620b/11f8f57 | [260807-gfk-hardening-b-validatedrafts-cmd-kb-search](./quick/260807-gfk-hardening-b-validatedrafts-cmd-kb-search/) |
 | Phase 12 P01 | ~76min | 3 tasks | 10 files |
 | Phase 12 P03 | ~95s（continuation Task 3）+ Task 1 前置 | 3 tasks（1 auto + 1 checkpoint + 1 auto）| 2 files |
+| Phase 13 P02 | ~6min | 2 tasks | 3 files |
 
 ### Risk Watch
 
@@ -265,8 +273,8 @@ v1.1 明确 defer 到二期（4 FUTURE，不进 roadmap）：
 
 ## Session Continuity
 
-- **Last action**: Phase 13 Plan 01 SEC-03 complete（SSH 算法 drift 消除：connection.ts connectSSH/testSSHConnection 删内联 algorithms 表全量复用 SSH_ALGORITHMS 常量补 curve25519-sha256 + 全部老算法保留 + readyTimeout 对齐 SSH_READY_TIMEOUT_MS(30s)；新增 connectSSH.algorithms.real.test.ts 真路径回归 3 it 全绿；全仓 4 处 SSH 路径零 drift；三绿门禁 tsc web + build:electron-main + test:electron 24/24 + npm test 244/244 全绿零回归；SC4 三红线不回退）
-- **Next action**: 继续 Phase 13 Plan 02 SEC-04（pre-release 5 项安全 hardening：L1 defer/L2 ai limit/L3 captcha/L4 Login/L6 authGuard）与 Plan 03 SEC-05（experience:list IPC 入参校验）—— 两 plan depends_on=[] 可独立并行
+- **Last action**: Phase 13 Plan 02 SEC-04 complete（pre-release 5 项 hardening 甄别收尾：authGuard 单测扩展 10 it 确认 secure/safe 未登录行为边界 + sanitizeMessage Unix 路径通用匹配加固覆盖 SQLite 部署路径 + DEFER-LOG 五项 L1/L2/L3/L4/L6 逐项结论+佐证+reason 登记；Rule 1+2 deviation 加固脱敏正则（红线①增强非削弱）；三绿门禁 vitest authGuard 10/10 + tsc web + npm test 247/247 全绿零回归；SC2 五项无静默跳过满足；SC4 三红线不回退）
+- **Next action**: 继续 Phase 13 Plan 03 SEC-05（experience:list IPC 入参校验防廉价 DoS：severity 枚举 throw + search/tags 钳制，双层防御职责分明 D-13-7）—— depends_on=[] 可独立执行
 - **Resume command**: `/gsd-status`
 
 ## Phase → Requirement Map
