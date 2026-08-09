@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: 安全与稳定性加固
-status: executing
-last_updated: "2026-08-09T15:56:00.000Z"
-last_activity: 2026-08-09 -- 14-01 完成（BUG-1 fix + 6 it realDb 单测全绿）
+status: verifying
+last_updated: "2026-08-10T00:00:00.000Z"
+last_activity: 2026-08-10
 progress:
   total_phases: 3
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 8
-  completed_plans: 7
-  percent: 88
+  completed_plans: 8
+  percent: 100
 ---
 
 # STATE: network_toplogy
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (updated 2026-08-01)
 ## Current Position
 
 Phase: 14 (defect-legacy-rollback-closure) — EXECUTING
-Plan: 2 of 2（14-01 已完成，14-02 待执行）
-Status: Ready to execute 14-02（FIX-02 旧规划 3 项甄别 + H3C 作废登记）
-Last activity: 2026-08-09 -- 14-01 完成（BUG-1 anomaly new_ip 恒零修复）
+Plan: 2 of 2（14-01 已完成，14-02 已执行）
+Status: Phase complete — ready for verification
+Last activity: 2026-08-10
 
 ## Performance Metrics
 
@@ -181,6 +181,13 @@ Phase 14 执行期决策（14-01 落地）：
 - [Phase 14]: 14-01 _setAnomalyDbGetter mock 注入口（镜像 experienceService._setExperienceDbGetter D-7-8 范式，D-14-4 借 Phase 12 realDb 真路径回归网）——anomalyService 全方法 getDatabase()→dbGetter()，生产 dbGetter 默认=getDatabase 单例行为零变化，@internal 测试专用无 IPC channel 暴露给 renderer；anomalyNewIp.real.test.ts 6 it 借 makeRealDb 真路径跑真 SQL（processARPEntries 内 INSERT/UPDATE/SELECT 全走真路径无需 mock 单条 SQL）
 - [Phase 14]: 14-01 三红线不回退论证——anomaly:* IPC 仍 secure 包装（service 层 + 迁移 + init DDL 改动不碰 IPC 网关 anomalyIpc.ts）/ ip_mac_changes 无 _enc 列本 plan 零 encField/decField 调用（红线②不涉及）/ 异常检测非 AI 命令执行路径 commandSafety 在 ai.ts:334/890 本 plan 零改动 ai.ts（红线③不涉及）
 
+Phase 14 执行期决策（14-02 落地）：
+
+- [Phase 14]: 14-02 FIX-02 #1 confirm 防重复点击完整闭环——核心关窗锁 setPendingConfirm(null)（useAIChat.ts:198）保留不动（防重复 IPC 主防线红线不回退）+ 视觉层 confirmInFlight useState（line 35）+ handleConfirm setConfirmInFlight(true) IPC 前置（line 204）+ setConfirmInFlight(false) 完成/异常释放（line 229）+ return 暴露（line 293）+ CommandConfirmModal 两 footer Button 加 loading={confirmInFlight} disabled={confirmInFlight}（参考 ChatInput.tsx:38-49 analog）+ types.ts UseAIChatReturn 加 confirmInFlight: boolean + AIPage.tsx 透传 prop
+- [Phase 14]: 14-02 测试通道定死无摇摆（D-14-4 测试方式 discretion）——confirmInFlight 关窗锁逻辑紧耦合 React hook useState 闭包（pendingConfirm/currentSessionId）+ React setter + window.api.ai.confirmCommand IPC 副作用无纯函数边界可提取 → 不在 tests/unit/ 写纯函数单测（无可独立测对象）+ 按钮 loading+disabled renderer 组件交互项目 @testing-library/* 未安装 + 0 renderer 组件测试先例 → 真机 HV defer，源断言 grep（confirmInFlight prop 透传 + setConfirmInFlight true/false + loading/disabled prop 落地）+ 真机 HV 验按钮转圈禁用 + 单次 IPC 登记闭环，不写「装了就测/没装降级」条件分支
+- [Phase 14]: 14-02 FIX-02 #2/#3/#4 甄别零代码改动——#2 ai_exec_logs 判定 FIXED 已满足（createLog INSERT prompt_text+ai_response + appendLogAiResponse 追加二次 + v2 迁移加列三项全就位，ai.ts:891-900/aiExecLogger.ts:8-34/42-52/migrations.ts:38-49）/ #3 会话标题判定 FIXED 前提偏差（标题更新在 renderer useAIChat.ts:132-137 不在 ai.ts，且已正确排在 confirm_required 分支 line 148 之前，updateSessionTitle 在 ai.ts:188 仅定义零 chat 流程 caller）/ #4 H3C LLDP 判定 DEFER 作废（D-14-3，discovery.ts:101-104 prompt 内联 H3C LLDP 命令 + line 275 AI 据邻居推断 edges + 用户真机验证 edges 非空 + 旧 vendor-commands.ts 已 commit 0bd4dbd 删除，重评估的是正确路径非复活硬编码方案）
+- [Phase 14]: 14-02 三红线不回退论证——Task 1 仅改 renderer 组件 CommandConfirmModal + hook useAIChat + types.ts + AIPage.tsx（视觉层 loading+disabled），零改动 ai:chat/ai:confirmCommand IPC secure 包装（红线①）/ 零改动 _enc/encField/decField 加密路径（红线②）/ 零改动 commandSafety.isCommandAllowed ai.ts:334/890 双守卫 + confirm_required 二次确认闸口（红线③）；甄别项 #2/#3/#4 零代码改动
+
 v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 
 - 加密/迁移改动必须向后兼容历史数据（v1/v2 IV 兼容、迁移幂等守卫靠 sqlite_master 特征串不靠 user_version、throw 即 ROLLBACK）
@@ -209,6 +216,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 - [x] 13-02-PLAN.md — Phase 13 SEC-04 pre-release hardening 甄别收尾（authGuard.test.ts 既有 7 it 追加 3 it：safe 未登录不拒绝 + isAuthenticated 行为 + secure 脱敏 SQL 错误含路径，共 10 it 全绿；Rule 1+2 deviation 加固 sanitizeMessage Unix 路径正则枚举前缀→通用绝对路径匹配覆盖 SQLite /app /data /root 部署路径，红线①异常脱敏增强非削弱；DEFER-LOG 五项 L1/L2/L3/L4/L6 逐项结论+佐证+reason+重评估条件，L1 DEFER D-13-1 / L2 DEFER 命令安全层+单机无滥用面 / L3 FIXED 核心+renderSvg DEFER / L4 FIXED 核心 / L6 FIXED 核心，SC2 无静默跳过；isAuthenticated 0 caller 保留决定 health §2.2 investigate 收尾；2 commits 9096853/82d30b4，三绿门禁 vitest authGuard 10/10 + tsc web + npm test 247/247 全绿零回归，SC4 三红线不回退）
 - [x] 13-03-PLAN.md — Phase 13 SEC-05 experience:list IPC 网关层 DoS 校验（experienceIpc.ts 抽 sanitizeListInput 纯函数：search slice(0,100) + tags slice(0,20) + 单tag slice(0,30) 钳制 + 非法 severity throw 复用 service 层 export VALID_SEVERITIES 单一来源消 drift；experienceService.ts const VALID_SEVERITIES → export ... as const 单一来源；handler 改 secure((_e, opts?) => listExperiences(sanitizeListInput(opts))) 仍 secure 包装红线①不变；service 层 listExperiences limit MAX_BATCH throw 兜底保留 D-13-7 双层第二层 + 签名 ListExperiencesOpts 不变；experienceListGuard.test.ts 8 it 沿用 _setExperienceDbGetter mock 范式 D-13-8 纯函数最高 ROI 无需 setAuthenticated/secure/ipcMain mock；2 commits 25f380d/39d1fe3，1 deviation Rule 1 auto-fixed（as readonly string[] 宽化 .includes 入参避 strict 报错），三绿门禁 vitest 8/8 + tsc web + build:electron-main + npm test 255/255 全绿零回归，SC3 DoS 防御 + SC4 三红线不回退 + 双层防御论证）
 - [x] 14-01-PLAN.md — Phase 14 FIX-01 BUG-1 anomaly new_ip 恒零修复（方案 A：anomalyService.processARPEntries 全新 IP else 分支补 recordChange(ip,null,mac,'new_ip') 被 if(hasBaseline) 门控 + 入口 hasBaseline 判定 + runBatch 后置 UPDATE ip_mac_bindings SET is_baseline=1 WHERE is_baseline=0；migrations.ts v12 加 ip_mac_bindings.is_baseline INTEGER NOT NULL DEFAULT 0 列 hasColumn 守卫沿用 v1/v2 第一形式 + MIGRATION_HEAD 11→12 + MIGRATIONS 注册；init.ts fresh-install ip_mac_bindings DDL 同步加列双路径逐字一致；_setAnomalyDbGetter mock 注入口镜像 experienceService D-14-4 借 Phase 12 realDb 真路径范式；getStats 读取侧 D-14-1 锁定不动；遗留库向后兼容 CLAUDE.md 硬约束由存量 IP 走 currentBinding 分支不误报 + 后置 UPDATE 纳入存量行双保证 Test 6 佐证；2 commits 5845f35/5cdddd6，1 deviation Rule 1+3 auto-fixed（migrations.test.ts MIGRATION_HEAD 静态守卫 11→12 同步），三绿门禁 tsc web + build:electron-main + test:electron 6/6 + npm test 256/256 全绿零回归，SC1 new_ip 不恒零闭环 + SC4 三红线不回退 anomaly:* secure 不碰 / ip_mac_changes 无 _enc 不碰加密 / 异常检测非 AI 命令路径 commandSafety 不碰）
+- [x] 14-02-PLAN.md — Phase 14 FIX-02 旧规划回退甄别 + H3C 作废登记（FIX-02 #1 confirm 防重复点击完整闭环：核心关窗锁 setPendingConfirm(null) useAIChat.ts:198 保留不动 + 视觉层 confirmInFlight useState + handleConfirm setConfirmInFlight(true/false) IPC 在途锁 + CommandConfirmModal 两 footer Button 加 loading+disabled + types.ts UseAIChatReturn 加 confirmInFlight + AIPage 透传 prop；FIX-02 #2 ai_exec_logs 判定 FIXED 已满足 createLog INSERT prompt_text+ai_response + appendLogAiResponse 追加二次 + v2 迁移加列三项全就位零代码改动；FIX-02 #3 会话标题判定 FIXED 前提偏差标题更新在 renderer useAIChat.ts:132-137 且在 confirm_required 分支 line 148 之前零代码改动；H3C LLDP 判定 DEFER 作废 D-14-3 discovery.ts:101-275 已覆盖 H3C + 用户真机验证 + vendor-commands.ts 已删；测试通道定死 confirmInFlight 无纯函数边界 + renderer 无 @testing-library → 真机 HV defer；14-02-DEFER-LOG.md 4 项甄别登记复用 13-02 结构 + 甄别汇总表 + 三红线确认段；2 commits d93b0d3/8bdb774，零偏差，三绿门禁 tsc web + build:electron-main + npm test 256/256 全绿零回归，SC2-SC5 逐项结论无静默跳过 + SC4 三红线不回退 ai:* secure 不碰 / ai_exec_logs 仅 device_name_enc 加密不碰加密 / commandSafety + confirm_required 双守卫不碰）
 
 ### Blockers/Concerns
 
@@ -248,6 +256,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 | Phase 13 P02 | ~6min | 2 tasks | 3 files |
 | Phase 13 P03 | ~6min | 2 tasks (tdd) | 3 files |
 | Phase 14 P01 | 6m33s | 2 tasks | 5 files |
+| Phase 14 P02 | ~12min | 2 tasks | 5 files |
 
 ### Risk Watch
 
@@ -290,8 +299,8 @@ v1.1 明确 defer 到二期（4 FUTURE，不进 roadmap）：
 
 ## Session Continuity
 
-- **Last action**: 14-01 完成（BUG-1 anomaly new_ip 恒零修复：v12 ip_mac_bindings.is_baseline 列 + 双路径同步 + _setAnomalyDbGetter mock 注入口 + 首次基线机制 hasBaseline 门控 + 遗留库后置基线 UPDATE 纳入存量行，6 it realDb 单测全绿，三绿门禁 tsc web + build:electron-main + test:electron 6/6 + npm test 256/256 全绿零回归，2 commits 5845f35/5cdddd6）
-- **Next action**: 执行 14-02-PLAN.md（FIX-02 旧规划 3 项甄别 + H3C LLDP 作废登记，沿用 SEC-04 D-13-4 甄别退路模式产出 14-02-DEFER-LOG.md）
+- **Last action**: 14-02 完成（FIX-02 旧规划回退甄别 + H3C 作废登记：#1 confirm 防重复完整闭环核心关窗锁保留 + 视觉层 confirmInFlight 按钮 loading+disabled 落地；#2 ai_exec_logs FIXED 已满足零改 / #3 会话标题 FIXED 前提偏差零改 / #4 H3C DEFER 作废；14-02-DEFER-LOG.md 4 项登记复用 13-02 结构，三绿门禁 tsc web + build:electron-main + npm test 256/256 全绿零回归，2 commits d93b0d3/8bdb774）
+- **Next action**: Phase 14 全部 plan 已执行（14-01 + 14-02），可进入 `/gsd:verify-phase 14` 验证 SC1-SC5 闭环 + 三红线不回退 + 真机 HV（confirmInFlight 按钮转圈禁用 + 单次 IPC）
 - **Resume command**: `/gsd-status`
 
 ## Phase → Requirement Map
