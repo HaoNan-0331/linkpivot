@@ -161,8 +161,9 @@ describe('v11 ai_system_logs CHECK widen security 迁移', () => {
     expect(initDdl).toContain(expectedStatusCheck)
   })
 
-  it('4. MIGRATION_HEAD=11（注册完整性静态守卫，防 bump 漏改）', async () => {
+  it('4. MIGRATION_HEAD=12（注册完整性静态守卫，防 bump 漏改）', async () => {
     const mod = await import('./migrations')
-    expect(mod.MIGRATION_HEAD).toBe(11)
+    // Phase 14 BUG-1：v12 ip_mac_bindings.is_baseline 列迁移已注册，MIGRATION_HEAD 从 11 bump 到 12
+    expect(mod.MIGRATION_HEAD).toBe(12)
   })
 })
