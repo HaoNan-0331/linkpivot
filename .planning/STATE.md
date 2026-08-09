@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: 安全与稳定性加固
 status: executing
-last_updated: "2026-08-09T07:38:05.240Z"
-last_activity: 2026-08-09 -- Phase 13 planning complete
+last_updated: "2026-08-09T11:18:25.153Z"
+last_activity: 2026-08-09 -- Plan 13-01 SEC-03 SSH 算法 drift 消除完成
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 6
-  completed_plans: 3
-  percent: 33
+  completed_plans: 4
+  percent: 67
 ---
 
 # STATE: network_toplogy
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-08-01)
 
 ## Current Position
 
-Phase: 13
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-08-09 -- Phase 13 planning complete
+Phase: 13 (security-hardening-cluster) — EXECUTING
+Plan: 2 of 3
+Status: Executing Phase 13（Plan 01 SEC-03 完成，准备 Plan 02 SEC-04）
+Last activity: 2026-08-09 -- Plan 13-01 SEC-03 SSH 算法 drift 消除完成（connection.ts 4 处 SSH 路径全走 SSH_ALGORITHMS + 真路径回归 3 it 全绿，三绿门禁 test:electron 24/24 + npm test 244/244 全绿）
 
 ## Performance Metrics
 
@@ -156,6 +156,12 @@ Phase 12 执行期决策（12-03 落地）：
 - [Phase 12]: 12-03 CI-A 分段方案落地（用户 plan review 选定，RESEARCH 推荐）——build-smoke.yml 重排 step：npm test 移 rebuild:native 之前（plain node 跑 mock 244 套件不碰 native 避免 ABI 崩 DEP-1 隐患）+ 新增 npm run test:electron 挂 rebuild + build 之后（electron.exe 跑真路径 22 it，需 electron-ABI binding + dist-electron/main.js）；CI-B（改 mock 套件运行环境）+ CI-C（违背 SC2 CI/本地绿）否决
 - [Phase 12]: 12-03 GHA windows-latest 实跑 defer——本地静态验证通过（YAML 语法合法 + step 顺序逻辑正确 npm test L26 < rebuild L28 < test:electron L33 + cross-env 跨平台兼容），RESEARCH 三 ASSUMED（xvfb 不需 / antivirus 误报 / CI 时长 +30-60s）记 SUMMARY defer 待 push 实跑确认；RUN_AS_NODE 模式不走 Chromium 语义判断不需 xvfb/--no-sandbox
 
+Phase 13 执行期决策（13-01 落地）：
+
+- [Phase 13]: 13-01 SEC-03 SSH 算法 drift 消除——connection.ts connectSSH 删 36 行内联 algorithms 表改 `algorithms: SSH_ALGORITHMS,` 单行（D-13-2 补 curve25519-sha256 首项 + 全部老算法保留 D-13-1）+ readyTimeout 10s → SSH_READY_TIMEOUT_MS(30s)（D-13-3 治同类慢设备超时 drift）；Rule 1 补 testSSHConnection 第二处内联 algorithms 表（plan must_haves 第4条「全仓无第二份算法表」+ 同源 drift 致测试连接现代 Linux 也失败）一并复用 SSH_ALGORITHMS，readyTimeout 8000 保留（测试连接语义不同希望快速失败反馈）；全仓 4 处 SSH 路径（ai.ts buildSSHConfig + arpCollector.ts executeSSH + connection.ts connectSSH/testSSHConnection）零 drift
+- [Phase 13]: 13-01 D-13-8 真路径测试绕开 BrowserWindow——connectSSH 带 BrowserWindow 参数测试通道（ELECTRON_RUN_AS_NODE Electron app 未 ready）无法造真窗口，故不调 connectSSH 全函数，直接验核心契约 new ssh2.Client 用 { algorithms: SSH_ALGORITHMS } 与 curve25519-only 对端协商触发 'ready'；不调 startMockSshServer helper（不支持自定义对端 algorithms），直接内联 ssh2.Server({ hostKeys:[随机RSA], algorithms:{ kex:['curve25519-sha256'] } })；3 it（常量首项断言 + 协商成功 SEC-03 修复守卫 + 内联旧表协商失败 drift 危害反向回归守卫）；plan 文档「Phase 12 既有 22 it」与实际 21 it 计数偏差如实记 SUMMARY，全套件 24/24 全绿
+- [Phase 13]: 13-01 三绿门禁全绿 + SC4 三红线不回退——tsc web strict + build:electron-main + test:electron 24/24 + npm test 244/244 零回归；SEC-03 仅改 SSH 算法常量复用（algorithms/readyTimeout），不碰 IPC 鉴权（connectSSH 由 connection:ssh secure 触发不变）/ 字段加密（device 凭证读 encField/decField 不变）/ commandSafety（终端 shell 不经 AI 命令执行层），threat_model T-13-01-04 论证三红线改动后仍生效
+
 v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 
 - 加密/迁移改动必须向后兼容历史数据（v1/v2 IV 兼容、迁移幂等守卫靠 sqlite_master 特征串不靠 user_version、throw 即 ROLLBACK）
@@ -180,6 +186,7 @@ v1.0 carry-over（归档前的关键决策，仍约束本 milestone）：
 - [x] 12-01-PLAN.md — Phase 12 测试基础设施主干（DEP-1 ABI 缓解：test:electron 通道 cross-env ELECTRON_RUN_AS_NODE=1 electron.exe vitest.mjs + 双 vitest config 物理隔离 Pitfall 6 + wtfnode@0.10.1 devDep + 4 helper 契约 realDb/mockSshServer/mockTelnetServer/handleLeakDetector + db.real.test.ts 真路径 CRUD/迁移幂等/WAL，3 commits aea9154/3022350/dae9f18，A1 实跑确认 vitest/4.1.5，OQ#1 方案 A 零生产改动，4 deviations 全 auto-fixed（2 Rule 3 阻塞性 + 2 Rule 2 关键功能），三绿门禁 test:electron 3/3 + npm test 244/244 + build:electron-main 全绿零回归，SC4 git diff electron/ 退出 0）
 - [x] 12-02-PLAN.md — Phase 12 SSH/Telnet 真路径回归（ai executeCommandsOnDevice/execOne + arpCollector executeSSH + telnetExec executeTelnetCommand 真路径，复用 12-01 mockSshServer/mockTelnetServer/handleLeakDetector 契约，vi.mock 反向范式被测协议走真 binding 仅 mock 非被测重依赖，2 commits 37f5cca/40f13e5，A2 checkpoint PASS + telnet IAC checkpoint PASS，TEST-02 四条 cleanup 路径泄漏检测全绿，handleLeakDetector 默认白名单反馈环，5 deviations 全 auto-fixed，三绿门禁 test:electron 17/17 + npm test 244/244 全绿零回归，SC4 git diff electron/ 退出 0）
 - [x] 12-03-PLAN.md — Phase 12 句柄泄漏专项 + CI 扩展（handleLeak.real.test.ts 异常场景 5 it：SSH RST/exec stream error/telnet 断连/循环累积 N=5/混合 timeout+正常，闭合 Phase 3 长时间运行 defer + Phase 6 SC#4；CI-A 用户选定 build-smoke.yml 重排 npm test 移 rebuild 前 + 新增 test:electron 挂 rebuild 后，CI 锁两条回归网；A4 wtfnode.dump 未触发，3 commits d8a8d34/bbdbe6d/98d8aca，零偏差，三绿门禁 test:electron 22/22 + npm test 244/244 + build:electron-main 全绿零回归，SC4 git diff electron/ 退出 0，GHA 实跑 defer 待 push）
+- [x] 13-01-PLAN.md — Phase 13 SEC-03 SSH 算法 drift 消除（connection.ts connectSSH 删 36 行内联 algorithms 表改 `algorithms: SSH_ALGORITHMS,` 单行 D-13-2 补 curve25519-sha256 + 全部老算法保留 D-13-1 + readyTimeout 10s → SSH_READY_TIMEOUT_MS(30s) D-13-3；Rule 1 补 testSSHConnection 第二处内联表同源 drift；新增 connectSSH.algorithms.real.test.ts 真路径回归 3 it：常量首项断言 + curve25519-only 协商成功 SEC-03 修复守卫 + 内联旧表协商失败 drift 危害反向回归守卫，内联 ssh2.Server 不调 startMockSshServer helper；D-13-8 绕开 BrowserWindow 直接验 ssh2.Client + algorithms 协商契约；2 commits c19c9f1/df0a0fc，1 deviation Rule 1 auto-fixed，三绿门禁 tsc web + build:electron-main + test:electron 24/24 + npm test 244/244 全绿零回归，SC4 三红线不回退）
 
 ### Blockers/Concerns
 
@@ -258,8 +265,8 @@ v1.1 明确 defer 到二期（4 FUTURE，不进 roadmap）：
 
 ## Session Continuity
 
-- **Last action**: Phase 12 Plan 03 complete（句柄泄漏专项 5 it 异常场景 + CI-A build-smoke.yml 重排：handleLeak.real.test SSH RST/exec stream error/telnet 断连/循环累积/混合 timeout 全绿闭合 Phase 3 长时间运行 defer + Phase 6 SC#4；CI-A npm test 移 rebuild 前 + test:electron 挂 rebuild 后；三绿门禁全绿 + SC4 兜底通过；Phase 12 三 plan 全完成 ready for verification）
-- **Next action**: `/gsd:verify-phase 12`（Phase 12 全部 SC1-4 + TEST-01/02 覆盖完毕，进入 verify；GHA 实跑 defer 项待下次 push 到 master 或开 PR 触发 build-smoke workflow 验证 test:electron step 在 windows-latest 退出码 0 + CI 时长增量 + antivirus 误报三项 ASSUMED）
+- **Last action**: Phase 13 Plan 01 SEC-03 complete（SSH 算法 drift 消除：connection.ts connectSSH/testSSHConnection 删内联 algorithms 表全量复用 SSH_ALGORITHMS 常量补 curve25519-sha256 + 全部老算法保留 + readyTimeout 对齐 SSH_READY_TIMEOUT_MS(30s)；新增 connectSSH.algorithms.real.test.ts 真路径回归 3 it 全绿；全仓 4 处 SSH 路径零 drift；三绿门禁 tsc web + build:electron-main + test:electron 24/24 + npm test 244/244 全绿零回归；SC4 三红线不回退）
+- **Next action**: 继续 Phase 13 Plan 02 SEC-04（pre-release 5 项安全 hardening：L1 defer/L2 ai limit/L3 captcha/L4 Login/L6 authGuard）与 Plan 03 SEC-05（experience:list IPC 入参校验）—— 两 plan depends_on=[] 可独立并行
 - **Resume command**: `/gsd-status`
 
 ## Phase → Requirement Map

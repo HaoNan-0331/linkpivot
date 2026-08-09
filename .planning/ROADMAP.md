@@ -97,7 +97,7 @@ Plans:
 
 **Wave 1**（SEC-03/04/05 三簇独立并行，files_modified 零重叠）
 
-- [ ] 13-01-PLAN.md — SEC-03：connection.ts connectSSH 删内联 algorithms 表复用 SSH_ALGORITHMS（补 curve25519）+ readyTimeout 对齐 SSH_READY_TIMEOUT_MS + 真路径单测验证协商
+- [x] 13-01-PLAN.md — SEC-03：connection.ts connectSSH 删内联 algorithms 表复用 SSH_ALGORITHMS（补 curve25519）+ readyTimeout 对齐 SSH_READY_TIMEOUT_MS + 真路径单测验证协商
 - [ ] 13-02-PLAN.md — SEC-04：pre-release 5 项（L1/L2/L3/L4/L6）逐项甄别登记（DEFER-LOG）+ L6 authGuard 单测扩展确认（核心已满足则显式 defer，不照单全修不静默跳过）
 - [ ] 13-03-PLAN.md — SEC-05：experience:list IPC 网关层 severity throw + search≤100/tags≤20/单tag≤30 截断防廉价 DoS + VALID_SEVERITIES export 消 drift + mock 单测
 
@@ -152,7 +152,7 @@ Phases execute in numeric order: 12 → 13 → 14
 | 10. Experience Browse Page | v1.1 | 4/4 | Complete | 2026-08-06 |
 | 11. AI Retrieval & Reuse | v1.1 | 2/2 | Complete | 2026-08-06 |
 | 12. Test Infrastructure (DEP-1 ABI 缓解) | v1.2 | 3/3 | Complete    | 2026-08-08 |
-| 13. Security Hardening Cluster | v1.2 | 0/TBD | Not started | - |
+| 13. Security Hardening Cluster | v1.2 | 1/3 | In Progress|  |
 | 14. Defect & Legacy Rollback Closure | v1.2 | 0/TBD | Not started | - |
 
 ## Coverage Validation
