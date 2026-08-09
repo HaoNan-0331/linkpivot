@@ -13,7 +13,7 @@ import { createSystemLog } from '../services/systemLog'
  *      在 createTables() 建好基线表之后、premigration 备份之后执行（D-06）。
  *      init.ts 不直接调用 runMigrations（单一调用点原则）。
  */
-export const MIGRATION_HEAD = 11
+export const MIGRATION_HEAD = 12
 
 interface MigrationStep {
   version: number
@@ -333,6 +333,34 @@ export const v11 = (db: Database.Database): void => {
   step()
 }
 
+/**
+ * v12：ip_mac_bindings 加 is_baseline 列（BUG-1 首次基线标志，FIX-01 / D-14-1）。
+ *
+ * 根因（审计 §1.0 BUG-1）：anomalyService.processARPEntries 全新 IP 分支（currentBinding 与 oldBinding 都不存在）
+ * 原本只 createBinding 缺 recordChange('new_ip')，致 getStats().newIp COUNT 读取侧恒零
+ * （异常检测面板「新 IP」数字 + 导出 CSV 恒为 0）。修复方案 A：补 recordChange('new_ip') + 首次扫描建基线机制
+ * （首次扫描只建 binding 不报 new_ip，避免首次全量扫描刷屏；基线后新增 IP 才报）。本 v12 提供 is_baseline 列。
+ *
+ * 语义（向后兼容，CLAUDE.md「迁移改动必须向后兼容历史数据」硬约束）：
+ * ALTER ADD COLUMN 默认 0——遗留库（user_version≤11，ip_mac_bindings 已有存量 binding 行）升级后存量行 is_baseline=0（未基线）。
+ * processARPEntries 首次扫描后置基线 UPDATE（WHERE is_baseline=0）会把所有现存存量 binding 行也置 1，
+ * 即「首次扫描把当前所有现存 IP（含遗留存量）纳入基线，之后新增 IP 才报 new_ip」——预期行为（老库升级第一次扫描即确立基线，不刷屏报全量 IP 为 new_ip）。
+ * 同时遗留库存量 IP 首次扫描走 processARPEntries 的 currentBinding 分支（存量 active binding 命中），
+ * 不进 else 全新 IP 分支，故存量 IP 不被误报为 new_ip（核心向后兼容不变量，Test 6 佐证）。
+ *
+ * 幂等守卫 D-14 第一形式：hasColumn（与 v1/v2/v3/v4/v9/v10 同构，纯 ALTER ADD COLUMN，不靠 user_version 判定）。
+ * 执行体包 db.transaction（throw 即 ROLLBACK）。列定义与 init.ts fresh-install ip_mac_bindings DDL 逐字一致（双路径一致红线）。
+ */
+const v12 = (db: Database.Database): void => {
+  const step = db.transaction(() => {
+    if (!hasColumn(db, 'ip_mac_bindings', 'is_baseline')) {
+      db.exec('ALTER TABLE ip_mac_bindings ADD COLUMN is_baseline INTEGER NOT NULL DEFAULT 0')
+    }
+    db.pragma('user_version = 12')
+  })
+  step()
+}
+
 const MIGRATIONS: MigrationStep[] = [
   { version: 1, name: 'chat_history.session_id', run: v1 },
   { version: 2, name: 'ai_exec_logs.prompt_text+ai_response', run: v2 },
@@ -345,6 +373,7 @@ const MIGRATIONS: MigrationStep[] = [
   { version: 9, name: 'experiences.duplicate_of_exp_id (Phase 8 drafting UPDATE hit link)', run: v9 },
   { version: 10, name: 'experiences.severity (Phase 10 browse filter/sort)', run: v10 },
   { version: 11, name: 'ai_system_logs CHECK widen security (R2 decrypt-failure + exp relate-failure log)', run: v11 },
+  { version: 12, name: 'ip_mac_bindings is_baseline (BUG-1 首次基线标志)', run: v12 },
 ]
 
 /**

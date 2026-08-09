@@ -4,6 +4,17 @@ import type { PaginatedResult } from '../../src/types/pagination'
 
 export type ChangeType = 'mac_changed' | 'new_ip' | 'ip_reused'
 
+// 默认走生产单例 db；测试经 _setAnomalyDbGetter 注入 realDb（D-14-4 借 Phase 12 回归网范式，
+// 镜像 experienceService._setExperienceDbGetter D-7-8）。生产路径 dbGetter 默认 = getDatabase 单例，
+// 行为零变化（红线① anomaly:* IPC 仍 secure 包装不变，本注入口仅 main 进程测试代码可调，
+// 无 IPC channel 暴露给 renderer）。
+let dbGetter: () => Database.Database = getDatabase
+
+/** @internal 测试专用：注入 db getter（生产不调用）。 */
+export function _setAnomalyDbGetter(fn: () => Database.Database): void {
+  dbGetter = fn
+}
+
 export interface IPMACChange {
   id: number; ip: string; oldMac: string | null; newMac: string | null
   changeType: ChangeType; detectedAt: string; acknowledged: boolean
@@ -16,7 +27,7 @@ type ExcludedRules = { ips: Set<string>; cidrs: string[]; wildcards: string[] }
 export class AnomalyService {
   private static isIPExcluded(ip: string): boolean {
     // 单次调用点：预载 + 内存判定（checkIPExcluded 走此路径，不再每行全表扫）
-    return this.isIPExcludedCached(ip, this.preloadExcludedSet(getDatabase()))
+    return this.isIPExcludedCached(ip, this.preloadExcludedSet(dbGetter()))
   }
 
   // 事务前一次性预载 excluded_ips 为内存结构，消除 processARPEntries 循环内 N+1 全表扫（D-P2）
@@ -67,7 +78,7 @@ export class AnomalyService {
   }
 
   static processARPEntries(entries: Array<{ ip: string; mac: string }>): IPMACChange[] {
-    const db = getDatabase()
+    const db = dbGetter()
     const changes: IPMACChange[] = []
     const now = new Date().toISOString()
 
@@ -79,6 +90,12 @@ export class AnomalyService {
     const stmtDeactivate = db.prepare('UPDATE ip_mac_bindings SET is_active = 0 WHERE id = ?')
     const stmtUpdateLastSeen = db.prepare('UPDATE ip_mac_bindings SET last_seen = ? WHERE id = ?')
     const stmtOldBinding = db.prepare('SELECT mac FROM ip_mac_bindings WHERE ip = ? ORDER BY last_seen DESC LIMIT 1')
+
+    // BUG-1（D-14-1）首次基线判定：库里有任意 is_baseline=1 行 = 基线已建。
+    // 入口读一次（本次整批扫描期间基线状态不变），runBatch 结束后统一置基线（避免本批次中途 IP 一边建 binding 一边报 new_ip 不一致）。
+    // 遗留库（升级前已有历史 binding 行，user_version≤11 经 v12 迁移加列默认 is_baseline=0）首次扫描时 hasBaseline=false，
+    // 后置基线 UPDATE 会把所有现存存量行也置 1（向后兼容语义见下方后置 UPDATE 注释）。
+    const hasBaseline = (db.prepare('SELECT 1 FROM ip_mac_bindings WHERE is_baseline = 1 LIMIT 1').get() as undefined | { 1: 1 }) !== undefined
 
     // 整批单事务：一次 COMMIT 替代逐条 autocommit（D-P2 / init.ts:346 先例）
     // WR-01：每条目的写逻辑用嵌套事务（better-sqlite3 的 db.transaction 嵌套自动用 SAVEPOINT 实现）包裹。
@@ -107,6 +124,16 @@ export class AnomalyService {
           const change = this.recordChange(ip, null, mac, 'ip_reused')
           if (change) changes.push(change)
         }
+        // BUG-1（D-14-1）补 recordChange('new_ip')：else 分支（currentBinding 与 oldBinding 都不存在 = 全新 IP）
+        // 原本只 createBinding 缺 new_ip 告警，致 getStats().newIp 恒零。现补齐，但用 hasBaseline 门控——
+        // 首次扫描（hasBaseline=false）只建 binding 不报 new_ip（建基线，防首次全量扫描刷屏）；
+        // 基线后（hasBaseline=true）新增 IP 才报 new_ip 落 ip_mac_changes。
+        // 遗留库（向后兼容，CLAUDE.md「迁移改动必须向后兼容历史数据」硬约束）：遗留库存量 IP 升级后首次扫描时走
+        // 上方 currentBinding 分支（存量 active binding 命中），**不进此 else 分支**，故存量 IP 不被误报为 new_ip（Test 6 (a) 佐证）。
+        if (hasBaseline) {
+          const change = this.recordChange(ip, null, mac, 'new_ip')
+          if (change) changes.push(change)
+        }
         this.createBinding(db, ip, mac, now)
       }
     })
@@ -125,6 +152,14 @@ export class AnomalyService {
     })
     runBatch()
 
+    // BUG-1（D-14-1）后置基线 UPDATE：本次为首次扫描（入口 hasBaseline=false）则置基线。
+    // 遗留库（向后兼容核心语义）：本 UPDATE WHERE is_baseline=0 会把**遗留库所有现存存量 binding 行**（升级前已存在、
+    // v12 迁移加列默认 is_baseline=0）也置 1，即「首次扫描把当前所有现存 IP（含遗留存量）纳入基线，之后新增 IP 才报 new_ip」。
+    // 这是预期行为（老库升级后第一次扫描即确立基线，避免老库升级刷屏报全量 IP 为 new_ip），Test 6 (c) 佐证。
+    if (!hasBaseline) {
+      db.prepare('UPDATE ip_mac_bindings SET is_baseline = 1 WHERE is_baseline = 0').run()
+    }
+
     return changes
   }
 
@@ -137,8 +172,9 @@ export class AnomalyService {
   }
 
   private static recordChange(ip: string, oldMac: string | null, newMac: string | null, changeType: ChangeType): IPMACChange | null {
-    // 事务边界：getDatabase() 返回模块级单例 db，processARPEntries 事务内的调用自动落入同一事务（better-sqlite3 单连接同步）
-    const db = getDatabase()
+    // 事务边界：dbGetter() 返回当前 db（生产默认 getDatabase 单例，测试经 _setAnomalyDbGetter 注入 realDb），
+    // processARPEntries 事务内的调用自动落入同一事务（better-sqlite3 单连接同步）
+    const db = dbGetter()
     try {
       const result = db.prepare('INSERT INTO ip_mac_changes (ip, old_mac, new_mac, change_type, detected_at) VALUES (?, ?, ?, ?, datetime(\'now\'))').run(ip, oldMac, newMac, changeType)
       return { id: result.lastInsertRowid as number, ip, oldMac, newMac, changeType, detectedAt: new Date().toISOString(), acknowledged: false, acknowledgedAt: null, notes: null }
@@ -146,7 +182,7 @@ export class AnomalyService {
   }
 
   static getChanges(unacknowledgedOnly: boolean = false, limit: number = 100, offset: number = 0): PaginatedResult<any> {
-    const db = getDatabase()
+    const db = dbGetter()
     // DATA-01 / D-4-1：补 OFFSET ?（prepared statement 绑定，T-04-02 防 SQL 注入）。total 单独 COUNT（带相同 WHERE 条件）。
     let query = 'SELECT id, ip, old_mac as oldMac, new_mac as newMac, change_type as changeType, detected_at as detectedAt, acknowledged, acknowledged_at as acknowledgedAt, notes FROM ip_mac_changes'
     let countQuery = 'SELECT COUNT(*) as c FROM ip_mac_changes'
@@ -161,24 +197,24 @@ export class AnomalyService {
   }
 
   static acknowledgeChange(id: number, notes?: string): void {
-    getDatabase().prepare('UPDATE ip_mac_changes SET acknowledged = 1, acknowledged_at = datetime(\'now\'), notes = ? WHERE id = ?').run(notes || null, id)
+    dbGetter().prepare('UPDATE ip_mac_changes SET acknowledged = 1, acknowledged_at = datetime(\'now\'), notes = ? WHERE id = ?').run(notes || null, id)
   }
 
   static acknowledgeAll(): number {
-    return getDatabase().prepare('UPDATE ip_mac_changes SET acknowledged = 1, acknowledged_at = datetime(\'now\') WHERE acknowledged = 0').run().changes
+    return dbGetter().prepare('UPDATE ip_mac_changes SET acknowledged = 1, acknowledged_at = datetime(\'now\') WHERE acknowledged = 0').run().changes
   }
 
   static deleteChange(id: number): void {
-    getDatabase().prepare('DELETE FROM ip_mac_changes WHERE id = ?').run(id)
+    dbGetter().prepare('DELETE FROM ip_mac_changes WHERE id = ?').run(id)
   }
 
   static deleteChanges(ids: number[]): number {
     const placeholders = ids.map(() => '?').join(',')
-    return getDatabase().prepare(`DELETE FROM ip_mac_changes WHERE id IN (${placeholders})`).run(...ids).changes
+    return dbGetter().prepare(`DELETE FROM ip_mac_changes WHERE id IN (${placeholders})`).run(...ids).changes
   }
 
   static getStats(): { total: number; unacknowledged: number; macChanged: number; newIp: number; ipReused: number } {
-    const db = getDatabase()
+    const db = dbGetter()
     return {
       total: (db.prepare('SELECT COUNT(*) as count FROM ip_mac_changes').get() as any).count,
       unacknowledged: (db.prepare('SELECT COUNT(*) as count FROM ip_mac_changes WHERE acknowledged = 0').get() as any).count,
@@ -189,21 +225,21 @@ export class AnomalyService {
   }
 
   static getBindingHistory(ip: string): any[] {
-    const rows = getDatabase().prepare('SELECT id, ip, mac, first_seen as firstSeen, last_seen as lastSeen, is_active as isActive FROM ip_mac_bindings WHERE ip = ? ORDER BY last_seen DESC').all(ip) as any[]
+    const rows = dbGetter().prepare('SELECT id, ip, mac, first_seen as firstSeen, last_seen as lastSeen, is_active as isActive FROM ip_mac_bindings WHERE ip = ? ORDER BY last_seen DESC').all(ip) as any[]
     return rows.map(row => ({ ...row, isActive: row.isActive === 1 }))
   }
 
   static getExcludedIPs(): any[] {
-    return getDatabase().prepare('SELECT id, ip_or_cidr as ipOrCidr, description, created_at as createdAt FROM excluded_ips ORDER BY created_at DESC').all()
+    return dbGetter().prepare('SELECT id, ip_or_cidr as ipOrCidr, description, created_at as createdAt FROM excluded_ips ORDER BY created_at DESC').all()
   }
 
   static addExcludedIP(input: { ipOrCidr: string; description?: string }): any {
-    const result = getDatabase().prepare('INSERT INTO excluded_ips (ip_or_cidr, description) VALUES (?, ?)').run(input.ipOrCidr, input.description || null)
+    const result = dbGetter().prepare('INSERT INTO excluded_ips (ip_or_cidr, description) VALUES (?, ?)').run(input.ipOrCidr, input.description || null)
     return { id: result.lastInsertRowid, ipOrCidr: input.ipOrCidr, description: input.description || null, createdAt: new Date().toISOString() }
   }
 
   static deleteExcludedIP(id: number): void {
-    getDatabase().prepare('DELETE FROM excluded_ips WHERE id = ?').run(id)
+    dbGetter().prepare('DELETE FROM excluded_ips WHERE id = ?').run(id)
   }
 
   static checkIPExcluded(ip: string): boolean {
