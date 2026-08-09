@@ -120,11 +120,14 @@ Plans:
   4. AI 会话标题更新逻辑在 confirm_required early return 之前执行——AI 命令需确认时会话标题仍正常更新不被 early return 跳过（旧规划回退项，体检 §1.0 待甄别）
   5. H3C LLDP 邻居发现路径重新评估——vendor-commands.ts 已删（死代码，体检 §2.1），H3C 邻居发现走正确路径（非自造华为命令），拓扑 edges 对 H3C 设备非空（旧规划回退项，体检 §1.0 方向过时）
 
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
 
-- [ ] 14-01: TBD（plan-phase 补充）
+**Wave 1**（FIX-01 BUG-1 后端 anomaly 域 / FIX-02 旧规划甄别 renderer+DEFER-LOG，files_modified 零重叠并行）
+
+- [ ] 14-01-PLAN.md — FIX-01 BUG-1：anomalyService processARPEntries 全新 IP 补 recordChange(new_ip) + 首次基线机制（ip_mac_bindings 加 is_baseline 列 v12 迁移 + init.ts 双路径同步 + _setAnomalyDbGetter mock 注入口 + realDb 真路径单测 5 it）
+- [ ] 14-02-PLAN.md — FIX-02 旧规划 4 项甄别：#1 confirm 视觉层防重复增强（confirmInFlight 按钮 loading+disabled，核心关窗锁不变）+ #2 ai_exec_logs FIXED 已满足 + #3 会话标题 FIXED 前提偏差 + H3C LLDP 作废，产出 14-02-DEFER-LOG.md（复用 13-02 结构）
 
 **Risk / 红线:**
 
