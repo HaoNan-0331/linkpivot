@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { secure, safe, setAuthenticated } from '../../electron/utils/authGuard'
+import { secure, safe, setAuthenticated, isAuthenticated } from '../../electron/utils/authGuard'
 
 // 安全核心回归网（审计 R5 / TEST-1）：authGuard.secure/sanitizeMessage 是 IPC 鉴权 + 异常脱敏防线。
 // sanitizeMessage 未 export，通过 secure() 包装的行为间接验证脱敏效果（攻击面在 reject 的 message）。
@@ -77,6 +77,38 @@ describe('authGuard', () => {
       const msg = (e as Error).message
       expect(msg).toContain('[路径]')
       expect(msg).not.toContain('C:\\Users')
+    }
+  })
+
+  // —— SEC-04 L6 加固确认扩展（D-13-8）：safe 未登录不拒绝 + isAuthenticated 行为 + SQL 错误脱敏 ——
+
+  it('safe does NOT reject when not authenticated (登录前 channel 不要求鉴权)', async () => {
+    setAuthenticated(false)
+    const wrapped = safe(() => 'ok')
+    // safe 是登录前 channel（auth:getCaptcha/auth:login/auth:isFirstRun/auth:initAdmin 用），
+    // 不强制鉴权——与 secure 区分。未登录态正常路径 resolves to 'ok'（非 reject）。
+    await expect(wrapped({})).resolves.toBe('ok')
+  })
+
+  it('isAuthenticated returns current auth state (预留查询入口，0 caller 但保留)', () => {
+    setAuthenticated(false)
+    expect(isAuthenticated()).toBe(false)
+    setAuthenticated(true)
+    expect(isAuthenticated()).toBe(true)
+  })
+
+  it('secure sanitizes SQL fragment from error (no internal detail leak)', async () => {
+    setAuthenticated(true)
+    // SQLite 等库报告的错误常含部署路径（/app/db/...），与纯路径错误是复合场景。
+    // sanitizeMessage 用通用 Unix 绝对路径匹配，覆盖非枚举前缀（/app 不在 usr/home/Users/tmp/var/opt 内）。
+    const wrapped = secure(() => { throw new Error('SQLITE_CONSTRAINT: experiences.tags is not unique in /app/db/main.db') })
+    try {
+      await wrapped({})
+      expect.unreachable('should have thrown')
+    } catch (e: unknown) {
+      const msg = (e as Error).message
+      expect(msg).toContain('[路径]')
+      expect(msg).not.toContain('/app/db/main.db')
     }
   })
 })
