@@ -156,7 +156,7 @@ Phases execute in numeric order: 12 → 13 → 14
 | 11. AI Retrieval & Reuse | v1.1 | 2/2 | Complete | 2026-08-06 |
 | 12. Test Infrastructure (DEP-1 ABI 缓解) | v1.2 | 3/3 | Complete    | 2026-08-08 |
 | 13. Security Hardening Cluster | v1.2 | 3/3 | Complete    | 2026-08-09 |
-| 14. Defect & Legacy Rollback Closure | v1.2 | 2/2 | Complete   | 2026-08-09 |
+| 14. Defect & Legacy Rollback Closure | v1.2 | 2/2 | Complete    | 2026-08-09 |
 
 ## Coverage Validation
 
