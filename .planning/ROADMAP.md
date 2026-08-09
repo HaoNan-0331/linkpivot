@@ -91,11 +91,15 @@ Plans:
   3. experience:list IPC 入参类型/长度受限（severity 枚举校验 + search 长度上限 + tags 数组上限），untrusted renderer 传超长 search 或非法 severity 不触发全表 LIKE 扫描而是被拒/钳制（体检 WR-06）
   4. 三红线（IPC secure/safe 鉴权 / 字段加密 _enc / commandSafety.isCommandAllowed）改动后仍生效，校验加在 IPC 网关层不绕过 service 层兜底
 
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
 
-- [ ] 13-01: TBD（plan-phase 补充）
+**Wave 1**（SEC-03/04/05 三簇独立并行，files_modified 零重叠）
+
+- [ ] 13-01-PLAN.md — SEC-03：connection.ts connectSSH 删内联 algorithms 表复用 SSH_ALGORITHMS（补 curve25519）+ readyTimeout 对齐 SSH_READY_TIMEOUT_MS + 真路径单测验证协商
+- [ ] 13-02-PLAN.md — SEC-04：pre-release 5 项（L1/L2/L3/L4/L6）逐项甄别登记（DEFER-LOG）+ L6 authGuard 单测扩展确认（核心已满足则显式 defer，不照单全修不静默跳过）
+- [ ] 13-03-PLAN.md — SEC-05：experience:list IPC 网关层 severity throw + search≤100/tags≤20/单tag≤30 截断防廉价 DoS + VALID_SEVERITIES export 消 drift + mock 单测
 
 **Risk / 红线:**
 
