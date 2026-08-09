@@ -100,7 +100,7 @@ describe('authGuard', () => {
   it('secure sanitizes SQL fragment from error (no internal detail leak)', async () => {
     setAuthenticated(true)
     // SQLite 等库报告的错误常含部署路径（/app/db/...），与纯路径错误是复合场景。
-    // sanitizeMessage 用通用 Unix 绝对路径匹配，覆盖非枚举前缀（/app 不在 usr/home/Users/tmp/var/opt 内）。
+    // sanitizeMessage 枚举根目录前缀（含 app 部署前缀），覆盖 /app/db/... 不泄露。
     const wrapped = secure(() => { throw new Error('SQLITE_CONSTRAINT: experiences.tags is not unique in /app/db/main.db') })
     try {
       await wrapped({})
@@ -109,6 +109,27 @@ describe('authGuard', () => {
       const msg = (e as Error).message
       expect(msg).toContain('[路径]')
       expect(msg).not.toContain('/app/db/main.db')
+    }
+  })
+
+  it('sanitizeMessage does NOT mangle URL/date/ratio (反向回归 CR-01：含斜杠的非路径内容保留)', async () => {
+    setAuthenticated(true)
+    // 13-02 曾把 Unix 正则放宽到 \/[^\s'"()<>]*，误吞 URL/日期/比例/路由；收紧后只匹配真实根目录前缀路径。
+    // 含斜杠的非路径内容必须原样透出——运维排障关键信息（端点/时间戳）不可丢失。
+    const cases = [
+      '请求失败: http://api.example.com/v1 超时',
+      '备份失败于 2024/01/15',
+      '磁盘占用 3/4 超限',
+      'GET /api/list 返回 500',
+    ]
+    for (const raw of cases) {
+      const wrapped = secure(() => { throw new Error(raw) })
+      try {
+        await wrapped({})
+        expect.unreachable('should have thrown')
+      } catch (e: unknown) {
+        expect((e as Error).message).not.toContain('[路径]')
+      }
     }
   })
 })

@@ -14,12 +14,13 @@ export function isAuthenticated(): boolean {
 }
 
 /** 基本脱敏：移除绝对路径、截断超长 message，避免向渲染层泄露 SQL/路径等内部细节。
- *  Unix 路径用通用绝对路径匹配（不再枚举前缀），覆盖 SQLite 等库报告的 /app /data /root /private 等部署路径。 */
+ *  Unix 路径枚举常见根目录前缀（usr/home/Users/tmp/var/opt + 部署路径 app/data/root/private/etc/srv/mnt 等），
+ *  覆盖 SQLite 等库报告的部署路径，同时避免误吞 URL/日期/比例等含斜杠的非路径内容（CR-01 收紧）。 */
 function sanitizeMessage(msg: string): string {
   if (!msg) return '操作失败'
   let s = msg
     .replace(/[A-Za-z]:\\[^\s'"()<>]*/g, '[路径]')
-    .replace(/\/[^\s'"()<>]*/g, '[路径]')
+    .replace(/\/(?:usr|home|Users|tmp|var|opt|app|data|root|private|etc|srv|mnt|proc|sys|dev|run|bin|sbin|lib|boot)[^\s'"()<>]*/g, '[路径]')
   if (s.length > 200) s = s.slice(0, 200) + '...'
   return s
 }
