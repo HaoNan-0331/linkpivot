@@ -24,3 +24,11 @@ master.key
 
 # 百度云同步客户端临时上传标记（运行时产物，不应提交）
 *.baiduyun.uploading.cfg
+
+# === 内部文档（不上传 GitHub，本地保留）===
+CLAUDE.md
+CHANGELOG.md
+.planning/
+docs/plans/
+docs/AI功能技术说明.md
+release-archive/
