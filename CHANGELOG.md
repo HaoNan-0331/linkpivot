@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## 2026-08-14 fix(pack): electron-builder 输出目录与 vite dist 解耦（修递归自吞）+ 发布 v0.3.0
+
+v1.2 milestone（Phase 12 测试基础设施 / Phase 13 安全加固 / Phase 14 缺陷修复，详见 .planning/MILESTONES.md）发布 v0.3.0（GitHub Release 附 Setup.0.3.0.exe）。打包配置缺陷修复：electron-builder 输出原与 vite renderer 同在 dist/，`files: dist/**/*` 把上一次打包产物（win-unpacked/*.exe/*.7z）递归打进下一次 asar，包体滚雪球（0.3.0 一度 2.3G）撑爆 32 位 NSIS 的 2GB mmap 上限。修复后 `directories.output: release` + files 双保险排除，安装包从 1.1G（含废料）回到健康 110M（win-unpacked 430M，mx=9 压缩），asar 关键运行时验证全过零 dev 混入。Phase 13/14 交付明细：SSH_ALGORITHMS 常量化（curve25519）+ sanitizeListInput IPC 网关 + BUG-1 new_ip 修复（首次基线 is_baseline）+ confirm 防连点（confirmInFlight + useRef 锁）。
+
 ## 2026-08-08 test(12-02): SSH/Telnet 真路径回归测试 + TEST-02 四条 cleanup 路径句柄泄漏自动化检测
 
 Phase 12 Plan 12-02 落地。DEP-1 ABI 缓解后，SSH（ai executeCommandsOnDevice/execOne + arpCollector executeSSH）与 Telnet（telnetExec executeTelnetCommand）经真实 ssh2/telnet-client 连 mock 对端回显，首次建立协议链路真路径回归网（此前仅 mock）。同时把 Phase 6 SC#4 + Phase 3 长期 defer 的人工 HV 句柄泄漏项转自动化（CONTEXT decision #4）。TEST-01（SSH/Telnet/DB 真路径）+ TEST-02（句柄泄漏检测）双 REQ 达成。零生产代码改动（SC4）。
