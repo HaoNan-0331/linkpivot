@@ -120,7 +120,7 @@ export class ARPCollector {
     devices: any[],
     onProgress?: (progress: { total: number; completed: number; current?: string }) => void
   ): Promise<ARPCollectionResult[]> {
-    const progress = { total: devices.length, completed: 0 }
+    const progress = { total: devices.length, completed: 0, current: undefined as string | undefined }
     const results: ARPCollectionResult[] = []
     for (let i = 0; i < devices.length; i += this.concurrency) {
       const batch = devices.slice(i, i + this.concurrency)

@@ -48,7 +48,6 @@ const api = {
     getLogs: (limit?: number) => ipcRenderer.invoke('ai:getLogs', limit),
     getChatHistory: () => ipcRenderer.invoke('ai:getChatHistory'),
     saveMessage: (role: string, content: string, deviceId?: string | null, sessionId?: string | null) => ipcRenderer.invoke('ai:saveMessage', role, content, deviceId, sessionId),
-    clearHistory: () => ipcRenderer.invoke('ai:clearHistory'),
     createSession: (title: string, deviceId?: string) => ipcRenderer.invoke('ai:createSession', title, deviceId),
     listSessions: () => ipcRenderer.invoke('ai:listSessions'),
     getSessionMessages: (sessionId: string) => ipcRenderer.invoke('ai:getSessionMessages', sessionId),

@@ -500,7 +500,7 @@ export function backfillSeverityFromHistory(): { backfilled: number } {
       if (!dec) continue
       const attrs = JSON.parse(dec)
       const sev = attrs?.severity
-      if (typeof sev === 'string' && VALID_SEVERITIES.includes(sev)) {
+      if (typeof sev === 'string' && (VALID_SEVERITIES as readonly string[]).includes(sev)) {
         stmtUpdate.run(sev, row.id)
         count++
       }

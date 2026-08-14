@@ -20,7 +20,7 @@ export class NetworkSegmentService {
     const cidr = this.maskToCIDR(input.mask)
     const result = db.prepare('INSERT INTO network_segments (name, network, mask, cidr, gateway, description) VALUES (?, ?, ?, ?, ?, ?)')
       .run(input.name, input.network, input.mask, cidr, input.gateway || null, input.description || null)
-    return this.getById(result.lastInsertRowid)
+    return this.getById(Number(result.lastInsertRowid))
   }
 
   static update(input: { id: number; name?: string; network?: string; mask?: string; gateway?: string; description?: string }): any {
@@ -64,7 +64,7 @@ export class NetworkSegmentService {
         try {
           const result = db.prepare('INSERT INTO network_segments (name, network, mask, cidr, description, is_auto_discovered) VALUES (?, ?, ?, ?, ?, 1)')
             .run(`自动发现-${network}/24`, network, '255.255.255.0', 24, `自动发现，包含 ${data.count} 个IP地址`)
-          const segment = this.getById(result.lastInsertRowid)
+          const segment = this.getById(Number(result.lastInsertRowid))
           if (segment) discovered.push(segment)
         } catch { /* ignore duplicate */ }
       }

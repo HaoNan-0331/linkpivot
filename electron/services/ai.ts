@@ -52,7 +52,25 @@ export function getAiConfigMasked(): Record<string, string> | null {
   }
 }
 
-export function saveAiConfig(config: Record<string, string>): void {
+/**
+ * H-3（v0.3.0 audit）：saveAiConfig 掩码守卫（纯函数）。
+ *
+ * 红线：设置页任意保存不会把 **** 掩码串落库覆盖真实 apiKey/visionApiKey。
+ * 主进程侧兜住一切掩码回传（不限定键名、不依赖 renderer 行为，与 mock-api.ts DEV 守卫语义对齐）：
+ * 值以 **** 开头的键直接剔除，merge 分支 `config.X ?? current.X` 自动保持现值；
+ * INSERT 分支掩码串也不会落库。null/''/undefined 值不剔除（?? 语义交给 merge）。
+ */
+export function stripMaskedKeys(config: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [key, value] of Object.entries(config)) {
+    if (typeof value === 'string' && value.startsWith('****')) continue
+    out[key] = value
+  }
+  return out
+}
+
+export function saveAiConfig(rawConfig: Record<string, string>): void {
+  const config = stripMaskedKeys(rawConfig)
   const db = getDatabase()
   const existing = db.prepare('SELECT id FROM ai_config LIMIT 1').get() as any
 
@@ -248,10 +266,6 @@ export function saveChatMessage(
   getDatabase().prepare(
     'INSERT INTO chat_history (id, role, content_enc, device_id, session_id) VALUES (?, ?, ?, ?, ?)'
   ).run(id, role, encField(trimmed, MK), deviceId || null, sessionId || null)
-}
-
-export function clearChatHistory(): void {
-  // Deprecated: use deleteSession instead
 }
 
 // ---------- AI API call ----------
@@ -527,6 +541,9 @@ export function getDeviceByIdInternal(id: string): any {
     model: decField(row.model_enc, MK),
     version: decField(row.version_enc, MK),
     ipAddress: decField(row.ip_enc, MK),
+    // H-4：补 deviceType 投影（与 device.ts rowToDevice 同语义兜底）——修复 discovery.ts
+    // `dev?.deviceType` 恒 undefined 导致节点图标/EditNodeModal 预填/nodes JSON 落库错型。
+    deviceType: row.device_type || 'generic',
     connectionType: row.connection_type,
     port: decField(row.port_enc, MK) ? parseInt(decField(row.port_enc, MK)) : null,
     username: decField(row.username_enc, MK),
@@ -558,6 +575,9 @@ const pendingBatches = new Map<
     deviceNames: string[]
     sessionId: string | null
     createdAt: number
+    // C-M3（v0.3.0 audit）：chat() 写入（pendingBatches.set 传 expReferences）/ confirmCommand
+    // 读取（batch.expReferences）此前类型声明缺失，属真实类型漂移——与 :750 局部变量同构。
+    expReferences?: Array<{ exp_id: string; title: string; source_session_id: string | null; unsupported: boolean }>
   }
 >()
 

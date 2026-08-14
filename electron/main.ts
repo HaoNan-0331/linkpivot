@@ -10,7 +10,7 @@ import { generateCaptcha, login, isFirstRun, initAdmin } from './services/auth'
 import { setDeviceMasterKey, listDevices, createDevice, updateDevice, deleteDevice, getDeviceById, maskDeviceSecrets } from './services/device'
 import { setTopologyMasterKey, listTopologies, getTopologyById, createTopology, updateTopology, deleteTopology, exportTopology, importTopology } from './services/topology'
 import { setConnectionMasterKey, openTerminal, openWebSafe, writeToSession, writeByWebContentsId, disconnectSession, testDeviceConnection } from './services/connection'
-import { setAiMasterKey, chat, getAiConfigMasked, saveAiConfig, getCommandWhitelist, saveCommandWhitelist, getExecMode, setExecMode, confirmCommand, getAiLogs, getChatHistory, saveChatMessage as aiSaveChatMessage, clearChatHistory, createSession, listSessions, getSessionMessages, deleteSession, updateSessionTitle } from './services/ai'
+import { setAiMasterKey, chat, getAiConfigMasked, saveAiConfig, getCommandWhitelist, saveCommandWhitelist, getExecMode, setExecMode, confirmCommand, getAiLogs, getChatHistory, saveChatMessage as aiSaveChatMessage, createSession, listSessions, getSessionMessages, deleteSession, updateSessionTitle } from './services/ai'
 import { discoverTopology } from './services/discovery'
 import { getSystemLogs, createSystemLog } from './services/systemLog'
 import { setArpMasterKey } from './services/arpCollector'
@@ -123,13 +123,13 @@ app.whenReady().then(() => {
     getDatabase().prepare("INSERT INTO kb_chunks_fts(kb_chunks_fts) VALUES('integrity-check')").run()
     console.log('[startup] kb_chunks_fts integrity-check: OK')
   } catch (e1) {
-    console.warn('[startup] kb_chunks_fts integrity-check failed, attempting rebuild:', (e1 && e1.message) || e1)
+    console.warn('[startup] kb_chunks_fts integrity-check failed, attempting rebuild:', (e1 instanceof Error ? e1.message : String(e1)))
     try {
       getDatabase().prepare("INSERT INTO kb_chunks_fts(kb_chunks_fts) VALUES('rebuild')").run()
       console.log('[startup] kb_chunks_fts rebuild: OK (FTS shadow 重建完成)')
     } catch (e2) {
       // rebuild 仍失败不阻塞启动（主库未坏，搜索功能降级；用户可手动从 backups 恢复）
-      console.warn('[startup] kb_chunks_fts rebuild failed (search may be degraded):', (e2 && e2.message) || e2)
+      console.warn('[startup] kb_chunks_fts rebuild failed (search may be degraded):', (e2 instanceof Error ? e2.message : String(e2)))
     }
   }
   // PERF-01 (D-P1)：启动预载 Map<macPrefix,vendor>，确保首次 getIPDetails 时 Map 就绪（消除 N+1）
@@ -208,7 +208,6 @@ app.whenReady().then(() => {
   ipcMain.handle('ai:getLogs', secure((_e, limit) => getAiLogs(limit)))
   ipcMain.handle('ai:getChatHistory', secure(() => getChatHistory()))
   ipcMain.handle('ai:saveMessage', secure((_e, role, content, deviceId, sessionId) => aiSaveChatMessage(role, content, deviceId, sessionId)))
-  ipcMain.handle('ai:clearHistory', secure(() => clearChatHistory()))
   ipcMain.handle('ai:createSession', secure((_e, title, deviceId) => createSession(title, deviceId)))
   ipcMain.handle('ai:listSessions', secure(() => listSessions()))
   ipcMain.handle('ai:getSessionMessages', secure((_e, sessionId) => getSessionMessages(sessionId)))

@@ -82,7 +82,7 @@ export class OUIService {
     const result = db.prepare('INSERT INTO oui_database (oui_prefix, vendor_name, is_custom) VALUES (?, ?, 1)').run(normalizedPrefix, input.vendorName)
     // PERF-01：写库成功后增量同步 Map（可选链，Map 未预载时 no-op）— 零脏读窗口（D-P1/T-03-05）
     this.vendorMap?.set(this.normalizeMac(input.ouiPrefix), input.vendorName)
-    return this.getById(result.lastInsertRowid)
+    return this.getById(Number(result.lastInsertRowid))
   }
 
   static addBatch(entries: Array<{ ouiPrefix: string; vendorName: string }>): number {

@@ -29,11 +29,11 @@ import {
 const validConfig = { apiKey: 'sk-test', baseUrl: 'http://x', modelName: 'm' }
 
 const troubDraft = {
-  category: 'troubleshooting',
+  category: 'troubleshooting' as const,
   title: '交换机端口 flapping',
   content: '端口频繁 up/down，更换光模块解决',
   tags: ['switch'],
-  attrs: { severity: 'high', symptoms: '端口抖动', resolution: '换光模块' },
+  attrs: { severity: 'high' as const, symptoms: '端口抖动', resolution: '换光模块' },
   confidence: 0.8,
   reasoning: '对话明确描述了该问题与解决方法',
   duplication_verdict: 'ADD' as const,
@@ -41,7 +41,7 @@ const troubDraft = {
 }
 
 const prodDraft = {
-  category: 'product',
+  category: 'product' as const,
   title: '华为 S5700 默认 SSH 端口',
   content: 'S5700 默认 SSH 端口 22',
   tags: ['huawei'],
@@ -420,7 +420,7 @@ describe('WR-01 反幻觉红线：validateDrafts [CMD]/[KB_SEARCH] 标记扫描�
   // 19. attrs.command 含 [CMD] 字面量不触发拒绝（attrs 不扫，二期结构化字段避免误伤）
   it('19. attrs.command 含 [CMD] 字面量 → ok:true（attrs 不扫，避免误伤二期结构化命令）', () => {
     const r = validateDrafts(
-      JSON.stringify([{ ...troubDraft, attrs: { severity: 'high', command: ['[CMD]display version[/CMD]'] } }])
+      JSON.stringify([{ ...troubDraft, attrs: { severity: 'high' as const, command: ['[CMD]display version[/CMD]'] } }])
     )
     expect(r.ok).toBe(true)
   })

@@ -132,7 +132,6 @@ if (!(window as any).api) {
       getLogs: async (_limit?: number) => [...execLogs],
       getChatHistory: async () => [...chatHistory],
       saveMessage: async (role: string, content: string, _deviceId?: string | null) => { chatHistory.push({ id: Date.now().toString(), role, content, deviceId: _deviceId || null, createdAt: new Date().toISOString() }); save('chatHistory', chatHistory) },
-      clearHistory: async () => { chatHistory = []; save('chatHistory', chatHistory) },
       createSession: async (title: string) => ({ id: 's-' + Date.now(), title, deviceId: null, createdAt: new Date().toISOString() }),
       listSessions: async () => [],
       getSessionMessages: async (_sessionId: string) => [],

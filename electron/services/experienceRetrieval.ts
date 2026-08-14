@@ -69,8 +69,8 @@ export async function retrieveForAnswer(input: RetrieveInput): Promise<RetrieveR
   // 否则 Phase 8 AI 起草 + Phase 9 未确认的 draft 经验会被注入 systemPrompt + incReuseCount 刷新，
   // 直接违反 milestone 红线③「AI 产出永远先进 draft 人工确认才 published」。
   const opts = input.deviceIds && input.deviceIds.length > 0
-    ? { deviceId: input.deviceIds, status: 'published', includeInvalid: false, limit: MAX_CANDIDATES }
-    : { search: input.userMessage, status: 'published', includeInvalid: false, limit: MAX_CANDIDATES }
+    ? { deviceId: input.deviceIds, status: 'published' as const, includeInvalid: false, limit: MAX_CANDIDATES }
+    : { search: input.userMessage, status: 'published' as const, includeInvalid: false, limit: MAX_CANDIDATES }
   const { rows } = listExperiences(opts)
   if (rows.length === 0) return empty  // 空库短路：不调精排 LLM
 

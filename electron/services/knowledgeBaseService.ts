@@ -411,7 +411,9 @@ function parseTxt(text: string): Array<{ title: string; content: string; level: 
 
 async function parsePdf(buffer: Buffer): Promise<Array<{ title: string; content: string; level: number }>> {
   const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs')
-  const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise
+  // pdfjs v6：destroy() 在 loadingTask 上（PDFDocumentProxy 无 destroy），释放 worker 资源须持 task
+  const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(buffer) })
+  const doc = await loadingTask.promise
 
   let fullText = ''
   for (let i = 1; i <= doc.numPages; i++) {
@@ -420,79 +422,16 @@ async function parsePdf(buffer: Buffer): Promise<Array<{ title: string; content:
     fullText += textContent.items.map((item: any) => item.str).join(' ') + '\n'
     page.cleanup()
   }
-  doc.destroy()
+  loadingTask.destroy()
 
   if (!fullText.trim()) return []
   return splitByHeadingPatterns(fullText)
 }
 
-interface PdfOutlineItem {
-  title: string
-  level: number
-  dest?: any
-}
-
-function splitByOutline(text: string, outline: PdfOutlineItem[]): Array<{ title: string; content: string; level: number }> {
-  const lines = text.split(/\r?\n/)
-  const chapters: Array<{ title: string; content: string; level: number }> = []
-  const titles = outline.map(o => o.title.trim())
-
-  let currentTitle = titles[0] || '前言'
-  let currentLevel = outline[0]?.level || 1
-  let currentContent: string[] = []
-  let nextTitleIdx = 1
-  let foundFirst = false
-
-  for (const line of lines) {
-    const nextTitle = nextTitleIdx < titles.length ? titles[nextTitleIdx] : null
-
-    if (nextTitle && line.trim().includes(nextTitle)) {
-      if (foundFirst || currentContent.some(l => l.trim())) {
-        chapters.push({
-          title: currentTitle,
-          content: currentContent.join('\n').trim(),
-          level: currentLevel,
-        })
-      }
-      currentTitle = nextTitle
-      currentLevel = outline[nextTitleIdx]?.level || 1
-      currentContent = [line]
-      nextTitleIdx++
-      foundFirst = true
-    } else {
-      currentContent.push(line)
-      foundFirst = foundFirst || line.trim().length > 0
-    }
-  }
-
-  if (currentContent.some(l => l.trim())) {
-    chapters.push({ title: currentTitle, content: currentContent.join('\n').trim(), level: currentLevel })
-  }
-
-  return splitOversizedChapters(chapters.length > 0 ? chapters : [{ title: '文档内容', content: text.trim(), level: 1 }])
-}
-
 // ---------- Word Parsing ----------
 
-function parseDocx(buffer: Buffer): Array<{ title: string; content: string; level: number }> {
-  return parseDocxWithImages(buffer).chapters
-}
-
-function parseDocxWithImages(buffer: Buffer): {
-  chapters: Array<{ title: string; content: string; level: number }>
-  images: Array<{ chunkIndex: number; buffer: Buffer; ext: string }>
-} {
-  const mammoth = require('mammoth')
-
-  // Synchronous: just extract chapters, images handled separately
-  const result = mammoth.convertToHtml({ buffer })
-  const html: string = result.value
-
-  if (!html || !html.trim()) return { chapters: [], images: [] }
-
-  const chapters = splitHtmlByHeadings(html)
-  return { chapters, images: [] }
-}
+// C-M2（v0.3.0 audit）：死代码已删——parseDocx/parseDocxWithImages/splitByOutline/ragQuery
+// 全仓零引用（在用的 Word 解析是下方 parseDocxWithImagesAsync，检索走上方 search）。
 
 // Async version that also extracts images
 async function parseDocxWithImagesAsync(buffer: Buffer): Promise<{
@@ -765,24 +704,4 @@ ${indexLines}
       return attachImages(db, c)
     })
   }
-}
-
-export async function ragQuery(query: string, deviceIds?: string[], topK = 5): Promise<{ chunks: any[]; images: any[] }> {
-  const chunks = await search(query, deviceIds, topK)
-  const db = getDatabase()
-
-  const images: any[] = []
-  for (const chunk of chunks) {
-    if (chunk.image_ids) {
-      try {
-        const ids = JSON.parse(chunk.image_ids) as string[]
-        for (const imgId of ids) {
-          const img = db.prepare('SELECT * FROM kb_images WHERE id = ?').get(imgId) as any
-          if (img) images.push(img)
-        }
-      } catch { /* ignore */ }
-    }
-  }
-
-  return { chunks, images }
 }

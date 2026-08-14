@@ -115,7 +115,6 @@ export interface ElectronAPI {
     getLogs: (limit?: number) => Promise<AIExecLog[]>
     getChatHistory: () => Promise<ChatMessage[]>
     saveMessage: (role: 'user' | 'assistant', content: string, deviceId?: string | null, sessionId?: string | null) => Promise<void>
-    clearHistory: () => Promise<void>
     createSession: (title: string, deviceId?: string) => Promise<ChatSession>
     listSessions: () => Promise<ChatSession[]>
     getSessionMessages: (sessionId: string) => Promise<ChatMessage[]>

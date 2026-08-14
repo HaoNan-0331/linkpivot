@@ -18,6 +18,7 @@ export default function SettingsPage() {
   const [configLoading, setConfigLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [originalApiKey, setOriginalApiKey] = useState('')
+  const [originalVisionApiKey, setOriginalVisionApiKey] = useState('')
   const logout = useAuthStore((s) => s.logout)
 
   // Scheduler state
@@ -30,7 +31,11 @@ export default function SettingsPage() {
   const loadConfig = async () => {
     try {
       const config = await window.api.ai.getConfig()
-      if (config) { form.setFieldsValue(config); setOriginalApiKey(config.apiKey) }
+      if (config) {
+        form.setFieldsValue(config)
+        setOriginalApiKey(config.apiKey)
+        setOriginalVisionApiKey(config.visionApiKey ?? '')
+      }
     } catch (e: unknown) { message.error(e instanceof Error ? e.message : String(e)) }
     setConfigLoading(false)
   }
@@ -47,20 +52,25 @@ export default function SettingsPage() {
     try {
       const values = await form.validateFields()
       setSaving(true)
+      // H-3：两个 Key 各自记录脱敏基准、各自比较——未改动的掩码串不进 payload，
+      // 防任意保存把 **** 掩码串落库覆盖真实 Key（主进程 stripMaskedKeys 为第二道守卫）。
       const payload: Partial<AIConfig> = {
         provider: values.provider,
         baseUrl: values.baseUrl,
         modelName: values.modelName,
         visionBaseUrl: values.visionBaseUrl,
-        visionApiKey: values.visionApiKey,
         visionModel: values.visionModel,
       }
       if (values.apiKey && values.apiKey !== originalApiKey) payload.apiKey = values.apiKey
-      if (values.visionApiKey && values.visionApiKey !== originalApiKey) payload.visionApiKey = values.visionApiKey
+      if (values.visionApiKey && values.visionApiKey !== originalVisionApiKey) payload.visionApiKey = values.visionApiKey
       await window.api.ai.saveConfig(payload as AIConfig)
       message.success('AI 配置已保存')
       const config = await window.api.ai.getConfig()
-      if (config) { form.setFieldsValue(config); setOriginalApiKey(config.apiKey) }
+      if (config) {
+        form.setFieldsValue(config)
+        setOriginalApiKey(config.apiKey)
+        setOriginalVisionApiKey(config.visionApiKey ?? '')
+      }
     } catch (e: unknown) {
       // antd Form validateFields reject 返回 { errorFields } 对象
       if (e && typeof e === 'object' && 'errorFields' in e) return
