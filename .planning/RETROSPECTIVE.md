@@ -45,6 +45,43 @@
 
 ---
 
+## Milestone: v1.2 — 安全与稳定性加固
+
+**Shipped:** 2026-08-14
+**Phases:** 3 | **Plans:** 8 | **Tasks:** 18 | **Requirements:** 7/7（TEST-01/02 + SEC-03/04/05 + FIX-01/02）
+
+### What Was Built
+- 测试基础设施（DEP-1 ABI 缓解）：electron.exe + ELECTRON_RUN_AS_NODE 跑 vitest，解锁 better-sqlite3/ssh2/telnet 真路径自动化回归 + 句柄泄漏自动化检测（handleLeakDetector）
+- 安全加固 cluster：SSH_ALGORITHMS 常量化（curve25519-sha256）+ experience:list IPC 网关 sanitizeListInput + pre-release hardening 甄别（13-02-DEFER-LOG）
+- 缺陷修复闭环：BUG-1 new_ip 恒零（写入侧 recordChange + 首次基线 is_baseline 列）+ 旧规划 4 项甄别（confirm/ai_exec_logs/会话标题/H3C）
+
+### What Worked
+- **test:electron 基础设施下游复用**：Phase 12 建的 realDb/mockSshServer/handleLeakDetector helper 被 Phase 13（connectSSH 3 it）+ 14（anomalyNewIp 8 it）直接复用，一次投入三期受益
+- **code review BLOCKER 即时修**：execute-phase 后 code review 发现 CR-01 时区/CR-02 事务边界 2 BLOCKER，verify 前手动精确修（含 W-1/W-2 audit 后补），避免 gaps_found 返工
+- **audit-milestone 闭环**：归档前 milestone audit（7/7 REQ + 跨 phase wiring 11 连接 + 5 E2E）+ integration-checker 独立实跑三绿，从整体角度验完整
+
+### What Was Inefficient
+- **SUMMARY frontmatter requirements_completed 缺失**：13-02/13-03/14-01/14-02 的 SUMMARY 没填此字段，audit 3-source 交叉验证需手动从 VERIFICATION 补证。executor 应自动填
+- **summary-extract accomplishments 瑕疵**：milestone.complete CLI 的 summary-extract 把 SUMMARY 文件路径列表当 accomplishment，需手动重写 MILESTONES 条目
+- **quick task 历史未归档**：.planning/quick/ 10 个 /gsd-quick 产物跨 milestone 累积，audit-open 每次报 open，无周期归档（应 /gsd:cleanup）
+
+### Patterns Established
+- **_setXxxDbGetter mock 注入口范式**：experienceService._setExperienceDbGetter → anomalyService._setAnomalyDbGetter，静态注入口注入 realDb 真路径单测（生产 dbGetter 默认=getDatabase 不变）
+- **localNow localtime 统一**：JS 端生成 localtime + SQL 参数绑定（非 datetime('now','localtime')），DB 存值与返回值逐字一致
+- **useRef 同步锁根治 React 竞态**：state 异步刷新期间连点竞态，用 ref.current 同步标志根治（confirmInFlightRef）
+- **甄别退路模式**：researcher/executor 全权甄别旧规划项，grep+代码核对给 FIXED/DEFER + file:line + DEFER-LOG（复用 13-02 结构）
+
+### Key Lessons
+- **test:electron 必须 npm run test:electron（electron.exe）**，npx vitest 走 node ABI 连锁失败误报（曾误判 SSH blowfish-cbc 回归，实则 21 failed 全 ABI 连锁）
+- **code review BLOCKER 应 verify 前修**：2 Critical（时区/事务边界）直接威胁 SC1/SC2，advisory gate 但工程上应即修
+- **renderer 无 testing-library 的真机 HV defer** 是项目固有约束，plan 阶段定死测试通道 + human-check 登记比临场降级可靠
+
+### Cost Observations
+- Model mix: planner/checker/integration sonnet 为主
+- Notable: complete-milestone acknowledge + audit-milestone integration-checker 双保险，从单 phase 验证升到 milestone 整体验证
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
