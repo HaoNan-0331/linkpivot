@@ -24,7 +24,7 @@ describe('H-3 stripMaskedKeys（saveAiConfig 掩码守卫）', () => {
     expect(out).not.toHaveProperty('visionApiKey')
   })
 
-  it('null/''/undefined 值的键不剔除（?? 语义交给 merge，守卫只管 **** 前缀）', () => {
+  it("null/''/undefined 值的键不剔除（?? 语义交给 merge，守卫只管 **** 前缀）", () => {
     const out = stripMaskedKeys({ apiKey: '', visionBaseUrl: null, visionModel: undefined })
     expect(out).toHaveProperty('apiKey', '')
     expect(out).toHaveProperty('visionBaseUrl', null)
