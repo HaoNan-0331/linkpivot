@@ -1,6 +1,12 @@
 appId: com.network-topology.manager
 productName: 网络拓扑管理工具
 
+# === 输出目录：与 vite renderer 的 dist/ 解耦 ===
+# 修复：electron-builder 输出原也在 dist/，files: dist/**/* 会把上一次打包产物
+# （win-unpacked/*.exe/*.7z）递归打进 asar，包体滚雪球撑爆 32 位 NSIS 的 2GB mmap 上限
+directories:
+  output: release
+
 # === asar 打包 ===
 asar: true
 asarUnpack:
@@ -10,9 +16,14 @@ asarUnpack:
   - "node_modules/telnet-client/**/*"
 
 # === 文件过滤：只包含运行所需文件 ===
+# 双保险：即使 dist/ 残留历史打包产物也不入 asar
 files:
   - dist-electron/**/*
   - dist/**/*
+  - "!dist/win-unpacked/**"
+  - "!dist/*.exe"
+  - "!dist/*.7z"
+  - "!dist/*.blockmap"
   - package.json
   - "!**/*.{ts,tsx,map}"
   - "!**/LICENSE*"
