@@ -1,5 +1,22 @@
 # Milestones
 
+## v1.2 安全与稳定性加固 (Shipped: 2026-08-14)
+
+**Phases completed:** 3 phases, 8 plans, 18 tasks
+**Requirements delivered:** 7/7（TEST-01/02 + SEC-03/04/05 + FIX-01/02）
+**Known deferred items at close:** 6（见 STATE.md §Deferred Items — Phase 14 confirm 视觉真机 HV + Phase 12 GHA 实跑/CR-01/CR-03 + 10 历史 quick task 归档）
+**Git range:** Phase 12 plan → v1.2-MILESTONE-AUDIT.md，覆盖 3 phase / 8 plan
+
+**Key accomplishments:**
+
+1. **测试基础设施 / DEP-1 ABI 缓解（Phase 12, TEST-01/02）**：vitest 经 ELECTRON_RUN_AS_NODE=1 electron.exe 跑通加载 electron-ABI better-sqlite3（弃 electron-vite 不支持 vite 8，改 electron.exe + 双 vitest config 物理隔离，不迁生产构建）+ test:electron 真路径套件 32 it（DB + SSH executeCommandsOnDevice/execOne/executeSSH + Telnet executeTelnetCommand + 句柄泄漏）+ handleLeakDetector 句柄泄漏自动化（getActiveResourcesInfo + wtfnode，四条 try/finally cleanup 全覆盖）+ build-smoke.yml CI-A 扩展。零生产代码改动（SC4）。
+2. **安全加固 cluster（Phase 13, SEC-03/04/05）**：connection.ts connectSSH/testSSHConnection 复用 SSH_ALGORITHMS 常量（补 curve25519-sha256 连通现代 Linux + readyTimeout 30s，全仓 3 SSH 路径零 drift）+ pre-release 5 项 hardening 甄别（13-02-DEFER-LOG：L1/L2 DEFER + L3/L4/L6 FIXED，sanitizeMessage CR-01 收紧枚举根前缀防过度脱敏）+ experience:list IPC 网关层 sanitizeListInput 纯函数（search≤100/tags filter string/单tag≤30 截断 + severity throw，W-1 audit 后补 filter）+ VALID_SEVERITIES 单一来源 + service MAX_BATCH 双层兜底。
+3. **缺陷修复闭环（Phase 14, FIX-01/02）**：anomalyService.processARPEntries 全新 IP 分支补 recordChange('new_ip') + 首次基线机制（ip_mac_bindings is_baseline 列 v12 迁移 hasColumn 守卫 + hasBaseline 门控 + runBatch 事务内后置 UPDATE，CR-02 fix 事务边界）+ _setAnomalyDbGetter mock 注入口（realDb 8 it 含遗留库向后兼容 Test 6 + 混合批次 Test 7 + UNIQUE fallback Test 8）+ localNow localtime 统一（CR-01 fix）+ FIX-02 旧规划 4 项甄别（confirm 视觉层 confirmInFlight + useRef 同步锁 WR-01 / ai_exec_logs FIXED / 会话标题 FIXED / H3C LLDP DEFER）。
+
+**验证：** 三绿门禁（tsc web strict + build:electron-main + vitest 256 mock + 32 真路径）全 phase 全绿零回归；milestone audit 7/7 REQ satisfied + 跨 phase wiring 11 连接 + 5 E2E 流通 + 三红线零回退；code review 2 Critical（CR-01 时区 / CR-02 事务边界）+ WR-01 useRef 锁全修复；W-1 sanitizeListInput tags filter + W-2 文档校正（audit 后修，三绿 257 全绿）。
+
+---
+
 ## v1.1 AI 对话经验沉淀 (Shipped: 2026-08-06)
 
 **Phases completed:** 5 phases, 14 plans, 20 tasks

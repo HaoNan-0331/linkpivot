@@ -2,16 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: 安全与稳定性加固
-status: milestone_complete
-last_updated: 2026-08-09T21:28:31.974Z
-last_activity: 2026-08-10
+status: Awaiting next milestone
+last_updated: "2026-08-14T03:19:43.680Z"
+last_activity: 2026-08-14 — Milestone v1.2 completed and archived
 progress:
   total_phases: 3
   completed_phases: 3
   total_plans: 8
   completed_plans: 8
   percent: 100
-stopped_at: Milestone complete (Phase 14 was final phase)
 ---
 
 # STATE: network_toplogy
@@ -26,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-08-01)
 
 ## Current Position
 
-Phase: 14
-Plan: Not started
-Status: Milestone complete
-Last activity: 2026-08-09
+Phase: Milestone v1.2 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-08-14 — Milestone v1.2 completed and archived
 
 ## Performance Metrics
 
@@ -298,6 +297,17 @@ v1.1 明确 defer 到二期（4 FUTURE，不进 roadmap）：
 | FUTURE-03 | 经验精确到会话内消息段锚点（source_event_ids） | 数据量上来后 |
 | FUTURE-04 | 经验关联图可视化（复用 React Flow） | 数据量上来后 |
 
+v1.2 milestone close 时 acknowledged（2026-08-14），renderer 真机 HV + GHA CI 实跑 + 历史 quick task 归档 defer（自动化层全过，详见 v1.2-MILESTONE-AUDIT.md）：
+
+| Category | Item | Status |
+|----------|------|--------|
+| uat_gap | Phase 12-HUMAN-UAT.md | resolved（GHA 配置就位，本地 test:electron 32 it 全绿，GHA 实跑 defer push 触发） |
+| uat_gap | Phase 14-HUMAN-UAT.md | partial（FIX-02 #1 confirm 视觉层真机 HV defer，源断言+useRef 锁+main 兜底全 VERIFIED，待 /gsd:verify-work 14） |
+| verification_gap | Phase 12-VERIFICATION.md | human_needed（GHA windows-latest 实跑 + CR-03 cpu-features native dep 确认 defer） |
+| verification_gap | Phase 14-VERIFICATION.md | human_needed（confirm 视觉层真机 HV，9/10 自动化 must-haves VERIFIED） |
+| tech_debt | Phase 12 TEST-02 CR-01 handleLeakDetector baseline 跨 it 共享 | 单 it 检测有效，跨 it 准确性质量债（建议 /gsd:code-review --fix） |
+| quick_task | .planning/quick/ 10 个历史 /gsd-quick 产物 | 6 complete + 3 status 空 + 1 archive 幽灵；非 milestone 待办，归档归后续 /gsd:cleanup |
+
 ## Session Continuity
 
 - **Last action**: 14-02 完成（FIX-02 旧规划回退甄别 + H3C 作废登记：#1 confirm 防重复完整闭环核心关窗锁保留 + 视觉层 confirmInFlight 按钮 loading+disabled 落地；#2 ai_exec_logs FIXED 已满足零改 / #3 会话标题 FIXED 前提偏差零改 / #4 H3C DEFER 作废；14-02-DEFER-LOG.md 4 项登记复用 13-02 结构，三绿门禁 tsc web + build:electron-main + npm test 256/256 全绿零回归，2 commits d93b0d3/8bdb774）
@@ -319,4 +329,4 @@ v1.1 明确 defer 到二期（4 FUTURE，不进 roadmap）：
 
 ## Operator Next Steps
 
-- `/gsd:plan-phase 12`（v1.2 第一个 phase：Test Infrastructure — DEP-1 ABI 缓解）
+- Start the next milestone with /gsd-new-milestone
