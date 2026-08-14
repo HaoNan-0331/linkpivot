@@ -16,11 +16,12 @@ export default function DeviceForm({ open, device, onOk, onCancel }: Props) {
 
   useEffect(() => {
     if (device) {
+      // H-1：编辑分支不回填 password/sshKeyContent（IPC 已脱敏为 ****尾4位，回填会把掩码串
+      // 当真实值提交覆盖凭证）。走「留空=不修改」语义（updateDevice 字段级 !== undefined 跳过）。
       form.setFieldsValue({
         name: device.name, vendor: device.vendor, model: device.model, version: device.version,
         ipAddress: device.ipAddress, deviceType: device.deviceType, connectionType: device.connectionType,
-        port: device.port, username: device.username, password: device.password,
-        sshKeyPath: device.sshKeyPath, sshKeyContent: device.sshKeyContent, webUrl: device.webUrl,
+        port: device.port, username: device.username, sshKeyPath: device.sshKeyPath, webUrl: device.webUrl,
       })
     } else {
       form.resetFields()
@@ -80,7 +81,7 @@ export default function DeviceForm({ open, device, onOk, onCancel }: Props) {
             </Form.Item>
             <div style={{ display: 'flex', gap: 16 }}>
               <Form.Item name="username" label="账号" style={{ flex: 1 }}><Input /></Form.Item>
-              <Form.Item name="password" label="密码" style={{ flex: 1 }}><Input.Password /></Form.Item>
+              <Form.Item name="password" label="密码" style={{ flex: 1 }}><Input.Password placeholder={device ? '留空则不修改' : undefined} /></Form.Item>
             </div>
             {connType === 'ssh' && (
               <>
@@ -88,7 +89,7 @@ export default function DeviceForm({ open, device, onOk, onCancel }: Props) {
                   <Input placeholder="C:/Users/.ssh/id_rsa（可选）" />
                 </Form.Item>
                 <Form.Item name="sshKeyContent" label="或粘贴 SSH Key 内容">
-                  <Input.TextArea rows={3} placeholder="-----BEGIN OPENSSH PRIVATE KEY-----...（可选）" />
+                  <Input.TextArea rows={3} placeholder={device ? '留空则不修改；粘贴新内容将覆盖' : '-----BEGIN OPENSSH PRIVATE KEY-----...（可选）'} />
                 </Form.Item>
               </>
             )}

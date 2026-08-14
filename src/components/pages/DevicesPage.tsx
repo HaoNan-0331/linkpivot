@@ -37,8 +37,13 @@ export default function DevicesPage() {
 
   const handleUpdate = async (values: CreateDeviceDTO) => {
     if (!editing) return
+    // H-1：编辑时密码/Key 留空（''/undefined）= 不修改——从 payload 剔除，
+    // updateDevice 的 `!== undefined` 字段级跳过语义生效，不误清空已有凭证。
+    const payload: Record<string, unknown> = { ...values }
+    if (!payload.password) delete payload.password
+    if (!payload.sshKeyContent) delete payload.sshKeyContent
     try {
-      await window.api.device.update(editing.id, values)
+      await window.api.device.update(editing.id, payload as unknown as CreateDeviceDTO)
       message.success('设备更新成功')
       setEditing(null); setFormOpen(false); load()
     } catch (e: unknown) {

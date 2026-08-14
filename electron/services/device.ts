@@ -9,6 +9,23 @@ export function setDeviceMasterKey(key: string) { MK = key }
 function enc(val: string | null | undefined): string | null { return encField(val, MK) }
 function dec(val: string | null | undefined): string { return decField(val, MK) }
 
+/**
+ * H-1（v0.3.0 audit）：设备凭证 IPC 边界脱敏投影（纯函数）。
+ *
+ * 红线：renderer 任何 IPC 返回值中不含明文 password/sshKeyContent（只可能收到 ****尾4位，
+ * 与 ai.ts getAiConfigMasked 同格式）。仅 IPC 出口（device:list/getById、experience:listDevices）
+ * 包裹；service 内部主进程明文消费方（connection.ts 终端连接、arpCollector 采集、
+ * experienceService 主进程路径）不受影响。
+ */
+export function maskDeviceSecrets<T>(device: T): T {
+  const masked: Record<string, unknown> = { ...(device as Record<string, unknown>) }
+  for (const key of ['password', 'sshKeyContent'] as const) {
+    const v = masked[key]
+    if (typeof v === 'string' && v.length > 0) masked[key] = `****${v.slice(-4)}`
+  }
+  return masked as T
+}
+
 function rowToDevice(row: any): any {
   return {
     id: row.id,

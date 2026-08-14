@@ -62,6 +62,9 @@ export function isFirstRun(): boolean {
 }
 
 export async function initAdmin(username: string, password: string) {
+  // H-2：首启门控（服务层）——users 表非空时拒绝创建，防登录前 safe 通道被滥用无鉴权新增管理员。
+  // 与 main.ts auth:initAdmin handler 层门控构成双层防御（audit H-2 整改建议）。
+  if (!isFirstRun()) return { success: false, error: '管理员已初始化，仅首次启动可创建' }
   const pwdCheck = validatePasswordStrength(password)
   if (!pwdCheck.ok) return { success: false, error: pwdCheck.error }
   const db = getDatabase()

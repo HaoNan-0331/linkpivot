@@ -7,7 +7,7 @@ import { setDecryptFailureHandler } from './utils/crypto'
 import { hardenWindow, openExternalSafe } from './utils/webSecurity'
 import { secure, safe, setAuthenticated } from './utils/authGuard'
 import { generateCaptcha, login, isFirstRun, initAdmin } from './services/auth'
-import { setDeviceMasterKey, listDevices, createDevice, updateDevice, deleteDevice, getDeviceById } from './services/device'
+import { setDeviceMasterKey, listDevices, createDevice, updateDevice, deleteDevice, getDeviceById, maskDeviceSecrets } from './services/device'
 import { setTopologyMasterKey, listTopologies, getTopologyById, createTopology, updateTopology, deleteTopology, exportTopology, importTopology } from './services/topology'
 import { setConnectionMasterKey, openTerminal, openWebSafe, writeToSession, writeByWebContentsId, disconnectSession, testDeviceConnection } from './services/connection'
 import { setAiMasterKey, chat, getAiConfigMasked, saveAiConfig, getCommandWhitelist, saveCommandWhitelist, getExecMode, setExecMode, confirmCommand, getAiLogs, getChatHistory, saveChatMessage as aiSaveChatMessage, clearChatHistory, createSession, listSessions, getSessionMessages, deleteSession, updateSessionTitle } from './services/ai'
@@ -157,14 +157,22 @@ app.whenReady().then(() => {
     return r
   }))
   ipcMain.handle('auth:isFirstRun', safe(() => isFirstRun()))
-  ipcMain.handle('auth:initAdmin', safe((_e, u, p) => initAdmin(u, p)))
+  // H-2：双层门控（audit 整改建议）——handler 层先判首启，服务层 initAdmin 内再判一次。
+  ipcMain.handle('auth:initAdmin', safe((_e, u, p) => {
+    if (!isFirstRun()) return { success: false, error: '管理员已初始化' }
+    return initAdmin(u, p)
+  }))
 
   // Device IPC（secure = 登录鉴权 + 异常脱敏）
-  ipcMain.handle('device:list', secure(() => listDevices()))
+  // H-1：IPC 返回值经 maskDeviceSecrets 脱敏投影——renderer 只收 ****尾4位，永不收明文凭证
+  ipcMain.handle('device:list', secure(() => listDevices().map(maskDeviceSecrets)))
   ipcMain.handle('device:create', secure((_e, data) => createDevice(data)))
   ipcMain.handle('device:update', secure((_e, id, data) => updateDevice(id, data)))
   ipcMain.handle('device:delete', secure((_e, id) => deleteDevice(id)))
-  ipcMain.handle('device:getById', secure((_e, id) => getDeviceById(id)))
+  ipcMain.handle('device:getById', secure((_e, id) => {
+    const d = getDeviceById(id)
+    return d ? maskDeviceSecrets(d) : null
+  }))
 
   // Topology IPC
   ipcMain.handle('topology:list', secure(() => listTopologies()))

@@ -25,6 +25,7 @@ import {
 } from '../services/experienceService'
 import type { ExperienceInput, ExperienceUpdateInput, ExperienceListInput, ConfirmDraftsInput } from '../../src/types/experience'
 import { secure } from '../utils/authGuard'
+import { maskDeviceSecrets } from '../services/device'
 
 /**
  * ExperienceService IPC 网关层（Phase 7 Plan 02）。
@@ -150,8 +151,10 @@ export function registerExperienceIpc() {
   ipcMain.handle('experience:listByDevice', secure((_e, deviceId: string, includeInvalid?: boolean) =>
     listExperiencesByDevice(deviceId, includeInvalid)))
 
+  // H-1（v0.3.0 audit 补漏）：listDevicesByExperience 走 getDeviceById→rowToDevice 返回 camelCase
+  // 明文 password/sshKeyContent，stripEncColumns 剥不掉（只删 _enc 后缀键）——脱敏须在其之前。
   ipcMain.handle('experience:listDevices', secure((_e, experienceId: string) =>
-    stripEncColumns(listDevicesByExperience(experienceId))))
+    stripEncColumns(listDevicesByExperience(experienceId).map(maskDeviceSecrets))))
 
   // Phase 9：人工确认（review）—— 全 secure 包装（鉴权 + 异常脱敏），延续 experience:* 基线。
   // confirmDrafts：IPC 层校验入参 drafts 数组 + MAX_BATCH 上限，与 service 层兜底校验（experienceService
