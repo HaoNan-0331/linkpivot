@@ -48,9 +48,9 @@ SEC-04 pre-release 5 项安全 hardening（L1/L2/L3/L4/L6）逐项甄别收尾�
 2. `isAuthenticated returns current auth state` —— setAuthenticated(false)→false / setAuthenticated(true)→true，确认 health §2.2 标记的 0 caller 预留入口行为正确
 3. `secure sanitizes SQL fragment from error` —— throw 含 `/app/db/main.db` 的 SQL 错误，断言脱敏后含 `[路径]` 不含原文路径
 
-**electron/utils/authGuard.ts** sanitizeMessage 加固（Rule 1+2 deviation）：
-- 原 Unix 路径正则 `/(?:usr|home|Users|tmp|var|opt)[^\s'"()<>]*/g`（枚举前缀）→ 改为通用绝对路径匹配 `/[^\s'"()<>]*/g`
-- 覆盖 SQLite 等库常报告的非白名单部署路径（`/app`/`/data`/`/root`/`/private` 等），红线①异常脱敏实际加固
+**electron/utils/authGuard.ts** sanitizeMessage 加固（Rule 1+2 deviation，W-2 文档校正 v1.2 audit）：
+- **双正则脱敏**（authGuard.ts:19-26 实际代码）：Windows 路径 `/[A-Za-z]:\\[^\s'"()<>]*/g` + Unix 枚举根前缀 `/(?:usr|home|Users|tmp|var|opt|app|data|root|private|etc|srv|mnt|proc|sys|dev|run|bin|sbin|lib|boot)[^\s'"()<>]*/g` → `[路径]`
+- CR-01 收紧后采用**枚举根前缀**（非最初设想的通用 `/[^\s'"()<>]*/g` 匹配）——既覆盖 SQLite 等库报告的部署路径（`/app`/`/data`/`/root`/`/private` 等），又避免误吞 URL/日期/比例等含斜杠非路径内容，红线①异常脱敏实际加固
 
 ### Task 2: SEC-04 五项甄别 DEFER-LOG（commit 82d30b4）
 

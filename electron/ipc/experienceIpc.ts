@@ -88,11 +88,13 @@ export function sanitizeListInput(opts: ExperienceListInput | undefined): Experi
     sanitized.search = sanitized.search.slice(0, 100)
   }
   // tags 钳制（D-13-6 ≤20 个 + 单 tag ≤30 字符）：超量 tags 截取前 20 + 每个超长 tag 截断。
+  // W-1 fix（v1.2 audit）：filter 只留 string tag——原 map 守卫让非 string 元素（如 123/null）原样透传，
+  // 下游 listExperiences t.replace throw（虽经 sanitizeMessage 脱敏，但崩溃面下沉 service 层）。
+  // IPC 层是 untrusted renderer→main 边界，在此洗净类型，service 层不再假设 tags 全 string。
   if (Array.isArray(sanitized.tags)) {
-    const capped = sanitized.tags.length > 20 ? sanitized.tags.slice(0, 20) : sanitized.tags
-    sanitized.tags = capped.map((tag) =>
-      typeof tag === 'string' && tag.length > 30 ? tag.slice(0, 30) : tag
-    )
+    const stringTags = sanitized.tags.filter((tag): tag is string => typeof tag === 'string')
+    const capped = stringTags.length > 20 ? stringTags.slice(0, 20) : stringTags
+    sanitized.tags = capped.map((tag) => (tag.length > 30 ? tag.slice(0, 30) : tag))
   }
   // severity throw（D-13-5 固定集合非法值暴露 bug）：非空非 undefined 且非合法枚举 → throw。
   // 复用 service 层 export 的 VALID_SEVERITIES 单一来源（D-13-6 + PATTERNS 范式），非第二份手写。

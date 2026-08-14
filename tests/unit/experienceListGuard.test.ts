@@ -75,6 +75,12 @@ describe('SEC-05 sanitizeListInput（experience:list IPC 网关层 DoS 校验）
     expect(out.tags![0].length).toBeLessThanOrEqual(30)
   })
 
+  // —— W-1 fix（v1.2 audit）：tags 非 string 元素 filter 滤除 ——
+  it('W-1: tags 非 string 元素（123/null/undefined）被 filter 滤除，只留 string 截断（防下游 listExperiences t.replace throw）', () => {
+    const out = sanitizeListInput({ tags: ['正常', 123, null, 'a'.repeat(40), undefined, '也正常'] as any })
+    expect(out.tags).toEqual(['正常', 'a'.repeat(30), '也正常'])
+  })
+
   // —— severity throw（D-13-5 固定集合非法值，Pattern B throw 暴露 bug）——
   it('非法 severity（BOGUS）throw 含「severity 非法」（固定集合非法值暴露调用方 bug）', () => {
     expect(() => sanitizeListInput({ severity: 'BOGUS' })).toThrow('severity 非法')
