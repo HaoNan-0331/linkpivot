@@ -33,7 +33,8 @@ vi.mock('./systemLog', () => ({
   createSystemLog: (...args: any[]) => createSystemLogMock(...args),
 }))
 
-// commandSafety 不 mock —— isCommandAllowed 真实现（D-13 红线，见文件头注释）
+// commandSafety 不 mock —— isCommandAllowed 真实现（D-13 红线，见文件头注释），
+// 经 import { discoverTopology } from './discovery' 真实加载（discovery.ts 内 from './commandSafety' 纯函数，无 IO）
 import { discoverTopology } from './discovery'
 
 // ---- 测试数据（内联固定 JSON，与 discovery.ts 两处 parse 的 code-block 剥离 / 裸 JSON 形态对齐） ----
