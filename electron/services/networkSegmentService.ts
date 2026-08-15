@@ -1,4 +1,5 @@
 import { getDatabase } from '../database/connection'
+import { ipInCIDR } from '../utils/ipMath'
 import { OUIService } from './ouiService'
 import type { PaginatedResult } from '../../src/types/pagination'
 
@@ -80,7 +81,7 @@ export class NetworkSegmentService {
     const cidr = `${segment.network}/${segment.cidr}`
     // 真实 CIDR 匹配（替代前3段 LIKE），修正 /16 等非 /24 网段的跨段误计
     const rows = db.prepare("SELECT ip FROM ip_status WHERE status = 'used'").all() as Array<{ ip: string }>
-    const used = rows.filter((r) => this.ipInCIDR(r.ip, cidr)).length
+    const used = rows.filter((r) => ipInCIDR(r.ip, cidr)).length
     const available = Math.max(0, total - used)
     const usagePercent = total > 0 ? Math.round((used / total) * 100) : 0
     return { networkId, total, used, available, usagePercent }
@@ -108,7 +109,7 @@ export class NetworkSegmentService {
       FROM ip_status ips
       LEFT JOIN (SELECT ip, interface, device_id, ROW_NUMBER() OVER (PARTITION BY ip ORDER BY collected_at DESC) as rn FROM arp_entries) arp ON arp.ip = ips.ip AND arp.rn = 1
       ORDER BY ${safeSortBy} ${safeSortOrder}`
-    let rows = (db.prepare(query).all() as any[]).filter((r) => this.ipInCIDR(r.ip, cidr))
+    let rows = (db.prepare(query).all() as any[]).filter((r) => ipInCIDR(r.ip, cidr))
     if (searchIp) rows = rows.filter((r) => r.ip?.includes(searchIp))
     if (searchMac) rows = rows.filter((r) => r.mac?.includes(searchMac))
     // PERF-01 红线：保留 OUIService.getVendor 读路径（vendorMap 预载 O(1)），不得退化为逐行查库。
@@ -126,24 +127,6 @@ export class NetworkSegmentService {
     const total = mapped.length
     const pageRows = mapped.slice(offset, offset + limit)
     return { rows: pageRows, total, truncated: pageRows.length < total }
-  }
-
-  /** IP 转数值（非法返回 null），用 >>>0 规范化为无符号 32 位。 */
-  private static ipToNumber(ip: string): number | null {
-    const parts = ip.split('.').map(Number)
-    if (parts.length !== 4 || parts.some((p) => !Number.isInteger(p) || p < 0 || p > 255)) return null
-    return ((parts[0] << 24) + (parts[1] << 16) + (parts[2] << 8) + parts[3]) >>> 0
-  }
-
-  /** 判断 ip 是否落在 cidr 网段内（替代前3段 LIKE 的跨网段误判）。 */
-  private static ipInCIDR(ip: string, cidr: string): boolean {
-    const [network, prefixStr] = cidr.split('/')
-    const prefix = parseInt(prefixStr, 10)
-    const ipNum = this.ipToNumber(ip)
-    const netNum = this.ipToNumber(network)
-    if (ipNum === null || netNum === null || isNaN(prefix) || prefix < 0 || prefix > 32) return false
-    const mask = prefix === 0 ? 0 : (0xFFFFFFFF << (32 - prefix)) >>> 0
-    return (ipNum & mask) === (netNum & mask)
   }
 
   private static maskToCIDR(mask: string): number {

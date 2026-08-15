@@ -1,25 +1,10 @@
 import { dialog } from 'electron'
 import { appendFile, writeFile } from 'fs/promises'
 import { getDatabase } from '../database/connection'
+import { ipInCIDR } from '../utils/ipMath'
 
 /** ARP 导出流式分批大小：单批行数，内存峰值 O(单批) 非 O(全表)。 */
 const ARP_BATCH_SIZE = 1000
-
-function ipToNumber(ip: string): number | null {
-  const parts = ip.split('.').map(Number)
-  if (parts.length !== 4 || parts.some((p) => !Number.isInteger(p) || p < 0 || p > 255)) return null
-  return ((parts[0] << 24) + (parts[1] << 16) + (parts[2] << 8) + parts[3]) >>> 0
-}
-
-function ipInCIDR(ip: string, cidr: string): boolean {
-  const [network, prefixStr] = cidr.split('/')
-  const prefix = parseInt(prefixStr, 10)
-  const ipNum = ipToNumber(ip)
-  const netNum = ipToNumber(network)
-  if (ipNum === null || netNum === null || isNaN(prefix) || prefix < 0 || prefix > 32) return false
-  const mask = prefix === 0 ? 0 : (0xFFFFFFFF << (32 - prefix)) >>> 0
-  return (ipNum & mask) === (netNum & mask)
-}
 
 /** RFC4180 CSV 字段转义：含逗号/引号/换行的字段用双引号包裹，内部引号转义为 ""。 */
 function csvEscape(field: any): string {
@@ -86,10 +71,11 @@ export class ExportService {
     const networks = db.prepare(networkQuery).all(...params) as any[]
     if (networks.length === 0) throw new Error('没有网段数据可导出')
     const csvLines: string[] = ['网段名称,网段地址,CIDR,IP地址,MAC地址,状态,最后发现时间']
+    // 全表窗口查询在网段循环外只执行一次（C-M6：原循环内每网段全表扫描 → N 网段 N 次），SQL 逐字未动仅挪位置
+    const ipRows = db.prepare(`SELECT latest.ip, latest.mac, latest.collected_at FROM (SELECT a.ip, a.mac, a.collected_at, ROW_NUMBER() OVER (PARTITION BY a.ip ORDER BY a.collected_at DESC) as rn FROM arp_entries a) latest WHERE latest.rn = 1 ORDER BY latest.ip`).all() as any[]
     for (const network of networks) {
       const cidr = `${network.network}/${network.cidr}`
       // 真实 CIDR 匹配（替代前3段 LIKE），修正非 /24 网段误计
-      const ipRows = db.prepare(`SELECT latest.ip, latest.mac, latest.collected_at FROM (SELECT a.ip, a.mac, a.collected_at, ROW_NUMBER() OVER (PARTITION BY a.ip ORDER BY a.collected_at DESC) as rn FROM arp_entries a) latest WHERE latest.rn = 1 ORDER BY latest.ip`).all() as any[]
       for (const row of ipRows.filter((r) => ipInCIDR(r.ip, cidr))) {
         csvLines.push([network.name, network.network, String(network.cidr), row.ip, row.mac || '', '已使用', row.collected_at || ''].map(csvEscape).join(','))
       }
