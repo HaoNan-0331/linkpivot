@@ -9,6 +9,7 @@ import { getDeviceById, setDeviceMasterKey } from './device'
 import { hardenWindow, openExternalSafe } from '../utils/webSecurity'
 import { buildSSHConnectConfig } from '../utils/sshConfig'
 import { decodeDeviceBuffer } from '../utils/textDecode'
+import { testTcpConnect, errnoToChinese } from '../utils/tcpProbe'
 
 interface DeviceInfo {
   id: string
@@ -241,12 +242,8 @@ function testSSHConnection(device: DeviceInfo): Promise<{ success: boolean; mess
     })
     client.on('error', (err: Error) => {
       clearTimeout(timer)
-      const msg = err.message.includes('ECONNREFUSED') ? '连接被拒绝'
-        : err.message.includes('ENOTFOUND') ? '主机名无法解析'
-        : err.message.includes('ETIMEDOUT') ? '连接超时'
-        : err.message.includes('AUTH') || err.message.includes('All configured') ? '认证失败(用户名/密码/密钥错误)'
-        : err.message.includes('EHOSTUNREACH') ? '主机不可达'
-        : `连接失败: ${err.message}`
+      // AUTH/All configured（认证失败）与 errno 词在 ssh2 错误消息中互斥——SSH 特有认证分支留本地，errno 基础映射走 util
+      const msg = err.message.includes('AUTH') || err.message.includes('All configured') ? '认证失败(用户名/密码/密钥错误)' : errnoToChinese(err)
       resolve({ success: false, message: msg })
     })
 
@@ -257,28 +254,7 @@ function testSSHConnection(device: DeviceInfo): Promise<{ success: boolean; mess
 }
 
 function testTelnetConnection(host: string, port: number): Promise<{ success: boolean; message: string }> {
-  return new Promise((resolve) => {
-    const socket = new net.Socket()
-    const timer = setTimeout(() => {
-      socket.destroy()
-      resolve({ success: false, message: `连接超时 (${host}:${port})` })
-    }, 10000)
-
-    socket.on('connect', () => {
-      clearTimeout(timer)
-      socket.destroy()
-      resolve({ success: true, message: `Telnet 连接成功 (${host}:${port})` })
-    })
-    socket.on('error', (err: Error) => {
-      clearTimeout(timer)
-      const msg = err.message.includes('ECONNREFUSED') ? '连接被拒绝'
-        : err.message.includes('ETIMEDOUT') ? '连接超时'
-        : err.message.includes('EHOSTUNREACH') ? '主机不可达'
-        : `连接失败: ${err.message}`
-      resolve({ success: false, message: msg })
-    })
-    socket.connect(port, host)
-  })
+  return testTcpConnect(host, port, { successLabel: 'Telnet 连接成功' })
 }
 
 async function testWebConnection(url: string): Promise<{ success: boolean; message: string }> {
@@ -287,23 +263,8 @@ async function testWebConnection(url: string): Promise<{ success: boolean; messa
     const parsed = new URL(url)
     const port = parseInt(parsed.port) || (parsed.protocol === 'https:' ? 443 : 80)
     // Test TCP connectivity only — skip SSL verification (devices use self-signed certs)
-    return await new Promise((resolve) => {
-      const socket = new net.Socket()
-      const timer = setTimeout(() => {
-        socket.destroy()
-        resolve({ success: false, message: `连接超时 (${parsed.hostname}:${port})` })
-      }, 10000)
-      socket.on('connect', () => {
-        clearTimeout(timer)
-        socket.destroy()
-        resolve({ success: true, message: `Web 端口可达 (${parsed.hostname}:${port})` })
-      })
-      socket.on('error', (err: Error) => {
-        clearTimeout(timer)
-        resolve({ success: false, message: `连接失败: ${err.message}` })
-      })
-      socket.connect(port, parsed.hostname)
-    })
+    // 注（行为超集，研究 ARCHITECTURE §2.1.3 统一映射）：error 路径原为裸 `连接失败: msg`，收敛后网络错误场景获得 errnoToChinese 中文文案
+    return await testTcpConnect(parsed.hostname, port, { successLabel: 'Web 端口可达' })
   } catch {
     return { success: false, message: '无效的 URL' }
   }
@@ -325,26 +286,5 @@ export function openRDP(device: DeviceInfo) {
 }
 
 function testRDPConnection(host: string, port: number): Promise<{ success: boolean; message: string }> {
-  return new Promise((resolve) => {
-    const socket = new net.Socket()
-    const timer = setTimeout(() => {
-      socket.destroy()
-      resolve({ success: false, message: `连接超时 (${host}:${port})` })
-    }, 10000)
-
-    socket.on('connect', () => {
-      clearTimeout(timer)
-      socket.destroy()
-      resolve({ success: true, message: `RDP 端口可达 (${host}:${port})` })
-    })
-    socket.on('error', (err: Error) => {
-      clearTimeout(timer)
-      const msg = err.message.includes('ECONNREFUSED') ? '连接被拒绝'
-        : err.message.includes('ETIMEDOUT') ? '连接超时'
-        : err.message.includes('EHOSTUNREACH') ? '主机不可达'
-        : `连接失败: ${err.message}`
-      resolve({ success: false, message: msg })
-    })
-    socket.connect(port, host)
-  })
+  return testTcpConnect(host, port, { successLabel: 'RDP 端口可达' })
 }
