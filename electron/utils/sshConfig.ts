@@ -1,3 +1,4 @@
+import fs from 'fs'
 import type { ConnectConfig } from 'ssh2'
 
 // SSH 握手 ready 超时（TCP connect + KEX + auth → 'ready' 事件）。
@@ -30,4 +31,42 @@ export const SSH_ALGORITHMS: ConnectConfig['algorithms'] = {
     'rsa-sha2-512', 'rsa-sha2-256',
     'ssh-rsa', 'ssh-dss',
   ],
+}
+
+/** device 凭证子集（buildSSHConnectConfig 入参；密钥内容 > 密钥路径 > 密码 三分支）。 */
+export interface SSHDeviceInput {
+  ipAddress: string
+  port?: number | null
+  username?: string
+  password?: string
+  sshKeyPath?: string
+  sshKeyContent?: string
+}
+
+/**
+ * SSH ConnectConfig 构造单一来源（三分支逐字照搬 ai.ts buildSSHConfig，零语义改动）。
+ *
+ * P10 语义（防抹平）：readyTimeoutMs 参数化保留两类场景语义——建会话路径默认 30s
+ * （SSH_READY_TIMEOUT_MS），探活快测（testSSHConnection）显式传 8000 快速失败；
+ * 两者差异是设计意图，收敛配置构造不等于收敛超时语义。
+ */
+export function buildSSHConnectConfig(
+  device: SSHDeviceInput,
+  readyTimeoutMs: number = SSH_READY_TIMEOUT_MS
+): ConnectConfig {
+  const cfg: ConnectConfig = {
+    host: device.ipAddress,
+    port: device.port || 22,
+    username: device.username || 'root',
+    readyTimeout: readyTimeoutMs,
+    algorithms: SSH_ALGORITHMS,
+  }
+  if (device.sshKeyContent) {
+    cfg.privateKey = Buffer.from(device.sshKeyContent)
+  } else if (device.sshKeyPath) {
+    cfg.privateKey = fs.readFileSync(device.sshKeyPath)
+  } else {
+    cfg.password = device.password
+  }
+  return cfg
 }
