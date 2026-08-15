@@ -5,7 +5,7 @@ import net from 'net'
  *
  * 模板逐字照搬 connection.ts testRDPConnection（Telnet/Web/RDP 三份探活的内嵌 Promise 同构），
  * 超时 10000ms 沿用现值；connection.ts 三探活已接线（15-01/15-02 完成），
- * SSH 探活的 AUTH 特有分支留在 connection.ts 组合本 util 基础映射。
+ * SSH 探活的 AUTH 特有分支在 sshConfig.mapSshProbeError 组合本 util 基础映射。
  */
 
 /** TCP 探活默认超时（沿用 connection.ts testTelnet/testWeb/testRDP 现值 10000ms）。 */
