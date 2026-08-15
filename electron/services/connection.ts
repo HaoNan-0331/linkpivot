@@ -8,6 +8,7 @@ import { Client, type ClientChannel } from 'ssh2'
 import { getDeviceById, setDeviceMasterKey } from './device'
 import { hardenWindow, openExternalSafe } from '../utils/webSecurity'
 import { buildSSHConnectConfig } from '../utils/sshConfig'
+import { decodeDeviceBuffer } from '../utils/textDecode'
 
 interface DeviceInfo {
   id: string
@@ -98,13 +99,6 @@ export function openWebSafe(url: string) {
   openExternalSafe(url)
 }
 
-function decodeBuffer(data: Buffer): string {
-  // Try UTF-8 first; if it contains invalid sequences, fall back to GBK
-  const text = data.toString('utf-8')
-  if (!text.includes('\ufffd')) return text
-  return iconv.decode(data, 'gbk')
-}
-
 function connectSSH(sessionId: string, device: DeviceInfo, termWin: BrowserWindow) {
   const client = new Client()
 
@@ -129,12 +123,12 @@ function connectSSH(sessionId: string, device: DeviceInfo, termWin: BrowserWindo
 
       stream.on('data', (data: Buffer) => {
         if (!termWin.isDestroyed()) {
-          termWin.webContents.send('terminal:data', decodeBuffer(data))
+          termWin.webContents.send('terminal:data', decodeDeviceBuffer(data))
         }
       })
       stream.stderr.on('data', (data: Buffer) => {
         if (!termWin.isDestroyed()) {
-          termWin.webContents.send('terminal:data', decodeBuffer(data))
+          termWin.webContents.send('terminal:data', decodeDeviceBuffer(data))
         }
       })
       stream.on('close', () => {

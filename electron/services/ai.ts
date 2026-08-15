@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid'
 import { Client } from 'ssh2'
-import iconv from 'iconv-lite'
+import { decodeDeviceBuffer } from '../utils/textDecode'
 import { getDatabase } from '../database/connection'
 import { encField, decField } from '../utils/crypto'
 import { verifyPasswordSync } from '../utils/crypto'
@@ -301,12 +301,6 @@ function stripAnsi(str: string): string {
     .replace(/\x1b[^[\]]/g, '')
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '')
-}
-
-function decodeDeviceBuffer(data: Buffer): string {
-  const text = data.toString('utf-8')
-  if (!text.includes('�')) return text
-  return iconv.decode(data, 'gbk')
 }
 
 // （已移除交互式 shell 的 prompt 检测/输出提取函数）
