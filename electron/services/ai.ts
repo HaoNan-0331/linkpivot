@@ -1,11 +1,10 @@
 import { v4 as uuidv4 } from 'uuid'
-import fs from 'fs'
-import { Client, type ConnectConfig } from 'ssh2'
+import { Client } from 'ssh2'
 import iconv from 'iconv-lite'
 import { getDatabase } from '../database/connection'
 import { encField, decField } from '../utils/crypto'
 import { verifyPasswordSync } from '../utils/crypto'
-import { SSH_READY_TIMEOUT_MS, SSH_ALGORITHMS } from '../utils/sshConfig'
+import { SSH_READY_TIMEOUT_MS, SSH_ALGORITHMS, buildSSHConnectConfig } from '../utils/sshConfig'
 import { executeTelnetCommand, pickDisablePaginationCmd, pickShellPrompt } from '../utils/telnetExec'
 import { isCommandAllowed } from './commandSafety'
 import { createLog, updateLogStatus, appendLogAiResponse, getLogs, setAiExecLoggerMasterKey } from './aiExecLogger'
@@ -317,23 +316,7 @@ function decodeDeviceBuffer(data: Buffer): string {
 // electron/utils/telnetExec.ts 共用——ai.ts telnet 分流 与 arpCollector collectFromDevice 同 util，
 // 关分页/精确 prompt 统一来源（导入见顶部 import），避免两处实现漂移。
 
-function buildSSHConfig(device: any): ConnectConfig {
-  const cfg: ConnectConfig = {
-    host: device.ipAddress,
-    port: device.port || 22,
-    username: device.username || 'root',
-    readyTimeout: SSH_READY_TIMEOUT_MS,
-    algorithms: SSH_ALGORITHMS,
-  }
-  if (device.sshKeyContent) {
-    cfg.privateKey = Buffer.from(device.sshKeyContent)
-  } else if (device.sshKeyPath) {
-    cfg.privateKey = fs.readFileSync(device.sshKeyPath)
-  } else {
-    cfg.password = device.password
-  }
-  return cfg
-}
+// SSH 配置构造已收敛 utils/sshConfig.ts buildSSHConnectConfig
 
 export function executeCommandsOnDevice(
   device: any,
@@ -359,7 +342,7 @@ export function executeCommandsOnDevice(
   const shellPrompt = isTelnet ? pickShellPrompt(device.vendor) : undefined
 
   // SSH-only config（telnet 路径不用）
-  const cfg = buildSSHConfig(device)
+  const cfg = buildSSHConnectConfig(device)
   const overallTimeout = 30000 + checked.length * (SSH_READY_TIMEOUT_MS + 15000)
 
   // runOne：按 connectionType 分流单命令执行。

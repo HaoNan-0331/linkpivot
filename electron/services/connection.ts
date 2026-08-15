@@ -4,10 +4,10 @@ import path from 'path'
 import fs from 'fs'
 import net from 'net'
 import iconv from 'iconv-lite'
-import { Client, type ConnectConfig, type ClientChannel } from 'ssh2'
+import { Client, type ClientChannel } from 'ssh2'
 import { getDeviceById, setDeviceMasterKey } from './device'
 import { hardenWindow, openExternalSafe } from '../utils/webSecurity'
-import { SSH_ALGORITHMS, SSH_READY_TIMEOUT_MS } from '../utils/sshConfig'
+import { buildSSHConnectConfig } from '../utils/sshConfig'
 
 interface DeviceInfo {
   id: string
@@ -108,22 +108,8 @@ function decodeBuffer(data: Buffer): string {
 function connectSSH(sessionId: string, device: DeviceInfo, termWin: BrowserWindow) {
   const client = new Client()
 
-  const config: ConnectConfig = {
-    host: device.ipAddress,
-    port: device.port || 22,
-    username: device.username || 'root',
-    readyTimeout: SSH_READY_TIMEOUT_MS,
-    algorithms: SSH_ALGORITHMS,
-  }
-
-  // SSH Key auth priority
-  if (device.sshKeyContent) {
-    config.privateKey = Buffer.from(device.sshKeyContent)
-  } else if (device.sshKeyPath) {
-    config.privateKey = fs.readFileSync(device.sshKeyPath)
-  } else {
-    config.password = device.password
-  }
+  // 建会话路径：readyTimeout 默认 30s（SSH_READY_TIMEOUT_MS，慢设备建会话可等）
+  const config = buildSSHConnectConfig(device)
 
   client.on('ready', () => {
     client.shell({ term: 'xterm-256color', cols: 80, rows: 24 }, (err: Error | undefined, stream: ClientChannel) => {
@@ -270,20 +256,8 @@ function testSSHConnection(device: DeviceInfo): Promise<{ success: boolean; mess
       resolve({ success: false, message: msg })
     })
 
-    const config: ConnectConfig = {
-      host: device.ipAddress,
-      port: device.port || 22,
-      username: device.username || 'root',
-      readyTimeout: 8000,
-      algorithms: SSH_ALGORITHMS,
-    }
-    if (device.sshKeyContent) {
-      config.privateKey = Buffer.from(device.sshKeyContent)
-    } else if (device.sshKeyPath) {
-      config.privateKey = fs.readFileSync(device.sshKeyPath)
-    } else {
-      config.password = device.password
-    }
+    // 探活快测语义 8s：与连接路径 30s 的差异是设计意图（探活要快速失败反馈，慢设备建会话可等 30s）——P10 禁抹平
+    const config = buildSSHConnectConfig(device, 8000)
     client.connect(config)
   })
 }
