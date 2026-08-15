@@ -2,6 +2,7 @@ import { app } from 'electron'
 import fs from 'fs'
 import path from 'path'
 import { v4 as uuidv4 } from 'uuid'
+import type Database from 'better-sqlite3'
 import { getDatabase } from '../database/connection'
 import { encField, decField } from '../utils/crypto'
 import { getAiConfig, callAI } from './ai'
@@ -12,14 +13,33 @@ export function setKbMasterKey(key: string) {
   MK = key
 }
 
+// ---- @internal 注入口（Phase 16 TEST-03 characterization 基线，D-07 零生产改动红线的唯一例外授权） ----
+// 生产路径 dbGetter 默认 = getDatabase 单例，行为零变化；仅 main 进程测试代码可调；
+// 无 IPC channel 暴露给 renderer（kbIpc 只包装业务函数，注入口不进 ipcMain.handle）。
+let dbGetter: () => Database.Database = getDatabase
+
+/** @internal 测试专用：注入 db getter（生产不调用）。 */
+export function _setKbDbGetter(fn: () => Database.Database): void {
+  dbGetter = fn
+}
+
+let kbDirsOverride: { kb: () => string; img: () => string } | null = null
+
+/** @internal 测试专用：注入 kb/img 父目录（生产不调用）。注入的是父路径，kb_files/kb_images 子目录创建仍走本文件真逻辑（D-04）。 */
+export function _setKbDirs(dirs: { kb: () => string; img: () => string } | null): void {
+  kbDirsOverride = dirs
+}
+
 function kbDir(): string {
-  const dir = path.join(app.getPath('userData'), 'kb_files')
+  const parent = kbDirsOverride ? kbDirsOverride.kb() : app.getPath('userData')
+  const dir = path.join(parent, 'kb_files')
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
   return dir
 }
 
 export function imgDir(): string {
-  const dir = path.join(app.getPath('userData'), 'kb_images')
+  const parent = kbDirsOverride ? kbDirsOverride.img() : app.getPath('userData')
+  const dir = path.join(parent, 'kb_images')
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
   return dir
 }
@@ -41,7 +61,7 @@ export function uploadDocument(
   fs.writeFileSync(filePath, buffer)
 
   const title = path.basename(fileName, ext)
-  const db = getDatabase()
+  const db = dbGetter()
   db.prepare(`
     INSERT INTO kb_documents (id, title, file_name, file_path, file_type, file_size, category, device_id, status)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
@@ -60,7 +80,7 @@ export function uploadDocument(
 }
 
 export function listDocuments(deviceId?: string | null, category?: string | null): any[] {
-  const db = getDatabase()
+  const db = dbGetter()
   const conditions: string[] = []
   const params: any[] = []
 
@@ -78,7 +98,7 @@ export function listDocuments(deviceId?: string | null, category?: string | null
 }
 
 export function getDocument(docId: string): any | null {
-  const db = getDatabase()
+  const db = dbGetter()
   const doc = db.prepare('SELECT * FROM kb_documents WHERE id = ?').get(docId) as any
   if (!doc) return null
 
@@ -104,7 +124,7 @@ export function getDocument(docId: string): any | null {
 // ---------- Chunk CRUD ----------
 
 export function updateChunk(chunkId: string, title: string, content: string): void {
-  const db = getDatabase()
+  const db = dbGetter()
   // kb-db-malformed：UPDATE + FTS sync 显式包进单事务，保证原子（防 taskkill 致 FTS shadow 半途中断写入）。
   // FTS sync 仍 try/catch（FTS 损坏不应回滚 chunk 主数据）。
   const tx = db.transaction(() => {
@@ -124,7 +144,7 @@ export function updateChunk(chunkId: string, title: string, content: string): vo
 }
 
 export function deleteChunk(chunkId: string): void {
-  const db = getDatabase()
+  const db = dbGetter()
   const chunk = db.prepare('SELECT document_id FROM kb_chunks WHERE id = ?').get(chunkId) as any
   if (!chunk) return
   // Delete associated image files (filesystem, 事务外：DB 已提交后再删，避免 DB 回滚后文件已删的不一致)
@@ -148,7 +168,7 @@ export function deleteChunk(chunkId: string): void {
 }
 
 export function mergeChunks(chunkIds: string[], newTitle: string): string {
-  const db = getDatabase()
+  const db = dbGetter()
   const chunks = chunkIds.map(id => db.prepare('SELECT * FROM kb_chunks WHERE id = ?').get(id) as any).filter(Boolean)
   if (chunks.length < 2) throw new Error('至少需要2个章节才能合并')
   const docId = chunks[0].document_id
@@ -175,7 +195,7 @@ export function mergeChunks(chunkIds: string[], newTitle: string): string {
 }
 
 export function splitChunk(chunkId: string, splitPosition: number, title1: string, title2: string): string[] {
-  const db = getDatabase()
+  const db = dbGetter()
   const chunk = db.prepare('SELECT * FROM kb_chunks WHERE id = ?').get(chunkId) as any
   if (!chunk) throw new Error('章节不存在')
   if (splitPosition <= 0 || splitPosition >= chunk.content.length) throw new Error('拆分位置无效')
@@ -206,7 +226,7 @@ export function splitChunk(chunkId: string, splitPosition: number, title1: strin
 }
 
 export function deleteDocument(docId: string): void {
-  const db = getDatabase()
+  const db = dbGetter()
   const doc = db.prepare('SELECT * FROM kb_documents WHERE id = ?').get(docId) as any
   if (!doc) throw new Error('文档不存在')
 
@@ -230,7 +250,7 @@ export function deleteDocument(docId: string): void {
 }
 
 export function reprocessDocument(docId: string): any {
-  const db = getDatabase()
+  const db = dbGetter()
   const doc = db.prepare('SELECT * FROM kb_documents WHERE id = ?').get(docId) as any
   if (!doc) throw new Error('文档不存在')
 
@@ -310,7 +330,7 @@ async function describeImage(imageBuffer: Buffer, ext: string, config: VisionCon
 // ---------- Document Processing ----------
 
 async function processDocument(docId: string): Promise<void> {
-  const db = getDatabase()
+  const db = dbGetter()
   const doc = db.prepare('SELECT * FROM kb_documents WHERE id = ?').get(docId) as any
   if (!doc) throw new Error('文档不存在')
 
@@ -632,7 +652,7 @@ function attachImages(db: ReturnType<typeof getDatabase>, chunk: any) {
 }
 
 export async function search(query: string, deviceIds?: string[], topK = 5): Promise<any[]> {
-  const db = getDatabase()
+  const db = dbGetter()
 
   // 1. Extract all ready chunks as virtual index
   let sql = `SELECT c.id, c.document_id, c.chunk_index, c.title, c.content, c.level, c.image_ids,
@@ -691,7 +711,7 @@ ${indexLines}
     })
 
     // 4. Return selected chunks with document info and image descriptions
-    const db2 = getDatabase()
+    const db2 = dbGetter()
     return indices.slice(0, topK).map((i: number) => {
       const chunk = allChunks[i]
       chunk.document = { id: chunk.document_id, title: chunk.doc_title, file_name: chunk.file_name }
