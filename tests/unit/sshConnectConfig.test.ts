@@ -4,6 +4,7 @@ import os from 'os'
 import path from 'path'
 import {
   buildSSHConnectConfig,
+  mapSshProbeError,
   SSH_ALGORITHMS,
   SSH_READY_TIMEOUT_MS,
 } from '../../electron/utils/sshConfig'
@@ -64,5 +65,26 @@ describe('sshConfig.buildSSHConnectConfig', () => {
     const cfg = buildSSHConnectConfig({ ipAddress: '1.2.3.4', sshKeyContent: 'INLINE', sshKeyPath: 'whatever', password: 'secret' })
     expect((cfg.privateKey as Buffer).toString('utf-8')).toBe('INLINE')
     expect(cfg.password).toBeUndefined()
+  })
+})
+
+describe('sshConfig.mapSshProbeError (WR-01 priority invariant)', () => {
+  it('errno word wins over AUTH phrase in dual-keyword message (original priority preserved)', () => {
+    const err = new Error('connect EHOSTUNREACH 10.0.0.5:22 (All configured authentication methods failed)')
+    expect(mapSshProbeError(err)).toBe('主机不可达')
+  })
+
+  it('AUTH-only message maps to authentication failure', () => {
+    expect(mapSshProbeError(new Error('All configured authentication methods failed'))).toBe('认证失败(用户名/密码/密钥错误)')
+    expect(mapSshProbeError(new Error('AUTH failed'))).toBe('认证失败(用户名/密码/密钥错误)')
+  })
+
+  it('errno-only messages map through base errno table', () => {
+    expect(mapSshProbeError(new Error('connect ECONNREFUSED 10.0.0.5:22'))).toBe('连接被拒绝')
+    expect(mapSshProbeError(new Error('connect ETIMEDOUT 10.0.0.5:22'))).toBe('连接超时')
+  })
+
+  it('unrecognized message falls back to raw message', () => {
+    expect(mapSshProbeError(new Error('boom'))).toBe('连接失败: boom')
   })
 })

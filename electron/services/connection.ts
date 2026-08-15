@@ -7,9 +7,9 @@ import iconv from 'iconv-lite'
 import { Client, type ClientChannel } from 'ssh2'
 import { getDeviceById, setDeviceMasterKey } from './device'
 import { hardenWindow, openExternalSafe } from '../utils/webSecurity'
-import { buildSSHConnectConfig } from '../utils/sshConfig'
+import { buildSSHConnectConfig, mapSshProbeError } from '../utils/sshConfig'
 import { decodeDeviceBuffer } from '../utils/textDecode'
-import { testTcpConnect, errnoToChinese } from '../utils/tcpProbe'
+import { testTcpConnect } from '../utils/tcpProbe'
 
 interface DeviceInfo {
   id: string
@@ -242,9 +242,8 @@ function testSSHConnection(device: DeviceInfo): Promise<{ success: boolean; mess
     })
     client.on('error', (err: Error) => {
       clearTimeout(timer)
-      // AUTH/All configured（认证失败）与 errno 词在 ssh2 错误消息中互斥——SSH 特有认证分支留本地，errno 基础映射走 util
-      const msg = err.message.includes('AUTH') || err.message.includes('All configured') ? '认证失败(用户名/密码/密钥错误)' : errnoToChinese(err)
-      resolve({ success: false, message: msg })
+      // SSH 特有 AUTH 分支 + errno 基础映射的组合单一来源（优先级保持原实现，15-REVIEW WR-01 fix）
+      resolve({ success: false, message: mapSshProbeError(err) })
     })
 
     // 探活快测语义 8s：与连接路径 30s 的差异是设计意图（探活要快速失败反馈，慢设备建会话可等 30s）——P10 禁抹平

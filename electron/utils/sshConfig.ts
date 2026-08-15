@@ -1,5 +1,6 @@
 import fs from 'fs'
 import type { ConnectConfig } from 'ssh2'
+import { errnoToChinese } from './tcpProbe'
 
 // SSH 握手 ready 超时（TCP connect + KEX + auth → 'ready' 事件）。
 // ai.ts buildSSHConfig 与 arpCollector.ts executeSSH 共用同一常量，
@@ -69,4 +70,19 @@ export function buildSSHConnectConfig(
     cfg.password = device.password
   }
   return cfg
+}
+
+/**
+ * SSH 探活错误消息映射（testSSHConnection error 分支单一来源）。
+ *
+ * 保持原优先级（15-REVIEW WR-01 fix）：errno 词先判（原实现顺序 AUTH 位于
+ * ETIMEDOUT 后、EHOSTUNREACH 前），AUTH/All configured 落为非 errno 消息的
+ * SSH 特有分支——双关键词消息（如认证阶段网络中断的包装错误）仍报网络错误，
+ * 不会把「主机不可达」误读为「密码错误」。
+ */
+export function mapSshProbeError(err: Error): string {
+  const isErrno = /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|EHOSTUNREACH/.test(err.message)
+  return !isErrno && (err.message.includes('AUTH') || err.message.includes('All configured'))
+    ? '认证失败(用户名/密码/密钥错误)'
+    : errnoToChinese(err)
 }
