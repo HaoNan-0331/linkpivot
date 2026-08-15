@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3'
 import { getDatabase } from '../database/connection'
+import { ipInCIDR } from '../utils/ipMath'
 import type { PaginatedResult } from '../../src/types/pagination'
 
 export type ChangeType = 'mac_changed' | 'new_ip' | 'ip_reused'
@@ -46,7 +47,7 @@ export class AnomalyService {
   // 循环内纯内存判定：Set O(1) 命中 + CIDR/通配数组线性 some（规则数通常很少）
   private static isIPExcludedCached(ip: string, excluded: ExcludedRules): boolean {
     if (excluded.ips.has(ip)) return true
-    if (excluded.cidrs.some(c => this.ipInCIDR(ip, c))) return true
+    if (excluded.cidrs.some(c => ipInCIDR(ip, c))) return true
     for (const w of excluded.wildcards) {
       // WR-02：先转义全部正则元字符，再把通配符 '*' 还原为 '.*'。否则用户输入含 `(`/`[`/`+` 等字符的规则
       // 会让 new RegExp 抛 SyntaxError（被外层吞错 → 该 IP 静默跳过丢数据）或静默误配（字符集等语义偏差）。
@@ -55,26 +56,6 @@ export class AnomalyService {
       if (regex.test(ip)) return true
     }
     return false
-  }
-
-  // WR-04：镜像 networkSegmentService.ipInCIDR（line 123-131）的健壮实现——畸形 CIDR/IP 返回 false，
-  // 避免一条畸形 cidr 规则（如 `192.168.1.0/` 或 `notacidr/8`）让 (NaN & mask)===(NaN & mask) 恒为 true，
-  // 误判所有 IP 已排除 → processARPEntries 对所有 IP continue → ARP 处理整体失效。
-  private static ipInCIDR(ip: string, cidr: string): boolean {
-    const [network, prefixStr] = cidr.split('/')
-    const prefix = parseInt(prefixStr, 10)
-    const ipNum = this.ipToNumber(ip)
-    const networkNum = this.ipToNumber(network)
-    if (ipNum === null || networkNum === null || isNaN(prefix) || prefix < 0 || prefix > 32) return false
-    const mask = prefix === 0 ? 0 : (0xFFFFFFFF << (32 - prefix)) >>> 0
-    return (ipNum & mask) === (networkNum & mask)
-  }
-
-  // WR-04：非法 IP（非 4 段 / 段值非 0-255 整数）返回 null，供 ipInCIDR 判定。>>>0 规范化为无符号 32 位。
-  private static ipToNumber(ip: string): number | null {
-    const parts = ip.split('.').map(Number)
-    if (parts.length !== 4 || parts.some((p) => !Number.isInteger(p) || p < 0 || p > 255)) return null
-    return ((parts[0] << 24) + (parts[1] << 16) + (parts[2] << 8) + parts[3]) >>> 0
   }
 
   static processARPEntries(entries: Array<{ ip: string; mac: string }>): IPMACChange[] {
