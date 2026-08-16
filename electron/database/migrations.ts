@@ -13,7 +13,7 @@ import { createSystemLog } from '../services/systemLog'
  *      在 createTables() 建好基线表之后、premigration 备份之后执行（D-06）。
  *      init.ts 不直接调用 runMigrations（单一调用点原则）。
  */
-export const MIGRATION_HEAD = 12
+export const MIGRATION_HEAD = 13
 
 interface MigrationStep {
   version: number
@@ -361,6 +361,44 @@ const v12 = (db: Database.Database): void => {
   step()
 }
 
+const v13 = (db: Database.Database): void => {
+  // Phase 17（SEC-06 / S-M1，D-04）：ai_exec_logs / ai_system_logs 加密列地基 + scheduler_config.retention_days。
+  // 根因：两日志表 prompt_text / ai_response 明文列（v2 迁移所加）明文落库 AI 对话原文，可含凭证/拓扑
+  // 敏感信息，SEC-06 切换 AES-256-GCM _enc 加密列；本 v13 只落 schema 地基（写侧切换 17-02、读侧
+  // fallback + 回填 17-03），纯加列零数据搬动，系统行为零变化。
+  // 语义：4 个 _enc 列一律 nullable（禁 NOT NULL、禁空串默认值）——NULL（从未写密文）与空串
+  // （写过但空内容）双态区分是读侧「列存在性判据、禁试解密」的语义根基（P3）。
+  // retention_days 归属 scheduler_config 单行配置表，ALTER DEFAULT 90 对存量行立即生效；
+  // 本 phase 只加列零消费，清理调度语义留给 Phase 18（D-04）。
+  // ai_system_logs 纯加列不 rebuild（P6 自举）：迁移失败日志（runMigrations 内 createSystemLog）
+  // 正写这张表，CREATE/DROP/RENAME 会在迁移窗口期自举坏死。
+  // 幂等守卫 D-14 第一形式：hasColumn（与 v1/v2/v3/v4/v9/v10/v12 同构，纯 ALTER ADD COLUMN，
+  // 不靠 user_version 判定）。列定义串与 init.ts fresh-install 三处 DDL 逐字一致（双路径红线）。
+  // 数据回填 caveat：P1 实测 main.ts:88-95（MK 注入）先于 :105-106（migrateAndSecure 迁移）——
+  // 技术上迁移内可解密回填，但刻意不做：回填可失败重试（post-MK 回填钩子 warn 不阻塞启动，判据
+  // 「明文列 IS NOT NULL AND _enc IS NULL」幂等续跑），而迁移失败必须中止启动（runMigrations
+  // throw 即中止）+ DDL 零数据依赖 + realDb 测试路径无 MK。历史明文行由 17-03 读侧 fallback 兼容。
+  const step = db.transaction(() => {
+    if (!hasColumn(db, 'ai_exec_logs', 'prompt_text_enc')) {
+      db.exec('ALTER TABLE ai_exec_logs ADD COLUMN prompt_text_enc TEXT')
+    }
+    if (!hasColumn(db, 'ai_exec_logs', 'ai_response_enc')) {
+      db.exec('ALTER TABLE ai_exec_logs ADD COLUMN ai_response_enc TEXT')
+    }
+    if (!hasColumn(db, 'ai_system_logs', 'prompt_text_enc')) {
+      db.exec('ALTER TABLE ai_system_logs ADD COLUMN prompt_text_enc TEXT')
+    }
+    if (!hasColumn(db, 'ai_system_logs', 'ai_response_enc')) {
+      db.exec('ALTER TABLE ai_system_logs ADD COLUMN ai_response_enc TEXT')
+    }
+    if (!hasColumn(db, 'scheduler_config', 'retention_days')) {
+      db.exec('ALTER TABLE scheduler_config ADD COLUMN retention_days INTEGER DEFAULT 90')
+    }
+    db.pragma('user_version = 13')
+  })
+  step()
+}
+
 const MIGRATIONS: MigrationStep[] = [
   { version: 1, name: 'chat_history.session_id', run: v1 },
   { version: 2, name: 'ai_exec_logs.prompt_text+ai_response', run: v2 },
@@ -374,6 +412,7 @@ const MIGRATIONS: MigrationStep[] = [
   { version: 10, name: 'experiences.severity (Phase 10 browse filter/sort)', run: v10 },
   { version: 11, name: 'ai_system_logs CHECK widen security (R2 decrypt-failure + exp relate-failure log)', run: v11 },
   { version: 12, name: 'ip_mac_bindings is_baseline (BUG-1 首次基线标志)', run: v12 },
+  { version: 13, name: 'ai_exec_logs/ai_system_logs prompt_text+ai_response 加密列 + scheduler_config.retention_days (SEC-06)', run: v13 },
 ]
 
 /**

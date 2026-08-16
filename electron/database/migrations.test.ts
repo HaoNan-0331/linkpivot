@@ -161,9 +161,53 @@ describe('v11 ai_system_logs CHECK widen security 迁移', () => {
     expect(initDdl).toContain(expectedStatusCheck)
   })
 
-  it('4. MIGRATION_HEAD=12（注册完整性静态守卫，防 bump 漏改）', async () => {
+  it('4. MIGRATION_HEAD=13（注册完整性静态守卫，防 bump 漏改）', async () => {
     const mod = await import('./migrations')
-    // Phase 14 BUG-1：v12 ip_mac_bindings.is_baseline 列迁移已注册，MIGRATION_HEAD 从 11 bump 到 12
-    expect(mod.MIGRATION_HEAD).toBe(12)
+    // Phase 17 SEC-06：v13 ai_exec_logs/ai_system_logs _enc 加密列 + scheduler_config.retention_days 迁移已注册，MIGRATION_HEAD 从 12 bump 到 13
+    expect(mod.MIGRATION_HEAD).toBe(13)
+  })
+
+  it('5. v13 双路径 DDL 一致：v13 ALTER 列定义串与 init.ts 三处 fresh-install DDL 特征串逐字一致', () => {
+    // fs 读 migrations.ts 源码，从 const v13 起 slice 出 v13 函数体（到 MIGRATIONS 数组止，
+    // 镜像 Test 3 字符串抽取法；v13 注释在函数体内，一并纳入切片受反向守卫约束）
+    const migSrc = fs.readFileSync(
+      path.resolve(__dirname, 'migrations.ts'),
+      'utf-8'
+    )
+    const v13Idx = migSrc.indexOf('const v13')
+    expect(v13Idx).toBeGreaterThan(-1)
+    const migrationsIdx = migSrc.indexOf('const MIGRATIONS', v13Idx)
+    expect(migrationsIdx).toBeGreaterThan(v13Idx)
+    const v13Body = migSrc.slice(v13Idx, migrationsIdx)
+
+    // P1 反向守卫：v13 注释不得引用「迁移在 MK 注入前跑」过时论据
+    // （17-RESEARCH P1 定论：现状 main.ts:88-95 MK 注入先于 :105-106 migrateAndSecure）
+    expect(v13Body).not.toContain('MK 注入前')
+
+    // fs 读 init.ts 源码抽出三处 CREATE TABLE 块（ai_exec_logs / ai_system_logs / scheduler_config）
+    const initSrc = fs.readFileSync(
+      path.resolve(__dirname, 'init.ts'),
+      'utf-8'
+    )
+    const extractInitBlock = (table: string): string => {
+      const startMarker = `CREATE TABLE IF NOT EXISTS ${table} (`
+      const startIdx = initSrc.indexOf(startMarker)
+      expect(startIdx).toBeGreaterThan(-1)
+      const endIdx = initSrc.indexOf(');', startIdx)
+      expect(endIdx).toBeGreaterThan(startIdx)
+      return initSrc.slice(startIdx, endIdx)
+    }
+    const aiExecLogsDdl = extractInitBlock('ai_exec_logs')
+    const aiSystemLogsDdl = extractInitBlock('ai_system_logs')
+    const schedulerConfigDdl = extractInitBlock('scheduler_config')
+
+    // 两日志表 _enc 特征串：v13 函数体与 init.ts 两处 DDL 块各含（双 toContain）
+    for (const ddl of [v13Body, aiExecLogsDdl, aiSystemLogsDdl]) {
+      expect(ddl).toContain('prompt_text_enc TEXT')
+      expect(ddl).toContain('ai_response_enc TEXT')
+    }
+    // scheduler_config retention_days 特征串：v13 函数体与 init.ts DDL 块双 toContain
+    expect(v13Body).toContain('retention_days INTEGER DEFAULT 90')
+    expect(schedulerConfigDdl).toContain('retention_days INTEGER DEFAULT 90')
   })
 })
