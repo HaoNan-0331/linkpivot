@@ -47,14 +47,20 @@ export default function DevicesPage() {
       message.success('设备更新成功')
       setEditing(null); setFormOpen(false); load()
     } catch (e: unknown) {
-      message.error(`更新失败: ${e instanceof Error ? e.message : String(e)}`)
+      // D-09：updateDevice 18-02 已事务化，失败即整体回滚
+      message.error('操作失败，数据已回滚无变化：' + (e instanceof Error ? e.message : String(e)))
     }
   }
 
   const handleDelete = async (id: string) => {
-    await window.api.device.delete(id)
-    message.success('设备删除成功')
-    load()
+    try {
+      await window.api.device.delete(id)
+      message.success('设备删除成功')
+      load()
+    } catch (e: unknown) {
+      // D-09：deleteDevice 18-02 已事务化，失败即整体回滚
+      message.error('操作失败，数据已回滚无变化：' + (e instanceof Error ? e.message : String(e)))
+    }
   }
 
   const handleTest = async (device: Device) => {

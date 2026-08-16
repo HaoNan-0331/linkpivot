@@ -173,7 +173,8 @@ export default function KnowledgeBasePage() {
       message.success('删除成功')
       loadDocuments()
     } catch (err) {
-      message.error('删除失败: ' + (err as Error).message)
+      // D-09：deleteDocument 多写已事务化，失败即整体回滚
+      message.error('操作失败，数据已回滚无变化：' + (err instanceof Error ? err.message : String(err)))
     }
   }
 
@@ -183,7 +184,8 @@ export default function KnowledgeBasePage() {
       message.success('已重新提交处理')
       loadDocuments()
     } catch (err) {
-      message.error('重新处理失败: ' + (err as Error).message)
+      // D-09：reprocessDocument 18-02 三段式事务化，失败即 DB 状态整体回滚
+      message.error('操作失败，数据已回滚无变化：' + (err instanceof Error ? err.message : String(err)))
     }
   }
 

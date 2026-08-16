@@ -80,7 +80,14 @@ export function useAIChat(): UseAIChatReturn {
   }, [currentSessionId])
 
   const handleDeleteSession = useCallback(async (sessionId: string) => {
-    await window.api.ai.deleteSession(sessionId)
+    try {
+      await window.api.ai.deleteSession(sessionId)
+    } catch (e: unknown) {
+      // D-09：deleteSession 18-02 已事务化（chat_history+chat_sessions 单事务），失败即整体回滚。
+      // 删除失败保持原会话列表与当前选中不变（不执行 setSessions 切换）。
+      message.error('操作失败，数据已回滚无变化：' + (e instanceof Error ? e.message : String(e)))
+      return
+    }
     setSessions((prev) => {
       const remaining = prev.filter((s) => s.id !== sessionId)
       if (sessionId === currentSessionId) {

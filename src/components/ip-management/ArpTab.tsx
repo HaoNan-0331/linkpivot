@@ -34,7 +34,8 @@ export default function ArpTab({ api }: ArpTabProps) {
       setStats(res.stats || null)
       message.success(`采集完成: ${res.results?.length || 0} 台设备, ${res.stats?.entries || 0} 条记录`)
     } catch (e: unknown) {
-      message.error('采集失败: ' + (e instanceof Error ? e.message : String(e)))
+      // D-09：ARP 批量写已整批单事务（PERF-02），失败即整体回滚
+      message.error('操作失败，数据已回滚无变化：' + (e instanceof Error ? e.message : String(e)))
     } finally { setLoading(false) }
   }
 
@@ -56,7 +57,8 @@ export default function ArpTab({ api }: ArpTabProps) {
       setStats({ entries: totalEntries })
       message.success(`采集完成: ${allResults.length} 台设备, ${totalEntries} 条记录`)
     } catch (e: unknown) {
-      message.error('采集失败: ' + (e instanceof Error ? e.message : String(e)))
+      // D-09：ARP 批量写已整批单事务（PERF-02），失败即整体回滚
+      message.error('操作失败，数据已回滚无变化：' + (e instanceof Error ? e.message : String(e)))
     } finally { setLoading(false) }
   }
 

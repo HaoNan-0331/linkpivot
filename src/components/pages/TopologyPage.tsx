@@ -113,12 +113,17 @@ export default function TopologyPage() {
 
   const handleDelete = useCallback(async () => {
     if (!currentTopologyId) return
-    await window.api.topology.delete(currentTopologyId)
-    setCurrentTopologyId(null)
-    setNodes([])
-    setEdges([])
-    await fetchTopologies()
-    message.success('删除成功')
+    try {
+      await window.api.topology.delete(currentTopologyId)
+      setCurrentTopologyId(null)
+      setNodes([])
+      setEdges([])
+      await fetchTopologies()
+      message.success('删除成功')
+    } catch (e: unknown) {
+      // D-09：deleteTopology 18-02 已事务化，失败即整体回滚（对照同文件 handleImport catch 结构）
+      message.error('操作失败，数据已回滚无变化：' + (e instanceof Error ? e.message : String(e)))
+    }
   }, [currentTopologyId, fetchTopologies, setNodes, setEdges])
 
   const handleImport = useCallback(async (jsonStr: string) => {
