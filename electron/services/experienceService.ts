@@ -531,6 +531,30 @@ export function unrelateDevice(experienceId: string, deviceId: string): void {
 }
 
 /**
+ * @internal 批量关联（TXN-02 / 18-02）：prepare 循环外复用；随调用方事务提交。
+ * 不自带 transaction——两处调用点（setExperienceDevices/confirmDrafts）均在外层事务内
+ * （RESEARCH Pattern 6），裸语句随外层提交，避免双层事务语义混淆。
+ */
+export function relateDevicesBatch(experienceId: string, deviceIds: string[], relationType: string = 'primary'): void {
+  if (deviceIds.length === 0) return
+  const stmt = db().prepare(
+    `INSERT OR IGNORE INTO exp_device_rel (id, experience_id, device_id, relation_type) VALUES (?, ?, ?, ?)`
+  )
+  for (const deviceId of deviceIds) {
+    stmt.run(uuidv4(), experienceId, deviceId, relationType)
+  }
+}
+
+/** @internal 批量取消关联（TXN-02 / 18-02）：prepare 循环外复用；随调用方事务提交（同上）。 */
+export function unrelateDevicesBatch(experienceId: string, deviceIds: string[]): void {
+  if (deviceIds.length === 0) return
+  const stmt = db().prepare('DELETE FROM exp_device_rel WHERE experience_id = ? AND device_id = ?')
+  for (const deviceId of deviceIds) {
+    stmt.run(experienceId, deviceId)
+  }
+}
+
+/**
  * Phase 10 Plan 04 WR-02：全量设置经验的关联设备（单事务原子 diff）。
  *
  * 替代 renderer 侧 Promise.all N IPC 非原子调用（T-10-04-04 mitigate）：
@@ -550,8 +574,8 @@ export function setExperienceDevices(expId: string, expectIds: string[]): void {
     const expectSet = new Set(expectIds)
     const toAdd = expectIds.filter((x) => !cur.includes(x))
     const toRemove = cur.filter((x) => !expectSet.has(x))
-    for (const did of toAdd) relateDevice(expId, did)
-    for (const did of toRemove) unrelateDevice(expId, did)
+    relateDevicesBatch(expId, toAdd)
+    unrelateDevicesBatch(expId, toRemove)
   })
   tx()
 }
@@ -667,8 +691,8 @@ export function confirmDrafts(input: ConfirmDraftsInput): ConfirmDraftsResult {
         const expectSet = new Set(d.relateDevices)
         const toAdd = d.relateDevices.filter((id) => !curDevices.includes(id))
         const toRemove = curDevices.filter((id) => !expectSet.has(id))
-        for (const did of toAdd) relateDevice(d.expId, did)
-        for (const did of toRemove) unrelateDevice(d.expId, did)
+        relateDevicesBatch(d.expId, toAdd)
+        unrelateDevicesBatch(d.expId, toRemove)
       }
       // D-9-2：UPDATE 草稿（duplicate_of_exp_id 非空）+ supersedeOld=true → 旧条目软失效
       if (d.supersedeOld && cur.duplicate_of_exp_id) {
