@@ -98,6 +98,46 @@ export function listDocuments(deviceId?: string | null, category?: string | null
   return db.prepare(`SELECT * FROM kb_documents${where} ORDER BY created_at DESC`).all(...params)
 }
 
+// TXN-02 (18-01)：kb 图片查询 N+1 消除——单条 document_id 批查（走既有 idx_kb_images_doc），
+// 按 chunk_id 分组。批查无 ORDER BY，经索引返回即 rowid（插入序）；生产写入路径按扫描序
+// push image_ids（uploadDocument :415-419），故 JSON 序 == 插入序，两序一致。
+// 挂载行投影 { id, file_path, description }——与旧逐 chunk `WHERE id IN` 行形态逐字一致
+//（search 基线 it 10 对 images[0] deep-equal，不得携带 chunk_id）。
+function groupImagesByChunk(
+  db: ReturnType<typeof getDatabase>,
+  docIds: string[]
+): Map<string, Array<{ id: string; file_path: string; description: string | null }>> {
+  const grouped = new Map<string, Array<{ id: string; file_path: string; description: string | null }>>()
+  const distinct = [...new Set(docIds)]
+  if (distinct.length === 0) return grouped
+  const placeholders = distinct.map(() => '?').join(',')
+  const rows = db.prepare(
+    `SELECT id, file_path, description, chunk_id FROM kb_images WHERE document_id IN (${placeholders})`
+  ).all(...distinct) as any[]
+  for (const { id, file_path, description, chunk_id } of rows) {
+    const list = grouped.get(chunk_id)
+    if (list) list.push({ id, file_path, description })
+    else grouped.set(chunk_id, [{ id, file_path, description }])
+  }
+  return grouped
+}
+
+// groupImagesByChunk 配套挂载：各 chunk 从分组取本 chunk 图片，按自身 image_ids JSON 序
+// 过滤/排序（与旧逐 chunk IN 行序一致）；JSON.parse 异常降级 images=[] 现状语义保留（:113-115）。
+function attachGroupedImages(chunk: any, grouped: Map<string, Array<{ id: string; file_path: string; description: string | null }>>): any {
+  if (chunk.image_ids) {
+    try {
+      const ids = JSON.parse(chunk.image_ids) as string[]
+      const own = grouped.get(chunk.id) ?? []
+      const byId = new Map(own.map(r => [r.id, r]))
+      chunk.images = ids.map(id => byId.get(id)).filter(Boolean)
+    } catch { chunk.images = [] }
+  } else {
+    chunk.images = []
+  }
+  return chunk
+}
+
 export function getDocument(docId: string): any | null {
   const db = dbGetter()
   const doc = db.prepare('SELECT * FROM kb_documents WHERE id = ?').get(docId) as any
@@ -107,16 +147,10 @@ export function getDocument(docId: string): any | null {
     'SELECT id, chunk_index, title, content, char_count, level, image_ids FROM kb_chunks WHERE document_id = ? ORDER BY chunk_index'
   ).all(docId) as any[]
 
-  // Attach images for each chunk
+  // TXN-02 (18-01)：图片查询仅此 1 条 document_id 批查（替代逐 chunk WHERE id IN 的 N+1）
+  const grouped = groupImagesByChunk(db, [docId])
   for (const chunk of chunks) {
-    if (chunk.image_ids) {
-      try {
-        const ids = JSON.parse(chunk.image_ids) as string[]
-        chunk.images = db.prepare('SELECT id, file_path, description FROM kb_images WHERE id IN (' + ids.map(() => '?').join(',') + ')').all(...ids)
-      } catch { chunk.images = [] }
-    } else {
-      chunk.images = []
-    }
+    attachGroupedImages(chunk, grouped)
   }
 
   return { ...doc, chunks }
@@ -640,21 +674,8 @@ function splitOversizedChapters(chapters: Array<{ title: string; content: string
 // 截断可观测：indexCapped 经信封回传 renderer（T-18-03），prompt 索引块尾部同步标注。
 export const MAX_INDEX_ENTRIES = 200
 
-// search 局部 helper：复刻 getDocument(line 86-94) 的 attach 模式，但 SELECT 含 file_path（ChunkContent 渲染必需）。
-// ids.length=0 守卫：跳过 `IN ()` 语法错。T-sj1-02 mitigate：try/catch 守 JSON.parse 异常 fallback images=[]。
-function attachImages(db: ReturnType<typeof getDatabase>, chunk: any) {
-  if (chunk.image_ids) {
-    try {
-      const ids = JSON.parse(chunk.image_ids) as string[]
-      chunk.images = ids.length
-        ? db.prepare('SELECT id, file_path, description FROM kb_images WHERE id IN (' + ids.map(() => '?').join(',') + ')').all(...ids)
-        : []
-    } catch { chunk.images = [] }
-  } else {
-    chunk.images = []
-  }
-  return chunk
-}
+// search 图片挂载复用模块级 groupImagesByChunk/attachGroupedImages（TXN-02，与 getDocument 单一来源），
+// 不再持逐 chunk WHERE id IN 的局部 attachImages。
 
 export async function search(query: string, deviceIds?: string[], topK = 5): Promise<KbSearchEnvelope> {
   const db = dbGetter()
@@ -705,13 +726,17 @@ export async function search(query: string, deviceIds?: string[], topK = 5): Pro
     const byId = new Map(full.map(r => [r.id, r]))
     return rows.map(r => byId.get(r.id)).filter(Boolean)
   }
-  const decorate = (chunk: any) => {
-    chunk.document = { id: chunk.document_id, title: chunk.doc_title, file_name: chunk.file_name }
-    // Attach images（含 file_path，供 ChunkContent 渲染 [图片N]）
-    return attachImages(db, chunk)
+  // TXN-02 (18-01)：decorate 批处理——命中行一次 document_id IN 批查挂图（≤topK 行零 N+1，
+  // 含 file_path 供 ChunkContent 渲染 [图片N]，行序按各 chunk image_ids JSON 序与旧一致）
+  const decorate = (rowsToDecorate: any[]): any[] => {
+    const grouped = groupImagesByChunk(db, rowsToDecorate.map(r => r.document_id))
+    return rowsToDecorate.map(chunk => {
+      chunk.document = { id: chunk.document_id, title: chunk.doc_title, file_name: chunk.file_name }
+      return attachGroupedImages(chunk, grouped)
+    })
   }
   // 降级行 = fallback 前 topK 行（返回语义同旧实现，未经 LLM 筛选）
-  const fallbackRows = () => fetchFullRows(allChunks.slice(0, topK)).map(decorate)
+  const fallbackRows = () => decorate(fetchFullRows(allChunks.slice(0, topK)))
 
   // 3. AI picks relevant chunks from the index
   const config = getAiConfig()
@@ -750,7 +775,7 @@ ${indexBlock}
     }
 
     // 4. Return selected chunks with document info and image descriptions
-    const rows = fetchFullRows(indices.slice(0, topK).map((i: number) => cappedChunks[i])).map(decorate)
+    const rows = decorate(fetchFullRows(indices.slice(0, topK).map((i: number) => cappedChunks[i])))
     return { rows, degraded: false, indexTotal, indexCapped }
   } catch {
     console.warn('[kb:search] degraded: callai_error')
