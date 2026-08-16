@@ -9,8 +9,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
  * 三类安全红线场景走真 isCommandAllowed 判定（审计点名的 discovery.ts:192 调用点不再白测）。
  *
  * characterization 原则：断言现状语义含怪癖。hasValidOutput 字符串前缀判定怪癖
- * （discovery.ts:229-231：命令输出本身以 '执行失败' 开头会被误判为失败）在
- * 「执行结果分流」组标注【现状怪癖，Phase 18 裁决】，回填 16-QUIRKS.md Q5。
+ * （16-QUIRKS.md Q5，Phase 18 裁决「修」）已由 D-02 修复：改 cmdSuccess 结构化信号，
+ * 「执行结果分流」组 it 17 由怪癖基线改写为修复守卫（成功输出以「执行失败」开头不再误判）。
  *
  * Mock 骨架照 experienceRetrieval.test.ts:16-37 范式（vi.fn 转发 + beforeEach 复位）。
  */
@@ -319,15 +319,19 @@ describe('执行结果分流', () => {
     expect(result.nodes).toEqual([])
   })
 
-  it('17. 【现状怪癖，Phase 18 裁决，回填 16-QUIRKS.md Q5】成功执行但输出本身以「执行失败」开头 → 被 hasValidOutput 前缀判定误判为全失败', async () => {
-    // 现状怪癖：hasValidOutput 用字符串前缀 startsWith('执行失败') 判定（discovery.ts:229-231），
-    // 设备真实输出恰好以「执行失败」开头（如中文故障回显）会被误判——success:true 也救不回来。
+  it('17. 【Phase 18 D-02 修复后】成功执行但输出本身以「执行失败」开头 → cmdSuccess 结构化信号判定有效采集，不再误判 failedDevices', async () => {
+    // D-02（16-QUIRKS Q5 裁决「修」落地）：hasValidOutput 弃字符串前缀判定改
+    // cmdSuccess[r.command] = r.success 结构化信号——设备真实输出恰好以「执行失败」开头
+    // （如中文故障回显）且 success:true → 正常采集进阶段4，修复守卫防回归前缀判定。
     executeCommandsOnDeviceMock.mockResolvedValue([
       { command: 'display version', success: true, output: '执行失败: 这是合法设备输出但以执行失败开头' },
     ])
     const result = await discoverTopology(['dev-1'])
-    expect(result.failedDevices).toEqual([{ deviceId: 'dev-1', deviceName: 'SW-Core', error: '所有命令执行失败，无有效输出' }])
-    expect(callAIMock).toHaveBeenCalledTimes(1)
+    expect(result.failedDevices).toEqual([])
+    // 设备进 collectedData → 阶段4 拓扑分析触发（callAI 两次）+ 原始输出进 prompt
+    expect(callAIMock).toHaveBeenCalledTimes(2)
+    expect(phase4Prompt()).toContain('执行失败: 这是合法设备输出但以执行失败开头')
+    expect(result.nodes).toHaveLength(2)
   })
 })
 

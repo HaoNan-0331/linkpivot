@@ -188,6 +188,10 @@ async function discoverTopologyInner(deviceIds: string[]): Promise<DiscoveryResu
     }
 
     const outputs: Record<string, string> = {}
+    // Phase 18 D-02（16-QUIRKS Q5 裁决「修」）：结构化成功信号，与 outputs 平行记录。
+    // 供 hasValidOutput 判定（替代字符串前缀判定，防「输出本身以『执行失败』开头的成功命令」被误判）；
+    // outputs 字符串赋值语义不变（AI 分析文本 + failedDevices 聚合消费，Pitfall 8）。
+    const cmdSuccess: Record<string, boolean> = {}
     const safeCommands = dc.commands.filter(cmd => {
       const safety = isCommandAllowed(cmd, whitelist)
       if (!safety.allowed) {
@@ -202,6 +206,7 @@ async function discoverTopologyInner(deviceIds: string[]): Promise<DiscoveryResu
         const results = await executeCommandsOnDevice(device, safeCommands)
         for (const r of results) {
           outputs[r.command] = r.success ? r.output : `执行失败: ${r.output}`
+          cmdSuccess[r.command] = r.success
         }
         // Phase 3 日志：每设备命令执行结果（成功摘要 / 失败原因），运维可追溯 channel failure 等
         const summary = results.map(r =>
@@ -226,9 +231,10 @@ async function discoverTopologyInner(deviceIds: string[]): Promise<DiscoveryResu
     }
 
     // Check if device has any valid output
-    const hasValidOutput = Object.values(outputs).some(
-      out => !out.startsWith('执行失败') && !out.startsWith('命令被安全策略拒绝')
-    )
+    // Phase 18 D-02：结构化信号判定——executeCommandsOnDevice 返回的 r.success 单布尔
+    // 同时覆盖「命令被安全策略拒绝」与「执行失败」两路径（ai.ts :356/:414/:438），
+    // 替代原字符串前缀判定（16-QUIRKS Q5：合法输出恰以「执行失败」开头曾被误判为全失败）。
+    const hasValidOutput = Object.values(cmdSuccess).some(s => s === true)
     if (hasValidOutput) {
       collectedData.push({ deviceId: dc.deviceId, deviceName: dc.deviceName, vendor: dc.vendor, outputs })
     } else {
