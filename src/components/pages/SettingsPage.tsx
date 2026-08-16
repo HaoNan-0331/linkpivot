@@ -25,6 +25,10 @@ export default function SettingsPage() {
   const [schedulerConfig, setSchedulerConfig] = useState<ScheduleConfig>({} as ScheduleConfig)
   const [schedulerStatus, setSchedulerStatus] = useState<SchedulerStatus>({} as SchedulerStatus)
   const [schedulerLoading, setSchedulerLoading] = useState(false)
+  // CR-01（18-REVIEW）：retentionDays 提交改 draft 本地态 + blur/Enter 提交——onChange 逐键提交会把
+  // 输入过程的瞬态值（90→180 必经 "1"、"18"）落库并经 updateConfig→start() 启动钩子触发按瞬态
+  // cutoff 的不可恢复批量 DELETE。draft 为 null 表示未编辑，展示并提交已落库配置值。
+  const [retentionDraft, setRetentionDraft] = useState<number | null>(null)
 
   useEffect(() => { loadConfig(); loadScheduler() }, [])
 
@@ -100,16 +104,22 @@ export default function SettingsPage() {
     setSchedulerLoading(false)
   }
 
-  // 18-05（D-07）：ARP 保留天数。守卫与 handleIntervalChange 区分——retentionDays 的 0 是合法特殊值
-  // （永不删除），不得 if (!value) return 短路（value === 0 必须能提交），仅 null/undefined（清空输入）跳过。
-  const handleRetentionChange = async (value: number | null) => {
-    if (value === null || value === undefined) return
+  // 18-05（D-07）/ CR-01（18-REVIEW）：ARP 保留天数提交语义 = blur/Enter（非逐键）——retentionDays
+  // 落库即可能触发 retention 清理（不可恢复删除），输入过程中的瞬态值（"1"/"18"）严禁提交。
+  // 0 是合法特殊值（永不删除），不得 if (!value) return 短路（0 必须能提交），仅 null（未编辑）跳过；
+  // 未变化/清空 draft 时直接复位，不发 IPC。
+  const commitRetention = async () => {
+    if (retentionDraft === null || retentionDraft === schedulerConfig.retentionDays) {
+      setRetentionDraft(null)
+      return
+    }
     setSchedulerLoading(true)
     try {
-      const config = await window.api.scheduler.updateConfig({ retentionDays: value })
+      const config = await window.api.scheduler.updateConfig({ retentionDays: retentionDraft })
       setSchedulerConfig(config)
     } catch (e: unknown) { message.error(e instanceof Error ? e.message : String(e)) }
     setSchedulerLoading(false)
+    setRetentionDraft(null)
   }
 
   const handleRunNow = async () => {
@@ -183,7 +193,7 @@ export default function SettingsPage() {
           <Col><span>间隔(分钟):</span></Col>
           <Col><InputNumber min={5} max={1440} value={schedulerConfig.intervalMinutes || 60} onChange={handleIntervalChange} style={{ width: 100 }} /></Col>
           <Col><span>ARP 保留天数:</span></Col>
-          <Col><InputNumber min={0} max={3650} value={schedulerConfig.retentionDays ?? 90} onChange={handleRetentionChange} style={{ width: 100 }} /></Col>
+          <Col><InputNumber min={0} max={3650} value={retentionDraft ?? schedulerConfig.retentionDays ?? 90} onChange={setRetentionDraft} onBlur={commitRetention} onPressEnter={commitRetention} style={{ width: 100 }} /></Col>
           <Col><span style={{ color: '#999' }}>0=永不删除</span></Col>
           <Col><Button icon={<PlayCircleOutlined />} onClick={handleRunNow} loading={schedulerLoading}>立即运行</Button></Col>
         </Row>

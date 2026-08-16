@@ -169,10 +169,16 @@ export class SchedulerService {
     const config = this.getConfig()
     const enabled = updates.enabled !== undefined ? (updates.enabled ? 1 : 0) : (config.enabled ? 1 : 0)
     const intervalMinutes = updates.intervalMinutes ?? config.intervalMinutes ?? 60
-    // 未传入时保持现值（与 enabled/interval_minutes 同款语义；restart 会触发 retention 启动钩子读新值）
+    // 未传入时保持现值（与 enabled/interval 同款语义；retention 运行时由钩子读 getConfig() 取新值）
     const retentionDays = updates.retentionDays ?? config.retentionDays ?? 90
     db.prepare('UPDATE scheduler_config SET enabled = ?, interval_minutes = ?, retention_days = ? WHERE id = 1').run(enabled, intervalMinutes, retentionDays)
-    this.restart()
+    // CR-01（18-REVIEW）纵深防御：仅 interval/enabled 变更需要重启调度周期；retentionDays 变更不重启——
+    // restart()→start() 顶部挂 retention 启动钩子（不可恢复批量 DELETE），任何走 updateConfig 的提交
+    // 若无差别 restart 都会以当前库值触发一次清理。retention 由启动钩子 + executeTask 尾钩在运行时
+    // 读 getConfig() 自然生效，无需重启。
+    if (updates.intervalMinutes !== undefined || updates.enabled !== undefined) {
+      this.restart()
+    }
     return this.getConfig()
   }
 
