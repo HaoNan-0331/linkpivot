@@ -119,12 +119,14 @@ export class SchedulerService {
       for (const result of results) {
         if (result.error) continue
         if (result.entries.length > 0) {
-          totalEntries += result.entries.length
           // 18-04（TXN-01）：内联 INSERT 副本删除，写库段换调 ArpIngestService 单设备单事务。
           // P8 审计（A4 采纳）：补 per-device try/catch 对齐 arpIpc.collectFromAll 既有语义——
           // 单设备事务失败整体回滚该设备写入后 continue，不再 throw 冒泡致整任务失败（已写设备保留半态）。
           try {
             const ingested = ArpIngestService.ingestDeviceResult(db, result, collectionTime)
+            // WR-03（18-REVIEW）：entries 口径对齐 arp:collectFromAll 的 stats.entries（ingested.inserted
+            // 实插数）——旧口径按采集条数先累加，设备事务回滚后不回减，task-completed/runNow 统计虚高。
+            totalEntries += ingested.inserted
             totalChanges += ingested.changes
           } catch (e: any) {
             console.error('[Scheduler] device ingest failed:', result.deviceId, e.message)
