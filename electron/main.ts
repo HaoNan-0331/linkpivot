@@ -12,7 +12,8 @@ import { setTopologyMasterKey, listTopologies, getTopologyById, createTopology, 
 import { setConnectionMasterKey, openTerminal, openWebSafe, writeToSession, writeByWebContentsId, disconnectSession, testDeviceConnection } from './services/connection'
 import { setAiMasterKey, chat, getAiConfigMasked, saveAiConfig, getCommandWhitelist, saveCommandWhitelist, getExecMode, setExecMode, confirmCommand, getAiLogs, getChatHistory, saveChatMessage as aiSaveChatMessage, createSession, listSessions, getSessionMessages, deleteSession, updateSessionTitle } from './services/ai'
 import { discoverTopology } from './services/discovery'
-import { getSystemLogs, createSystemLog } from './services/systemLog'
+import { getSystemLogs, createSystemLog, setSystemLogMasterKey, backfillSystemLogEnc } from './services/systemLog'
+import { backfillAiExecLogEnc } from './services/aiExecLogger'
 import { setArpMasterKey } from './services/arpCollector'
 import { SchedulerService } from './services/schedulerService'
 import { BackupScheduler } from './services/backupScheduler'
@@ -93,6 +94,9 @@ app.whenReady().then(() => {
   setArpMasterKey(masterKey)
   setKbMasterKey(masterKey)
   setExperienceMasterKey(masterKey)
+  // 第 8 直接注入器（SEC-06）：systemLog 持模块级 MK 加密 prompt_text_enc/ai_response_enc；
+  // aiExecLogger 已由 setAiMasterKey 内部链式注入（ai.ts），不重复。service 不直读 keyManager 红线。
+  setSystemLogMasterKey(masterKey)
   // R2: decField 解密失败可观测——masterKey 不匹配 / safeStorage 翻转时写 system_log 告警，避免无声数据丢失。
   // handler 在此注入（解耦：crypto.ts 不依赖 services/DB，保持纯函数可单测）。
   setDecryptFailureHandler(() => {
@@ -113,6 +117,44 @@ app.whenReady().then(() => {
     if (r.backfilled > 0) console.log('[startup] backfill severity from history:', r.backfilled)
   } catch (e) {
     console.warn('[startup] backfill severity failed (non-blocking):', (e as Error).message)
+  }
+  // Phase 17 SEC-06（D-01）：日志加密列启动即同步回填——明文存量行加密落 _enc + 旧列置 NULL（净化备份）。
+  // 双钩子独立 try/catch 隔离故障（一个失败不挡另一个）；幂等可重试（中断后下次启动续跑），失败仅 warn 不阻塞启动。
+  let logEncBackfilled = 0
+  try {
+    const r = backfillAiExecLogEnc()
+    if (r.backfilled > 0) console.log('[startup] backfill log enc (ai_exec_logs):', r.backfilled)
+    logEncBackfilled += r.backfilled
+  } catch (e) {
+    const msg = (e as Error).message
+    console.warn('[startup] backfill ai_exec_logs enc failed (non-blocking):', msg)
+    try {
+      createSystemLog({ type: 'security', status: 'warning', errorMessage: '日志加密列回填失败（下次启动重试）：' + msg })
+    } catch { /* 日志失败非致命 */ }
+  }
+  try {
+    const r = backfillSystemLogEnc()
+    if (r.backfilled > 0) console.log('[startup] backfill log enc (ai_system_logs):', r.backfilled)
+    logEncBackfilled += r.backfilled
+  } catch (e) {
+    const msg = (e as Error).message
+    console.warn('[startup] backfill ai_system_logs enc failed (non-blocking):', msg)
+    try {
+      createSystemLog({ type: 'security', status: 'warning', errorMessage: '日志加密列回填失败（下次启动重试）：' + msg })
+    } catch { /* 日志失败非致命 */ }
+  }
+  // 置 NULL ≠ 字节净化：明文字节仍留库文件 freelist 页，db.backup() 整页拷贝会带出（17-RESEARCH Pitfall 7 实证）——
+  // SC#4「备份净化」必须 VACUUM 才成立。非致命包裹（百度云锁 DB 文件 EBUSY 前科），不重试不阻塞启动。
+  if (logEncBackfilled > 0) {
+    try {
+      getDatabase().exec('VACUUM')
+      console.log('[startup] VACUUM after log enc backfill: OK')
+    } catch (e) {
+      console.warn('[startup] VACUUM after log enc backfill failed (non-blocking):', (e as Error).message)
+      try {
+        createSystemLog({ type: 'security', status: 'warning', errorMessage: '日志回填后 VACUUM 失败（明文残留可能在库文件延续）：' + (e as Error).message })
+      } catch { /* 日志失败非致命 */ }
+    }
   }
   // kb-db-malformed：启动 FTS5 自愈——把"被动 malformed"转成"主动自愈"。
   // taskkill/Stop-Process -Force = SIGKILL 不触发 before-quit → closeDatabase，WAL 未 checkpoint 可致
