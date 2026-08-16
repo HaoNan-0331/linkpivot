@@ -13,7 +13,7 @@ import { createSystemLog } from '../services/systemLog'
  *      在 createTables() 建好基线表之后、premigration 备份之后执行（D-06）。
  *      init.ts 不直接调用 runMigrations（单一调用点原则）。
  */
-export const MIGRATION_HEAD = 13
+export const MIGRATION_HEAD = 14
 
 interface MigrationStep {
   version: number
@@ -175,15 +175,15 @@ const v7 = (db: Database.Database): void => {
     // 故现有库必须先 DROP 再 CREATE（PATTERNS caveat）。fresh-install 由 init.ts DDL 建带 WHEN 版本，此 v7 no-op。
     db.exec('DROP TRIGGER IF EXISTS kb_chunks_au')
     // 以下 CREATE TRIGGER DDL 必须与 init.ts fresh-install DDL 逐字一致（同一 WHEN + 两条 INSERT）。
+    // image_desc 18-02（Q10 方案 A）随 v14 对齐为恒 NULL 常量：遗留库 v7→v14 重放与 fresh-install
+    // 收敛到同一触发器定义（v14 DROP+CREATE 重建幂等，见 v14 注释）。
     db.exec(`CREATE TRIGGER kb_chunks_au AFTER UPDATE ON kb_chunks
 WHEN OLD.content IS NOT NEW.content OR OLD.title IS NOT NEW.title OR OLD.image_ids IS NOT NEW.image_ids
 BEGIN
   INSERT INTO kb_chunks_fts(kb_chunks_fts, rowid, title, content, image_desc)
-    VALUES ('delete', old.rowid, old.title, old.content,
-      (SELECT GROUP_CONCAT(description, ' ') FROM kb_images WHERE chunk_id = old.id));
+    VALUES ('delete', old.rowid, old.title, old.content, NULL);
   INSERT INTO kb_chunks_fts(rowid, title, content, image_desc)
-    VALUES (new.rowid, new.title, new.content,
-      (SELECT GROUP_CONCAT(description, ' ') FROM kb_images WHERE chunk_id = new.id));
+    VALUES (new.rowid, new.title, new.content, NULL);
 END`)
     db.pragma('user_version = 7')
   })
@@ -399,6 +399,49 @@ const v13 = (db: Database.Database): void => {
   step()
 }
 
+const v14 = (db: Database.Database): void => {
+  // Phase 18（18-02 / TXN-01 Q10 方案 A 终裁 + TXN-03 前置）：arp_entries.collected_at 索引
+  // + kb 三触发器 image_desc 恒 NULL 重建。
+  //
+  // Q10 根因：ai/ad/au 三触发器 image_desc 取 kb_images 描述列的 GROUP_CONCAT 聚合子查询——
+  // 非确定性来源（图片行可在 chunk 索引化之后插入/变更），delete 端命令值与索引实际值不符时
+  // FTS5 抛 database disk image is malformed（生产线索：vision 描述非空时 docx 路径
+  // processDocument 落 status='error'，16-QUIRKS Q10）。方案 A 终裁：image_desc 全链路恒定
+  // NULL——kb_chunks_fts 零生产 MATCH 读者（18-RESEARCH 全库 grep 实证）+ Q9 已裁该列不可
+  // 读回，双端常量可静态证明不 mismatch（T-18-06）。
+  //
+  // collected_at 索引为 18-05 retention（按时间窗删除 arp_entries）备好 schema，纯加索引零行为变化。
+  //
+  // 幂等守卫：索引走 CREATE INDEX IF NOT EXISTS 天然幂等（v8 先例）；触发器走 DROP IF EXISTS +
+  // CREATE（v7 先例：CREATE IF NOT EXISTS 对「已存在但定义不同」的 trigger 不替换，必须先 DROP）；
+  // 重放收敛同一结果，不靠 user_version 判定（文件头红线）。throw 即 ROLLBACK 回到 v13 态可重试（T-18-05）。
+  // 三触发器 DDL 与 init.ts fresh-install 三触发器段逐字一致（双路径一致红线，v7 注释同款要求）。
+  const step = db.transaction(() => {
+    db.exec('CREATE INDEX IF NOT EXISTS idx_arp_entries_collected_at ON arp_entries(collected_at)')
+    db.exec('DROP TRIGGER IF EXISTS kb_chunks_ai')
+    db.exec('DROP TRIGGER IF EXISTS kb_chunks_ad')
+    db.exec('DROP TRIGGER IF EXISTS kb_chunks_au')
+    db.exec(`CREATE TRIGGER kb_chunks_ai AFTER INSERT ON kb_chunks BEGIN
+  INSERT INTO kb_chunks_fts(rowid, title, content, image_desc)
+    VALUES (new.rowid, new.title, new.content, NULL);
+END`)
+    db.exec(`CREATE TRIGGER kb_chunks_ad AFTER DELETE ON kb_chunks BEGIN
+  INSERT INTO kb_chunks_fts(kb_chunks_fts, rowid, title, content, image_desc)
+    VALUES ('delete', old.rowid, old.title, old.content, NULL);
+END`)
+    db.exec(`CREATE TRIGGER kb_chunks_au AFTER UPDATE ON kb_chunks
+WHEN OLD.content IS NOT NEW.content OR OLD.title IS NOT NEW.title OR OLD.image_ids IS NOT NEW.image_ids
+BEGIN
+  INSERT INTO kb_chunks_fts(kb_chunks_fts, rowid, title, content, image_desc)
+    VALUES ('delete', old.rowid, old.title, old.content, NULL);
+  INSERT INTO kb_chunks_fts(rowid, title, content, image_desc)
+    VALUES (new.rowid, new.title, new.content, NULL);
+END`)
+    db.pragma('user_version = 14')
+  })
+  step()
+}
+
 const MIGRATIONS: MigrationStep[] = [
   { version: 1, name: 'chat_history.session_id', run: v1 },
   { version: 2, name: 'ai_exec_logs.prompt_text+ai_response', run: v2 },
@@ -413,6 +456,7 @@ const MIGRATIONS: MigrationStep[] = [
   { version: 11, name: 'ai_system_logs CHECK widen security (R2 decrypt-failure + exp relate-failure log)', run: v11 },
   { version: 12, name: 'ip_mac_bindings is_baseline (BUG-1 首次基线标志)', run: v12 },
   { version: 13, name: 'ai_exec_logs/ai_system_logs prompt_text+ai_response 加密列 + scheduler_config.retention_days (SEC-06)', run: v13 },
+  { version: 14, name: 'arp_entries.collected_at index (TXN-03) + kb fts triggers image_desc constant NULL (Q10)', run: v14 },
 ]
 
 /**

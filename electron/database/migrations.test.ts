@@ -161,10 +161,10 @@ describe('v11 ai_system_logs CHECK widen security 迁移', () => {
     expect(initDdl).toContain(expectedStatusCheck)
   })
 
-  it('4. MIGRATION_HEAD=13（注册完整性静态守卫，防 bump 漏改）', async () => {
+  it('4. MIGRATION_HEAD=14（注册完整性静态守卫，防 bump 漏改）', async () => {
     const mod = await import('./migrations')
-    // Phase 17 SEC-06：v13 ai_exec_logs/ai_system_logs _enc 加密列 + scheduler_config.retention_days 迁移已注册，MIGRATION_HEAD 从 12 bump 到 13
-    expect(mod.MIGRATION_HEAD).toBe(13)
+    // Phase 18 18-02：v14 arp_entries.collected_at 索引 + kb 三触发器 image_desc 恒 NULL 重建迁移已注册，MIGRATION_HEAD 从 13 bump 到 14
+    expect(mod.MIGRATION_HEAD).toBe(14)
   })
 
   it('5. v13 双路径 DDL 一致：v13 ALTER 列定义串与 init.ts 三处 fresh-install DDL 特征串逐字一致', () => {
@@ -209,5 +209,40 @@ describe('v11 ai_system_logs CHECK widen security 迁移', () => {
     // scheduler_config retention_days 特征串：v13 函数体与 init.ts DDL 块双 toContain
     expect(v13Body).toContain('retention_days INTEGER DEFAULT 90')
     expect(schedulerConfigDdl).toContain('retention_days INTEGER DEFAULT 90')
+  })
+
+  it('6. v14 双路径 DDL 一致：collected_at 索引 + 三触发器 image_desc 恒 NULL 特征串在 migrations.ts 与 init.ts 均命中，GROUP_CONCAT(description) 全文归零', () => {
+    // fs 读 migrations.ts 源码，从 const v14 起 slice 出 v14 函数体（到 MIGRATIONS 数组止，
+    // 镜像 Test 5 字符串抽取法）
+    const migSrc = fs.readFileSync(
+      path.resolve(__dirname, 'migrations.ts'),
+      'utf-8'
+    )
+    const v14Idx = migSrc.indexOf('const v14')
+    expect(v14Idx).toBeGreaterThan(-1)
+    const migrationsIdx = migSrc.indexOf('const MIGRATIONS', v14Idx)
+    expect(migrationsIdx).toBeGreaterThan(v14Idx)
+    const v14Body = migSrc.slice(v14Idx, migrationsIdx)
+
+    const initSrc = fs.readFileSync(
+      path.resolve(__dirname, 'init.ts'),
+      'utf-8'
+    )
+
+    // collected_at 索引特征串：v14 函数体与 init.ts 双 toContain（逐字同款 DDL）
+    const idxFeature = 'CREATE INDEX IF NOT EXISTS idx_arp_entries_collected_at ON arp_entries(collected_at)'
+    expect(v14Body).toContain(idxFeature)
+    expect(initSrc).toContain(idxFeature)
+
+    // 三触发器 image_desc NULL 常量特征串（插入端 + delete 端）：双路径逐字一致
+    // （T-18-06：双端常量静态可证不 mismatch，防 init/migrations 漂移）
+    expect(v14Body).toContain('VALUES (new.rowid, new.title, new.content, NULL)')
+    expect(initSrc).toContain('VALUES (new.rowid, new.title, new.content, NULL)')
+    expect(v14Body).toContain("VALUES ('delete', old.rowid, old.title, old.content, NULL)")
+    expect(initSrc).toContain("VALUES ('delete', old.rowid, old.title, old.content, NULL)")
+
+    // Q10 方案 A：GROUP_CONCAT(description) 非确定性子查询全文件归零（含 v7 历史触发器体，已随 v14 对齐）
+    expect(migSrc).not.toContain('GROUP_CONCAT(description)')
+    expect(initSrc).not.toContain('GROUP_CONCAT(description)')
   })
 })

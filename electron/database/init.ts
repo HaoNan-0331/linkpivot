@@ -125,6 +125,8 @@ export function createTables() {
     CREATE INDEX IF NOT EXISTS idx_arp_entries_ip ON arp_entries(ip);
     CREATE INDEX IF NOT EXISTS idx_arp_entries_mac ON arp_entries(mac);
     CREATE INDEX IF NOT EXISTS idx_arp_entries_device ON arp_entries(device_id);
+    -- 18-02（TXN-03 前置）：retention 按时间窗删除 arp_entries 的查询索引（v14 迁移双路径同款）
+    CREATE INDEX IF NOT EXISTS idx_arp_entries_collected_at ON arp_entries(collected_at);
 
     CREATE TABLE IF NOT EXISTS network_segments (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -265,27 +267,27 @@ export function createTables() {
       tokenize='unicode61'
     );
 
+    -- 三触发器 image_desc 恒 NULL（18-02 Q10 方案 A 终裁，v14 迁移同款重建）：
+    -- GROUP_CONCAT 子查询是非确定性来源（图片行可在 chunk 索引化后插入/变更），delete 端命令值
+    -- 与索引不符时 FTS5 抛 database disk image is malformed。kb_chunks_fts 零生产 MATCH 读者，
+    -- 双端 NULL 常量可静态证明不 mismatch。
     CREATE TRIGGER IF NOT EXISTS kb_chunks_ai AFTER INSERT ON kb_chunks BEGIN
       INSERT INTO kb_chunks_fts(rowid, title, content, image_desc)
-        VALUES (new.rowid, new.title, new.content,
-          (SELECT GROUP_CONCAT(description, ' ') FROM kb_images WHERE chunk_id = new.id));
+        VALUES (new.rowid, new.title, new.content, NULL);
     END;
 
     CREATE TRIGGER IF NOT EXISTS kb_chunks_ad AFTER DELETE ON kb_chunks BEGIN
       INSERT INTO kb_chunks_fts(kb_chunks_fts, rowid, title, content, image_desc)
-        VALUES ('delete', old.rowid, old.title, old.content,
-          (SELECT GROUP_CONCAT(description, ' ') FROM kb_images WHERE chunk_id = old.id));
+        VALUES ('delete', old.rowid, old.title, old.content, NULL);
     END;
 
     CREATE TRIGGER IF NOT EXISTS kb_chunks_au AFTER UPDATE ON kb_chunks
       WHEN OLD.content IS NOT NEW.content OR OLD.title IS NOT NEW.title OR OLD.image_ids IS NOT NEW.image_ids
     BEGIN
       INSERT INTO kb_chunks_fts(kb_chunks_fts, rowid, title, content, image_desc)
-        VALUES ('delete', old.rowid, old.title, old.content,
-          (SELECT GROUP_CONCAT(description, ' ') FROM kb_images WHERE chunk_id = old.id));
+        VALUES ('delete', old.rowid, old.title, old.content, NULL);
       INSERT INTO kb_chunks_fts(rowid, title, content, image_desc)
-        VALUES (new.rowid, new.title, new.content,
-          (SELECT GROUP_CONCAT(description, ' ') FROM kb_images WHERE chunk_id = new.id));
+        VALUES (new.rowid, new.title, new.content, NULL);
     END;
 
     -- Experience tables (Phase 7: 经验沉淀数据层，独立于 kb_* 文档表)
