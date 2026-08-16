@@ -63,6 +63,8 @@ export function createTables() {
       status TEXT CHECK(status IN ('approved','rejected','pending','executed','failed')),
       mode TEXT CHECK(mode IN ('confirm','auto')),
       ai_reason TEXT,
+      prompt_text_enc TEXT,
+      ai_response_enc TEXT,
       created_at TEXT DEFAULT (datetime('now','localtime'))
     );
 
@@ -92,6 +94,8 @@ export function createTables() {
       ai_response TEXT,
       parsed_result TEXT,
       error_message TEXT,
+      prompt_text_enc TEXT,
+      ai_response_enc TEXT,
       created_at TEXT DEFAULT (datetime('now','localtime'))
     );
 
@@ -196,7 +200,8 @@ export function createTables() {
       enabled INTEGER NOT NULL DEFAULT 0,
       interval_minutes INTEGER NOT NULL DEFAULT 60,
       last_run TEXT,
-      next_run TEXT
+      next_run TEXT,
+      retention_days INTEGER DEFAULT 90
     );
 
     CREATE TABLE IF NOT EXISTS backup_config (
