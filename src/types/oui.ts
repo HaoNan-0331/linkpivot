@@ -44,6 +44,8 @@ export interface ScheduleConfig {
   id: number
   enabled: boolean
   intervalMinutes: number
+  /** ARP 历史保留天数（D-07）：0=永不删除；v13 列 DEFAULT 90 兜底 */
+  retentionDays: number
   lastRun: string | null
   nextRun: string | null
 }
@@ -57,4 +59,6 @@ export interface SchedulerStatus {
 export interface UpdateScheduleInput {
   enabled?: boolean
   intervalMinutes?: number
+  /** ARP 历史保留天数（D-07）：0=永不删除 */
+  retentionDays?: number
 }

@@ -100,6 +100,18 @@ export default function SettingsPage() {
     setSchedulerLoading(false)
   }
 
+  // 18-05（D-07）：ARP 保留天数。守卫与 handleIntervalChange 区分——retentionDays 的 0 是合法特殊值
+  // （永不删除），不得 if (!value) return 短路（value === 0 必须能提交），仅 null/undefined（清空输入）跳过。
+  const handleRetentionChange = async (value: number | null) => {
+    if (value === null || value === undefined) return
+    setSchedulerLoading(true)
+    try {
+      const config = await window.api.scheduler.updateConfig({ retentionDays: value })
+      setSchedulerConfig(config)
+    } catch (e: unknown) { message.error(e instanceof Error ? e.message : String(e)) }
+    setSchedulerLoading(false)
+  }
+
   const handleRunNow = async () => {
     setSchedulerLoading(true)
     try {
@@ -170,6 +182,9 @@ export default function SettingsPage() {
           <Col><Switch checked={!!schedulerConfig.enabled} onChange={handleToggleScheduler} loading={schedulerLoading} /></Col>
           <Col><span>间隔(分钟):</span></Col>
           <Col><InputNumber min={5} max={1440} value={schedulerConfig.intervalMinutes || 60} onChange={handleIntervalChange} style={{ width: 100 }} /></Col>
+          <Col><span>ARP 保留天数:</span></Col>
+          <Col><InputNumber min={0} max={3650} value={schedulerConfig.retentionDays ?? 90} onChange={handleRetentionChange} style={{ width: 100 }} /></Col>
+          <Col><span style={{ color: '#999' }}>0=永不删除</span></Col>
           <Col><Button icon={<PlayCircleOutlined />} onClick={handleRunNow} loading={schedulerLoading}>立即运行</Button></Col>
         </Row>
         <div style={{ marginTop: 12, color: '#666' }}>

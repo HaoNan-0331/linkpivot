@@ -158,17 +158,20 @@ export class SchedulerService {
     const row = db.prepare('SELECT * FROM scheduler_config WHERE id = 1').get() as any
     if (!row) {
       db.prepare('INSERT INTO scheduler_config (id, enabled, interval_minutes) VALUES (1, 0, 60)').run()
-      return { id: 1, enabled: false, intervalMinutes: 60, lastRun: null, nextRun: null }
+      // 18-05（D-06）：retention_days 由 v13 列 DEFAULT 90 兜底，零额外迁移
+      return { id: 1, enabled: false, intervalMinutes: 60, retentionDays: 90, lastRun: null, nextRun: null }
     }
-    return { id: row.id, enabled: Boolean(row.enabled), intervalMinutes: row.interval_minutes ?? 60, lastRun: row.last_run, nextRun: row.next_run }
+    return { id: row.id, enabled: Boolean(row.enabled), intervalMinutes: row.interval_minutes ?? 60, retentionDays: row.retention_days ?? 90, lastRun: row.last_run, nextRun: row.next_run }
   }
 
-  static updateConfig(updates: { enabled?: boolean; intervalMinutes?: number }): any {
+  static updateConfig(updates: { enabled?: boolean; intervalMinutes?: number; retentionDays?: number }): any {
     const db = getDatabase()
     const config = this.getConfig()
     const enabled = updates.enabled !== undefined ? (updates.enabled ? 1 : 0) : (config.enabled ? 1 : 0)
     const intervalMinutes = updates.intervalMinutes ?? config.intervalMinutes ?? 60
-    db.prepare('UPDATE scheduler_config SET enabled = ?, interval_minutes = ? WHERE id = 1').run(enabled, intervalMinutes)
+    // 未传入时保持现值（与 enabled/interval_minutes 同款语义；restart 会触发 retention 启动钩子读新值）
+    const retentionDays = updates.retentionDays ?? config.retentionDays ?? 90
+    db.prepare('UPDATE scheduler_config SET enabled = ?, interval_minutes = ?, retention_days = ? WHERE id = 1').run(enabled, intervalMinutes, retentionDays)
     this.restart()
     return this.getConfig()
   }
