@@ -373,7 +373,7 @@ async function processDocument(docId: string): Promise<void> {
 
   const buffer = fs.readFileSync(doc.file_path)
   let chapters: Array<{ title: string; content: string; level: number }>
-  let images: Array<{ chunkIndex: number; buffer: Buffer; ext: string }> = []
+  let images: Array<{ buffer: Buffer; ext: string }> = []
 
   switch (doc.file_type) {
     case 'txt':
@@ -491,10 +491,10 @@ async function parsePdf(buffer: Buffer): Promise<Array<{ title: string; content:
 // Async version that also extracts images
 async function parseDocxWithImagesAsync(buffer: Buffer): Promise<{
   chapters: Array<{ title: string; content: string; level: number }>
-  images: Array<{ chunkIndex: number; buffer: Buffer; ext: string }>
+  images: Array<{ buffer: Buffer; ext: string }>
 }> {
   const mammoth = require('mammoth')
-  const images: Array<{ chunkIndex: number; buffer: Buffer; ext: string }> = []
+  const images: Array<{ buffer: Buffer; ext: string }> = []
 
   console.log('[KB] parseDocxWithImagesAsync: starting, buffer size:', buffer.length)
   const result = await mammoth.convertToHtml({ buffer }, {
@@ -503,7 +503,7 @@ async function parseDocxWithImagesAsync(buffer: Buffer): Promise<{
       return element.read('base64').then((imgBuffer: Buffer) => {
         const ext = element.contentType?.split('/')[1] || 'png'
         console.log('[KB] image extracted: ext=', ext, 'size=', imgBuffer.length)
-        images.push({ chunkIndex: 0, buffer: imgBuffer, ext })
+        images.push({ buffer: imgBuffer, ext })
         return { src: `[图片${images.length}]` }
       }).catch((err: any) => {
         console.error('[KB] image read error:', err)
@@ -518,11 +518,8 @@ async function parseDocxWithImagesAsync(buffer: Buffer): Promise<{
 
   const chapters = splitHtmlByHeadings(html)
 
-  // Distribute images across chunks
-  for (let i = 0; i < images.length; i++) {
-    images[i].chunkIndex = Math.min(i, chapters.length - 1)
-  }
-
+  // D-03（Q6 裁决）：原「按序号预分配图片落章节」死轨已删——processDocument 实际落位走
+  // [图片N] 标记扫描（:403-411），该预分配字段零消费者，连字段一并移除。
   return { chapters, images }
 }
 
@@ -589,13 +586,14 @@ function splitByHeadingPatterns(text: string): Array<{ title: string; content: s
   let currentContent: string[] = []
   let hasContent = false
 
+  // D-04（Q7 裁决）：原 pattern[4]（1.1→level 3）/ pattern[5]（1.1.1→level 4）不可达规则已删——
+  // pattern[3] 的 [、.．] 后 \s*（零或多空白）先命中任何「1.1 xxx」，二者一律落 level 2，从未可达。
+  // level 取值语义（前一章 level 取自下一标题层级）与末章收尾 push 恒 1 保持现状（renderer 树形展示不变）。
   const headingPatterns = [
     /^(#{1,6})\s+(.+)$/,                                          // Markdown
     /^第([一二三四五六七八九十百千]+)[章节篇部]\s*(.*)/,              // 第X章/节/篇
     /^([一二三四五六七八九十]+)[、.．]\s*(.*)/,                     // 一、二、
-    /^(\d+)[、.．]\s*(.*)/,                                        // 1、2、
-    /^(\d+\.\d+)\s+(.*)/,                                          // 1.1 Title
-    /^(\d+\.\d+\.\d+)\s+(.*)/,                                     // 1.1.1 Title
+    /^(\d+)[、.．]\s*(.*)/,                                        // 1、2、（1.1/1.1.1 经 \s* 零空白同落此规则）
   ]
 
   for (const line of lines) {
@@ -612,8 +610,6 @@ function splitByHeadingPatterns(text: string): Array<{ title: string; content: s
         else if (pattern === headingPatterns[1]) headingLevel = 1
         else if (pattern === headingPatterns[2]) headingLevel = 2
         else if (pattern === headingPatterns[3]) headingLevel = 2
-        else if (pattern === headingPatterns[4]) headingLevel = 3
-        else if (pattern === headingPatterns[5]) headingLevel = 4
         break
       }
     }
@@ -635,9 +631,8 @@ function splitByHeadingPatterns(text: string): Array<{ title: string; content: s
     chapters.push({ title: currentTitle || '未命名', content: currentContent.join('\n').trim(), level: 1 })
   }
 
-  if (chapters.length === 0 && text.trim()) {
-    chapters.push({ title: '文档内容', content: text.trim(), level: 1 })
-  }
+  // D-05（Q8 裁决）：原「零章节时按整段兜底成单章」不可达分支已删——
+  // 任何非空文本必先经上方收尾 push（currentTitle || '未命名'），chapters.length≥1 恒成立。
 
   return splitOversizedChapters(chapters)
 }
