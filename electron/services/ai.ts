@@ -222,14 +222,16 @@ export function getChatHistory(sessionId?: string, limit?: number): Array<{
   createdAt: string
 }> {
   // WR-09：limit 截断（取最近 N 条）防超大历史会话全量返回。默认不传 = 全量（向后兼容 ai 域自用）。
-  // 子查询 ORDER BY created_at ASC 后外层逆取最近 limit 条再正序，保证「最近 N 条 + 时间正序」。
+  // WR-02（18-REVIEW）：子查询 ORDER BY created_at DESC LIMIT ? 取最近 limit 条，外层 ASC 复原时间
+  // 正序——旧实现子查询即 ASC（实取最旧 N 条），注释声明的「外层逆取」从未实现，>limit 条会话的
+  // 溯源消费方（experienceService.getSessionMessages 默认 200）看到的是会话开头而非最近对话。
   if (limit != null && limit > 0) {
     const sql = sessionId
       ? `SELECT * FROM (
-           SELECT * FROM chat_history WHERE session_id = ? ORDER BY created_at ASC LIMIT ?
+           SELECT * FROM chat_history WHERE session_id = ? ORDER BY created_at DESC LIMIT ?
          ) sub ORDER BY created_at ASC`
       : `SELECT * FROM (
-           SELECT * FROM chat_history ORDER BY created_at ASC LIMIT ?
+           SELECT * FROM chat_history ORDER BY created_at DESC LIMIT ?
          ) sub ORDER BY created_at ASC`
     const rows = sessionId
       ? (getDatabase().prepare(sql).all(sessionId, limit) as any[])
