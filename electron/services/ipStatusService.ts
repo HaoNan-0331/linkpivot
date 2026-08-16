@@ -21,9 +21,11 @@ export class IPStatusService {
     const db = getDatabase()
     const updateExisting = db.prepare('UPDATE ip_status SET mac = ?, status = \'used\', last_seen = ?, updated_at = CURRENT_TIMESTAMP WHERE ip = ?')
     const insertNew = db.prepare('INSERT INTO ip_status (ip, mac, status, first_seen, last_seen) VALUES (?, ?, \'used\', ?, ?)')
+    // 18-04（TXN-02）：exists 探测语句提到事务定义之前（与上两 stmt 并排），事务回调体内零 db.prepare
+    const existsProbe = db.prepare('SELECT 1 FROM ip_status WHERE ip = ?')
     const transaction = db.transaction((items: Array<{ ip: string; mac: string }>) => {
       for (const entry of items) {
-        const existing = db.prepare('SELECT 1 FROM ip_status WHERE ip = ?').get(entry.ip)
+        const existing = existsProbe.get(entry.ip)
         if (existing) { updateExisting.run(entry.mac, collectionTime, entry.ip) }
         else { insertNew.run(entry.ip, entry.mac, collectionTime, collectionTime) }
       }
