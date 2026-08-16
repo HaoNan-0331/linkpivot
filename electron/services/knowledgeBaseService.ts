@@ -6,6 +6,7 @@ import type Database from 'better-sqlite3'
 import { getDatabase } from '../database/connection'
 import { encField, decField } from '../utils/crypto'
 import { getAiConfig, callAI } from './ai'
+import type { KbSearchEnvelope } from '../../src/types/kb'
 
 let MK = ''
 
@@ -635,6 +636,10 @@ function splitOversizedChapters(chapters: Array<{ title: string; content: string
 
 // ---------- Search ----------
 
+// TXN-04 (18-01) L2：LLM 索引条目上限——库增长时 prompt 不再无界膨胀（Q3）。
+// 截断可观测：indexCapped 经信封回传 renderer（T-18-03），prompt 索引块尾部同步标注。
+export const MAX_INDEX_ENTRIES = 200
+
 // search 局部 helper：复刻 getDocument(line 86-94) 的 attach 模式，但 SELECT 含 file_path（ChunkContent 渲染必需）。
 // ids.length=0 守卫：跳过 `IN ()` 语法错。T-sj1-02 mitigate：try/catch 守 JSON.parse 异常 fallback images=[]。
 function attachImages(db: ReturnType<typeof getDatabase>, chunk: any) {
@@ -651,11 +656,13 @@ function attachImages(db: ReturnType<typeof getDatabase>, chunk: any) {
   return chunk
 }
 
-export async function search(query: string, deviceIds?: string[], topK = 5): Promise<any[]> {
+export async function search(query: string, deviceIds?: string[], topK = 5): Promise<KbSearchEnvelope> {
   const db = dbGetter()
 
   // 1. Extract all ready chunks as virtual index
-  let sql = `SELECT c.id, c.document_id, c.chunk_index, c.title, c.content, c.level, c.image_ids,
+  // L1（TXN-04）：索引构建不再 SELECT 全文——LLM 索引行只需 80 字摘要（T-18-02）；
+  // AI 选中 / 降级返回的 ≤topK 行另发一条 id IN 占位符批查取全文（见 fetchFullRows）。
+  let sql = `SELECT c.id, c.document_id, c.chunk_index, c.title, substr(c.content, 1, 80) AS summary, c.level, c.image_ids,
     d.title AS doc_title, d.file_name
     FROM kb_chunks c JOIN kb_documents d ON c.document_id = d.id
     WHERE d.status = 'ready'`
@@ -668,21 +675,49 @@ export async function search(query: string, deviceIds?: string[], topK = 5): Pro
   sql += ` ORDER BY d.title, c.chunk_index`
   const allChunks = db.prepare(sql).all(...params) as any[]
 
-  if (allChunks.length === 0) return []
+  if (allChunks.length === 0) {
+    return { rows: [], degraded: false, indexTotal: 0, indexCapped: null }
+  }
 
   // 2. Build virtual index (compact, like INDEX.md)
-  const indexLines = allChunks.map((c, i) =>
-    `[${i}] 文档: ${c.doc_title} | 章节: ${c.title || '无标题'} | 摘要: ${(c.content || '').slice(0, 80).replace(/\n/g, ' ')}`
+  // L2（TXN-04）：indexLines 只取前 MAX_INDEX_ENTRIES 条（ORDER BY 前缀语义，与全量同序）
+  const indexTotal = allChunks.length
+  const cappedChunks = allChunks.slice(0, MAX_INDEX_ENTRIES)
+  const indexCapped = indexTotal > MAX_INDEX_ENTRIES ? MAX_INDEX_ENTRIES : null
+  const indexLines = cappedChunks.map((c, i) =>
+    `[${i}] 文档: ${c.doc_title} | 章节: ${c.title || '无标题'} | 摘要: ${(c.summary || '').replace(/\n/g, ' ')}`
   ).join('\n')
+  const indexBlock = indexCapped !== null
+    ? `${indexLines}\n（索引已从 ${indexTotal} 条截取前 ${indexCapped} 条）`
+    : indexLines
+
+  // L1 配套：≤topK 命中行取全文——单条 id IN 占位符批查（'?,'.repeat 模板生成占位符，值全走绑定禁拼接），
+  // 返回行列集与旧全量索引行逐字一致（含 content 全文 + doc_title/file_name join 列）。
+  const fetchFullRows = (rows: any[]): any[] => {
+    if (rows.length === 0) return []
+    const placeholders = '?,'.repeat(rows.length - 1) + '?'
+    const full = db.prepare(
+      `SELECT c.id, c.document_id, c.chunk_index, c.title, c.content, c.level, c.image_ids,
+        d.title AS doc_title, d.file_name
+        FROM kb_chunks c JOIN kb_documents d ON c.document_id = d.id
+        WHERE c.id IN (${placeholders})`
+    ).all(...rows.map(r => r.id)) as any[]
+    const byId = new Map(full.map(r => [r.id, r]))
+    return rows.map(r => byId.get(r.id)).filter(Boolean)
+  }
+  const decorate = (chunk: any) => {
+    chunk.document = { id: chunk.document_id, title: chunk.doc_title, file_name: chunk.file_name }
+    // Attach images（含 file_path，供 ChunkContent 渲染 [图片N]）
+    return attachImages(db, chunk)
+  }
+  // 降级行 = fallback 前 topK 行（返回语义同旧实现，未经 LLM 筛选）
+  const fallbackRows = () => fetchFullRows(allChunks.slice(0, topK)).map(decorate)
 
   // 3. AI picks relevant chunks from the index
   const config = getAiConfig()
   if (!config || !config.apiKey) {
-    // Fallback: return first topK chunks
-    return allChunks.slice(0, topK).map(c => {
-      c.document = { id: c.document_id, title: c.doc_title, file_name: c.file_name }
-      return attachImages(db, c)
-    })
+    console.warn('[kb:search] degraded: no_api_key')
+    return { rows: fallbackRows(), degraded: true, degradedReason: 'no_api_key', indexTotal, indexCapped }
   }
 
   const pickPrompt = `你是一个文档检索助手。以下是资料库中所有文档的章节索引。用户提出了一个问题，请从索引中选出与问题最相关的章节。
@@ -690,7 +725,7 @@ export async function search(query: string, deviceIds?: string[], topK = 5): Pro
 用户问题：${query}
 
 章节索引：
-${indexLines}
+${indexBlock}
 
 请返回最相关的章节编号，用逗号分隔，按相关性从高到低排列。最多返回${topK}个。
 如果没有相关章节，返回：none
@@ -699,29 +734,26 @@ ${indexLines}
   try {
     const response = await callAI(config, [{ role: 'user', content: pickPrompt }])
 
-    if (!response || response.trim().toLowerCase() === 'none') return []
+    // LLM 明确判定无相关章节（none）是正常结论，非降级
+    if (!response || response.trim().toLowerCase() === 'none') {
+      return { rows: [], degraded: false, indexTotal, indexCapped }
+    }
 
+    // 编号只可能落在 LLM 可见的截断索引内（cappedChunks），越界/非数字一律过滤
     const indices = response.trim().split(/[,，\s]+/)
       .map((s: string) => parseInt(s.trim(), 10))
-      .filter((i: number) => !isNaN(i) && i >= 0 && i < allChunks.length)
+      .filter((i: number) => !isNaN(i) && i >= 0 && i < cappedChunks.length)
 
-    if (indices.length === 0) return allChunks.slice(0, topK).map(c => {
-      c.document = { id: c.document_id, title: c.doc_title, file_name: c.file_name }
-      return attachImages(db, c)
-    })
+    if (indices.length === 0) {
+      console.warn('[kb:search] degraded: empty_pick')
+      return { rows: fallbackRows(), degraded: true, degradedReason: 'empty_pick', indexTotal, indexCapped }
+    }
 
     // 4. Return selected chunks with document info and image descriptions
-    const db2 = dbGetter()
-    return indices.slice(0, topK).map((i: number) => {
-      const chunk = allChunks[i]
-      chunk.document = { id: chunk.document_id, title: chunk.doc_title, file_name: chunk.file_name }
-      // Attach images（含 file_path，供 ChunkContent 渲染 [图片N]）
-      return attachImages(db2, chunk)
-    })
+    const rows = fetchFullRows(indices.slice(0, topK).map((i: number) => cappedChunks[i])).map(decorate)
+    return { rows, degraded: false, indexTotal, indexCapped }
   } catch {
-    return allChunks.slice(0, topK).map(c => {
-      c.document = { id: c.document_id, title: c.doc_title, file_name: c.file_name }
-      return attachImages(db, c)
-    })
+    console.warn('[kb:search] degraded: callai_error')
+    return { rows: fallbackRows(), degraded: true, degradedReason: 'callai_error', indexTotal, indexCapped }
   }
 }

@@ -778,7 +778,7 @@ export async function chat(
   if (kbSearchMatch) {
     const searchQuery = kbSearchMatch[1].trim()
     try {
-      const searchResults = await kbSearch(searchQuery, deviceIds, 5)
+      const searchResults = (await kbSearch(searchQuery, deviceIds, 5)).rows
       if (searchResults.length > 0) {
         // Build context from search results, replacing [图片N] with descriptions
         const kbContext = searchResults.map((r: any, i: number) => {

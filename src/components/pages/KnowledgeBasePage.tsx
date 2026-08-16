@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
-import { Table, Button, Upload, Modal, message, Tag, Space, Popconfirm, Input, Select, Card, Checkbox, InputNumber, Tabs } from 'antd'
+import { Table, Button, Upload, Modal, message, Tag, Space, Popconfirm, Input, Select, Card, Checkbox, InputNumber, Tabs, Alert } from 'antd'
 import { UploadOutlined, DeleteOutlined, ReloadOutlined, SearchOutlined, FileTextOutlined, FilePdfOutlined, FileWordOutlined, EditOutlined, MergeCellsOutlined, ScissorOutlined, SaveOutlined, CloseOutlined } from '@ant-design/icons'
-import type { KbDocument, KbChunk, KbImage, KbSearchResult } from '@/types/kb'
+import type { KbDocument, KbChunk, KbImage, KbSearchResult, KbSearchEnvelope } from '@/types/kb'
 import type { Device } from '@/types/device'
 import { getImage } from './kb/imageCache'
 import ExperienceTab from '../knowledge/ExperienceTab'
@@ -105,6 +105,8 @@ export default function KnowledgeBasePage() {
   const [filterCategory, setFilterCategory] = useState<string | undefined>()
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<KbSearchResult[]>([])
+  // TXN-04 (18-01)：检索信封元数据（degraded/indexTotal/indexCapped），驱动降级 Alert warning（D-08）
+  const [searchEnvelope, setSearchEnvelope] = useState<KbSearchEnvelope | null>(null)
   const [searching, setSearching] = useState(false)
   const [detailDoc, setDetailDoc] = useState<KbDocument | null>(null)
   const [detailModalOpen, setDetailModalOpen] = useState(false)
@@ -189,8 +191,9 @@ export default function KnowledgeBasePage() {
     if (!searchQuery.trim()) return
     setSearching(true)
     try {
-      const results = await window.api.kb.search(searchQuery)
-      setSearchResults(results)
+      const envelope = await window.api.kb.search(searchQuery)
+      setSearchResults(envelope.rows)
+      setSearchEnvelope(envelope)
     } catch (err) {
       message.error('检索失败: ' + (err as Error).message)
     } finally {
@@ -458,6 +461,16 @@ export default function KnowledgeBasePage() {
           />
           <Button type="primary" icon={<SearchOutlined />} loading={searching} onClick={handleSearch}>检索</Button>
         </Space.Compact>
+        {/* TXN-04 (18-01) D-08：降级/截断可观测——正常路径（degraded=false 且 indexCapped=null）不渲染 */}
+        {searchEnvelope && (searchEnvelope.degraded || searchEnvelope.indexCapped !== null) && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message={searchEnvelope.degraded ? 'AI 筛选不可用，已降级为关键词匹配' : `已从 ${searchEnvelope.indexTotal} 条截取前 ${searchEnvelope.indexCapped} 条`}
+            description={searchEnvelope.degraded && searchEnvelope.indexCapped !== null ? `已从 ${searchEnvelope.indexTotal} 条截取前 ${searchEnvelope.indexCapped} 条` : undefined}
+          />
+        )}
         {searchResults.length > 0 && (
           <div>
             {searchResults.map((r: KbSearchResult, i: number) => (

@@ -47,3 +47,23 @@ export interface KbSearchResult {
   score?: number
   images?: KbImage[]            // FE-04 defer：检索结果 attach 图片，供 ChunkContent 渲染 [图片N]
 }
+
+/**
+ * KB 检索信封（TXN-04 / 18-01，沿 PaginatedResult 命名族）。
+ *
+ * kb:search 返回值由裸数组改为信封对象：降级可观测（Q4 三处 fallback 不再静默）+
+ * 索引截断标注（Q3 无界 prompt 收敛后，LLM 只见前 MAX_INDEX_ENTRIES 条索引）。
+ * renderer 消费 .rows 渲染，degraded / indexCapped 驱动 Alert warning（D-08）。
+ */
+export interface KbSearchEnvelope {
+  /** 检索结果行（降级时为 fallback 前 topK 行，形态与 AI 选中路径一致） */
+  rows: KbSearchResult[]
+  /** 是否走了降级路径（未经 LLM 筛选，直接按索引序返回前 topK 行） */
+  degraded: boolean
+  /** 降级原因（仅 degraded=true 时有值；固定三值枚举，无自由文本穿越 IPC——T-18-01） */
+  degradedReason?: 'no_api_key' | 'empty_pick' | 'callai_error'
+  /** 裁剪前虚拟索引全量条数 */
+  indexTotal: number
+  /** 裁剪后索引条数（null = 未截断；非 null 时 prompt 索引块尾部有截断标注——T-18-03） */
+  indexCapped: number | null
+}

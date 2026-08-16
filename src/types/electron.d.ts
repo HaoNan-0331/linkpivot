@@ -6,7 +6,7 @@ import type { ARPEntry, ARPCollectionResult, ARPScanProgress } from './arp'
 import type { IPMACBinding, IPMACChange, ChangeStats, ExcludedIP, CreateExcludedIPInput } from './anomaly'
 import type { OUIRow, CreateOUIInput, UpdateOUIInput, OUIStats, ScheduleConfig, SchedulerStatus, UpdateScheduleInput } from './oui'
 import type { ChatMessage, ChatSession, DiscoverResult } from './ai'
-import type { KbDocument, KbStatus, KbSearchResult } from './kb'
+import type { KbDocument, KbStatus, KbSearchEnvelope } from './kb'
 import type { Experience, ExperienceInput, ExperienceUpdateInput, ExperienceListResult, ExperienceListInput, ExperienceRelatedDevice, DraftingResult, ConfirmDraftsInput, ConfirmDraftsResult, DraftSummary, SessionMessage } from './experience'
 // FE-02：ChatMessage/ChatSession 迁至 ./ai（role 收联合类型）。
 // re-export 维持既有 `import { ChatMessage } from '@/types/electron'` 调用面
@@ -149,7 +149,8 @@ export interface ElectronAPI {
     getDocument: (docId: string) => Promise<KbDocument | null>
     getStatus: (docId: string) => Promise<KbStatus>
     reprocess: (docId: string) => Promise<{ id: string }>
-    search: (query: string, deviceIds?: string[], topK?: number) => Promise<KbSearchResult[]>
+    // TXN-04 (18-01)：search 返回信封（rows + degraded/indexTotal/indexCapped），渲染层读 .rows
+    search: (query: string, deviceIds?: string[], topK?: number) => Promise<KbSearchEnvelope>
     updateChunk: (chunkId: string, title: string, content: string) => Promise<void>
     deleteChunk: (chunkId: string) => Promise<void>
     mergeChunks: (chunkIds: string[], newTitle: string) => Promise<string>

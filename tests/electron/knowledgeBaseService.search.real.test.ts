@@ -2,15 +2,16 @@
 //
 // Phase 16 TEST-03 characterization 基线（16-02 第二段 Task 2）——kb 第 10 个导出函数 search
 // 的确定性基线：vi.mock('../../electron/services/ai') 固定 getAiConfig/callAI 应答（IO 边界，
-// D-01 范式），DB/目录走 makeRealDb 真库真 tmpdir（D-03/D-04），现状语义含怪癖照录（D-06）：
-//   Q3 search 无界拼 prompt——全部 ready chunks 索引进 LLM 上下文（TXN-04 三层收敛靶子）
-//   Q4 search 三处 fallback 静默降级，无 degraded 可观测标注（TXN-04 靶子）
-// 怪癖清单汇总落盘 16-QUIRKS.md，行为裁决留 Phase 18 D 组。
+// D-01 范式），DB/目录走 makeRealDb 真库真 tmpdir（D-03/D-04）。
+// 18-01（TXN-04）基线改写：search 契约改 KbSearchEnvelope 信封（rows + degraded/degradedReason/
+// indexTotal/indexCapped），Q3/Q4 怪癖修复后断言同步改写（基线即守门）：
+//   Q3 无界拼 prompt → L1 substr 80 摘要 + L2 MAX_INDEX_ENTRIES=200 截断（it 11/12/13）
+//   Q4 三处 fallback 静默降级 → degradedReason 枚举入信封 + console.warn（it 1/5/6）
 //
 // 造数红线：uploadDocument 的 category 只允许合法枚举 'manual'|'api'|'template'|'notes'
 // （init.ts:221 CHECK 约束），本套件一律用 'manual'。
 //
-// 虚拟索引顺序：ORDER BY d.title, c.chunk_index（kb:668）——种子文档按标题排序控索引位。
+// 虚拟索引顺序：ORDER BY d.title, c.chunk_index——种子文档按标题排序控索引位。
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'fs'
@@ -184,73 +185,84 @@ afterEach(() => {
 })
 
 describe('kb search（真路径 realDb + vi.mock ai 固定应答）', () => {
-  it('1. getAiConfig 返 null（无 apiKey）→ fallback 返回前 topK chunks + document attach + images=[]', async () => {
+  it('1. getAiConfig 返 null（无 apiKey）→ 降级信封 no_api_key + rows 前 topK chunks + document attach + images=[]', async () => {
     const { docA } = await seedAb()
     getAiConfigMock.mockReturnValue(null)
 
-    // 现状怪癖 Q4，Phase 18 裁决：fallback 静默降级无 degraded 标注（TXN-04 靶子）——
-    // 返回形态与 AI 选中路径完全一致，调用方无从感知本次没走 LLM
+    // Q4 修复（18-01 TXN-04）：无 apiKey 降级不再静默——degradedReason='no_api_key' 入信封
     const top2 = await search('拓扑问题', undefined, 2)
-    expect(top2).toHaveLength(2)
-    expect(top2.map((c: any) => c.title)).toEqual(['第一章 A1', '第二章 A2'])
-    expect(top2[0].document).toEqual({ id: docA.id, title: '文档A', file_name: '文档A.txt' })
-    expect(top2[0].images).toEqual([])
+    expect(top2.rows).toHaveLength(2)
+    expect(top2.rows.map((c: any) => c.title)).toEqual(['第一章 A1', '第二章 A2'])
+    expect(top2.rows[0].document).toEqual({ id: docA.id, title: '文档A', file_name: '文档A.txt' })
+    expect(top2.rows[0].images).toEqual([])
+    expect(top2.degraded).toBe(true)
+    expect(top2.degradedReason).toBe('no_api_key')
+    expect(top2.indexTotal).toBe(4)
+    expect(top2.indexCapped).toBeNull()
     expect(callAIMock).not.toHaveBeenCalled()
 
     // 默认 topK=5 > 库内 4 chunks → 全量返回
     const all = await search('拓扑问题')
-    expect(all).toHaveLength(4)
-    expect(all.map((c: any) => c.title)).toEqual(['第一章 A1', '第二章 A2', '第一章 B1', '第二章 B2'])
+    expect(all.rows).toHaveLength(4)
+    expect(all.rows.map((c: any) => c.title)).toEqual(['第一章 A1', '第二章 A2', '第一章 B1', '第二章 B2'])
+    expect(all.degraded).toBe(true)
+    expect(all.degradedReason).toBe('no_api_key')
   })
 
-  it('2. callAI 返 none → 返回 []（kb:702）', async () => {
+  it('2. callAI 返 none → rows=[] 且非降级（LLM 明确判定无相关章节）', async () => {
     await seedAb()
     callAIMock.mockResolvedValue('none')
     const result = await search('无关问题')
-    expect(result).toEqual([])
+    expect(result.rows).toEqual([])
+    expect(result.degraded).toBe(false)
+    expect(result.degradedReason).toBeUndefined()
     expect(callAIMock).toHaveBeenCalledTimes(1)
   })
 
-  it('3. callAI 返 0,2 → 按序返回选中 2 chunks + document attach（kb:715-720）', async () => {
+  it('3. callAI 返 0,2 → 按序返回选中 2 chunks + document attach', async () => {
     const { docA, docB } = await seedAb()
     callAIMock.mockResolvedValue('0,2')
     const result = await search('拓扑问题')
-    expect(result).toHaveLength(2)
-    expect(result[0].title).toBe('第一章 A1')
-    expect(result[0].content).toContain('A1正文甲token')
-    expect(result[0].document).toEqual({ id: docA.id, title: '文档A', file_name: '文档A.txt' })
-    expect(result[1].title).toBe('第一章 B1')
-    expect(result[1].content).toContain('B1正文乙token')
-    expect(result[1].document).toEqual({ id: docB.id, title: '文档B', file_name: '文档B.txt' })
+    expect(result.rows).toHaveLength(2)
+    expect(result.rows[0].title).toBe('第一章 A1')
+    expect(result.rows[0].content).toContain('A1正文甲token')
+    expect(result.rows[0].document).toEqual({ id: docA.id, title: '文档A', file_name: '文档A.txt' })
+    expect(result.rows[1].title).toBe('第一章 B1')
+    expect(result.rows[1].content).toContain('B1正文乙token')
+    expect(result.rows[1].document).toEqual({ id: docB.id, title: '文档B', file_name: '文档B.txt' })
   })
 
-  it('4. callAI 返中文逗号 0，2 → split 正则 /[,，\\s]+/ 兼容（kb:704）', async () => {
+  it('4. callAI 返中文逗号 0，2 → split 正则 /[,，\\s]+/ 兼容', async () => {
     await seedAb()
     callAIMock.mockResolvedValue('0，2')
     const result = await search('拓扑问题')
-    expect(result).toHaveLength(2)
-    expect(result.map((c: any) => c.title)).toEqual(['第一章 A1', '第一章 B1'])
+    expect(result.rows).toHaveLength(2)
+    expect(result.rows.map((c: any) => c.title)).toEqual(['第一章 A1', '第一章 B1'])
   })
 
-  it('5. callAI 返越界/非数字 99,abc,-1 → indices 过滤后空 → fallback 前 topK（kb:706-711）', async () => {
+  it('5. callAI 返越界/非数字 99,abc,-1 → indices 过滤后空 → 降级信封 empty_pick + rows 前 topK', async () => {
     await seedAb()
     callAIMock.mockResolvedValue('99,abc,-1')
-    // 现状怪癖 Q4，Phase 18 裁决：AI 应答无效时静默 fallback 全量前 topK，无 degraded 标注
+    // Q4 修复（18-01 TXN-04）：AI 应答无效索引降级不再静默——degradedReason='empty_pick'
     const result = await search('拓扑问题')
-    expect(result).toHaveLength(4)
-    expect(result.map((c: any) => c.title)).toEqual(['第一章 A1', '第二章 A2', '第一章 B1', '第二章 B2'])
+    expect(result.rows).toHaveLength(4)
+    expect(result.rows.map((c: any) => c.title)).toEqual(['第一章 A1', '第二章 A2', '第一章 B1', '第二章 B2'])
+    expect(result.degraded).toBe(true)
+    expect(result.degradedReason).toBe('empty_pick')
   })
 
-  it('6. callAI reject → catch fallback 前 topK（kb:721-726）', async () => {
+  it('6. callAI reject → 降级信封 callai_error + rows 前 topK', async () => {
     await seedAb()
     callAIMock.mockRejectedValue(new Error('network down'))
-    // 现状怪癖 Q4，Phase 18 裁决：LLM 异常静默吞掉（catch 无日志无标注），降级返回前 topK
+    // Q4 修复（18-01 TXN-04）：LLM 异常降级不再静默吞掉——degradedReason='callai_error' + console.warn
     const result = await search('拓扑问题')
-    expect(result).toHaveLength(4)
-    expect(result.map((c: any) => c.document.title)).toEqual(['文档A', '文档A', '文档B', '文档B'])
+    expect(result.rows).toHaveLength(4)
+    expect(result.rows.map((c: any) => c.document.title)).toEqual(['文档A', '文档A', '文档B', '文档B'])
+    expect(result.degraded).toBe(true)
+    expect(result.degradedReason).toBe('callai_error')
   })
 
-  it('7. deviceIds 过滤：device_id IN (...) OR device_id IS NULL 双分支（kb:663-667）', async () => {
+  it('7. deviceIds 过滤：device_id IN (...) OR device_id IS NULL 双分支', async () => {
     await seedReady('文档C.txt', '第一章 C1\nC1正文\n第二章 C2\nC2正文', 'dev-1')
     await seedReady('文档D.txt', '第一章 D1\nD1正文\n第二章 D2\nD2正文', null)
     await seedReady('文档E.txt', '第一章 E1\nE1正文\n第二章 E2\nE2正文', 'dev-2')
@@ -258,31 +270,34 @@ describe('kb search（真路径 realDb + vi.mock ai 固定应答）', () => {
     // dev-1 视角：索引 = 文档C(dev-1) + 文档D(NULL)，无 文档E(dev-2)
     callAIMock.mockResolvedValue('0,2')
     const forDev1 = await search('问题', ['dev-1'])
-    expect(forDev1.map((c: any) => c.document.title)).toEqual(['文档C', '文档D'])
+    expect(forDev1.rows.map((c: any) => c.document.title)).toEqual(['文档C', '文档D'])
 
     // dev-2 视角：索引按 title 排序 = D0,D1,E0,E1 → '2,3' 选中 文档E 两 chunks
     callAIMock.mockResolvedValue('2,3')
     const forDev2 = await search('问题', ['dev-2'])
-    expect(forDev2.map((c: any) => c.document.title)).toEqual(['文档E', '文档E'])
+    expect(forDev2.rows.map((c: any) => c.document.title)).toEqual(['文档E', '文档E'])
   })
 
-  it('8. 空库（无 ready chunks）→ 返回 []（kb:671）', async () => {
+  it('8. 空库（无 ready chunks）→ rows=[] 空信封（indexTotal=0）', async () => {
     callAIMock.mockResolvedValue('0,1')
     const result = await search('任何问题')
-    expect(result).toEqual([])
+    expect(result.rows).toEqual([])
+    expect(result.degraded).toBe(false)
+    expect(result.indexTotal).toBe(0)
+    expect(result.indexCapped).toBeNull()
     // allChunks 空在 getAiConfig 检查前短路，不触 LLM
     expect(callAIMock).not.toHaveBeenCalled()
   })
 
-  it('9. pending 文档 chunk 不入虚拟索引（status=ready 过滤 kb:661）', async () => {
+  it('9. pending 文档 chunk 不入虚拟索引（status=ready 过滤）', async () => {
     await seedAb()
     // 同步 return 即 pending，紧接着同步段执行 search 的索引查询（先于 setImmediate 处理）→ 确定性排除
     const docP = uploadTxt('文档P.txt', '第一章 P1\nP1正文\n第二章 P2\nP2正文')
     callAIMock.mockResolvedValue('0,1,2,3')
     const result = await search('问题')
-    expect(result).toHaveLength(4)
+    expect(result.rows).toHaveLength(4)
     // 用两文档 chunk 计数差断言：返回只含 A/B 的 4 chunks，文档P 的 2 chunks 不在索引
-    expect(result.every((c: any) => c.document.title !== '文档P')).toBe(true)
+    expect(result.rows.every((c: any) => c.document.title !== '文档P')).toBe(true)
     // 排干异步处理，防 setImmediate 在 afterEach 关库后才跑（catch 内 db.prepare 抛错成 unhandled）
     await waitForStatus(docP.id, 'ready')
     const total = (
@@ -291,7 +306,7 @@ describe('kb search（真路径 realDb + vi.mock ai 固定应答）', () => {
     expect(total).toBe(6) // A2 + B2 + P2 = 6（P ready 后库里 6 chunks，但上面 search 只见 4）
   })
 
-  it('10. attachImages：image_ids IN 批查返回 / 畸形 JSON → images=[]（kb:640-652）', async () => {
+  it('10. attachImages：image_ids IN 批查返回 / 畸形 JSON → images=[]', async () => {
     const docA = await seedReady('文档A.txt', TEXT_A)
     const chunks = handle!.db
       .prepare('SELECT id FROM kb_chunks WHERE document_id = ? ORDER BY chunk_index')
@@ -311,21 +326,21 @@ describe('kb search（真路径 realDb + vi.mock ai 固定应答）', () => {
 
     callAIMock.mockResolvedValue('0,1')
     const result = await search('问题')
-    expect(result[0].images.map((i: any) => i.id)).toEqual(['img-x', 'img-y'])
-    expect(result[0].images[0]).toEqual({
+    expect(result.rows[0].images.map((i: any) => i.id)).toEqual(['img-x', 'img-y'])
+    expect(result.rows[0].images[0]).toEqual({
       id: 'img-x',
       file_path: path.join(tmpParent, 'kb_images', 'img-x.png'),
       description: '描述X',
     })
     // 畸形 image_ids JSON → try/catch fallback images=[]
-    expect(result[1].images).toEqual([])
+    expect(result.rows[1].images).toEqual([])
   })
 
-  it('11. callAI 入参断言：pickPrompt 含 indexLines 拼接的全部 chunk 索引行（无界拼 prompt）', async () => {
+  it('11. callAI 入参断言：索引行含 80 字摘要（L1）+ 全部索引行可见（未截断）', async () => {
     await seedAb()
     callAIMock.mockResolvedValue('0')
     const result = await search('拓扑是什么')
-    expect(result).toHaveLength(1)
+    expect(result.rows).toHaveLength(1)
 
     expect(callAIMock).toHaveBeenCalledTimes(1)
     const [passedConfig, messages] = callAIMock.mock.calls[0]
@@ -334,11 +349,59 @@ describe('kb search（真路径 realDb + vi.mock ai 固定应答）', () => {
     expect(messages[0].role).toBe('user')
     expect(prompt).toContain('用户问题：拓扑是什么')
     expect(prompt).toContain('最多返回5个')
-    // 现状怪癖 Q3，Phase 18 裁决：无界拼 prompt——全部 ready chunks 索引进 LLM 上下文
-    //（TXN-04 三层收敛靶子：库增长 = prompt 无限膨胀，无截断无分页）
+    // Q3 修复（18-01 L1）：索引行摘要来自 SQL substr(c.content,1,80)——短内容与旧 slice(0,80) 逐字一致
     expect(prompt).toContain('[0] 文档: 文档A | 章节: 第一章 A1 | 摘要: 第一章 A1 A1正文甲token')
     expect(prompt).toContain('[1] 文档: 文档A | 章节: 第二章 A2 | 摘要: 第二章 A2 A2正文甲token')
     expect(prompt).toContain('[2] 文档: 文档B | 章节: 第一章 B1 | 摘要: 第一章 B1 B1正文乙token')
     expect(prompt).toContain('[3] 文档: 文档B | 章节: 第二章 B2 | 摘要: 第二章 B2 B2正文乙token')
+    // 4 chunks < 200 → 未截断，无标注行
+    expect(result.indexTotal).toBe(4)
+    expect(result.indexCapped).toBeNull()
+    expect(prompt).not.toContain('（索引已从')
+  })
+
+  it('12. L2 截断：>200 chunks → indexCapped=200 + prompt 索引只含前 200 行 + 截断标注行', async () => {
+    // 直接 SQL 造 205 ready chunks（单文档）——本 it 靶子是索引条数上限，非解析语义
+    handle!.db.prepare(
+      `INSERT INTO kb_documents (id, title, file_name, file_path, file_type, file_size, category, device_id, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ready')`
+    ).run('doc-big', '文档BIG', '文档BIG.txt', path.join(tmpParent, 'big.txt'), 'txt', 1, 'manual', null)
+    const ins = handle!.db.prepare(
+      'INSERT INTO kb_chunks (id, document_id, chunk_index, title, content, level, char_count) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    )
+    for (let i = 0; i < 205; i++) {
+      ins.run(`chunk-${i}`, 'doc-big', i, `章节${i}`, `章节${i}正文token`, 1, 20)
+    }
+
+    callAIMock.mockResolvedValue('0')
+    const result = await search('问题')
+    expect(result.indexTotal).toBe(205)
+    expect(result.indexCapped).toBe(200)
+    expect(result.rows).toHaveLength(1)
+    expect(result.rows[0].title).toBe('章节0')
+
+    const prompt = callAIMock.mock.calls[0][1][0].content
+    // 截断可观测（T-18-03）：prompt 尾部标注 + 索引只含前 200 行（[200]-[204] 不可见）
+    expect(prompt).toContain('（索引已从 205 条截取前 200 条）')
+    expect(prompt).toContain('[0] 文档: 文档BIG | 章节: 章节0')
+    expect(prompt).toContain('[199] 文档: 文档BIG | 章节: 章节199')
+    expect(prompt).not.toContain('[200] 文档')
+  })
+
+  it('13. 正常 AI 选中路径：degraded=false + indexCapped=null + rows 含全文（非 80 字摘要版）', async () => {
+    const longBody = '章节长文正文' + 'X'.repeat(100) + '尾部token'
+    await seedReady('文档长.txt', `第一章 长文\n${longBody}\n第二章 短\n短正文`)
+    callAIMock.mockResolvedValue('0')
+    const result = await search('问题')
+    expect(result.degraded).toBe(false)
+    expect(result.degradedReason).toBeUndefined()
+    expect(result.indexCapped).toBeNull()
+    expect(result.indexTotal).toBe(2)
+    expect(result.rows).toHaveLength(1)
+    // L1 配套批查取全文：rows.content 含 80 字窗口外的尾部 token
+    expect(result.rows[0].content).toContain('尾部token')
+    // L1：prompt 索引行只含 substr 80 摘要，不含摘要窗口外的尾部 token
+    const prompt = callAIMock.mock.calls[0][1][0].content
+    expect(prompt).not.toContain('尾部token')
   })
 })
