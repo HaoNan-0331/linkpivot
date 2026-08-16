@@ -6,6 +6,9 @@ import {
   hashPassword,
   verifyPassword,
   decField,
+  encField,
+  projectEncField,
+  DECRYPT_FAIL_PLACEHOLDER,
   setDecryptFailureHandler,
 } from '../../electron/utils/crypto'
 
@@ -77,5 +80,35 @@ describe('crypto', () => {
     setDecryptFailureHandler((e) => calls.push(e))
     for (let i = 0; i < 10; i++) decField('bad', key) // 模拟 list 10 行全失败
     expect(calls.length).toBe(1) // 窗口内只告警 1 次
+  })
+
+  // Phase 17 SEC-06（D-03）：读侧列存在性投影 + 坏密文哨兵占位（纯函数直调，无需 mock）
+  describe('projectEncField', () => {
+    it('enc null + plain non-null returns plain (column-existence fallback, no trial-decrypt)', () => {
+      expect(projectEncField(null, 'legacy-plaintext', key)).toBe('legacy-plaintext')
+    })
+
+    it('enc null + plain null returns empty string', () => {
+      expect(projectEncField(null, null, key)).toBe('')
+      expect(projectEncField(undefined, undefined, key)).toBe('')
+    })
+
+    it('valid ciphertext decrypts back to plaintext (ignores stale plain column)', () => {
+      const enc = encrypt('roundtrip-content', key)
+      expect(projectEncField(enc, null, key)).toBe('roundtrip-content')
+    })
+
+    it('garbage ciphertext returns DECRYPT_FAIL_PLACEHOLDER (D-03 sentinel literal)', () => {
+      // 'v2:AAAA' 非 base64 完整结构（GCM tag/IV 长度不足），解密必抛 → decField 降级 '' → 哨兵占位
+      expect(projectEncField('v2:AAAA', null, key)).toBe('[内容无法解密（密钥不匹配）]')
+      expect(DECRYPT_FAIL_PLACEHOLDER).toBe('[内容无法解密（密钥不匹配）]')
+    })
+
+    it('encField("") === null — discriminator foundation (non-empty _enc cannot come from legal empty plaintext)', () => {
+      // 「非空 _enc 且 decField 返 ''」⟺ 解密失败 的判别器根基：空明文不产生非空 _enc
+      expect(encField('', key)).toBeNull()
+      expect(encField(null, key)).toBeNull()
+      expect(encField(undefined, key)).toBeNull()
+    })
   })
 })

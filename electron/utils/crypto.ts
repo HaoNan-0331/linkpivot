@@ -120,3 +120,21 @@ export function decField(val: string | null | undefined, key: string): string {
     return ''
   }
 }
+
+// D-03（Phase 17 SEC-06）：坏密文读侧占位符——解密失败时投影给 renderer 的哨兵串。
+// 单一来源（systemLog/aiExecLogger 读侧共用，消两 service 副本 drift）；文案不携带任何原文片段
+// （无外泄路径）；非空字符串天然穿透 renderer 既有 `|| '(空)'` 兜底，原样显示（零 renderer 改动）。
+export const DECRYPT_FAIL_PLACEHOLDER = '[内容无法解密（密钥不匹配）]'
+
+// 读侧列存在性投影（禁试解密，P3/T-17-06）：_enc 为 NULL → 返回旧明文列 fallback；
+// 非空 _enc 经 decField 解密，返 '' ⟺ 解密失败（判别器依据 encField('') === null——
+// 非空 _enc 不可能来自合法空明文，矩阵 #5）→ 投影哨兵串占位。
+export function projectEncField(
+  enc: string | null | undefined,
+  plain: string | null | undefined,
+  key: string
+): string {
+  if (enc == null) return plain || ''
+  const v = decField(enc, key)
+  return v === '' ? DECRYPT_FAIL_PLACEHOLDER : v
+}
