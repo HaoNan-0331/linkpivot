@@ -45,8 +45,8 @@ vi.mock('../../electron/services/ai', () => ({
 let handle: RealDbHandle | null = null
 let tmpParent = ''
 
-// 建 kb 四对象（DDL 照 init.ts:214-284 逐字抄，含三触发器——docx 图片路径依赖
-// kb_chunks_au 与 kb_chunks_ai 的 FTS 联动，缺了必挂）。
+// 建 kb 四对象（DDL 照 init.ts kb 块逐字抄，含三触发器（image_desc 恒 NULL，18-02 v14 方案 A）——
+// docx 图片路径依赖 kb_chunks_au 与 kb_chunks_ai 的 FTS 联动，缺了必挂）。
 function createKbTables(db: import('better-sqlite3').Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS kb_documents (
@@ -100,25 +100,21 @@ function createKbTables(db: import('better-sqlite3').Database): void {
 
     CREATE TRIGGER IF NOT EXISTS kb_chunks_ai AFTER INSERT ON kb_chunks BEGIN
       INSERT INTO kb_chunks_fts(rowid, title, content, image_desc)
-        VALUES (new.rowid, new.title, new.content,
-          (SELECT GROUP_CONCAT(description, ' ') FROM kb_images WHERE chunk_id = new.id));
+        VALUES (new.rowid, new.title, new.content, NULL);
     END;
 
     CREATE TRIGGER IF NOT EXISTS kb_chunks_ad AFTER DELETE ON kb_chunks BEGIN
       INSERT INTO kb_chunks_fts(kb_chunks_fts, rowid, title, content, image_desc)
-        VALUES ('delete', old.rowid, old.title, old.content,
-          (SELECT GROUP_CONCAT(description, ' ') FROM kb_images WHERE chunk_id = old.id));
+        VALUES ('delete', old.rowid, old.title, old.content, NULL);
     END;
 
     CREATE TRIGGER IF NOT EXISTS kb_chunks_au AFTER UPDATE ON kb_chunks
       WHEN OLD.content IS NOT NEW.content OR OLD.title IS NOT NEW.title OR OLD.image_ids IS NOT NEW.image_ids
     BEGIN
       INSERT INTO kb_chunks_fts(kb_chunks_fts, rowid, title, content, image_desc)
-        VALUES ('delete', old.rowid, old.title, old.content,
-          (SELECT GROUP_CONCAT(description, ' ') FROM kb_images WHERE chunk_id = old.id));
+        VALUES ('delete', old.rowid, old.title, old.content, NULL);
       INSERT INTO kb_chunks_fts(rowid, title, content, image_desc)
-        VALUES (new.rowid, new.title, new.content,
-          (SELECT GROUP_CONCAT(description, ' ') FROM kb_images WHERE chunk_id = new.id));
+        VALUES (new.rowid, new.title, new.content, NULL);
     END;
   `)
 }

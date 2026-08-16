@@ -3,7 +3,7 @@
 // Phase 16 TEST-03 characterization 基线（16-01 第一段）——断言 kb docs/chunk CRUD + txt 解析的
 // 现状语义含怪癖（D-06）：发现怪癖仅在注释标记，怪癖清单在 16-02 落盘，行为裁决留 Phase 18 D 组。
 // 经 makeRealDb 真库 + _setKbDbGetter/_setKbDirs 注入（D-03 真路径段 + D-04 tmpdir 真目录注入），
-// DDL 照 electron/database/init.ts:214-284 逐字抄（kb_documents/kb_chunks/kb_images/kb_chunks_fts + 3 触发器，
+// DDL 照 electron/database/init.ts kb 块逐字抄（kb_documents/kb_chunks/kb_images/kb_chunks_fts + 3 触发器，
 // 不 import 生产 init.ts——getDatabase 单例牵连，12-01 OQ#1 方案 A 既定决策）。
 //
 // 造数红线：uploadDocument 的 category 只允许合法枚举 'manual'|'api'|'template'|'notes'
@@ -21,10 +21,9 @@
 //   5. kb_chunks_fts（FTS5 外部内容表，content='kb_chunks'）不可直读——SELECT/COUNT 任何列投影均报
 //      `no such column: T.image_desc`（kb_chunks 无 image_desc 列），仅 MATCH + 裸 rowid 投影可查；
 //      CJK unicode61 分词按整段连续汉字成单 token，MATCH 必须整词命中。
-//   6. kb_chunks_au 触发器 delete 命令值不匹配 → `database disk image is malformed`：chunk 插入（ai 触发器
-//      image_desc=NULL）后、先插入非空 description 的图片行再 UPDATE image_ids，delete 端 image_desc 子查询
-//      变为非空与索引不符即抛（description='' 与 NULL 等价不抛——生产无 vision 配置 docx 路径因此幸存，
-//      vision 描述非空则 processDocument 落 status='error'）。
+//   6.（已修，Q10 方案 A / 18-02 v14）kb 三触发器 image_desc 恒 NULL——旧 GROUP_CONCAT 子查询形态下
+//      先插非空 description 图片行再 UPDATE image_ids 会抛 database disk image is malformed，
+//      v14 重建后双端 NULL 常量恒匹配（it 31 改写为修复后语义守卫）。
 //
 // assert 直接 handle.db.prepare 查表行数与字段值（anomalyNewIp.real.test.ts 范式），禁主观词。
 
@@ -53,7 +52,7 @@ import { getDatabase } from '../../electron/database/connection'
 let handle: RealDbHandle | null = null
 let tmpParent = ''
 
-// 建 kb 四对象（DDL 照 init.ts:214-284 逐字抄，含 kb_chunks_au 触发器 END 收尾）。
+// 建 kb 四对象（DDL 照 init.ts kb 块逐字抄，含 kb_chunks_au 触发器 END 收尾；触发器 image_desc 恒 NULL——18-02 v14 方案 A）。
 // updateChunk 的 FTS sync 与 deleteDocument/deleteChunk 的 FTS 清理依赖三个触发器，缺了必挂。
 function createKbTables(db: import('better-sqlite3').Database): void {
   db.exec(`
@@ -108,25 +107,21 @@ function createKbTables(db: import('better-sqlite3').Database): void {
 
     CREATE TRIGGER IF NOT EXISTS kb_chunks_ai AFTER INSERT ON kb_chunks BEGIN
       INSERT INTO kb_chunks_fts(rowid, title, content, image_desc)
-        VALUES (new.rowid, new.title, new.content,
-          (SELECT GROUP_CONCAT(description, ' ') FROM kb_images WHERE chunk_id = new.id));
+        VALUES (new.rowid, new.title, new.content, NULL);
     END;
 
     CREATE TRIGGER IF NOT EXISTS kb_chunks_ad AFTER DELETE ON kb_chunks BEGIN
       INSERT INTO kb_chunks_fts(kb_chunks_fts, rowid, title, content, image_desc)
-        VALUES ('delete', old.rowid, old.title, old.content,
-          (SELECT GROUP_CONCAT(description, ' ') FROM kb_images WHERE chunk_id = old.id));
+        VALUES ('delete', old.rowid, old.title, old.content, NULL);
     END;
 
     CREATE TRIGGER IF NOT EXISTS kb_chunks_au AFTER UPDATE ON kb_chunks
       WHEN OLD.content IS NOT NEW.content OR OLD.title IS NOT NEW.title OR OLD.image_ids IS NOT NEW.image_ids
     BEGIN
       INSERT INTO kb_chunks_fts(kb_chunks_fts, rowid, title, content, image_desc)
-        VALUES ('delete', old.rowid, old.title, old.content,
-          (SELECT GROUP_CONCAT(description, ' ') FROM kb_images WHERE chunk_id = old.id));
+        VALUES ('delete', old.rowid, old.title, old.content, NULL);
       INSERT INTO kb_chunks_fts(rowid, title, content, image_desc)
-        VALUES (new.rowid, new.title, new.content,
-          (SELECT GROUP_CONCAT(description, ' ') FROM kb_images WHERE chunk_id = new.id));
+        VALUES (new.rowid, new.title, new.content, NULL);
     END;
   `)
 }
@@ -395,9 +390,8 @@ describe('kb getDocument（真路径 realDb）', () => {
     expect(chunks).toHaveLength(2)
 
     // txt 路径不产图，手工回填 image_ids 再落图片行（复刻 attach 读取形态）。
-    // 现状怪癖 #6，Phase 18 裁决：必须先 UPDATE image_ids（此时 kb_images 无行，au 触发器 delete 端
-    // image_desc 子查询与 ai 触发器插入端同为 NULL 才匹配）；若先插非空 description 图片行再 UPDATE
-    // image_ids，会触发 `database disk image is malformed`（见文末 FTS 怪癖 describe it 31）。
+    // Q10 修复（18-02 v14 方案 A）后触发器 image_desc 双端恒 NULL：先 UPDATE 后插行、先插行后 UPDATE
+    // 均不再有顺序约束（旧 GROUP_CONCAT 形态下先插非空 description 再 UPDATE 会抛 malformed，见 it 31）。
     handle!.db.prepare('UPDATE kb_chunks SET image_ids = ? WHERE id = ?').run(JSON.stringify(['img-1', 'img-2']), chunks[0].id)
     handle!.db.prepare('UPDATE kb_chunks SET image_ids = ? WHERE id = ?').run(JSON.stringify(['img-3']), chunks[1].id)
     const insImg = handle!.db.prepare(
@@ -631,19 +625,28 @@ describe('kb FTS 现状怪癖（外部内容表，Phase 18 裁决）', () => {
     expect(ftsMatchRowids('中文')).toEqual([]) // 连续汉字段成单 token，'中文' 子串不命中
   })
 
-  it('31. docx 形态顺序（先插非空 description 图片行再 UPDATE image_ids）→ database disk image is malformed', async () => {
+  it('31.（Q10 修复守卫）先插非空 description 图片行再 UPDATE image_ids → 不再抛 malformed，UPDATE 成功 + 后续 kb 写入正常', async () => {
     const doc = uploadTxt('mal.txt', '第一章 图\nmalformedtoken 正文')
     await waitForStatus(doc.id, 'ready')
     const chunk = docChunks(doc.id)[0]
-    // 现状怪癖 #6，Phase 18 裁决：ai 触发器插入时 image_desc=NULL；插入非空 description 的图片行后
-    // UPDATE image_ids 触发 kb_chunks_au，delete 端 image_desc 子查询已变非空与索引不符 → FTS5 抛
-    // database disk image is malformed（description='' 与 NULL 等价不抛——生产无 vision 配置时
-    // docx 路径 description='' 幸存；vision 描述非空则 processDocument 落 status='error'）
+    const rowid = (
+      handle!.db.prepare('SELECT rowid AS r FROM kb_chunks WHERE id = ?').get(chunk.id) as any
+    ).r
+    // Q10 方案 A（18-02 v14）：三触发器 image_desc 双端恒 NULL 常量——先插非空 description 图片行
+    // 再 UPDATE image_ids，au 触发器 delete/insert 端与索引值恒一致，不再抛
+    // database disk image is malformed（旧 GROUP_CONCAT 子查询形态下 delete 端变非空与索引不符即抛，
+    // vision 描述非空时 docx 路径 processDocument 曾落 status='error'）
     handle!.db
       .prepare('INSERT INTO kb_images (id, document_id, chunk_id, file_path, description) VALUES (?, ?, ?, ?, ?)')
       .run('img-bad', doc.id, chunk.id, path.join(tmpParent, 'kb_images', 'img-bad.png'), '非空描述')
     expect(() =>
       handle!.db.prepare('UPDATE kb_chunks SET image_ids = ? WHERE id = ?').run('["img-bad"]', chunk.id)
-    ).toThrow(/database disk image is malformed/)
+    ).not.toThrow()
+    // FTS 索引保持完好（MATCH 仍命中该 rowid），后续 kb 写入正常（updateChunk 显式 fts 行重写不抛）
+    expect(ftsMatchRowids('malformedtoken')).toEqual([rowid])
+    expect(() => updateChunk(chunk.id, '第一章 图', '第一章 图\nmalformedtoken 更新正文')).not.toThrow()
+    const after = docChunks(doc.id)[0]
+    expect(after.content).toBe('第一章 图\nmalformedtoken 更新正文')
+    expect(ftsMatchRowids('更新正文')).toEqual([rowid])
   })
 })

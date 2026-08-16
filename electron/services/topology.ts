@@ -98,8 +98,13 @@ export function updateTopology(id: string, data: any) {
 
 export function deleteTopology(id: string) {
   const db = getDatabase()
-  db.prepare('UPDATE devices SET topology_id = NULL WHERE topology_id = ?').run(id)
-  db.prepare('DELETE FROM topologies WHERE id = ?').run(id)
+  // TXN-01（18-02）：设备脱钩 + 拓扑行删除包同一同步事务——中途失败整体回滚，
+  // 不留「devices 已脱钩但 topologies 行仍在」半写状态。
+  const tx = db.transaction(() => {
+    db.prepare('UPDATE devices SET topology_id = NULL WHERE topology_id = ?').run(id)
+    db.prepare('DELETE FROM topologies WHERE id = ?').run(id)
+  })
+  tx()
 }
 
 export function exportTopology(id: string): string {

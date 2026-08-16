@@ -168,10 +168,10 @@ export function updateChunk(chunkId: string, title: string, content: string): vo
     try {
       const chunk = db.prepare('SELECT rowid FROM kb_chunks WHERE id = ?').get(chunkId) as any
       if (chunk) {
-        const images = db.prepare('SELECT description FROM kb_images WHERE chunk_id = ?').all(chunkId) as any[]
-        const imageDesc = images.map(i => i.description).filter(Boolean).join(' ')
+        // Q10（18-02 方案 A 终裁）：image_desc 恒 NULL，与 v14 三触发器双端常量一致——
+        // kb_chunks_fts 零生产 MATCH 读者，NULL 常量可静态证明不 mismatch（malformed 根除）。
         db.prepare('INSERT OR REPLACE INTO kb_chunks_fts (rowid, title, content, image_desc) VALUES (?, ?, ?, ?)')
-          .run(chunk.rowid, title, content, imageDesc)
+          .run(chunk.rowid, title, content, null)
       }
     } catch { /* FTS sync failed, non-critical */ }
   })
@@ -289,16 +289,24 @@ export function reprocessDocument(docId: string): any {
   const doc = db.prepare('SELECT * FROM kb_documents WHERE id = ?').get(docId) as any
   if (!doc) throw new Error('文档不存在')
 
-  // Clean existing chunks and images
+  // TXN-01（18-02）+ T-18-07：文件序反转为三段式——先收集路径 → tx 提交 → 再 unlink。
+  // 事务回滚时文件仍在磁盘（可重试重处理）；孤儿文件由下次 reprocess 重删
+  // （镜像 deleteChunk 三段式先例：DB 事务提交后再动文件系统）。
   const images = db.prepare('SELECT file_path FROM kb_images WHERE document_id = ?').all(docId) as any[]
+
+  // kb-db-malformed + TXN-01：2 DELETE + status 重置包单事务保原子（镜像 deleteDocument 范式）。
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM kb_chunks WHERE document_id = ?').run(docId)
+    db.prepare('DELETE FROM kb_images WHERE document_id = ?').run(docId)
+    db.prepare('UPDATE kb_documents SET status = ?, error_message = NULL WHERE id = ?').run('pending', docId)
+  })
+  tx()
+
   for (const img of images) {
     try { fs.unlinkSync(img.file_path) } catch { /* ignore */ }
   }
-  db.prepare('DELETE FROM kb_chunks WHERE document_id = ?').run(docId)
-  db.prepare('DELETE FROM kb_images WHERE document_id = ?').run(docId)
 
-  db.prepare('UPDATE kb_documents SET status = ?, error_message = NULL WHERE id = ?').run('pending', docId)
-
+  // Pitfall 1：processDocument 含 await describeImage（异步编排），永不整体包事务（P7 铁律）。
   setImmediate(() => {
     processDocument(docId).catch((err: any) => {
       console.error('[KB] reprocessDocument failed:', err)

@@ -198,8 +198,14 @@ export function getSessionMessages(sessionId: string): Array<{
 }
 
 export function deleteSession(sessionId: string): void {
-  getDatabase().prepare('DELETE FROM chat_history WHERE session_id = ?').run(sessionId)
-  getDatabase().prepare('DELETE FROM chat_sessions WHERE id = ?').run(sessionId)
+  const db = getDatabase()
+  // TXN-01（18-02）：两条 DELETE 包同一同步事务——chat_history 删成、chat_sessions 删除失败
+  // 会留空会话壳（中途失败整体回滚，范式 deleteDocument）。
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM chat_history WHERE session_id = ?').run(sessionId)
+    db.prepare('DELETE FROM chat_sessions WHERE id = ?').run(sessionId)
+  })
+  tx()
 }
 
 export function updateSessionTitle(sessionId: string, title: string): void {

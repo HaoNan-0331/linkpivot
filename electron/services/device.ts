@@ -91,7 +91,6 @@ export function updateDevice(id: string, data: any) {
   if (data.deviceType !== undefined) { sets.push('device_type = ?'); vals.push(data.deviceType) }
 
   vals.push(id)
-  db.prepare(`UPDATE devices SET ${sets.join(', ')} WHERE id = ?`).run(...vals)
 
   // Sync: update embedded device info in all topologies that reference this device
   const topoFields: Record<string, string> = {
@@ -99,61 +98,74 @@ export function updateDevice(id: string, data: any) {
     ipAddress: 'ipAddress', vendor: 'vendor', model: 'model',
   }
   const changedFields = Object.keys(topoFields).filter(k => data[k] !== undefined)
-  if (changedFields.length > 0) {
-    const topologies = db.prepare('SELECT id, data_enc FROM topologies').all() as any[]
-    for (const topo of topologies) {
-      let topoData: any
-      try {
-        topoData = JSON.parse(dec(topo.data_enc))
-      } catch (e) {
-        console.error('[device] 拓扑数据解析失败，跳过该拓扑:', topo.id, e)
-        continue
-      }
-      let modified = false
-      if (topoData.nodes) {
-        for (const node of topoData.nodes) {
-          if (node.data?.deviceId === id) {
-            for (const field of changedFields) {
-              node.data[topoFields[field]] = data[field]
+
+  // TXN-01（18-02）：devices UPDATE + 拓扑 JSON 级联包同一同步事务，中途失败整体回滚（无半写状态）。
+  // 循环内 JSON.parse catch+continue 行级容错原样保留进事务体（P8 禁顺手删 catch）；
+  // UPDATE topologies 的 prepare 提循环外复用（TXN-02 精神）；encField/decField 加密调用不动。
+  const tx = db.transaction(() => {
+    db.prepare(`UPDATE devices SET ${sets.join(', ')} WHERE id = ?`).run(...vals)
+    if (changedFields.length > 0) {
+      const topologies = db.prepare('SELECT id, data_enc FROM topologies').all() as any[]
+      const stmtUpdateTopo = db.prepare('UPDATE topologies SET data_enc = ?, updated_at = ? WHERE id = ?')
+      for (const topo of topologies) {
+        let topoData: any
+        try {
+          topoData = JSON.parse(dec(topo.data_enc))
+        } catch (e) {
+          console.error('[device] 拓扑数据解析失败，跳过该拓扑:', topo.id, e)
+          continue
+        }
+        let modified = false
+        if (topoData.nodes) {
+          for (const node of topoData.nodes) {
+            if (node.data?.deviceId === id) {
+              for (const field of changedFields) {
+                node.data[topoFields[field]] = data[field]
+              }
+              modified = true
             }
-            modified = true
           }
         }
-      }
-      if (modified) {
-        db.prepare('UPDATE topologies SET data_enc = ?, updated_at = ? WHERE id = ?')
-          .run(encField(JSON.stringify(topoData), MK), now, topo.id)
+        if (modified) {
+          stmtUpdateTopo.run(encField(JSON.stringify(topoData), MK), now, topo.id)
+        }
       }
     }
-  }
+  })
+  tx()
 
   return rowToDevice(db.prepare('SELECT * FROM devices WHERE id = ?').get(id))
 }
 
 export function deleteDevice(id: string) {
   const db = getDatabase()
-  // Cascade: remove device node from all topologies that reference this device
-  const topologies = db.prepare('SELECT id, data_enc FROM topologies').all() as any[]
-  for (const topo of topologies) {
-    let data: any
-    try {
-      data = JSON.parse(dec(topo.data_enc))
-    } catch (e) {
-      console.error('[device] 拓扑数据解析失败，跳过该拓扑:', topo.id, e)
-      continue
-    }
-    if (data.nodes) {
-      const filtered = data.nodes.filter((n: any) => n.id !== id && n.data?.deviceId !== id)
-      if (filtered.length !== data.nodes.length) {
-        data.nodes = filtered
-        data.edges = (data.edges || []).filter((e: any) => e.source !== id && e.target !== id)
-        const newDataStr = JSON.stringify(data)
-        db.prepare('UPDATE topologies SET data_enc = ?, updated_at = ? WHERE id = ?')
-          .run(encField(newDataStr, MK), new Date().toISOString(), topo.id)
+  // TXN-01（18-02）：拓扑级联清理 + devices 行删除包同一同步事务，中途失败整体回滚。
+  // JSON.parse catch+continue 行级容错原样保留进事务体（P8）；UPDATE prepare 提循环外复用（TXN-02）。
+  const tx = db.transaction(() => {
+    // Cascade: remove device node from all topologies that reference this device
+    const topologies = db.prepare('SELECT id, data_enc FROM topologies').all() as any[]
+    const stmtUpdateTopo = db.prepare('UPDATE topologies SET data_enc = ?, updated_at = ? WHERE id = ?')
+    for (const topo of topologies) {
+      let data: any
+      try {
+        data = JSON.parse(dec(topo.data_enc))
+      } catch (e) {
+        console.error('[device] 拓扑数据解析失败，跳过该拓扑:', topo.id, e)
+        continue
+      }
+      if (data.nodes) {
+        const filtered = data.nodes.filter((n: any) => n.id !== id && n.data?.deviceId !== id)
+        if (filtered.length !== data.nodes.length) {
+          data.nodes = filtered
+          data.edges = (data.edges || []).filter((e: any) => e.source !== id && e.target !== id)
+          const newDataStr = JSON.stringify(data)
+          stmtUpdateTopo.run(encField(newDataStr, MK), new Date().toISOString(), topo.id)
+        }
       }
     }
-  }
-  db.prepare('DELETE FROM devices WHERE id = ?').run(id)
+    db.prepare('DELETE FROM devices WHERE id = ?').run(id)
+  })
+  tx()
 }
 
 export function getDeviceById(id: string) {
