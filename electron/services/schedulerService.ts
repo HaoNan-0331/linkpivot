@@ -1,7 +1,7 @@
 import { BrowserWindow } from 'electron'
 import { getDatabase } from '../database/connection'
 import { ARPCollector } from './arpCollector'
-import { AnomalyService } from './anomalyService'
+import { ArpIngestService } from './arpIngestService'
 import { IPStatusService } from './ipStatusService'
 
 export class SchedulerService {
@@ -56,13 +56,16 @@ export class SchedulerService {
         if (result.error) continue
         if (result.entries.length > 0) {
           totalEntries += result.entries.length
-          const stmt = db.prepare('INSERT INTO arp_entries (device_id, ip, mac, vlan, interface, collected_at) VALUES (?, ?, ?, ?, ?, ?)')
-          for (const entry of result.entries) {
-            try { stmt.run(result.deviceId, entry.ip, entry.mac, entry.vlan || null, entry.interface || null, result.collectedAt) } catch (e: any) { if (!/UNIQUE|CONSTRAINT/i.test(e.message)) console.error('[scheduler] arp insert failed:', e.message) }
+          // 18-04（TXN-01）：内联 INSERT 副本删除，写库段换调 ArpIngestService 单设备单事务。
+          // P8 审计（A4 采纳）：补 per-device try/catch 对齐 arpIpc.collectFromAll 既有语义——
+          // 单设备事务失败整体回滚该设备写入后 continue，不再 throw 冒泡致整任务失败（已写设备保留半态）。
+          try {
+            const ingested = ArpIngestService.ingestDeviceResult(db, result, collectionTime)
+            totalChanges += ingested.changes
+          } catch (e: any) {
+            console.error('[Scheduler] device ingest failed:', result.deviceId, e.message)
+            continue
           }
-          IPStatusService.batchUpdateIPStatus(result.entries.map(e => ({ ip: e.ip, mac: e.mac })), collectionTime)
-          const changes = AnomalyService.processARPEntries(result.entries)
-          totalChanges += changes.length
         }
       }
 

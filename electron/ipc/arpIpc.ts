@@ -1,24 +1,9 @@
 import { ipcMain } from 'electron'
 import { ARPCollector } from '../services/arpCollector'
 import { IPStatusService } from '../services/ipStatusService'
-import { AnomalyService } from '../services/anomalyService'
+import { ArpIngestService } from '../services/arpIngestService'
 import { getDatabase } from '../database/connection'
 import { secure } from '../utils/authGuard'
-
-// 写入 ARP 条目：仅忽略主键/唯一冲突，其他错误记录日志，避免静默吞掉真实写库失败。
-function insertArpEntries(db: any, deviceId: string, entries: any[], collectedAt: string): number {
-  const stmt = db.prepare('INSERT INTO arp_entries (device_id, ip, mac, vlan, interface, collected_at) VALUES (?, ?, ?, ?, ?, ?)')
-  let inserted = 0
-  for (const entry of entries) {
-    try {
-      stmt.run(deviceId, entry.ip, entry.mac, entry.vlan || null, entry.interface || null, collectedAt)
-      inserted++
-    } catch (e: any) {
-      if (!/UNIQUE|CONSTRAINT/i.test(e.message)) console.error('[arp] insert failed:', e.message)
-    }
-  }
-  return inserted
-}
 
 export function registerArpIpc() {
   ipcMain.handle('arp:collectFromDevice', secure(async (_e, deviceId: string) => {
@@ -32,9 +17,8 @@ export function registerArpIpc() {
       const db = getDatabase()
       const collectionTime = IPStatusService.beginCollection()
       try {
-        insertArpEntries(db, result.deviceId, result.entries, result.collectedAt)
-        IPStatusService.batchUpdateIPStatus(result.entries.map((e: any) => ({ ip: e.ip, mac: e.mac })), collectionTime)
-        AnomalyService.processARPEntries(result.entries)
+        // 18-04（TXN-01）：写库段下沉 ArpIngestService——单设备单事务（INSERT + ip_status + anomaly 原子）
+        ArpIngestService.ingestDeviceResult(db, result, collectionTime)
       } finally {
         IPStatusService.endCollection(collectionTime)
       }
@@ -54,9 +38,10 @@ export function registerArpIpc() {
         if (result.error) { stats.failures++; okResults.push(result); continue }
         if (!result.entries || result.entries.length === 0) { okResults.push(result); continue }
         try {
-          stats.entries += insertArpEntries(db, result.deviceId, result.entries, result.collectedAt)
-          IPStatusService.batchUpdateIPStatus(result.entries.map((e: any) => ({ ip: e.ip, mac: e.mac })), collectionTime)
-          stats.changes += AnomalyService.processARPEntries(result.entries).length
+          // 18-04（TXN-01）：单设备单事务落库；per-device catch 保留在事务外（P8 设备级容错）
+          const ingested = ArpIngestService.ingestDeviceResult(db, result, collectionTime)
+          stats.entries += ingested.inserted
+          stats.changes += ingested.changes
           okResults.push(result)
         } catch (e: any) {
           stats.failures++
