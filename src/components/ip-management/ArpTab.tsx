@@ -34,8 +34,9 @@ export default function ArpTab({ api }: ArpTabProps) {
       setStats(res.stats || null)
       message.success(`采集完成: ${res.results?.length || 0} 台设备, ${res.stats?.entries || 0} 条记录`)
     } catch (e: unknown) {
-      // D-09：ARP 批量写已整批单事务（PERF-02），失败即整体回滚
-      message.error('操作失败，数据已回滚无变化：' + (e instanceof Error ? e.message : String(e)))
+      // 18-04（TXN-01）单设备单事务（per-device）：本 catch 仅在整批 IPC reject（采集整体失败/
+      // endCollection 抛错）时到达，此前已成功写库的设备数据已提交保留，不存在「整批回滚」。
+      message.error('操作失败（已成功写入的设备数据保留，失败设备已回滚）：' + (e instanceof Error ? e.message : String(e)))
     } finally { setLoading(false) }
   }
 
@@ -44,8 +45,9 @@ export default function ArpTab({ api }: ArpTabProps) {
     setLoading(true)
     setResults([])
     setStats(null)
+    // 提升到 try 外：catch 中需引用已成功台数（per-device 事务下前面设备的数据已提交保留）
+    const allResults: ARPCollectionResult[] = []
     try {
-      const allResults: ARPCollectionResult[] = []
       let totalEntries = 0
       for (const deviceId of selectedDeviceIds) {
         const result = await api.arp.collectFromDevice(deviceId)
@@ -57,8 +59,10 @@ export default function ArpTab({ api }: ArpTabProps) {
       setStats({ entries: totalEntries })
       message.success(`采集完成: ${allResults.length} 台设备, ${totalEntries} 条记录`)
     } catch (e: unknown) {
-      // D-09：ARP 批量写已整批单事务（PERF-02），失败即整体回滚
-      message.error('操作失败，数据已回滚无变化：' + (e instanceof Error ? e.message : String(e)))
+      // 18-04（TXN-01）单设备单事务（per-device）：设备 N 失败仅回滚该设备，前 N-1 台已提交——
+      // 部分结果照常展示供核对，措辞不得声称「无变化」。
+      setResults(allResults)
+      message.error(`采集中断（已写入 ${allResults.length} 台设备数据并保留，失败设备已回滚）：` + (e instanceof Error ? e.message : String(e)))
     } finally { setLoading(false) }
   }
 
