@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import * as fs from 'fs'
 import * as path from 'path'
-import { v11 } from './migrations'
+import { v11, v15 } from './migrations'
 
 /**
  * v11 迁移单测（体检报告 2026-08-07 §1.1 #5 闭环）。
@@ -161,10 +161,11 @@ describe('v11 ai_system_logs CHECK widen security 迁移', () => {
     expect(initDdl).toContain(expectedStatusCheck)
   })
 
-  it('4. MIGRATION_HEAD=14（注册完整性静态守卫，防 bump 漏改）', async () => {
+  it('4. MIGRATION_HEAD=15（注册完整性静态守卫，防 bump 漏改）', async () => {
     const mod = await import('./migrations')
-    // Phase 18 18-02：v14 arp_entries.collected_at 索引 + kb 三触发器 image_desc 恒 NULL 重建迁移已注册，MIGRATION_HEAD 从 13 bump 到 14
-    expect(mod.MIGRATION_HEAD).toBe(14)
+    // Phase 18 18-02：v14 注册后 MIGRATION_HEAD=14；
+    // Phase 20 20-01：v15 prompt_overrides + mcp_configs 两表迁移注册，HEAD 从 14 bump 到 15
+    expect(mod.MIGRATION_HEAD).toBe(15)
   })
 
   it('5. v13 双路径 DDL 一致：v13 ALTER 列定义串与 init.ts 三处 fresh-install DDL 特征串逐字一致', () => {
@@ -244,5 +245,96 @@ describe('v11 ai_system_logs CHECK widen security 迁移', () => {
     // Q10 方案 A：GROUP_CONCAT(description) 非确定性子查询全文件归零（含 v7 历史触发器体，已随 v14 对齐）
     expect(migSrc).not.toContain('GROUP_CONCAT(description)')
     expect(initSrc).not.toContain('GROUP_CONCAT(description)')
+  })
+})
+
+describe('v15 prompt_overrides + mcp_configs 建表迁移（Phase 20 20-01）', () => {
+  // v15 迁移函数实际调用形态：db.exec(CREATE TABLE IF NOT EXISTS ...) + db.pragma('user_version = 15')，
+  // 全部包在 db.transaction 内（throw 即 ROLLBACK，mock 直跑 fn，与 v11 mock 思路一致）。
+  function makeMockDb() {
+    const execCalls: string[] = []
+    const pragmaCalls: string[] = []
+    const db: any = {
+      prepare() {
+        return { get: () => undefined, all: () => [] }
+      },
+      exec(sql: string) {
+        execCalls.push(sql)
+      },
+      pragma(cmd: string | string[]) {
+        pragmaCalls.push(Array.isArray(cmd) ? cmd.join(';') : cmd)
+      },
+      transaction(fn: () => void) {
+        return () => fn()
+      },
+    }
+    return { db, execCalls, pragmaCalls }
+  }
+
+  it('1. 执行两表 CREATE TABLE IF NOT EXISTS + user_version=15，全部 DDL 带 IF NOT EXISTS 幂等守卫', () => {
+    const { db, execCalls, pragmaCalls } = makeMockDb()
+    v15(db)
+    expect(execCalls.length).toBeGreaterThanOrEqual(2)
+    const joined = execCalls.join('\n')
+    expect(joined).toContain('CREATE TABLE IF NOT EXISTS prompt_overrides')
+    expect(joined).toContain('CREATE TABLE IF NOT EXISTS mcp_configs')
+    // 全部建表语句均带 IF NOT EXISTS 守卫（不靠 user_version 判定，可重复执行）
+    for (const c of execCalls) {
+      expect(c).toContain('IF NOT EXISTS')
+    }
+    expect(pragmaCalls.some((c) => c.includes('user_version = 15'))).toBe(true)
+  })
+
+  it('2. 幂等重跑：v15 二次执行不 throw，语句仍全为 IF NOT EXISTS', () => {
+    const { db } = makeMockDb()
+    expect(() => {
+      v15(db)
+      v15(db)
+    }).not.toThrow()
+  })
+
+  it('3. 双路径 DDL 一致：v15 两表 DDL 特征串与 init.ts fresh-install DDL 逐字一致', () => {
+    const migSrc = fs.readFileSync(path.resolve(__dirname, 'migrations.ts'), 'utf-8')
+    const v15Idx = migSrc.indexOf('const v15')
+    expect(v15Idx).toBeGreaterThan(-1)
+    const migrationsIdx = migSrc.indexOf('const MIGRATIONS', v15Idx)
+    const v15Body = migSrc.slice(v15Idx, migrationsIdx)
+
+    const initSrc = fs.readFileSync(path.resolve(__dirname, 'init.ts'), 'utf-8')
+    const extractInitBlock = (table: string): string => {
+      const startIdx = initSrc.indexOf(`CREATE TABLE IF NOT EXISTS ${table} (`)
+      expect(startIdx).toBeGreaterThan(-1)
+      const endIdx = initSrc.indexOf(');', startIdx)
+      return initSrc.slice(startIdx, endIdx)
+    }
+
+    // prompt_overrides 关键列特征串：双路径逐字一致（content 明文不加 _enc，CONTEXT 决策）
+    const promptCols = [
+      'prompt_id TEXT PRIMARY KEY',
+      'content TEXT NOT NULL',
+      'based_on_version INTEGER NOT NULL',
+      'updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP',
+    ]
+    for (const col of promptCols) {
+      expect(v15Body).toContain(col)
+      expect(extractInitBlock('prompt_overrides')).toContain(col)
+    }
+
+    // mcp_configs 关键列特征串：双路径逐字一致（credential_enc nullable 占位，业务归 Phase 21）
+    const mcpCols = [
+      'id INTEGER PRIMARY KEY AUTOINCREMENT',
+      'device_id INTEGER UNIQUE NOT NULL REFERENCES devices(id) ON DELETE CASCADE',
+      "type TEXT NOT NULL CHECK(type IN ('stdio','http'))",
+      'credential_enc TEXT',
+      'enabled INTEGER NOT NULL DEFAULT 1',
+    ]
+    for (const col of mcpCols) {
+      expect(v15Body).toContain(col)
+      expect(extractInitBlock('mcp_configs')).toContain(col)
+    }
+
+    // 反向守卫：credential_enc 不得带 NOT NULL / 空串默认（v13:369-370 双态语义）
+    expect(v15Body).not.toContain('credential_enc TEXT NOT NULL')
+    expect(v15Body).not.toContain("credential_enc TEXT DEFAULT ''")
   })
 })
