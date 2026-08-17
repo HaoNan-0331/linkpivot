@@ -33,7 +33,7 @@ describe('diffInline（自研逐词 diff 纯函数）', () => {
     const a = '第一行不变\n第二行旧内容\n第三行不变'
     const b = '第一行不变\n第二行新内容\n第三行不变'
     const segs = diffInline(a, b)
-    expect(segs.map((s) => s.text).join('')).toBe(b)
+    expect(segs.filter((s) => s.type !== 'remove').map((s) => s.text).join('')).toBe(b)
     expect(segs.some((s) => s.type === 'add' && s.text.includes('新'))).toBe(true)
     expect(segs.some((s) => s.type === 'remove' && s.text.includes('旧'))).toBe(true)
     expect(segs.some((s) => s.type === 'same' && s.text.includes('第一行不变'))).toBe(true)
