@@ -4,7 +4,8 @@ import NetworkTab from '../ip-management/NetworkTab'
 import AnomalyTab from '../ip-management/AnomalyTab'
 import OuiTab from '../ip-management/OuiTab'
 
-const api = (window as any).api
+// Phase 19 / REN-02：删 window as-any 中转，直连 window.api（全局 Window.api: ElectronAPI 类型声明已有）
+const api = window.api
 
 export default function IpManagementPage() {
   return (

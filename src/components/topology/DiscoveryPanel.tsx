@@ -53,11 +53,12 @@ export default function DiscoveryPanel({
     try {
       const list = await window.api.device.list()
       // Only show CLI devices (ssh/telnet)
+      // Phase 19 / REN-02：(d: any)×2 → Device 强类型（device.list() 已返 Promise<Device[]>，照抄 useAIChat 收窄版写法）
       const cliDevices = list.filter(
-        (d: any) => d.connectionType === 'ssh' || d.connectionType === 'telnet'
+        (d) => d.connectionType === 'ssh' || d.connectionType === 'telnet'
       )
       setDevices(
-        cliDevices.map((d: any) => ({
+        cliDevices.map((d) => ({
           id: d.id,
           name: d.name,
           ipAddress: d.ipAddress,
@@ -99,8 +100,9 @@ export default function DiscoveryPanel({
       setResultEdges(result.edges || [])
       setFailedDevices(result.failedDevices || [])
       setStep('done')
-    } catch (err: any) {
-      setError(err.message || '拓扑发现失败')
+    } catch (e: unknown) {
+      // Phase 19 / REN-02：catch unknown + instanceof 窄化（OuiTab.tsx:71 范式），fallback 沿用原默认文案
+      setError(e instanceof Error ? e.message : '拓扑发现失败')
       setStep('done')
     }
   }

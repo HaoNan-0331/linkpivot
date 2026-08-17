@@ -13,8 +13,9 @@ export default function CommandWhitelistEditor() {
     try {
       const list = await window.api.ai.getCommandWhitelist()
       setWhitelist(list)
-    } catch (e: any) {
-      message.error(e.message)
+    } catch (e: unknown) {
+      // Phase 19 / REN-02：catch unknown + instanceof 窄化（OuiTab.tsx:71 范式）
+      message.error(e instanceof Error ? e.message : String(e))
     }
     setLoading(false)
   }
@@ -41,8 +42,9 @@ export default function CommandWhitelistEditor() {
     try {
       await window.api.ai.saveCommandWhitelist(whitelist)
       message.success('白名单已保存')
-    } catch (e: any) {
-      message.error(e.message)
+    } catch (e: unknown) {
+      // Phase 19 / REN-02：catch unknown + instanceof 窄化（OuiTab.tsx:71 范式）
+      message.error(e instanceof Error ? e.message : String(e))
     }
     setSaving(false)
   }

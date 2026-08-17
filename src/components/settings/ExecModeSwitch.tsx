@@ -40,8 +40,9 @@ export default function ExecModeSwitch() {
       } else {
         message.error(result.error || '切换失败')
       }
-    } catch (e: any) {
-      message.error(e.message)
+    } catch (e: unknown) {
+      // Phase 19 / REN-02：catch unknown + instanceof 窄化（OuiTab.tsx:71 范式）
+      message.error(e instanceof Error ? e.message : String(e))
     }
     setLoading(false)
   }
