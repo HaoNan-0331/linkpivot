@@ -7,11 +7,17 @@ import AddDeviceModal from '@/components/topology/AddDeviceModal'
 import DiscoveryPanel from '@/components/topology/DiscoveryPanel'
 import EditNodeModal from '@/components/topology/EditNodeModal'
 import { useTopologyToolbarStore } from '@/stores/topologyToolbarStore'
-import type { TopologyNode, TopologyNodeData, TopologyEdgeData, TopologyEdge } from '@/types/topology'
+import type { TopologyNode, TopologyNodeData, TopologyEdgeData, TopologyEdge, TopologySummary } from '@/types/topology'
 import type { ConnectionType } from '@/types/device'
 
+// D-08（Phase 19 / REN-02）：topology 记录已知字段覆盖集（Topology 类型字段），供未识别字段 warn 判定
+const KNOWN_TOPOLOGY_KEYS = new Set(['id', 'name', 'nodes', 'edges', 'status', 'createdAt', 'updatedAt'])
+// T-19-04：未识别字段 warn 全局去重标志（至多一次）
+let warnedUnknownTopologyKeys = false
+
 export default function TopologyPage() {
-  const [topologies, setTopologies] = useState<any[]>([])
+  // Phase 19 / REN-02：topologies 强类型 TopologySummary（P14 全字段 optional，兼容持久化历史 JSON）
+  const [topologies, setTopologies] = useState<TopologySummary[]>([])
   const [currentTopologyId, setCurrentTopologyId] = useState<string | null>(null)
   const [nodes, setNodes, onNodesChange] = useNodesState<TopologyNodeData>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<TopologyEdgeData>([])
@@ -49,6 +55,19 @@ export default function TopologyPage() {
 
   const fetchTopologies = useCallback(async () => {
     const list = await window.api.topology.list()
+    // D-08（Phase 19 / REN-02）：旧版本拓扑 JSON 含未识别字段时静默忽略 + console.warn 可观测——
+    // 仅输出字段名键集不输出值（T-19-05，拓扑数据可能含 IP 等资产信息）；
+    // 模块级 warnedUnknownTopologyKeys 去重，整个会话至多 warn 一次（T-19-04 防大拓扑刷屏）。
+    if (!warnedUnknownTopologyKeys) {
+      for (const record of list) {
+        const unknown = Object.keys(record).filter((k) => !KNOWN_TOPOLOGY_KEYS.has(k))
+        if (unknown.length > 0) {
+          warnedUnknownTopologyKeys = true
+          console.warn('拓扑数据含未识别字段', unknown)
+          break
+        }
+      }
+    }
     setTopologies(list)
     // Auto-select most recent topology if none selected
     if (list.length > 0) {

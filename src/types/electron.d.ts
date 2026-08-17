@@ -141,7 +141,7 @@ export interface ElectronAPI {
     runNow: () => Promise<SchedulerRunResult>
     getStatus: () => Promise<SchedulerStatus>
   }
-  // FE-02 (05-04)：kb.* 通道收类型（05-01 保留 Promise<any>，本 plan 接力，DTO 见 src/types/kb.ts）
+  // FE-02 (05-04)：kb.* 通道已全量收类型（05-01 的宽返回已在 05-04 收窄，DTO 见 src/types/kb.ts）
   kb: {
     uploadBuffer: (buffer: ArrayBuffer, fileName: string, fileType: string, fileSize: number, category: string, deviceId: string | null) => Promise<{ id: string }>
     listDocuments: (deviceId?: string, category?: string) => Promise<KbDocument[]>

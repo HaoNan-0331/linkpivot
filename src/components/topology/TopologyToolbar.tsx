@@ -8,10 +8,11 @@ import {
   ExportOutlined,
 } from '@ant-design/icons'
 
+// Phase 19 / REN-02（P14）：字段 optional 化——与 TopologySummary 对齐，兼容持久化历史 JSON
 interface TopologyItem {
-  id: string
-  name: string
-  status: string
+  id?: string
+  name?: string
+  status?: string
 }
 
 interface TopologyToolbarProps {

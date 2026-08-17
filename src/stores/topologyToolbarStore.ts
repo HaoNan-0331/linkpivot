@@ -1,7 +1,8 @@
 import { create } from 'zustand'
 
 interface TopologyToolbarState {
-  topologies: { id: string; name: string; status: string }[]
+  // Phase 19 / REN-02（P14）：字段 optional 化——与 TopologySummary 对齐，兼容持久化历史 JSON
+  topologies: { id?: string; name?: string; status?: string }[]
   currentTopologyId: string | null
   onTopologyChange: (id: string | null) => void
   onNew: (name: string) => void

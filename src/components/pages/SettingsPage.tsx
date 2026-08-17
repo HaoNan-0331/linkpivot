@@ -22,6 +22,9 @@ export default function SettingsPage() {
   const logout = useAuthStore((s) => s.logout)
 
   // Scheduler state
+  // REN-02 分诊（Phase 19 / D-07 谨慎条款）：`{} as X` 空对象断言保留——消费处（enabled/!!、intervalMinutes||60、
+  // retentionDays??90、lastRun/nextRun/isTaskRunning 条件渲染）均已带空值兜底，改 `X | null` 需连锁改
+  // 全部渲染分支且不改变实际行为，波及面大于收益；18-05 CR-01 retentionDays blur/Enter 提交语义不受影响。
   const [schedulerConfig, setSchedulerConfig] = useState<ScheduleConfig>({} as ScheduleConfig)
   const [schedulerStatus, setSchedulerStatus] = useState<SchedulerStatus>({} as SchedulerStatus)
   const [schedulerLoading, setSchedulerLoading] = useState(false)
