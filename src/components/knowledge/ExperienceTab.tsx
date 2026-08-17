@@ -122,6 +122,11 @@ export default function ExperienceTab() {
 
   // 搜索防抖
   const debounceRef = useRef<number | null>(null)
+  // WR-02：page ref 镜像——筛选 effect 需读最新 page 但不将其纳入依赖（否则 setPage 又触发本 effect 造成双加载）
+  const pageRef = useRef(1)
+  useEffect(() => {
+    pageRef.current = page
+  }, [page])
 
   // 拉设备候选（设备 Select 用）
   useEffect(() => {
@@ -172,9 +177,14 @@ export default function ExperienceTab() {
     }
   }
 
-  // 任一筛选变化触发（防抖）；筛选/排序变化重置第 1 页（D-05）
+  // 任一筛选变化触发；筛选变化重置第 1 页（D-05）。
+  // WR-02：page > 1 时仅 setPage(1)，由 page effect 立即以新筛选加载一次（不防抖重复）；
+  // page === 1 时走 300ms 防抖加载。
   useEffect(() => {
-    setPage(1)
+    if (pageRef.current !== 1) {
+      setPage(1)
+      return
+    }
     if (debounceRef.current) window.clearTimeout(debounceRef.current)
     debounceRef.current = window.setTimeout(() => {
       loadExperiences()
