@@ -593,6 +593,14 @@ export async function confirmCommand(
     return msg
   }
 
+  // T-20-04 fail-closed 空命令批次（回复解析失败回落的人工确认）：无命令可执行，
+  // 直接返回说明，不构造空结果集触发 LLM 追问（既有 approved 路径对此类批次无意义）。
+  if (batch.commands.length === 0) {
+    const msg = '本轮回复命令结构解析失败（fail-closed），未执行任何命令。请检查提示词配置后重试。'
+    saveChatMessage('assistant', msg, null, batch.sessionId)
+    return msg
+  }
+
   // Execute all approved commands — group by device for batch execution
   const cmdResults: Array<{ deviceName: string; cmd: string; output: string; status: string }> = []
 
@@ -698,6 +706,19 @@ function buildExpAnswerPayload(
 }
 
 // ---------- Main chat ----------
+
+/**
+ * T-20-04 fail-closed 判定：AI 回复命令结构解析失败。
+ * 判定规则：回复含 [CMD(:name)?] 开标签但提取不到任何完整命令块（标签未闭合），
+ * 或提取出的命令体为空串——两类都视为「改坏提示词导致的畸形回复」。
+ */
+export function isMalformedCommandReply(
+  reply: string,
+  commands: Array<{ deviceName: string; cmd: string }>
+): boolean {
+  const hasOpenTag = /\[CMD(?::[^\]]+)?\]/.test(reply)
+  return (hasOpenTag && commands.length === 0) || commands.some((c) => !c.cmd)
+}
 
 export async function chat(
   messages: Array<{ role: string; content: string }>,
@@ -836,6 +857,39 @@ export async function chat(
     const deviceName = (match[1] || '').trim()
     const cmd = match[2].trim()
     commands.push({ deviceName, cmd })
+  }
+
+  // T-20-04 fail-closed（Phase 20 PMT-04 / Success Criteria 5）：
+  // 用户改坏 ai.chat.systemPrompt（override）可能导致 AI 输出畸形命令结构（未闭合 [CMD] 标签 /
+  // 空命令体）。confirm 模式下解析失败不进入执行路径、也不静默当作"无命令"处理，而是回落输出
+  // 与下方 confirm_required 同型的人工确认结构（携带原始回复供 UI 展示）——
+  // 宁可多一次人工确认，绝不因解析失败漏确认或误执行。auto 模式维持既有行为不变。
+  if (targetDevices.length > 0 && execMode === 'confirm' && isMalformedCommandReply(finalAiReply, commands)) {
+    const batchId = uuidv4()
+    // 注册空命令批次：确认/拒绝均无害（confirmCommand 空命令守卫直接返回说明，不触发 LLM 追问）
+    pendingBatches.set(batchId, {
+      commands: [],
+      rejectedCommands: [],
+      fullMessages,
+      aiReply: finalAiReply,
+      config,
+      deviceNames: targetDevices.map((d) => d.name),
+      sessionId: sessionId || null,
+      createdAt: Date.now(),
+      expReferences,
+    })
+    const failClosedResponse = JSON.stringify({
+      type: 'confirm_required',
+      execId: batchId,
+      commands: [],
+      rejectedCommands: [
+        { command: '（回复命令结构解析失败）', reason: 'AI 回复命令标记解析失败（fail-closed），未提取到可执行命令；请检查提示词配置后重试' },
+      ],
+      aiExplanation: finalAiReply,
+    })
+    saveChatMessage('user', messages[messages.length - 1]?.content || '', null, sessionId)
+    saveChatMessage('assistant', '回复命令结构解析失败（fail-closed），等待人工确认...', null, sessionId)
+    return failClosedResponse
   }
 
   // No commands or no devices — just return the reply
