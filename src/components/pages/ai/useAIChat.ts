@@ -2,7 +2,8 @@ import { useState, useCallback, useRef } from 'react'
 import { message } from 'antd'
 import type { ChatSession } from '@/types/ai'
 import type { ConfirmDraftsResult } from '@/types/experience'
-import type { UseAIChatReturn, DeviceOption, ChatMsg, ConfirmData, ReferenceItem } from './types'
+import type { UseAIChatReturn, DeviceOption, ChatMsg, ConfirmData } from './types'
+import { parseAiReply } from './parseAiReply'
 
 /**
  * useAIChat —— AIPage page-local 会话态自定义 hook（FE-01 / D-5-1）。
@@ -151,55 +152,21 @@ export function useAIChat(): UseAIChatReturn {
         setSessions((prev) => prev.map((s) => s.id === currentSessionId ? { ...s, title } : s))
       }
 
-      // Check if reply is a confirm_required / kb_answer / exp_answer response
-      try {
-        const parsed = JSON.parse(reply) as ConfirmData & {
-          type: string
-          content?: string
-          references?: ReferenceItem[]
-          // exp_answer 的原始 references（ai.ts:835 返 camelCase，含 sourceSessionId 用于拆 session 引用）
-          // kb_answer 的 references 无 kind，消费时统一补 kind:'kb'
-        }
-        if (parsed.type === 'confirm_required') {
-          setPendingConfirm(parsed)
-          setLoading(false)
-          return
-        }
-        if (parsed.type === 'kb_answer') {
-          // KB references 既有形态 {docTitle,chunkTitle,docId} 无 kind，map 补 kind:'kb'（联合类型类型安全）
-          const refs: ReferenceItem[] = (parsed.references || []).map((r) => {
-            if ('kind' in r) return r
-            const kr = r as { docTitle: string; chunkTitle: string; docId: string }
-            return { kind: 'kb', docTitle: kr.docTitle, chunkTitle: kr.chunkTitle, docId: kr.docId } as ReferenceItem
-          })
-          setMessages([...newMessages, { role: 'assistant', content: parsed.content || '', references: refs }])
-          setLoading(false)
-          return
-        }
-        if (parsed.type === 'exp_answer') {
-          // D-11-10/D-11-11：经验引用 + 拆会话引用（sourceSessionId 非空额外 push session 项）
-          // WR-01 fix：KB 与经验同命中时 ai.ts 合并进 exp_answer.references（kind:'kb' + kind:'experience'），按 kind 分流。
-          const refs: ReferenceItem[] = []
-          for (const r of parsed.references || []) {
-            if (r.kind === 'experience') {
-              refs.push({ kind: 'experience', expId: r.expId, title: r.title, unsupported: r.unsupported })
-              // ai.ts:835 references 已含 sourceSessionId 字段（未列入类型联合，运行时存在）
-              const sid = (r as { sourceSessionId?: string | null }).sourceSessionId
-              if (sid) refs.push({ kind: 'session', sessionId: sid, title: '原始会话' })
-            } else if (r.kind === 'kb') {
-              const kr = r as { docTitle: string; chunkTitle: string; docId: string }
-              refs.push({ kind: 'kb', docTitle: kr.docTitle, chunkTitle: kr.chunkTitle, docId: kr.docId })
-            }
-          }
-          setMessages([...newMessages, { role: 'assistant', content: parsed.content || '', references: refs }])
-          setLoading(false)
-          return
-        }
-      } catch {
-        // Not JSON — normal reply
+      // Phase 19 REN-02：AI 应答解析收敛为纯函数 parseAiReply（原 :154-200 内联段语义逐字迁移：
+      // confirm_required 提前返回 / kb·exp 引用归一 + session 拆分，P14 unknown 边界校验）
+      const parsed = parseAiReply(reply)
+      if (parsed.kind === 'confirm') {
+        setPendingConfirm(parsed.confirm)
+        setLoading(false)
+        return
+      }
+      if (parsed.kind === 'answer') {
+        setMessages([...newMessages, { role: 'assistant', content: parsed.content, references: parsed.references }])
+        setLoading(false)
+        return
       }
 
-      setMessages([...newMessages, { role: 'assistant', content: reply }])
+      setMessages([...newMessages, { role: 'assistant', content: parsed.content }])
     } catch (e: unknown) {
       const errMsg = `错误: ${e instanceof Error ? e.message : String(e)}`
       setMessages([...newMessages, { role: 'assistant', content: errMsg }])
@@ -218,25 +185,14 @@ export function useAIChat(): UseAIChatReturn {
     setConfirmInFlight(true) // Phase 14-02：视觉锁在途（按钮 loading+disabled）
     try {
       const result = await window.api.ai.confirmCommand(confirmData.execId, approved)
-      // Phase 11 UAT fix：命令路径也返 exp_answer/kb_answer JSON → 解析 references（与 handleSend 同语义）
-      let content = result
-      let refs: ReferenceItem[] | undefined
-      try {
-        const parsed = JSON.parse(result) as { type: string; content?: string; references?: any[] }
-        if (parsed.type === 'exp_answer' || parsed.type === 'kb_answer') {
-          content = parsed.content || ''
-          refs = (parsed.references || []).flatMap((r: any): ReferenceItem[] => {
-            if (r.kind === 'kb' || r.docTitle !== undefined) {
-              return [{ kind: 'kb' as const, docTitle: r.docTitle, chunkTitle: r.chunkTitle, docId: r.docId }]
-            }
-            const exp: ReferenceItem = { kind: 'experience', expId: r.expId, title: r.title, unsupported: r.unsupported }
-            return r.sourceSessionId
-              ? [exp, { kind: 'session' as const, sessionId: r.sourceSessionId, title: '原始会话' }]
-              : [exp]
-          })
-        }
-      } catch { /* 纯文本回复（无 references） */ }
-      setMessages((prev) => [...prev, { role: 'assistant', content, references: refs }])
+      // Phase 19 REN-02：原 Phase 11 UAT fix 内联解析段（:222-238）收敛为 parseAiReply（与 handleSend 同语义）
+      const parsed = parseAiReply(result)
+      if (parsed.kind === 'answer') {
+        setMessages((prev) => [...prev, { role: 'assistant', content: parsed.content, references: parsed.references }])
+      } else {
+        // 纯文本回复（无 references）——原降级路径
+        setMessages((prev) => [...prev, { role: 'assistant', content: parsed.content }])
+      }
     } catch (e: unknown) {
       message.error(e instanceof Error ? e.message : String(e))
     }
