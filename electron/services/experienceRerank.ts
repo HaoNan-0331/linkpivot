@@ -1,4 +1,5 @@
 import { callAI, getAiConfig } from './ai'
+import { PromptService } from './promptService'
 
 /**
  * 经验精排 LLM service（Phase 11 D-11-3 方案 Y / D-11-4 阈值防噪声）。
@@ -30,13 +31,8 @@ export interface RerankInput {
   demoMode?: boolean
 }
 
-const RERANK_SYSTEM_PROMPT = [
-  '你是网络运维经验检索助手。对每条候选经验，结合用户问题判相关度并打分。',
-  '【反幻觉红线】禁止编造 exp_id；score 必须 0-1 数值；只对给定候选打分，不得新增。',
-  '【输出格式】严格输出 JSON 数组，不得有任何额外文字。每条对象字段：',
-  'exp_id(候选列表中既有的 id), score(0-1 数值，支持 "0.85" 或 "85%" 百分比字符串), reason(为何相关/不相关)。',
-  '若全部不相关，返回空数组 []。',
-].join('\n')
+// Phase 20 PMT-01：RERANK_SYSTEM_PROMPT 收敛到 promptRegistry 'rerank.experience'（用户可 override），
+// 文案与收敛前逐字一致（promptRegistry.ts 逐字搬移）。
 
 export function buildRerankPrompt(input: RerankInput): { system: string; user: string } {
   const candLine = input.candidates.length > 0
@@ -50,7 +46,7 @@ export function buildRerankPrompt(input: RerankInput): { system: string; user: s
     '',
     '请按 system 约束输出 JSON 数组（每条含 exp_id + score + reason；全部不相关返 []）。',
   ].join('\n')
-  return { system: RERANK_SYSTEM_PROMPT, user }
+  return { system: PromptService.getPrompt('rerank.experience'), user }
 }
 
 /** 剥离 ```json 包裹与首尾多余文字，提取第一个 [ 到最后一个 ]（复刻 draftingService.ts:97-104 同逻辑）。 */

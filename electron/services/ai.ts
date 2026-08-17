@@ -10,6 +10,7 @@ import { isCommandAllowed } from './commandSafety'
 import { createLog, updateLogStatus, appendLogAiResponse, getLogs, setAiExecLoggerMasterKey } from './aiExecLogger'
 import { search as kbSearch } from './knowledgeBaseService'
 import { retrieveForAnswer } from './experienceRetrieval'
+import { PromptService } from './promptService'
 
 let MK = ''
 export function setAiMasterKey(key: string) {
@@ -711,26 +712,9 @@ export async function chat(
   const whitelist = getCommandWhitelist()
   const execMode = getExecMode()
 
-  // Build system prompt
-  let systemPrompt =
-    '你是一个网络设备管理AI助手。你可以帮助用户查询网络设备状态、分析网络问题。' +
-    '当需要查询设备信息时，请在回复中使用特殊格式标记要执行的命令：\n' +
-    '[CMD:设备名]命令内容[/CMD]\n' +
-    '如果只有一个设备，也可以用 [CMD]命令内容[/CMD]\n' +
-    '每个命令单独一行。你可以在命令前后添加解释说明。\n' +
-    '注意：只能执行只读查询命令（如 display、show、ping、traceroute），不能执行修改配置的命令。\n\n' +
-    '你还可以查询资料库中已上传的设备文档。\n' +
-    '**必须使用资料库搜索的场景**（优先级高于SSH命令）：\n' +
-    '- 用户询问设备的默认账号/密码、初始配置、出厂设置\n' +
-    '- 用户询问设备功能说明、配置方法、操作指南\n' +
-    '- 用户询问设备规格参数、支持的特性\n' +
-    '- 用户的问题涉及特定产品型号的专属知识\n\n' +
-    '使用格式：\n' +
-    '[KB_SEARCH]搜索关键词[/KB_SEARCH]\n' +
-    '系统会返回相关文档片段，你基于这些内容回答用户问题。' +
-    '每次最多使用一次KB_SEARCH。'
-
-  // Load target devices
+  // Load target devices（动态注入段先行构造，值与拼接顺序与收敛前完全一致——PMT-01 零回归）
+  // 前导 \n\n 由变量值带入（registry 占位符契约，见 promptRegistry.ts ai.chat.systemPrompt 注释）
+  let deviceInfo = ''
   const targetDevices: any[] = []
   if (deviceIds && deviceIds.length > 0) {
     for (const did of deviceIds) {
@@ -739,13 +723,14 @@ export async function chat(
     }
     if (targetDevices.length === 1) {
       const d = targetDevices[0]
-      systemPrompt += `\n\n当前目标设备信息：\n- 名称: ${d.name}\n- IP: ${d.ipAddress}\n- 厂商: ${d.vendor || '未知'}\n- 型号: ${d.model || '未知'}\n- 版本: ${d.version || '未知'}`
+      deviceInfo = `\n\n当前目标设备信息：\n- 名称: ${d.name}\n- IP: ${d.ipAddress}\n- 厂商: ${d.vendor || '未知'}\n- 型号: ${d.model || '未知'}\n- 版本: ${d.version || '未知'}`
     } else if (targetDevices.length > 1) {
-      systemPrompt += '\n\n当前目标设备（多台）：'
+      let multi = '\n\n当前目标设备（多台）：'
       for (const d of targetDevices) {
-        systemPrompt += `\n---\n- 名称: ${d.name}\n- IP: ${d.ipAddress}\n- 厂商: ${d.vendor || '未知'}\n- 型号: ${d.model || '未知'}\n- 版本: ${d.version || '未知'}`
+        multi += `\n---\n- 名称: ${d.name}\n- IP: ${d.ipAddress}\n- 厂商: ${d.vendor || '未知'}\n- 型号: ${d.model || '未知'}\n- 版本: ${d.version || '未知'}`
       }
-      systemPrompt += '\n\n你可以在不同设备上执行不同命令，请用 [CMD:设备名] 格式指定在哪台设备上执行。'
+      multi += '\n\n你可以在不同设备上执行不同命令，请用 [CMD:设备名] 格式指定在哪台设备上执行。'
+      deviceInfo = multi
     }
   }
 
@@ -753,13 +738,14 @@ export async function chat(
   // retrieveForAnswer 内部整体 try/catch，异常时 expReferences=[] 继续正常答（D-11-9 不阻塞主路径）。
   const userMessage = messages[messages.length - 1]?.content || ''
   let expReferences: Array<{ exp_id: string; title: string; source_session_id: string | null; unsupported: boolean }> = []
+  let experienceContext = ''
   try {
     const retrieval = await retrieveForAnswer({ userMessage, deviceIds })
     if (retrieval.injected.length > 0) {
       const expContext = retrieval.injected.map((e, i) =>
         `[经验${i + 1}: ${e.title}${e.unsupported ? '（⚠ 此条经验命令已失支持，请提示用户手动执行或更新白名单）' : ''}]\n${e.content}`
       ).join('\n\n')
-      systemPrompt += `\n\n以下是经验库中检索到的相关经验（仅供参考，回答末尾无需标注来源）：\n${expContext}`
+      experienceContext = `\n\n以下是经验库中检索到的相关经验（仅供参考，回答末尾无需标注来源）：\n${expContext}`
       expReferences = retrieval.injected.map((e) => ({
         exp_id: e.exp_id,
         title: e.title,
@@ -770,6 +756,12 @@ export async function chat(
   } catch (err) {
     console.warn('[ai.chat] experience retrieval failed, continue without injection:', (err as Error).message)
   }
+
+  // Phase 20 PMT-01：systemPrompt 静态头收敛到 promptRegistry（用户可 override），
+  // 动态注入段（deviceInfo/experienceContext）按 registry 占位符填入，值与收敛前逐字一致。
+  const systemPrompt = PromptService.getPrompt('ai.chat.systemPrompt')
+    .replace('{{deviceInfo}}', () => deviceInfo)
+    .replace('{{experienceContext}}', () => experienceContext)
 
   const fullMessages: Array<{ role: string; content: string }> = [
     { role: 'system', content: systemPrompt },

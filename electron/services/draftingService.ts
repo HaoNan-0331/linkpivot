@@ -1,5 +1,6 @@
 import { callAI, getAiConfig } from './ai'
 import type { ExperienceCategory, ExperienceAttrs } from './experienceService'
+import { PromptService } from './promptService'
 
 /**
  * AI 起草 service（Phase 8 D-01/D-03/D-04 起草侧 + DRAFT-04 + W-4 两阶段复判）。
@@ -66,21 +67,8 @@ export interface JudgeVerdictsInput {
   demoMode?: boolean
 }
 
-const SYSTEM_PROMPT = [
-  '你是网络运维经验提炼助手。回顾运维对话，提炼可复用经验。',
-  '【反幻觉红线】禁止输出 [CMD]、[KB_SEARCH] 等执行标记；禁止编造命令；禁止虚构分类或字段；缺数据字段值必须填字符串 "gap"，严禁瞎编或强填。',
-  '【分类固定枚举】只允许：troubleshooting、best_practices、product、env，禁止超出此枚举。',
-  '【分类模板字段】',
-  '- troubleshooting：attrs 必须含 severity（critical/high/medium/low/info），可含 symptoms/root_cause/resolution/prevention。',
-  '- best_practices / product / env：attrs 可为空对象 {}。',
-  '【判定规则】参考"已有经验列表"（阶段 A 通常为空，故全标 ADD；阶段 B 复判交 judgeVerdicts）。',
-  '- ADD（新增，与存量不重复）→ duplicate_of_exp_id 必须为 null',
-  '- UPDATE（命中存量需补充/更新）→ duplicate_of_exp_id 填命中 exp_id',
-  '- NOOP（与存量重复，无新增价值）→ duplicate_of_exp_id 填命中 exp_id（提示跳过，不落库）',
-  '【输出格式】严格输出 JSON 数组，不得有任何额外文字或解释。每条对象字段：',
-  'category, title, content, tags(字符串数组), attrs(对象), confidence(0-1 数值), reasoning(字符串), duplication_verdict(ADD/UPDATE/NOOP), duplicate_of_exp_id(exp_id 字符串或 null)。',
-  '若对话无可总结经验，返回空数组 []。',
-].join('\n')
+// Phase 20 PMT-01：SYSTEM_PROMPT 收敛到 promptRegistry 'drafting.experience'（用户可 override），
+// 文案与收敛前逐字一致（promptRegistry.ts 逐字搬移）。
 
 export function buildDraftingPrompt(input: DraftSessionInput): { system: string; user: string } {
   const deviceLine = input.deviceIds && input.deviceIds.length > 0
@@ -100,7 +88,7 @@ export function buildDraftingPrompt(input: DraftSessionInput): { system: string;
     '',
     '请按 system 约束输出 JSON 数组。',
   ].join('\n')
-  return { system: SYSTEM_PROMPT, user }
+  return { system: PromptService.getPrompt('drafting.experience'), user }
 }
 
 /** 剥离 ```json 包裹与首尾多余文字，提取第一个 [ 到最后一个 ]。 */
@@ -205,15 +193,8 @@ export async function draftSession(input: DraftSessionInput): Promise<DraftDraft
 
 // ---------- W-4 阶段 B：judgeVerdicts 两阶段复判 ----------
 
-const VERDICT_SYSTEM_PROMPT = [
-  '你是经验查重判定助手。对每条草稿，参考其同分类已有经验列表，判定 duplication_verdict。',
-  '【判定规则】',
-  '- ADD（与同分类存量不重复）→ duplicate_of_exp_id = null',
-  '- UPDATE（命中同分类存量需补充/更新）→ duplicate_of_exp_id 填命中 exp_id',
-  '- NOOP（与同分类存量重复，无新增价值）→ duplicate_of_exp_id 填命中 exp_id',
-  '【输出格式】严格输出 JSON 数组，每条对象含：draft_index(草稿在输入 drafts[] 中的 0-based 下标), verdict(ADD/UPDATE/NOOP), duplicate_of_exp_id(exp_id 或 null)。',
-  '每条输入草稿必须输出一条判定，不得遗漏。',
-].join('\n')
+// Phase 20 PMT-01：VERDICT_SYSTEM_PROMPT 收敛到 promptRegistry 'drafting.verdict'（safetyCritical，用户可 override），
+// 文案与收敛前逐字一致（promptRegistry.ts 逐字搬移）。
 
 /** 构建复判 prompt：drafts[] 摘要（index+title+category+content 前80字）+ 按 category 分组的同分类存量。 */
 export function buildVerdictPrompt(input: JudgeVerdictsInput): { system: string; user: string } {
@@ -238,7 +219,7 @@ export function buildVerdictPrompt(input: JudgeVerdictsInput): { system: string;
     '',
     '请按 system 约束对每条草稿输出判定 JSON 数组。',
   ].join('\n')
-  return { system: VERDICT_SYSTEM_PROMPT, user }
+  return { system: PromptService.getPrompt('drafting.verdict'), user }
 }
 
 interface VerdictEntry {

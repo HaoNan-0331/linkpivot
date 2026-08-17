@@ -102,15 +102,24 @@ export class PromptService {
     }
   }
 
-  /** 读取 override 行：缓存优先，miss（缓存未预载）回退查库。 */
+  /**
+   * 读取 override 行：缓存优先，miss（缓存未预载）回退查库。
+   * 20-02：查库异常（如调用方单测无 DB 环境）优雅降级返回 null → getPrompt 落 registry 默认，
+   * 保证 prompt 读取链路永不因 override 表不可达而打断 AI 主流程（fail-safe 到默认文案）。
+   */
   private static loadOverride(id: string): { content: string; basedOnVersion: number } | null {
     if (PromptService.overrideCache !== null) {
       return PromptService.overrideCache.get(id) ?? null
     }
-    const row = _getDb()
-      .prepare('SELECT prompt_id, content, based_on_version FROM prompt_overrides WHERE prompt_id = ?')
-      .get(id) as OverrideRow | undefined
-    return row ? { content: row.content, basedOnVersion: row.based_on_version } : null
+    try {
+      const row = _getDb()
+        .prepare('SELECT prompt_id, content, based_on_version FROM prompt_overrides WHERE prompt_id = ?')
+        .get(id) as OverrideRow | undefined
+      return row ? { content: row.content, basedOnVersion: row.based_on_version } : null
+    } catch (e: any) {
+      console.warn('[prompt] override 查库失败，回落 registry 默认:', e.message)
+      return null
+    }
   }
 
   /**

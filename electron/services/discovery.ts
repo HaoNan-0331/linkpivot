@@ -3,6 +3,7 @@ import { getAiConfig, callAI, getDeviceByIdInternal, executeCommandsOnDevice } f
 import { getCommandWhitelist } from './ai'
 import { isCommandAllowed } from './commandSafety'
 import { createSystemLog } from './systemLog'
+import { PromptService } from './promptService'
 
 /**
  * discovery 模块局部非致命日志 helper（D-6-4）。
@@ -95,31 +96,8 @@ async function discoverTopologyInner(deviceIds: string[]): Promise<DiscoveryResu
   }
 
   // Phase 2: Ask AI which commands to execute for each device
-  const commandPrompt = `你是一个网络设备管理专家。根据以下设备信息，判断每台设备的厂商，并给出用于拓扑发现需要执行的命令列表。
-
-已知厂商的常用命令参考：
-- 华为(Huawei/VRP): display version, display lldp neighbor brief, display arp, display ip routing-table, display interface brief
-- H3C(华三/Comware): display version, display lldp neighbor-information list, display arp, display ip routing-table, display interface brief
-- Cisco(IOS): show version, show lldp neighbors detail, show cdp neighbors detail, show ip arp, show ip route, show ip interface brief
-- 其他厂商：请根据设备信息推断合适的命令（如 LLDP 邻居、ARP 表、路由表、接口状态等对应的命令）
-
-请返回严格的JSON格式（不要包含其他文本）：
-{
-  "devices": [
-    {
-      "deviceId": "设备的原始ID",
-      "deviceName": "设备名称",
-      "vendor": "判断的厂商",
-      "commands": ["命令1", "命令2", ...]
-    }
-  ]
-}
-
-要求：
-1. 每台设备至少包含查看 LLDP/CDP 邻居、ARP 表的命令
-2. 如果已知厂商，使用该厂商正确的命令语法
-3. 如果是不认识的厂商，根据设备信息推断可能的命令语法
-4. 所有命令必须是只读查询命令`
+  // Phase 20 PMT-01：prompt 收敛到 promptRegistry（用户可 override），文案与收敛前逐字一致
+  const commandPrompt = PromptService.getPrompt('discovery.vendor')
 
   const deviceListText = deviceInfos.map(d =>
     `- 设备名: ${d.deviceName}, ID: ${d.deviceId}, 厂商: ${d.vendor}, 型号: ${d.model}, 版本: ${d.version}, IP: ${d.ipAddress}`
@@ -256,32 +234,8 @@ async function discoverTopologyInner(deviceIds: string[]): Promise<DiscoveryResu
     })
     .join('\n\n==========\n\n')
 
-  const topologyPrompt = `你是一个网络拓扑分析专家。根据以下从多台网络设备采集的信息，分析它们之间的拓扑连接关系。
-
-请返回严格的JSON格式（不要包含其他文本）：
-{
-  "nodes": [
-    {
-      "deviceId": "设备的原始ID",
-      "deviceName": "设备名称",
-      "position": { "x": 数字, "y": 数字 }
-    }
-  ],
-  "edges": [
-    {
-      "sourceDeviceId": "源设备ID",
-      "targetDeviceId": "目标设备ID",
-      "sourceInterface": "源端接口名",
-      "targetInterface": "目标端接口名"
-    }
-  ]
-}
-
-分析规则：
-1. 根据LLDP/CDP邻居信息确定设备间连接关系
-2. 根据ARP表和路由表补充连接关系
-3. 为每个节点分配合理的布局位置（分层/星型/树形）
-4. 接口名从邻居信息和接口表中提取`
+  // Phase 20 PMT-01：prompt 收敛到 promptRegistry（用户可 override），文案与收敛前逐字一致
+  const topologyPrompt = PromptService.getPrompt('discovery.topology')
 
   const topologyMessages = [
     { role: 'system', content: topologyPrompt },

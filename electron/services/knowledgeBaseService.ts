@@ -6,6 +6,7 @@ import type Database from 'better-sqlite3'
 import { getDatabase } from '../database/connection'
 import { encField, decField } from '../utils/crypto'
 import { getAiConfig, callAI } from './ai'
+import { PromptService } from './promptService'
 import type { KbSearchEnvelope } from '../../src/types/kb'
 
 let MK = ''
@@ -748,16 +749,13 @@ export async function search(query: string, deviceIds?: string[], topK = 5): Pro
     return { rows: fallbackRows(), degraded: true, degradedReason: 'no_api_key', indexTotal, indexCapped }
   }
 
-  const pickPrompt = `你是一个文档检索助手。以下是资料库中所有文档的章节索引。用户提出了一个问题，请从索引中选出与问题最相关的章节。
-
-用户问题：${query}
-
-章节索引：
-${indexBlock}
-
-请返回最相关的章节编号，用逗号分隔，按相关性从高到低排列。最多返回${topK}个。
-如果没有相关章节，返回：none
-只返回编号，不要解释。`
+  // Phase 20 PMT-01：pickPrompt 收敛到 promptRegistry 'kb.pick'（用户可 override），
+  // 3 个插值段（query/indexBlock/topK）按 registry {{var}} 占位符填入，值与收敛前一致。
+  // 替换值含 $ 等正则替换特殊字符风险 → 用函数形式 replacement（$& 等不生效，语义等同原模板插值）。
+  const pickPrompt = PromptService.getPrompt('kb.pick')
+    .replace('{{query}}', () => query)
+    .replace('{{indexBlock}}', () => indexBlock)
+    .replace('{{topK}}', () => String(topK))
 
   try {
     const response = await callAI(config, [{ role: 'user', content: pickPrompt }])
