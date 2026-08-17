@@ -20,8 +20,14 @@ export type ParsedAiReply =
 
 const isStr = (v: unknown): v is string => typeof v === 'string'
 
-// ConfirmData 载荷校验：execId/aiExplanation string + commands 形状合法（缺任一降级 plain）
-function isValidConfirmPayload(p: Record<string, unknown>): boolean {
+// ConfirmData 载荷校验：execId/aiExplanation string + commands 形状合法（缺任一降级 plain）。
+// WR-04：谓词签名产出 narrowing，confirm 分支消费免 as 断言（校验体逻辑不变）。
+function isValidConfirmPayload(p: Record<string, unknown>): p is {
+  execId: string
+  aiExplanation: string
+  commands: Array<{ deviceName: string; command: string }>
+  rejectedCommands?: unknown[]
+} {
   if (!isStr(p.execId) || !isStr(p.aiExplanation)) return false
   if (!Array.isArray(p.commands)) return false
   return p.commands.every(
@@ -32,6 +38,13 @@ function isValidConfirmPayload(p: Record<string, unknown>): boolean {
       isStr((c as Record<string, unknown>).command)
   )
 }
+
+// rejectedCommands 单项守卫：command/reason 均 string 才透传（T-19-06，窄化免 as）
+const isRejectedCommand = (c: unknown): c is { command: string; reason: string } =>
+  c !== null &&
+  typeof c === 'object' &&
+  isStr((c as Record<string, unknown>).command) &&
+  isStr((c as Record<string, unknown>).reason)
 
 // 单条原始 reference 归一（unknown → ReferenceItem[]）：
 // - kind==='kb' 或含 docTitle → kb 项（kb_answer 既有形态无 kind，消费时统一补 kind:'kb'，Phase 11 D-11）
@@ -82,26 +95,17 @@ export function parseAiReply(raw: string): ParsedAiReply {
     if (!isValidConfirmPayload(p)) return { kind: 'plain', content: raw }
     const confirm: ConfirmData = {
       type: 'confirm_required',
-      execId: p.execId as string,
-      aiExplanation: p.aiExplanation as string,
-      commands: (p.commands as Array<{ deviceName: string; command: string }>).map((c) => ({
+      execId: p.execId,
+      aiExplanation: p.aiExplanation,
+      commands: p.commands.map((c) => ({
         deviceName: c.deviceName,
         command: c.command,
       })),
     }
     if (Array.isArray(p.rejectedCommands)) {
       confirm.rejectedCommands = p.rejectedCommands
-        .filter(
-          (c) =>
-            c !== null &&
-            typeof c === 'object' &&
-            isStr((c as Record<string, unknown>).command) &&
-            isStr((c as Record<string, unknown>).reason)
-        )
-        .map((c) => ({
-          command: (c as Record<string, unknown>).command as string,
-          reason: (c as Record<string, unknown>).reason as string,
-        }))
+        .filter(isRejectedCommand)
+        .map((c) => ({ command: c.command, reason: c.reason }))
     }
     return { kind: 'confirm', content: '', confirm }
   }
