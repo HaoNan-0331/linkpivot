@@ -95,6 +95,12 @@ const api = {
     getAllVendors: () => ipcRenderer.invoke('oui:getAllVendors'),
     getStats: () => ipcRenderer.invoke('oui:getStats'),
   },
+  prompt: {
+    list: () => ipcRenderer.invoke('prompt:list'),
+    save: (id: string, content: string) => ipcRenderer.invoke('prompt:save', id, content),
+    reset: (id: string) => ipcRenderer.invoke('prompt:reset', id),
+    diff: (id: string) => ipcRenderer.invoke('prompt:diff', id),
+  },
   export: {
     arpTable: () => ipcRenderer.invoke('export:arpTable'),
     changes: (unacknowledgedOnly?: boolean) => ipcRenderer.invoke('export:changes', unacknowledgedOnly),

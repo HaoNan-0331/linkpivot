@@ -22,6 +22,8 @@ import { registerArpIpc } from './ipc/arpIpc'
 import { registerNetworkIpc } from './ipc/networkIpc'
 import { registerAnomalyIpc } from './ipc/anomalyIpc'
 import { registerOuiIpc } from './ipc/ouiIpc'
+import { PromptService } from './services/promptService'
+import { registerPromptIpc } from './ipc/promptIpc'
 import { registerExportIpc } from './ipc/exportIpc'
 import { registerSchedulerIpc } from './ipc/schedulerIpc'
 import { setKbMasterKey } from './services/knowledgeBaseService'
@@ -176,6 +178,8 @@ app.whenReady().then(() => {
   }
   // PERF-01 (D-P1)：启动预载 Map<macPrefix,vendor>，确保首次 getIPDetails 时 Map 就绪（消除 N+1）
   OUIService.preload()
+  // Phase 20：prompt override 缓存预热（对齐 OUIService.preload 调用点；失败回退逐条查库）
+  PromptService.preload()
   console.log('[startup] DB+OUI init', (performance.now() - __startupT0).toFixed(0), 'ms')   // PERF-04：冷启动耗时，供 before/after 证据 grep 验证
 
   // IP Management IPC
@@ -183,6 +187,7 @@ app.whenReady().then(() => {
   registerNetworkIpc()
   registerAnomalyIpc()
   registerOuiIpc()
+  registerPromptIpc()
   registerExportIpc()
   registerSchedulerIpc()
   registerKbIpc()
