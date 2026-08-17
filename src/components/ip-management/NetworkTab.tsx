@@ -46,10 +46,12 @@ export default function NetworkTab({ api }: NetworkTabProps) {
 
   const searchIPs = async () => {
     if (selectedId) {
-      // Phase 19 REN-01：searchIPs 同款保留信封（truncated 提示与 getAll 路径一致）
-      const res = await api.network.getIPDetails(selectedId, searchIp, searchMac)
-      setIpDetails(res.rows)
-      setIpEnvelope({ total: res.total, truncated: res.truncated })
+      try {
+        // Phase 19 REN-01：searchIPs 同款保留信封（truncated 提示与 getAll 路径一致）
+        const res = await api.network.getIPDetails(selectedId, searchIp, searchMac)
+        setIpDetails(res.rows)
+        setIpEnvelope({ total: res.total, truncated: res.truncated })
+      } catch (e: unknown) { message.error(e instanceof Error ? e.message : String(e)) }
     }
   }
 
@@ -93,10 +95,12 @@ export default function NetworkTab({ api }: NetworkTabProps) {
   }
 
   const deleteSegment = async (id: number) => {
-    await api.network.delete(id)
-    if (selectedId === id) { setSelectedId(null); setIpUsage(null); setIpDetails([]) }
-    message.success('删除成功')
-    loadSegments()
+    try {
+      await api.network.delete(id)
+      if (selectedId === id) { setSelectedId(null); setIpUsage(null); setIpDetails([]) }
+      message.success('删除成功')
+      loadSegments()
+    } catch (e: unknown) { message.error(e instanceof Error ? e.message : String(e)) }
   }
 
   const segColumns = [

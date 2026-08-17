@@ -44,22 +44,28 @@ export default function AnomalyTab({ api }: AnomalyTabProps) {
   useEffect(() => { loadData() }, [])
 
   const acknowledge = async (id: number, notes?: string) => {
-    await api.anomaly.acknowledge(id, notes)
-    message.success('已确认')
-    loadData()
+    try {
+      await api.anomaly.acknowledge(id, notes)
+      message.success('已确认')
+      loadData()
+    } catch (e: unknown) { message.error(e instanceof Error ? e.message : String(e)) }
   }
 
   const acknowledgeAll = async () => {
-    const count = await api.anomaly.acknowledgeAll()
-    message.success(`已确认 ${count} 条`)
-    loadData()
+    try {
+      const count = await api.anomaly.acknowledgeAll()
+      message.success(`已确认 ${count} 条`)
+      loadData()
+    } catch (e: unknown) { message.error(e instanceof Error ? e.message : String(e)) }
   }
 
   const deleteChanges = async (ids: number[]) => {
-    await api.anomaly.deleteChanges(ids)
-    message.success('已删除')
-    setSelectedRowKeys([])
-    loadData()
+    try {
+      await api.anomaly.deleteChanges(ids)
+      message.success('已删除')
+      setSelectedRowKeys([])
+      loadData()
+    } catch (e: unknown) { message.error(e instanceof Error ? e.message : String(e)) }
   }
 
   const batchExclude = async () => {
@@ -67,31 +73,39 @@ export default function AnomalyTab({ api }: AnomalyTabProps) {
       const change = changes.find(c => c.id === id)
       return change?.ip
     }).filter(Boolean)
-    for (const ip of ips) {
-      if (!ip) continue
-      await api.anomaly.addExcludedIP({ ipOrCidr: ip })
-    }
-    message.success(`已排除 ${ips.length} 个 IP`)
-    setSelectedRowKeys([])
-    loadData()
+    try {
+      for (const ip of ips) {
+        if (!ip) continue
+        await api.anomaly.addExcludedIP({ ipOrCidr: ip })
+      }
+      message.success(`已排除 ${ips.length} 个 IP`)
+      setSelectedRowKeys([])
+      loadData()
+    } catch (e: unknown) { message.error(e instanceof Error ? e.message : String(e)) }
   }
 
   const showHistory = async (ip: string) => {
-    setHistoryIp(ip)
-    setHistoryData(await api.anomaly.getBindingHistory(ip))
+    try {
+      setHistoryIp(ip)
+      setHistoryData(await api.anomaly.getBindingHistory(ip))
+    } catch (e: unknown) { message.error(e instanceof Error ? e.message : String(e)) }
   }
 
   const addExclude = async () => {
-    await api.anomaly.addExcludedIP(excludeForm)
-    setAddExcludeOpen(false)
-    setExcludeForm({ ipOrCidr: '', description: '' })
-    message.success('已添加')
-    loadData()
+    try {
+      await api.anomaly.addExcludedIP(excludeForm)
+      setAddExcludeOpen(false)
+      setExcludeForm({ ipOrCidr: '', description: '' })
+      message.success('已添加')
+      loadData()
+    } catch (e: unknown) { message.error(e instanceof Error ? e.message : String(e)) }
   }
 
   const deleteExclude = async (id: number) => {
-    await api.anomaly.deleteExcludedIP(id)
-    loadData()
+    try {
+      await api.anomaly.deleteExcludedIP(id)
+      loadData()
+    } catch (e: unknown) { message.error(e instanceof Error ? e.message : String(e)) }
   }
 
   const exportChanges = async (unackOnly: boolean = false) => {

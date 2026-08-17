@@ -40,7 +40,7 @@ export default function OuiTab({ api }: OuiTabProps) {
       // search 返回裸数组无信封——清空 truncated 防陈旧截断误报（T-19-11）
       setEntries(await api.oui.search(kw))
       setEnvelope({ total: 0, truncated: false })
-    } finally { setLoading(false) }
+    } catch (e: unknown) { message.error(e instanceof Error ? e.message : String(e)) } finally { setLoading(false) }
   }
 
   const onSearchChange = (value: string) => {
