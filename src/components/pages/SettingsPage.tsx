@@ -4,6 +4,7 @@ import { LogoutOutlined, PlayCircleOutlined, DatabaseOutlined } from '@ant-desig
 import { useAuthStore } from '../../stores/authStore'
 import CommandWhitelistEditor from '../settings/CommandWhitelistEditor'
 import ExecModeSwitch from '../settings/ExecModeSwitch'
+import PromptTab from '../settings/PromptTab'
 import type { AIConfig } from '../../types/electron'
 import type { ScheduleConfig, SchedulerStatus } from '../../types/oui'
 
@@ -224,6 +225,7 @@ export default function SettingsPage() {
       <Tabs items={[
         { key: 'general', label: '通用设置', children: generalSettings },
         { key: 'ip', label: 'IP 管理', children: ipSettings },
+        { key: 'prompt', label: 'AI 提示词', children: <PromptTab /> },
       ]} />
     </div>
   )

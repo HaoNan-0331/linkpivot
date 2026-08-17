@@ -219,6 +219,37 @@ export interface ElectronAPI {
     listDrafts: () => Promise<DraftSummary[]>
     getSessionMessages: (sessionId: string, limit?: number) => Promise<SessionMessage[]>
   }
+  // Phase 20 (20-03)：prompt.* 通道（promptIpc 四 secure handler，preload 透传）。
+  // PromptEntryView/PromptDiffBase 与 electron/services/promptService.ts 接口镜像（IPC 边界无 _enc 列）。
+  prompt: {
+    list: () => Promise<PromptEntryView[]>
+    save: (id: string, content: string) => Promise<{ ok: true } | { ok: false; error: string }>
+    reset: (id: string) => Promise<{ ok: true }>
+    diff: (id: string) => Promise<PromptDiffBase>
+  }
+}
+
+// Phase 20：提示词注册表条目视图（20-01 PromptService.listEntries 返回形态的 renderer 镜像）
+export interface PromptEntryView {
+  id: string
+  group: string
+  description: string
+  version: number
+  defaultContent: string
+  overrideContent: string | null
+  basedOnVersion: number | null
+  /** override 基线落后于 registry 当前版本（D-01 冲突，UI 三选弹窗） */
+  conflict: boolean
+  safetyCritical: boolean
+  requiredVars: string[]
+  optionalVars: Array<{ name: string; desc: string }>
+}
+
+export interface PromptDiffBase {
+  defaultContent: string
+  overrideContent: string | null
+  basedOnVersion: number | null
+  currentVersion: number
 }
 
 export interface TerminalAPI {
