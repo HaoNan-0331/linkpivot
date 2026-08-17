@@ -392,6 +392,10 @@ class MemDb {
                 remaining = remaining.slice(1)
                 if (r.status !== st) return false
               }
+              // Phase 19 REN-01：默认路径字面量条件 e.status != 'draft'（draft 默认排除）
+              if (/e\.status\s*!=\s*'draft'/i.test(whereClause)) {
+                if (r.status === 'draft') return false
+              }
               return true
             })
           }
@@ -465,6 +469,10 @@ class MemDb {
             const st = vals[0]
             rows = rows.filter((r) => r.status === st)
             vals = vals.slice(1)
+          }
+          // Phase 19 REN-01：默认路径字面量条件 e.status != 'draft'（draft 默认排除）
+          if (/e\.status\s*!=\s*'draft'/i.test(sql)) {
+            rows = rows.filter((r) => r.status !== 'draft')
           }
           // WR-02 includeInvalid=false 过滤：复刻 bi-temporal 双分支真实比较
           // （invalid_at IS NULL OR invalid_at > now），覆盖过期/有效/NULL 三态
@@ -681,8 +689,9 @@ describe('experienceService', () => {
   })
 
   it('listExperiences includeInvalid=false 默认过滤已失效', () => {
-    const e1 = createExperience({ title: '有效', category: 'product', content: 'c' })
-    const e2 = createExperience({ title: '将失效', category: 'product', content: 'c' })
+    // Phase 19 REN-01 变更：默认路径排除 draft，测试数据改用 published
+    const e1 = createExperience({ title: '有效', category: 'product', content: 'c', status: 'published' })
+    const e2 = createExperience({ title: '将失效', category: 'product', content: 'c', status: 'published' })
     invalidateExperience(e2.id)
     const res = listExperiences({})
     const ids = res.rows.map((r: any) => r.id)
@@ -691,11 +700,32 @@ describe('experienceService', () => {
   })
 
   it('listExperiences includeInvalid=true 包含失效', () => {
-    const e1 = createExperience({ title: '有效', category: 'product', content: 'c' })
-    const e2 = createExperience({ title: '将失效', category: 'product', content: 'c' })
+    const e1 = createExperience({ title: '有效', category: 'product', content: 'c', status: 'published' })
+    const e2 = createExperience({ title: '将失效', category: 'product', content: 'c', status: 'published' })
     invalidateExperience(e2.id)
     const res = listExperiences({ includeInvalid: true })
     expect(res.rows.length).toBe(2)
+  })
+
+  // Phase 19 REN-01：draft 默认排除契约——未传 status 时 draft 不可见；显式 status='draft' 时可见。
+  // （ExperienceTab 服务端分页将移除前端 draft filter，排除责任移交 service 层）
+  it('listExperiences 未传 status 默认排除 draft', () => {
+    const pub = createExperience({ title: '已发布', category: 'product', content: 'c', status: 'published' })
+    createExperience({ title: '草稿', category: 'product', content: 'c' }) // 默认 draft
+    const res = listExperiences({})
+    const ids = res.rows.map((r: any) => r.id)
+    expect(ids).toContain(pub.id)
+    expect(res.rows.every((r: any) => r.status !== 'draft')).toBe(true)
+    expect(res.total).toBe(1)
+  })
+
+  it('listExperiences 显式 status=draft 返回 draft（listDrafts 契约不变）', () => {
+    const draft = createExperience({ title: '草稿', category: 'product', content: 'c' })
+    createExperience({ title: '已发布', category: 'product', content: 'c', status: 'published' })
+    const res = listExperiences({ status: 'draft', includeInvalid: true })
+    const ids = res.rows.map((r: any) => r.id)
+    expect(ids).toContain(draft.id)
+    expect(res.rows.every((r: any) => r.status === 'draft')).toBe(true)
   })
 
   // WR-02 回归保护：bi-temporal `invalid_at IS NULL OR invalid_at > now` 真实文本比较。
@@ -707,7 +737,7 @@ describe('experienceService', () => {
     mockDbRef.current = db
     const exp = db.tables.get('experiences')!
     const mkRow = (id: string, invalidAt: string | null) => ({
-      id, title: id, category: 'product', content: 'c', tags: '[]', status: 'draft',
+      id, title: id, category: 'product', content: 'c', tags: '[]', status: 'published',
       attrs_enc: null, valid_at: mockNowOffseted(-3600),
       invalid_at: invalidAt, last_verified_at: null, reuse_count: 0,
       created_at: mockNowOffseted(-3600), updated_at: mockNowOffseted(-3600),
@@ -730,8 +760,9 @@ describe('experienceService', () => {
 
   it('listExperiences bi-temporal 过期行经 invalidateExperience 被过滤（回归）', () => {
     // invalidateExperience 写 mockNow()，过滤时 mockNow() 略晚 → 已过期被过滤（真实 sqlite 语义）
-    const e1 = createExperience({ title: '有效', category: 'product', content: 'c' })
-    const e2 = createExperience({ title: '将失效', category: 'product', content: 'c' })
+    // Phase 19 REN-01 变更：默认路径排除 draft，测试数据改用 published
+    const e1 = createExperience({ title: '有效', category: 'product', content: 'c', status: 'published' })
+    const e2 = createExperience({ title: '将失效', category: 'product', content: 'c', status: 'published' })
     invalidateExperience(e2.id)
     const res = listExperiences({ includeInvalid: false })
     const ids = res.rows.map((r: any) => r.id)
@@ -803,8 +834,9 @@ describe('experienceService', () => {
   })
 
   it('listExperiencesByDevice 反查设备关联经验', () => {
-    const e1 = createExperience({ title: 'e1', category: 'product', content: 'c' })
-    const e2 = createExperience({ title: 'e2', category: 'product', content: 'c' })
+    // Phase 19 REN-01 变更：byDevice 默认路径同样排除 draft，测试数据改用 published
+    const e1 = createExperience({ title: 'e1', category: 'product', content: 'c', status: 'published' })
+    const e2 = createExperience({ title: 'e2', category: 'product', content: 'c', status: 'published' })
     relateDevice(e1.id, 'dev-A')
     relateDevice(e2.id, 'dev-A')
     const exps = listExperiencesByDevice('dev-A')

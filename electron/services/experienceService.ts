@@ -277,6 +277,12 @@ export function listExperiences(opts: ListExperiencesOpts): PaginatedResult<any>
   if (opts.status) {
     conditions.push('e.status = ?')
     params.push(opts.status)
+  } else {
+    // Phase 19 REN-01：默认路径排除 draft（字面量条件，无用户输入拼接面）——
+    // ExperienceTab 服务端分页将移除前端 `filter(r => r.status !== 'draft')`（19-06），
+    // draft（AI 草稿、未经人审）排除改由 service 层承担；listDrafts 显式传 status='draft'
+    // 走上分支不受影响（既有测试作证）。
+    conditions.push("e.status != 'draft'")
   }
   // Phase 10 D-10-2：search 关键词 LIKE（title/content，参数化防注入 T-10-01 mitigate）
   // Phase 11 WR-07：LIKE 通配符元字符（\ % _）转义 + ESCAPE '\\' 子句。
@@ -348,7 +354,8 @@ export function listExperiences(opts: ListExperiencesOpts): PaginatedResult<any>
       `JOIN exp_device_rel r ON e.id = r.experience_id ` +
       `WHERE r.device_id IN (${inPlaceholders})` +
       (conditions.length > 0 ? ' AND ' + conditions.join(' AND ') : '') +
-      ` GROUP BY e.id ORDER BY e.created_at DESC`
+      // Phase 19 REN-01：created_at 为秒级 localtime，同秒并列时无唯一锚点会翻页跳行，e.id 唯一作 tie-breaker
+      ` GROUP BY e.id ORDER BY e.created_at DESC, e.id DESC`
     rowsSql = injectLimitOffset(rowsSql)
     const rowsParams = [...deviceIds, ...params, limit, offset]
     const rows = (conn.prepare(rowsSql).all(...rowsParams) as any[]).map(rowToExperience)
@@ -365,7 +372,8 @@ export function listExperiences(opts: ListExperiencesOpts): PaginatedResult<any>
   rowsSql =
     `SELECT e.*, ${deviceCountSub} FROM experiences e` +
     (conditions.length > 0 ? ' WHERE ' + conditions.join(' AND ') : '') +
-    ` ORDER BY e.created_at DESC`
+    // Phase 19 REN-01：同上，e.id 唯一锚点保证分页行序稳定
+    ` ORDER BY e.created_at DESC, e.id DESC`
   rowsSql = injectLimitOffset(rowsSql)
   const rows = (conn.prepare(rowsSql).all(...params, limit, offset) as any[]).map(rowToExperience)
   const totalSql =
@@ -598,7 +606,11 @@ export function listDevicesByExperience(experienceId: string): any[] {
     .filter((d): d is NonNullable<typeof d> => d !== null)
 }
 
-/** 设备→关联经验（反查，复用 listExperiences 的 deviceId 分支；无分页，返全部有效关联经验）。 */
+/**
+ * 设备→关联经验（反查，复用 listExperiences 的 deviceId 分支；无分页，返全部有效关联经验）。
+ * Phase 19 REN-01 行为对齐：未传 status 时复用 listExperiences 默认路径的 `e.status != 'draft'`
+ * 排除（draft 未经人审，不在设备关联经验视图中出现）。
+ */
 export function listExperiencesByDevice(deviceId: string, includeInvalid: boolean = false): any[] {
   return listExperiences({ deviceId, includeInvalid, limit: MAX_BATCH, offset: 0 }).rows
 }
