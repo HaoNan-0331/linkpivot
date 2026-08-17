@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { Handle, Position, type NodeProps } from 'reactflow'
 import type { DeviceType } from '@/types/device'
 import type { TopologyNodeData } from '@/types/topology'
@@ -16,7 +17,12 @@ const iconMap: Record<DeviceType, string> = {
   generic: equipmentIcon,
 }
 
-export default function DeviceNode({ data, selected }: NodeProps<TopologyNodeData>) {
+// Phase 19 REN-03：memo 化自定义节点，拖拽仅被拖节点重渲染（P13 组装侧——useNodesState 拖拽仅被拖节点换引用）。
+// comparator 白名单（P13 双坑红线）：
+// - selected 必含：:47-48 选中态边框/底色随选即变，漏掉 = 选中视觉恒失效（恒失效坑）
+// - data 引用相等：TopologyPage handleEditConfirm 对被编辑节点 { ...n, data: updatedData }
+//   产新 data 引用 → memo 放行编辑更新（D-09 ①「编辑节点立即刷新」回归前提）
+function DeviceNodeInner({ data, selected }: NodeProps<TopologyNodeData>) {
   const iconSrc = iconMap[data.deviceType] || equipmentIcon
 
   return (
@@ -69,3 +75,7 @@ export default function DeviceNode({ data, selected }: NodeProps<TopologyNodeDat
     </div>
   )
 }
+
+const DeviceNode = memo(DeviceNodeInner, (prev, next) => prev.selected === next.selected && prev.data === next.data)
+
+export default DeviceNode

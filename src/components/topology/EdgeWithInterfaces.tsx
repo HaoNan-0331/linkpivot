@@ -1,3 +1,7 @@
+// Phase 19 REN-03 分诊结论：本组件不加 React.memo——依赖 useStore((s) => s.nodeInternals)（:45）实时读
+// 源/目标节点 position，拖拽时 nodeInternals 变但 edge props（source/target/data/style）不变。
+// 若 comparator 只比 props 相等则边不重算 → 接口标签位置滞留（:60-70 每渲染重算 nearest handles 是
+// 现状实时跟随行为，不可吃掉——P13 过严坑）；memo 化收益为零且过严风险实质化，故不 memo。
 import { EdgeLabelRenderer, useStore, type EdgeProps } from 'reactflow'
 import type { TopologyEdgeData } from '@/types/topology'
 
