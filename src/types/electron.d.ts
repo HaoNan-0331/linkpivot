@@ -1,6 +1,6 @@
 import type { PaginatedResult } from './pagination'
 import type { Device, CreateDeviceDTO, UpdateDeviceDTO } from './device'
-import type { Topology } from './topology'
+import type { Topology, TopologySummary } from './topology'
 import type { NetworkSegment, IPUsage, IPDetail, CreateNetworkInput, UpdateNetworkInput } from './network'
 import type { ARPEntry, ARPCollectionResult, ARPScanProgress } from './arp'
 import type { IPMACBinding, IPMACChange, ChangeStats, ExcludedIP, CreateExcludedIPInput } from './anomaly'
@@ -84,7 +84,8 @@ export interface ElectronAPI {
     getById: (id: string) => Promise<Device | null>
   }
   topology: {
-    list: () => Promise<Topology[]>
+    // Phase 19 WR-01：列表走摘要类型（P14 全字段 optional，兼容持久化历史 JSON 缺字段的行）
+    list: () => Promise<TopologySummary[]>
     getById: (id: string) => Promise<Topology | null>
     create: (data: Partial<Topology>) => Promise<Topology>
     update: (id: string, data: Partial<Pick<Topology, 'nodes' | 'edges'>>) => Promise<void>

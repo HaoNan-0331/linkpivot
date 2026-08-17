@@ -54,7 +54,8 @@ export default function TopologyPage() {
   }, [setNodes, setEdges])
 
   const fetchTopologies = useCallback(async () => {
-    const list = await window.api.topology.list()
+    // WR-01：过滤无 id 的历史脏数据行，防 undefined 传播为 currentTopologyId / getById(undefined)
+    const list = (await window.api.topology.list()).filter((t): t is TopologySummary & { id: string } => !!t.id)
     // D-08（Phase 19 / REN-02）：旧版本拓扑 JSON 含未识别字段时静默忽略 + console.warn 可观测——
     // 仅输出字段名键集不输出值（T-19-05，拓扑数据可能含 IP 等资产信息）；
     // 模块级 warnedUnknownTopologyKeys 去重，整个会话至多 warn 一次（T-19-04 防大拓扑刷屏）。
