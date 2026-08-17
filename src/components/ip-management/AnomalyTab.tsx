@@ -3,6 +3,7 @@ import { Button, Table, Card, Row, Col, Statistic, Tag, Modal, Input, Popconfirm
 import { DeleteOutlined, PlusOutlined, HistoryOutlined } from '@ant-design/icons'
 import type { ElectronAPI } from '@/types/electron'
 import type { IPMACChange, ChangeStats, ExcludedIP, IPMACBinding, CreateExcludedIPInput } from '@/types/anomaly'
+import { TruncatedAlert, rangeShowTotal } from '@/components/common/TruncatedAlert'
 
 interface AnomalyTabProps { api: ElectronAPI }
 
@@ -15,6 +16,8 @@ const changeTypeMap: Record<string, { label: string; color: string }> = {
 export default function AnomalyTab({ api }: AnomalyTabProps) {
   const [stats, setStats] = useState<ChangeStats>({} as ChangeStats)
   const [changes, setChanges] = useState<IPMACChange[]>([])
+  // Phase 19 REN-01 D-01~D-03：getChanges 信封驱动截断提示
+  const [changesEnvelope, setChangesEnvelope] = useState<{ total: number; truncated: boolean }>({ total: 0, truncated: false })
   const [excludedIPs, setExcludedIPs] = useState<ExcludedIP[]>([])
   const [loading, setLoading] = useState(false)
   const [historyIp, setHistoryIp] = useState<string | null>(null)
@@ -33,6 +36,7 @@ export default function AnomalyTab({ api }: AnomalyTabProps) {
       ])
       setStats(s)
       setChanges(c.rows)
+      setChangesEnvelope({ total: c.total, truncated: c.truncated })
       setExcludedIPs(e)
     } finally { setLoading(false) }
   }
@@ -158,10 +162,13 @@ export default function AnomalyTab({ api }: AnomalyTabProps) {
                 <Button onClick={() => exportChanges(false)}>导出全部</Button>
                 <Button onClick={() => exportChanges(true)}>导出未确认</Button>
               </div>
+              {/* Phase 19 REN-01 D-01~D-03：truncated=true 常驻 Alert；total 不传信封值（客户端 cap 红线）；排除 IP 子表与绑定历史 Modal 不动 */}
+              <TruncatedAlert truncated={changesEnvelope.truncated} shown={changes.length} total={changesEnvelope.total}
+                guidance="已超出单次加载上限，可删除已处理事件缩小列表，或「导出全部」CSV 获取完整记录" />
               <Table dataSource={changes} columns={changeColumns} rowKey="id" size="small"
                 loading={loading}
                 rowSelection={{ selectedRowKeys, onChange: (keys) => setSelectedRowKeys(keys as number[]) }}
-                pagination={{ pageSize: 20 }} />
+                pagination={{ pageSize: 20, showTotal: rangeShowTotal }} />
             </>
           ),
         },

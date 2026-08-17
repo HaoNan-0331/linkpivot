@@ -3,6 +3,7 @@ import { Button, Table, Card, Modal, Form, Input, Row, Col, Statistic, message, 
 import { PlusOutlined, SearchOutlined, ThunderboltOutlined, ExportOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons'
 import type { ElectronAPI } from '@/types/electron'
 import type { NetworkSegment, IPUsage, IPDetail } from '@/types/network'
+import { TruncatedAlert, rangeShowTotal } from '@/components/common/TruncatedAlert'
 
 interface NetworkTabProps { api: ElectronAPI }
 
@@ -12,6 +13,8 @@ export default function NetworkTab({ api }: NetworkTabProps) {
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [ipUsage, setIpUsage] = useState<IPUsage | null>(null)
   const [ipDetails, setIpDetails] = useState<IPDetail[]>([])
+  // Phase 19 REN-01 D-01~D-03：保留 getIPDetails 信封 total/truncated 驱动截断提示
+  const [ipEnvelope, setIpEnvelope] = useState<{ total: number; truncated: boolean }>({ total: 0, truncated: false })
   const [searchIp, setSearchIp] = useState('')
   const [searchMac, setSearchMac] = useState('')
   const [modalOpen, setModalOpen] = useState(false)
@@ -34,6 +37,7 @@ export default function NetworkTab({ api }: NetworkTabProps) {
       ])
       setIpUsage(usage)
       setIpDetails(details.rows)
+      setIpEnvelope({ total: details.total, truncated: details.truncated })
     } catch (e: unknown) {
       console.error('Failed to load segment details:', e)
       message.error('加载网段详情失败: ' + (e instanceof Error ? e.message : String(e)))
@@ -42,7 +46,10 @@ export default function NetworkTab({ api }: NetworkTabProps) {
 
   const searchIPs = async () => {
     if (selectedId) {
-      setIpDetails((await api.network.getIPDetails(selectedId, searchIp, searchMac)).rows)
+      // Phase 19 REN-01：searchIPs 同款保留信封（truncated 提示与 getAll 路径一致）
+      const res = await api.network.getIPDetails(selectedId, searchIp, searchMac)
+      setIpDetails(res.rows)
+      setIpEnvelope({ total: res.total, truncated: res.truncated })
     }
   }
 
@@ -158,7 +165,11 @@ export default function NetworkTab({ api }: NetworkTabProps) {
                 <Input placeholder="搜索 MAC" value={searchMac} onChange={e => setSearchMac(e.target.value)} onPressEnter={searchIPs} style={{ width: 200 }} />
                 <Button onClick={searchIPs}>搜索</Button>
               </div>
-              <Table dataSource={ipDetails} columns={ipColumns} rowKey="ip" size="small" pagination={{ pageSize: 20 }} />
+              {/* Phase 19 REN-01 D-01~D-03：truncated=true 常驻 Alert；total 不传信封值（客户端 cap 红线） */}
+              <TruncatedAlert truncated={ipEnvelope.truncated} shown={ipDetails.length} total={ipEnvelope.total}
+                guidance="当前网段 IP 超出单次加载上限，可点击右上方「导出」获取该网段完整 IP 清单（CSV）" />
+              <Table dataSource={ipDetails} columns={ipColumns} rowKey="ip" size="small"
+                pagination={{ pageSize: 20, showTotal: rangeShowTotal }} />
             </>
           ) : (
             <Card><span style={{ color: '#999' }}>请选择一个网段查看 IP 详情</span></Card>

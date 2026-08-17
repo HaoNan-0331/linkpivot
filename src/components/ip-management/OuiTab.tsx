@@ -3,11 +3,14 @@ import { Button, Table, Card, Row, Col, Statistic, Input, Modal, Form, Tag, Popc
 import { PlusOutlined, EditOutlined, DeleteOutlined, ImportOutlined, SearchOutlined } from '@ant-design/icons'
 import type { ElectronAPI } from '@/types/electron'
 import type { OUIRow, OUIStats, CreateOUIInput } from '@/types/oui'
+import { TruncatedAlert, rangeShowTotal } from '@/components/common/TruncatedAlert'
 
 interface OuiTabProps { api: ElectronAPI }
 
 export default function OuiTab({ api }: OuiTabProps) {
   const [entries, setEntries] = useState<OUIRow[]>([])
+  // Phase 19 REN-01 D-01~D-03：getAll 信封驱动截断提示；search 裸数组路径须清空防陈旧误报（T-19-11 状态矩阵）
+  const [envelope, setEnvelope] = useState<{ total: number; truncated: boolean }>({ total: 0, truncated: false })
   const [stats, setStats] = useState<OUIStats>({} as OUIStats)
   const [loading, setLoading] = useState(false)
   const [keyword, setKeyword] = useState('')
@@ -23,6 +26,7 @@ export default function OuiTab({ api }: OuiTabProps) {
     try {
       const [e, s] = await Promise.all([api.oui.getAll(), api.oui.getStats()])
       setEntries(e.rows)
+      setEnvelope({ total: e.total, truncated: e.truncated })
       setStats(s)
     } finally { setLoading(false) }
   }
@@ -32,7 +36,11 @@ export default function OuiTab({ api }: OuiTabProps) {
   const search = async (kw: string) => {
     if (!kw) { loadAll(); return }
     setLoading(true)
-    try { setEntries(await api.oui.search(kw)) } finally { setLoading(false) }
+    try {
+      // search 返回裸数组无信封——清空 truncated 防陈旧截断误报（T-19-11）
+      setEntries(await api.oui.search(kw))
+      setEnvelope({ total: 0, truncated: false })
+    } finally { setLoading(false) }
   }
 
   const onSearchChange = (value: string) => {
@@ -132,7 +140,11 @@ export default function OuiTab({ api }: OuiTabProps) {
         <Button icon={<ImportOutlined />} onClick={() => setImportOpen(true)}>批量导入</Button>
       </div>
 
-      <Table dataSource={entries} columns={columns} rowKey="id" size="small" loading={loading} pagination={{ pageSize: 20 }} />
+      {/* Phase 19 REN-01 D-01~D-03：truncated=true 常驻 Alert；total 不传信封值（客户端 cap 红线） */}
+      <TruncatedAlert truncated={envelope.truncated} shown={entries.length} total={envelope.total}
+        guidance="数据量超出单次加载上限，可通过上方搜索框按 OUI 前缀或厂商名筛选查看" />
+      <Table dataSource={entries} columns={columns} rowKey="id" size="small" loading={loading}
+        pagination={{ pageSize: 20, showTotal: rangeShowTotal }} />
 
       {/* 添加/编辑弹窗 */}
       <Modal title={editing ? '编辑 OUI' : '添加 OUI'} open={modalOpen} onOk={save} onCancel={() => setModalOpen(false)}>
