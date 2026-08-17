@@ -48,10 +48,12 @@ function normalizeReference(r: unknown): ReferenceItem[] {
   }
   if (o.kind === 'experience') {
     if (!isStr(o.expId) || !isStr(o.title)) return []
-    const refs: ReferenceItem[] = [{ kind: 'experience', expId: o.expId, title: o.title }]
+    // WR-05：首项提具名 const 保持 experience 变体窄类型，unsupported 直赋免 cast
+    const experienceRef: ReferenceItem = { kind: 'experience', expId: o.expId, title: o.title }
+    const refs: ReferenceItem[] = [experienceRef]
     // unsupported 可选标记（命令失支持 Tag warning，D-11-7）
     if (o.unsupported !== undefined) {
-      ;(refs[0] as { unsupported?: boolean }).unsupported = o.unsupported === true
+      experienceRef.unsupported = o.unsupported === true
     }
     // ai.ts:835 references 已含 sourceSessionId（camelCase），非空拆 session 引用（D-11-10）
     if (isStr(o.sourceSessionId) && o.sourceSessionId) {
