@@ -23,6 +23,7 @@ import type {
 } from '@/types/experience'
 import ExperienceEditForm from './ExperienceEditForm'
 import ExperienceDetailModal from './ExperienceDetailModal'
+import { rangeShowTotal } from '../common/TruncatedAlert'
 
 /**
  * ExperienceTab —— Phase 10 经验浏览 Tab（UI-SPEC §1-5 锁定契约 + BROWSE-01/02/03/04）。
@@ -37,8 +38,13 @@ import ExperienceDetailModal from './ExperienceDetailModal'
  * 状态 Tag/有效期/最后验证/操作。
  *
  * 行操作三能力（D-10-3）：有效经验「编辑/标失效/删除」；失效经验「编辑/恢复有效/删除」。
- * draft 不进浏览页：前端 filter `record.status !== 'draft'`（Phase 9 待确认草稿专属）。
+ * Phase 19 REN-01（19-06）：翻页改真服务端分页（limit 20 / offset (page-1)*20，19-01 ORDER BY
+ * created_at DESC, id DESC 双锚点保证行序稳定翻页无重复无丢行）；draft 排除由 service 层承担
+ * （19-01：listExperiences opts.status 未传时默认排除 draft），前端 filter 移除。
  */
+
+// D-04 契约：固定 20 条/页
+const PAGE_SIZE = 20
 
 const CATEGORY_OPTIONS: Array<{ value: ExperienceCategory; label: string }> = [
   { value: 'troubleshooting', label: '故障排查' },
@@ -95,6 +101,8 @@ function isInvalid(exp: Experience): boolean {
 
 export default function ExperienceTab() {
   const [list, setList] = useState<Experience[]>([])
+  const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [devices, setDevices] = useState<Device[]>([])
 
@@ -123,7 +131,15 @@ export default function ExperienceTab() {
       .catch(() => setDevices([]))
   }, [])
 
-  const loadExperiences = async () => {
+  // 删除/恢复/标失效后 reload 的越界守卫：当前页 reload 后为空且 page > 1 时回退末有效页（防空页）
+  const reloadWithFallback = async () => {
+    const res = await loadExperiences()
+    if (res !== null && res.rows.length === 0 && page > 1) {
+      setPage(Math.max(1, Math.ceil(res.total / PAGE_SIZE)))
+    }
+  }
+
+  const loadExperiences = async (): Promise<{ rows: Experience[]; total: number } | null> => {
     setLoading(true)
     try {
       // Phase 10 Plan 04 问题 2：status='invalid' 走 invalidOnly 路径（失效行 status 列仍 'published'，
@@ -137,21 +153,28 @@ export default function ExperienceTab() {
         deviceId: deviceId.length > 0 ? deviceId : undefined,
         tags: tags.length > 0 ? tags : undefined,
         includeInvalid: status === 'published' ? false : status === 'invalid' ? true : includeInvalid,
-        limit: 100,
-        offset: 0,
+        // Phase 19 REN-01：真服务端分页（D-04 固定 20/页）；draft 排除由 service 层承担（19-01：
+        // opts.status 未传时默认排除 draft），前端 filter 已移除。
+        limit: PAGE_SIZE,
+        offset: (page - 1) * PAGE_SIZE,
       }
       const res = await window.api.experience.list(opts)
-      // draft 不进浏览页（Phase 9 待确认草稿专属，前端 filter 兜底）
-      setList(res.rows.filter((r) => r.status !== 'draft'))
+      // 服务端分页 total 必传信封真总数（D-06，与三 tab cap 后 rows.length 相反——分页是完整数据通道）
+      setList(res.rows)
+      setTotal(res.total)
+      return { rows: res.rows, total: res.total }
     } catch (err) {
+      // 换页失败不清 setList：保留旧页数据不白屏
       message.error('加载经验列表失败: ' + (err as Error).message)
+      return null
     } finally {
       setLoading(false)
     }
   }
 
-  // 任一筛选变化触发（防抖）
+  // 任一筛选变化触发（防抖）；筛选/排序变化重置第 1 页（D-05）
   useEffect(() => {
+    setPage(1)
     if (debounceRef.current) window.clearTimeout(debounceRef.current)
     debounceRef.current = window.setTimeout(() => {
       loadExperiences()
@@ -161,6 +184,12 @@ export default function ExperienceTab() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, category, severity, status, deviceId, tags, includeInvalid])
+
+  // 换页触发（无防抖，翻页即取）
+  useEffect(() => {
+    loadExperiences()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page])
 
   const openCreate = () => {
     setEditingExp(null)
@@ -224,7 +253,7 @@ export default function ExperienceTab() {
     try {
       await window.api.experience.invalidate(id)
       message.success('已标记为失效')
-      loadExperiences()
+      reloadWithFallback()
     } catch (err) {
       message.error('标失效失败: ' + (err as Error).message)
     }
@@ -234,7 +263,7 @@ export default function ExperienceTab() {
     try {
       await window.api.experience.restore(id)
       message.success('已恢复为有效')
-      loadExperiences()
+      reloadWithFallback()
     } catch (err) {
       message.error('恢复失败: ' + (err as Error).message)
     }
@@ -244,7 +273,7 @@ export default function ExperienceTab() {
     try {
       await window.api.experience.delete(id)
       message.success('已删除')
-      loadExperiences()
+      reloadWithFallback()
     } catch (err) {
       message.error('删除失败: ' + (err as Error).message)
     }
@@ -465,6 +494,7 @@ export default function ExperienceTab() {
           style={{ width: 160 }}
           value={tags}
           onChange={(v: string[]) => setTags(v)}
+          // Phase 19 PATTERNS 裁决：标签候选只覆盖当前页（20 条），可接受——服务端分页下不额外全量拉标签
           options={Array.from(new Set(list.flatMap((r) => r.tags ?? []))).map(
             (t) => ({ value: t, label: t })
           )}
@@ -481,7 +511,13 @@ export default function ExperienceTab() {
         rowKey="id"
         loading={loading}
         size="small"
-        pagination={{ pageSize: 20 }}
+        pagination={{
+          current: page,
+          pageSize: PAGE_SIZE,
+          total,
+          showTotal: rangeShowTotal,
+          onChange: (p) => setPage(p),
+        }}
         locale={{
           emptyText: (
             <Empty description="暂无经验。AI 对话后点『经验总结』自动沉淀，或点击右上角『新增经验』手动录入。" />
