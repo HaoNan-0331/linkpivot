@@ -338,6 +338,34 @@ export function createTables() {
     );
     CREATE INDEX IF NOT EXISTS idx_exp_device_rel_exp ON exp_device_rel(experience_id);
     CREATE INDEX IF NOT EXISTS idx_exp_device_rel_device ON exp_device_rel(device_id);
+
+    -- Phase 20（20-01）：提示词 override 表 + MCP 配置占位表。
+    -- 以下两表 DDL 必须与 migrations.ts v15 迁移 DDL 逐字一致（双路径一致红线，v7/v8/v13/v14 注释同款要求）。
+    -- prompt_overrides.content 明文不加密：默认值本身在代码 registry 明文单一来源，加密无增益（20-CONTEXT 决策）。
+    -- mcp_configs 仅建表占位：本 phase 无读写路径，业务归 Phase 21；
+    -- credential_enc nullable（禁 NOT NULL、禁空串默认）——NULL/空串双态区分是读侧
+    -- 「列存在性判据、禁试解密」的语义根基（v13:369-370 同款语义注释）。
+
+    CREATE TABLE IF NOT EXISTS prompt_overrides (
+      prompt_id TEXT PRIMARY KEY,
+      content TEXT NOT NULL,
+      based_on_version INTEGER NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS mcp_configs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      device_id INTEGER UNIQUE NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL CHECK(type IN ('stdio','http')),
+      command_or_url TEXT NOT NULL,
+      args_json TEXT,
+      env_whitelist_json TEXT,
+      credential_enc TEXT,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
   `)
 
   // 散落迁移块（chat_history.session_id / ai_exec_logs.prompt_text+ai_response /

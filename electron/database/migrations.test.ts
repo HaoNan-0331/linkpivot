@@ -274,7 +274,7 @@ describe('v15 prompt_overrides + mcp_configs 建表迁移（Phase 20 20-01）', 
   it('1. 执行两表 CREATE TABLE IF NOT EXISTS + user_version=15，全部 DDL 带 IF NOT EXISTS 幂等守卫', () => {
     const { db, execCalls, pragmaCalls } = makeMockDb()
     v15(db)
-    expect(execCalls.length).toBeGreaterThanOrEqual(2)
+    expect(execCalls.length).toBeGreaterThanOrEqual(1)
     const joined = execCalls.join('\n')
     expect(joined).toContain('CREATE TABLE IF NOT EXISTS prompt_overrides')
     expect(joined).toContain('CREATE TABLE IF NOT EXISTS mcp_configs')

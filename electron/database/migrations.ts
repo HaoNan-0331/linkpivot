@@ -13,7 +13,7 @@ import { createSystemLog } from '../services/systemLog'
  *      在 createTables() 建好基线表之后、premigration 备份之后执行（D-06）。
  *      init.ts 不直接调用 runMigrations（单一调用点原则）。
  */
-export const MIGRATION_HEAD = 14
+export const MIGRATION_HEAD = 15
 
 interface MigrationStep {
   version: number
@@ -442,6 +442,50 @@ END`)
   step()
 }
 
+/**
+ * v15：Phase 20（20-01）prompt_overrides + mcp_configs 两表建表迁移。
+ *
+ * - prompt_overrides：提示词 override 存储（PMT-01/PMT-02）。content 列**明文不加密**——
+ *   默认值本身在代码 registry（promptRegistry.ts）内明文单一来源，用户改的也只是文案模板，
+ *   加密无增益（20-CONTEXT 决策）。override-only 落库：DB 只存用户改动行，读取侧
+ *   getPrompt = override ?? registry 默认（promptService，20-01 Task 3）。
+ * - mcp_configs：仅建表占位，本 phase 无任何读写路径，凭证 _enc 体系与业务归 Phase 21。
+ *   credential_enc nullable（禁 NOT NULL、禁空串默认）——NULL（从未写密文）与空串
+ *   （写过但空内容）双态区分是读侧「列存在性判据、禁试解密」的语义根基（v13:369-370 同款）。
+ *
+ * 幂等守卫：CREATE TABLE IF NOT EXISTS 天然幂等（v8 先例），不靠 user_version 判定（文件头红线）。
+ * 执行体包 db.transaction（throw 即 ROLLBACK）。
+ * 两表 DDL 与 init.ts fresh-install DDL 逐字一致（双路径一致红线，v7/v8/v13/v14 注释同款要求）。
+ */
+export const v15 = (db: Database.Database): void => {
+  const step = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS prompt_overrides (
+        prompt_id TEXT PRIMARY KEY,
+        content TEXT NOT NULL,
+        based_on_version INTEGER NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS mcp_configs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        device_id INTEGER UNIQUE NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL CHECK(type IN ('stdio','http')),
+        command_or_url TEXT NOT NULL,
+        args_json TEXT,
+        env_whitelist_json TEXT,
+        credential_enc TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `)
+    db.pragma('user_version = 15')
+  })
+  step()
+}
+
 const MIGRATIONS: MigrationStep[] = [
   { version: 1, name: 'chat_history.session_id', run: v1 },
   { version: 2, name: 'ai_exec_logs.prompt_text+ai_response', run: v2 },
@@ -457,6 +501,7 @@ const MIGRATIONS: MigrationStep[] = [
   { version: 12, name: 'ip_mac_bindings is_baseline (BUG-1 首次基线标志)', run: v12 },
   { version: 13, name: 'ai_exec_logs/ai_system_logs prompt_text+ai_response 加密列 + scheduler_config.retention_days (SEC-06)', run: v13 },
   { version: 14, name: 'arp_entries.collected_at index (TXN-03) + kb fts triggers image_desc constant NULL (Q10)', run: v14 },
+  { version: 15, name: 'prompt_overrides + mcp_configs create (Phase 20 prompt registry / Phase 21 MCP placeholder)', run: v15 },
 ]
 
 /**
