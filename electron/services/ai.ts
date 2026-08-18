@@ -781,8 +781,8 @@ export async function chat(
   // Phase 20 PMT-01：systemPrompt 静态头收敛到 promptRegistry（用户可 override），
   // 动态注入段（deviceInfo/experienceContext）按 registry 占位符填入，值与收敛前逐字一致。
   const systemPrompt = PromptService.getPrompt('ai.chat.systemPrompt')
-    .replace('{{deviceInfo}}', () => deviceInfo)
-    .replace('{{experienceContext}}', () => experienceContext)
+    .replaceAll('{{deviceInfo}}', () => deviceInfo)
+    .replaceAll('{{experienceContext}}', () => experienceContext)
 
   const fullMessages: Array<{ role: string; content: string }> = [
     { role: 'system', content: systemPrompt },

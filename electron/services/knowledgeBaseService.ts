@@ -753,9 +753,9 @@ export async function search(query: string, deviceIds?: string[], topK = 5): Pro
   // 3 个插值段（query/indexBlock/topK）按 registry {{var}} 占位符填入，值与收敛前一致。
   // 替换值含 $ 等正则替换特殊字符风险 → 用函数形式 replacement（$& 等不生效，语义等同原模板插值）。
   const pickPrompt = PromptService.getPrompt('kb.pick')
-    .replace('{{query}}', () => query)
-    .replace('{{indexBlock}}', () => indexBlock)
-    .replace('{{topK}}', () => String(topK))
+    .replaceAll('{{query}}', () => query)
+    .replaceAll('{{indexBlock}}', () => indexBlock)
+    .replaceAll('{{topK}}', () => String(topK))
 
   try {
     const response = await callAI(config, [{ role: 'user', content: pickPrompt }])

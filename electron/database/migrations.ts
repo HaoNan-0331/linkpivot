@@ -459,6 +459,16 @@ END`)
  */
 export const v15 = (db: Database.Database): void => {
   const step = db.transaction(() => {
+    // WR-02（20-REVIEW）：早期 v15 曾以 device_id INTEGER 建表，而 devices.id 是 TEXT uuid——
+    // 列亲和性使 ON DELETE CASCADE 外键匹配不可预期（同库正确先例 arp_entries.device_id TEXT）。
+    // 占位表零读写零数据，sqlite_master 特征串命中即 DROP 重建为 TEXT（幂等守卫红线，不靠 user_version）。
+    const legacy = db.prepare(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='mcp_configs'"
+    ).get() as { sql: string } | undefined
+    if (legacy && legacy.sql.includes('device_id INTEGER')) {
+      db.exec('DROP TABLE mcp_configs')
+    }
+
     db.exec(`
       CREATE TABLE IF NOT EXISTS prompt_overrides (
         prompt_id TEXT PRIMARY KEY,
@@ -469,7 +479,7 @@ export const v15 = (db: Database.Database): void => {
 
       CREATE TABLE IF NOT EXISTS mcp_configs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        device_id INTEGER UNIQUE NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        device_id TEXT UNIQUE NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
         name TEXT NOT NULL,
         type TEXT NOT NULL CHECK(type IN ('stdio','http')),
         command_or_url TEXT NOT NULL,

@@ -320,10 +320,11 @@ describe('v15 prompt_overrides + mcp_configs 建表迁移（Phase 20 20-01）', 
       expect(extractInitBlock('prompt_overrides')).toContain(col)
     }
 
-    // mcp_configs 关键列特征串：双路径逐字一致（credential_enc nullable 占位，业务归 Phase 21）
+    // mcp_configs 关键列特征串：双路径逐字一致（credential_enc nullable 占位，业务归 Phase 21；
+    // device_id TEXT 对齐 devices.id TEXT uuid —— WR-02 修复，同库先例 arp_entries.device_id TEXT）
     const mcpCols = [
       'id INTEGER PRIMARY KEY AUTOINCREMENT',
-      'device_id INTEGER UNIQUE NOT NULL REFERENCES devices(id) ON DELETE CASCADE',
+      'device_id TEXT UNIQUE NOT NULL REFERENCES devices(id) ON DELETE CASCADE',
       "type TEXT NOT NULL CHECK(type IN ('stdio','http'))",
       'credential_enc TEXT',
       'enabled INTEGER NOT NULL DEFAULT 1',
@@ -336,5 +337,37 @@ describe('v15 prompt_overrides + mcp_configs 建表迁移（Phase 20 20-01）', 
     // 反向守卫：credential_enc 不得带 NOT NULL / 空串默认（v13:369-370 双态语义）
     expect(v15Body).not.toContain('credential_enc TEXT NOT NULL')
     expect(v15Body).not.toContain("credential_enc TEXT DEFAULT ''")
+    // 反向守卫（WR-02）：device_id 不得回退 INTEGER（devices.id 是 TEXT uuid，亲和性致 CASCADE 失效；
+    // 用 DDL 精确形态 'device_id INTEGER UNIQUE' 避免误命中守卫代码/注释里的检测字符串）
+    expect(v15Body).not.toContain('device_id INTEGER UNIQUE')
+    expect(extractInitBlock('mcp_configs')).not.toContain('device_id INTEGER')
+  })
+
+  it('4. WR-02 重建守卫：legacy device_id INTEGER 表被 DROP 重建为 TEXT，新表/无表不触发 DROP', () => {
+    // legacy 形态：早期 v15 建出的 INTEGER 表
+    const legacyDb: any = {
+      prepare() {
+        return { get: () => ({ sql: 'CREATE TABLE mcp_configs (id INTEGER PRIMARY KEY AUTOINCREMENT, device_id INTEGER UNIQUE NOT NULL REFERENCES devices(id) ON DELETE CASCADE)' }) }
+      },
+      execCalls: [] as string[],
+      exec(sql: string) { this.execCalls.push(sql) },
+      pragma() { /* noop */ },
+      transaction(fn: () => void) { return () => fn() },
+    }
+    v15(legacyDb)
+    const joined = legacyDb.execCalls.join('\n')
+    expect(joined).toContain('DROP TABLE mcp_configs')
+    expect(joined).toContain('device_id TEXT UNIQUE NOT NULL REFERENCES devices(id)')
+
+    // 干净库（无表）：不触发 DROP，直接 CREATE
+    const freshDb: any = {
+      prepare() { return { get: () => undefined } },
+      execCalls: [] as string[],
+      exec(sql: string) { this.execCalls.push(sql) },
+      pragma() { /* noop */ },
+      transaction(fn: () => void) { return () => fn() },
+    }
+    v15(freshDb)
+    expect(freshDb.execCalls.join('\n')).not.toContain('DROP TABLE')
   })
 })

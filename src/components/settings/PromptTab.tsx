@@ -200,6 +200,22 @@ export default function PromptTab({ refreshKey = 0 }: { refreshKey?: number }) {
     setResetting(false)
   }
 
+  // 冲突三选「手动合并」：编辑器入口必须过门槛（WR-01 修复——T-20-09 单窗原则：
+  // 未过门槛先关三选只留门槛窗，passGate 通过后经 pendingEntry 流转进编辑器）
+  const mergeFromConflict = () => {
+    if (!conflictEntry) return
+    const entry = conflictEntry
+    if (!gatePassed) {
+      setConflictEntry(null)
+      setPendingEntry(entry)
+      setGateOpen(true)
+      return
+    }
+    setEditContent(entry.overrideContent ?? entry.defaultContent)
+    setEditing(entry)
+    setConflictEntry(null)
+  }
+
   // 冲突三选「保留我的」：content 不动，based_on_version 同步当前版本（冲突解除，黄点熄灭）
   const keepMine = async () => {
     if (!conflictEntry) return
@@ -364,12 +380,7 @@ export default function PromptTab({ refreshKey = 0 }: { refreshKey?: number }) {
           <Button
             key="merge"
             type="primary"
-            onClick={() => {
-              if (!conflictEntry) return
-              setEditContent(conflictEntry.overrideContent ?? conflictEntry.defaultContent)
-              setEditing(conflictEntry)
-              setConflictEntry(null)
-            }}
+            onClick={mergeFromConflict}
           >
             手动合并
           </Button>,

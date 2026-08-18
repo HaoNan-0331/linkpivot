@@ -355,7 +355,7 @@ export function createTables() {
 
     CREATE TABLE IF NOT EXISTS mcp_configs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      device_id INTEGER UNIQUE NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+      device_id TEXT UNIQUE NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       type TEXT NOT NULL CHECK(type IN ('stdio','http')),
       command_or_url TEXT NOT NULL,
