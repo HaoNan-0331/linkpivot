@@ -159,4 +159,31 @@ describe('McpService 真路径（in-memory db + 真加密）', () => {
     expect(row.last_test_status).toBe('success')
     expect(row.last_test_tool_count).toBe(5)
   })
+
+  it('WR-03 saveConfig 更新不存在的 id：返回「配置不存在或已被删除」而非晦涩 FK 错误/崩溃', () => {
+    // 带 deviceIds 形态（原本会触发 rel INSERT 的 FK 约束异常）
+    const withRels = McpService.saveConfig({
+      id: 999, name: '幽灵配置', type: 'http', commandOrUrl: 'http://127.0.0.1:9/mcp', deviceIds: ['dev-1']
+    })
+    expect(withRels.ok).toBe(false)
+    if (!withRels.ok) expect(withRels.error).toContain('配置不存在或已被删除')
+    // 不带 deviceIds 形态（原本 rowToView(undefined) TypeError）
+    const plain = McpService.saveConfig({ id: 999, name: '幽灵配置', type: 'http', commandOrUrl: 'http://127.0.0.1:9/mcp' })
+    expect(plain.ok).toBe(false)
+    if (!plain.ok) expect(plain.error).toContain('配置不存在或已被删除')
+  })
+
+  it('WR-05 http credential null=显式清空：保存后 credentialMasked 归 null（清空通道可用）', () => {
+    const saved = McpService.saveConfig({
+      name: '令牌配置', type: 'http', commandOrUrl: 'http://127.0.0.1:9/mcp', credential: 'token-987654'
+    })
+    expect(saved.ok).toBe(true)
+    expect(McpService.listConfigs()[0].credentialMasked).toBe('****7654')
+    const cleared = McpService.saveConfig({
+      id: 1, name: '令牌配置', type: 'http', commandOrUrl: 'http://127.0.0.1:9/mcp', credential: null
+    })
+    expect(cleared.ok).toBe(true)
+    expect(McpService.listConfigs()[0].credentialMasked).toBeNull()
+    expect(McpService.decodeForTest(1)!.credential).toBeNull()
+  })
 })

@@ -206,7 +206,13 @@ export class McpService {
           params.push(dto.enabled ? 1 : 0)
         }
         params.push(configId)
-        conn.prepare(`UPDATE mcp_configs SET ${sets.join(', ')} WHERE id = ?`).run(...params)
+        const info = conn.prepare(`UPDATE mcp_configs SET ${sets.join(', ')} WHERE id = ?`).run(...params)
+        // WR-03：UPDATE 0 行命中（id 不存在/已被并发删除）给用户明确反馈，
+        // 防 rel INSERT FK 晦涩报错 / rowToView(undefined) TypeError
+        if (info.changes === 0) {
+          result = { ok: false, error: '配置不存在或已被删除，请刷新列表' }
+          return
+        }
       } else {
         const envStr = dto.env && Object.keys(dto.env).length > 0 ? JSON.stringify(dto.env) : null
         conn.prepare(
