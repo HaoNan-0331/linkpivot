@@ -29,7 +29,8 @@ function freshDb(): Database.Database {
 }
 
 beforeEach(() => {
-  McpToolPolicy._setDbGetter(freshDb)
+  const db = freshDb()
+  McpToolPolicy._setDbGetter(() => db)
 })
 
 describe('isReadOnlyEligible 双条件判定矩阵', () => {
