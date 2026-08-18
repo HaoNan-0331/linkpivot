@@ -20,7 +20,7 @@ import Database from 'better-sqlite3'
  * 安全域：内存库（`:memory:`）无落盘；只跑 v16 本体不碰 runMigrations/system log。
  */
 
-import { v16 } from '../../electron/database/migrations'
+import { v16, v17 } from '../../electron/database/migrations'
 
 /** v15 占位形态基线：devices + prompt_overrides + 旧 mcp_configs（DDL 照抄 v15 迁移段） */
 function createV15Schema(db: Database.Database): void {
@@ -144,6 +144,90 @@ describe('v16 mcp_configs_v16_rebuild', () => {
       "INSERT INTO mcp_configs (name, type, command_or_url) VALUES ('m2', 'http', 'http://x')"
     ).run()
     expect(() => insert.run('rel-3', 2, 'dev-1')).toThrow(/UNIQUE/i)
+    db.close()
+  })
+})
+
+/**
+ * Phase 22 Plan 22-01 Task 1 —— v17 迁移（mcp_tools 工具策略表）真路径验证。
+ *
+ * 用例（plan 验收）：
+ *   a) v16 形态库跑 v17 → mcp_tools 表存在且含全部列；user_version=17
+ *   b) v17 重复执行幂等（不 throw、表不重建——既有行策略值保活证明）
+ *   c) init.ts 与 migrations.ts 的 mcp_tools DDL 逐字一致（文件级抽取比对）
+ *   d) UNIQUE(config_id, tool_name) 二次 INSERT 抛约束
+ */
+describe('v17 mcp_tools', () => {
+  function createV17Base(db: Database.Database): void {
+    // v16 形态基线：先跑 v15 占位 + v16（复用本文件既有 helper），mcp_tools 不存在
+    createV15Schema(db)
+    v16(db)
+  }
+
+  it('a) v16 形态库跑 v17 后 mcp_tools 表存在且含全部列，user_version=17', () => {
+    const db = new Database(':memory:')
+    createV17Base(db)
+    expect(getTableSql(db, 'mcp_tools')).toBe('') // 前置：v17 前不存在
+
+    v17(db)
+
+    const sql = getTableSql(db, 'mcp_tools')
+    expect(sql).toContain('config_id INTEGER NOT NULL')
+    expect(sql).toContain('tool_name TEXT NOT NULL')
+    expect(sql).toContain('enabled INTEGER NOT NULL DEFAULT 1')
+    expect(sql).toContain('skip_confirm INTEGER NOT NULL DEFAULT 0')
+    expect(sql).toContain('tool_meta TEXT')
+    expect(sql).toContain('UNIQUE(config_id, tool_name)')
+    expect(db.pragma('user_version', { simple: true })).toBe(17)
+    db.close()
+  })
+
+  it('b) v17 重复执行幂等（不 throw、表不重建——行保活证明）', () => {
+    const db = new Database(':memory:')
+    createV17Base(db)
+    v17(db)
+    db.prepare(
+      "INSERT INTO mcp_tools (config_id, tool_name, enabled, skip_confirm, tool_meta) VALUES (1, 'get_status', 0, 1, '{}')"
+    ).run()
+
+    expect(() => v17(db)).not.toThrow()
+
+    const row = db.prepare("SELECT enabled, skip_confirm FROM mcp_tools WHERE tool_name = 'get_status'").get() as any
+    expect(row.enabled).toBe(0)
+    expect(row.skip_confirm).toBe(1)
+    db.close()
+  })
+
+  it('c) init.ts 与 migrations.ts 的 mcp_tools DDL 逐字一致（文件级抽取比对）', () => {
+    const root = path.resolve(__dirname, '../..')
+    const migrationsSrc = fs.readFileSync(
+      path.join(root, 'electron/database/migrations.ts'),
+      'utf-8'
+    )
+    const initSrc = fs.readFileSync(path.join(root, 'electron/database/init.ts'), 'utf-8')
+
+    const v17Idx = migrationsSrc.indexOf('export const v17')
+    expect(v17Idx).toBeGreaterThanOrEqual(0)
+    const v17Src = migrationsSrc.slice(v17Idx, migrationsSrc.indexOf('const MIGRATIONS'))
+
+    const extract = (src: string, table: string): string => {
+      const re = new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\(([\\s\\S]*?)\\);`)
+      const m = src.match(re)
+      expect(m, `${table} DDL 未在源文件命中`).toBeTruthy()
+      return m![1].replace(/\s+/g, ' ').trim()
+    }
+
+    expect(extract(v17Src, 'mcp_tools')).toBe(extract(initSrc, 'mcp_tools'))
+  })
+
+  it('d) mcp_tools UNIQUE(config_id, tool_name) 二次 INSERT 抛约束', () => {
+    const db = new Database(':memory:')
+    createV17Base(db)
+    v17(db)
+    const insert = db.prepare('INSERT INTO mcp_tools (config_id, tool_name) VALUES (?, ?)')
+    insert.run(1, 'get_status')
+    expect(() => insert.run(1, 'get_status')).toThrow(/UNIQUE/i)
+    insert.run(2, 'get_status') // 不同 config 同名工具合法
     db.close()
   })
 })
