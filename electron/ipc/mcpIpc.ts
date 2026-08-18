@@ -60,12 +60,22 @@ export function registerMcpIpc() {
     }
     if (dto.args !== undefined) {
       if (!Array.isArray(dto.args)) throw new Error('参数无效：args 必须为数组')
-      if (dto.args.some((a) => typeof a !== 'string')) throw new Error('参数无效：args 数组元素必须均为 string')
+      // WR-02：持久化路径与 temp 测试路径同标准（元素长度上限），防密文/DB 膨胀
+      if (dto.args.some((a) => typeof a !== 'string' || a.length > MAX_ARG_LENGTH)) {
+        throw new Error(`参数无效：args 元素必须为 string 且不超过 ${MAX_ARG_LENGTH} 字符`)
+      }
     }
     if (dto.env !== undefined && dto.env !== null) {
       if (typeof dto.env !== 'object' || Array.isArray(dto.env)) throw new Error('参数无效：env 必须为键值对对象')
+      const envKeys = Object.keys(dto.env)
+      if (envKeys.length > MAX_ENV_PAIRS) throw new Error(`env 键值对超过上限 ${MAX_ENV_PAIRS}`)
       for (const v of Object.values(dto.env)) {
-        if (typeof v !== 'string') throw new Error('参数无效：env 值必须均为 string')
+        if (typeof v !== 'string' || v.length > MAX_ENV_VALUE_LENGTH) {
+          throw new Error(`参数无效：env 值必须为 string 且不超过 ${MAX_ENV_VALUE_LENGTH} 字符`)
+        }
+      }
+      if (envKeys.some((k) => k.length > MAX_ENV_KEY_LENGTH)) {
+        throw new Error(`env 键超过长度上限 ${MAX_ENV_KEY_LENGTH} 字符`)
       }
     }
     if (dto.credential !== undefined && dto.credential !== null && typeof dto.credential !== 'string') {
@@ -184,9 +194,10 @@ export function registerMcpIpc() {
       throw new Error('参数无效：须提供 configId 或 temp')
     }
 
-    // 阶段进度事件转发（T-21-04-04：仅 stage/elapsed 数据字段，无凭证）
+    // 阶段进度事件转发（T-21-04-04：仅 stage/elapsed 数据字段，无凭证）。
+    // WR-04：webContents 可能已随窗口销毁——send 抛错不得被当作连接失败落库
     const result: McpTestResult = await runTest(testId, config, (stage, elapsedMs) => {
-      e.sender.send('mcp:testProgress', { testId, stage, elapsedMs })
+      try { e.sender.send('mcp:testProgress', { testId, stage, elapsedMs }) } catch { /* webContents 已销毁，忽略 */ }
     })
 
     // 已存配置测试结果落库（D-09 最近测试持久化；取消不落库）
