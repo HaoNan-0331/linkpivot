@@ -17,7 +17,7 @@
  */
 
 import { ipcMain } from 'electron'
-import { McpService, MAX_BATCH } from '../services/mcpService'
+import { McpService, MAX_BATCH, UNCHANGED_ENV_SENTINEL } from '../services/mcpService'
 import type { McpSaveInput } from '../services/mcpService'
 import { testConnection as runTest, cancelTest } from '../services/mcpClient'
 import type { McpTestResult } from '../services/mcpClient'
@@ -31,9 +31,6 @@ const MAX_ENV_PAIRS = 50
 const MAX_ENV_KEY_LENGTH = 100
 const MAX_ENV_VALUE_LENGTH = 2000
 const VALID_TYPES = ['stdio', 'http']
-
-/** renderer→main 单向哨兵：env 值「未修改（沿用脱敏回显）」（21-04 凭证不重传机制） */
-export const UNCHANGED_ENV_SENTINEL = '****__unchanged__'
 
 export interface McpTempTestInput {
   type: 'stdio' | 'http'

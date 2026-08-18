@@ -23,6 +23,13 @@ import { getDeviceById } from './device'
 
 export const MAX_BATCH = 1000
 
+/**
+ * renderer→main 单向哨兵（21-04 凭证不重传机制）：env 值「未修改（沿用脱敏回显）」。
+ * saveConfig / testConnection 遇哨兵值时用已存明文替换（main 侧保留旧值）；
+ * ''（空串）表示删除该键。
+ */
+export const UNCHANGED_ENV_SENTINEL = '****__unchanged__'
+
 export interface McpSaveInput {
   /** 有值 → UPDATE；空 → INSERT（新建） */
   id?: number | null
@@ -149,6 +156,24 @@ export class McpService {
 
     let result: { ok: true; config: McpConfigView } | { ok: false; error: string } | null = null
     const tx = conn.transaction((): void => {
+      // 21-04 哨兵合并：env 含哨兵值/空串删除标记时，用已存明文解冲突后替换 dto.env
+      // （renderer 只回显 ****尾4，未修改键经哨兵跳过、main 侧保留旧值；空串=删除该键）
+      if (dto.env && configId != null) {
+        const hasSentinel = Object.values(dto.env).some((v) => v === UNCHANGED_ENV_SENTINEL || v === '')
+        if (hasSentinel) {
+          const existing = McpService.decodeForTest(configId)?.env ?? {}
+          const merged: Record<string, string> = {}
+          for (const [k, v] of Object.entries(dto.env)) {
+            if (v === UNCHANGED_ENV_SENTINEL) {
+              if (existing[k] !== undefined) merged[k] = existing[k]
+            } else if (v !== '') {
+              merged[k] = v
+            }
+          }
+          dto.env = merged
+        }
+      }
+
       // ---- 冲突判定先行（先于一切写语句）----
       const stmtBound = conn.prepare('SELECT mcp_config_id FROM mcp_device_rel WHERE device_id = ?')
       const stmtCfgName = conn.prepare('SELECT name FROM mcp_configs WHERE id = ?')

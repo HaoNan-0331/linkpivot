@@ -5,6 +5,7 @@ import { useAuthStore } from '../../stores/authStore'
 import CommandWhitelistEditor from '../settings/CommandWhitelistEditor'
 import ExecModeSwitch from '../settings/ExecModeSwitch'
 import PromptTab from '../settings/PromptTab'
+import McpTab from '../settings/McpTab'
 import type { AIConfig } from '../../types/electron'
 import type { ScheduleConfig, SchedulerStatus } from '../../types/oui'
 
@@ -31,6 +32,8 @@ export default function SettingsPage() {
   const [schedulerLoading, setSchedulerLoading] = useState(false)
   // D-01：切回「AI 提示词」tab 时递增，触发 PromptTab 重新扫描（AntD Tabs 切回不重挂面板）
   const [promptRefresh, setPromptRefresh] = useState(0)
+  // 21-04：切回「MCP 服务」tab 时递增，触发 McpTab 重新拉取（同 prompt 先例）
+  const [mcpRefresh, setMcpRefresh] = useState(0)
   // CR-01（18-REVIEW）：retentionDays 提交改 draft 本地态 + blur/Enter 提交——onChange 逐键提交会把
   // 输入过程的瞬态值（90→180 必经 "1"、"18"）落库并经 updateConfig→start() 启动钩子触发按瞬态
   // cutoff 的不可恢复批量 DELETE。draft 为 null 表示未编辑，展示并提交已落库配置值。
@@ -225,11 +228,15 @@ export default function SettingsPage() {
   return (
     <div style={{ maxWidth: 900, padding: 16 }}>
       <Tabs
-        onChange={(key) => { if (key === 'prompt') setPromptRefresh((n) => n + 1) }}
+        onChange={(key) => {
+          if (key === 'prompt') setPromptRefresh((n) => n + 1)
+          if (key === 'mcp') setMcpRefresh((n) => n + 1)
+        }}
         items={[
           { key: 'general', label: '通用设置', children: generalSettings },
           { key: 'ip', label: 'IP 管理', children: ipSettings },
           { key: 'prompt', label: 'AI 提示词', children: <PromptTab refreshKey={promptRefresh} /> },
+          { key: 'mcp', label: 'MCP 服务', children: <McpTab refreshKey={mcpRefresh} /> },
         ]} />
     </div>
   )
