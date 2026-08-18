@@ -13,7 +13,7 @@ import { createSystemLog } from '../services/systemLog'
  *      在 createTables() 建好基线表之后、premigration 备份之后执行（D-06）。
  *      init.ts 不直接调用 runMigrations（单一调用点原则）。
  */
-export const MIGRATION_HEAD = 15
+export const MIGRATION_HEAD = 16
 
 interface MigrationStep {
   version: number
@@ -496,6 +496,67 @@ export const v15 = (db: Database.Database): void => {
   step()
 }
 
+/**
+ * v16：Phase 21（21-01）mcp_configs 一对多重建（D-03）+ mcp_device_rel 关联表 + source（D-06）+ 最近测试列（D-09）。
+ *
+ * - v15 mcp_configs 为一对一占位形态（device_id 列内嵌），D-03 需求修订为一对多绑定 →
+ *   DROP 重建为无 device_id 主表 + 独立 mcp_device_rel 关联表（照 exp_device_rel 形态，
+ *   但 device_id 为**单列 UNIQUE**——一台设备至多绑定一个 MCP 配置，D-04 冲突拦截在
+ *   service 层事务判定，DB 层 UNIQUE 兜底锁死）。占位表零读写零数据（v15 起无任何读写路径），DROP 无损。
+ * - env_json_enc：stdio 环境变量键值对整体 JSON 加密单列（A4 裁决形态）；credential_enc：
+ *   http token，保持 nullable 双态语义（NULL=从未写密文 / 空串=写过但空内容，v13:369 同款）。
+ *   读写只走 encField/decField（禁裸调 encrypt/decrypt，service 层红线）。
+ * - source：配置来源（manual/imported），默认 'manual'，UI 不暴露（D-06）。
+ * - last_test_at/last_test_status/last_test_tool_count：连接测试最近结果（D-09）。
+ *
+ * 幂等守卫：sqlite_master 查 mcp_configs.sql——含旧特征（device_id 内嵌）或不含 'source'
+ * 列特征才 DROP 重建；已是新形态则全段 CREATE IF NOT EXISTS no-op（不靠 user_version，文件头红线）。
+ * 执行体包 db.transaction（throw 即 ROLLBACK）。
+ * DDL 与 init.ts fresh-install DDL 逐字一致（双路径一致红线，v7/v8/v13/v14/v15 注释同款要求）。
+ */
+export const v16 = (db: Database.Database): void => {
+  const step = db.transaction(() => {
+    const existing = db.prepare(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='mcp_configs'"
+    ).get() as { sql: string } | undefined
+    if (existing && (existing.sql.includes('device_id') || !existing.sql.includes('source'))) {
+      db.exec('DROP TABLE mcp_configs')
+    }
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS mcp_configs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL CHECK(type IN ('stdio','http')),
+        command_or_url TEXT NOT NULL,
+        args_json TEXT,
+        env_json_enc TEXT,
+        credential_enc TEXT,
+        source TEXT NOT NULL DEFAULT 'manual',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        last_test_at TEXT,
+        last_test_status TEXT,
+        last_test_tool_count INTEGER,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS mcp_device_rel (
+        id TEXT PRIMARY KEY,
+        mcp_config_id INTEGER NOT NULL,
+        device_id TEXT NOT NULL UNIQUE,
+        created_at TEXT DEFAULT (datetime('now','localtime')),
+        FOREIGN KEY (mcp_config_id) REFERENCES mcp_configs(id) ON DELETE CASCADE,
+        FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_mcp_device_rel_mcp ON mcp_device_rel(mcp_config_id);
+      CREATE INDEX IF NOT EXISTS idx_mcp_device_rel_device ON mcp_device_rel(device_id);
+    `)
+    db.pragma('user_version = 16')
+  })
+  step()
+}
+
 const MIGRATIONS: MigrationStep[] = [
   { version: 1, name: 'chat_history.session_id', run: v1 },
   { version: 2, name: 'ai_exec_logs.prompt_text+ai_response', run: v2 },
@@ -512,6 +573,7 @@ const MIGRATIONS: MigrationStep[] = [
   { version: 13, name: 'ai_exec_logs/ai_system_logs prompt_text+ai_response 加密列 + scheduler_config.retention_days (SEC-06)', run: v13 },
   { version: 14, name: 'arp_entries.collected_at index (TXN-03) + kb fts triggers image_desc constant NULL (Q10)', run: v14 },
   { version: 15, name: 'prompt_overrides + mcp_configs create (Phase 20 prompt registry / Phase 21 MCP placeholder)', run: v15 },
+  { version: 16, name: 'mcp_configs_v16_rebuild', run: v16 },
 ]
 
 /**

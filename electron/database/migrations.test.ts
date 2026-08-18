@@ -161,11 +161,12 @@ describe('v11 ai_system_logs CHECK widen security 迁移', () => {
     expect(initDdl).toContain(expectedStatusCheck)
   })
 
-  it('4. MIGRATION_HEAD=15（注册完整性静态守卫，防 bump 漏改）', async () => {
+  it('4. MIGRATION_HEAD=16（注册完整性静态守卫，防 bump 漏改）', async () => {
     const mod = await import('./migrations')
     // Phase 18 18-02：v14 注册后 MIGRATION_HEAD=14；
-    // Phase 20 20-01：v15 prompt_overrides + mcp_configs 两表迁移注册，HEAD 从 14 bump 到 15
-    expect(mod.MIGRATION_HEAD).toBe(15)
+    // Phase 20 20-01：v15 prompt_overrides + mcp_configs 两表迁移注册，HEAD 从 14 bump 到 15；
+    // Phase 21 21-01：v16 mcp_configs 一对多重建注册，HEAD 从 15 bump 到 16
+    expect(mod.MIGRATION_HEAD).toBe(16)
   })
 
   it('5. v13 双路径 DDL 一致：v13 ALTER 列定义串与 init.ts 三处 fresh-install DDL 特征串逐字一致', () => {
@@ -320,8 +321,11 @@ describe('v15 prompt_overrides + mcp_configs 建表迁移（Phase 20 20-01）', 
       expect(extractInitBlock('prompt_overrides')).toContain(col)
     }
 
-    // mcp_configs 关键列特征串：双路径逐字一致（credential_enc nullable 占位，业务归 Phase 21；
-    // device_id TEXT 对齐 devices.id TEXT uuid —— WR-02 修复，同库先例 arp_entries.device_id TEXT）
+    // mcp_configs 关键列特征串：v15 迁移体保持历史形态（device_id 内嵌占位）——
+    // 21-01 v16 起 init.ts fresh-install 基线已切换为 v16 一对多形态（D-03），
+    // v15 块与 init.ts 的 mcp_configs 双路径一致性断言由 v16 段接管
+    // （见 tests/electron/migrations.test.ts 用例 c + 本文件 v16 describe）。
+    // 此处仅断言 v15 迁移体自身的历史 DDL 特征（WR-02 修复后的 TEXT 形态）。
     const mcpCols = [
       'id INTEGER PRIMARY KEY AUTOINCREMENT',
       'device_id TEXT UNIQUE NOT NULL REFERENCES devices(id) ON DELETE CASCADE',
@@ -331,7 +335,6 @@ describe('v15 prompt_overrides + mcp_configs 建表迁移（Phase 20 20-01）', 
     ]
     for (const col of mcpCols) {
       expect(v15Body).toContain(col)
-      expect(extractInitBlock('mcp_configs')).toContain(col)
     }
 
     // 反向守卫：credential_enc 不得带 NOT NULL / 空串默认（v13:369-370 双态语义）

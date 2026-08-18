@@ -339,12 +339,17 @@ export function createTables() {
     CREATE INDEX IF NOT EXISTS idx_exp_device_rel_exp ON exp_device_rel(experience_id);
     CREATE INDEX IF NOT EXISTS idx_exp_device_rel_device ON exp_device_rel(device_id);
 
-    -- Phase 20（20-01）：提示词 override 表 + MCP 配置占位表。
-    -- 以下两表 DDL 必须与 migrations.ts v15 迁移 DDL 逐字一致（双路径一致红线，v7/v8/v13/v14 注释同款要求）。
+    -- Phase 20（20-01）+ Phase 21（21-01 v16 形态）：提示词 override 表 + MCP 配置表（一对多形态）。
+    -- prompt_overrides DDL 与 migrations.ts v15 迁移 DDL 逐字一致；
+    -- mcp_configs/mcp_device_rel DDL 必须与 migrations.ts v16 迁移 DDL 逐字一致
+    -- （双路径一致红线，v7/v8/v13/v14/v15 注释同款要求）。
     -- prompt_overrides.content 明文不加密：默认值本身在代码 registry 明文单一来源，加密无增益（20-CONTEXT 决策）。
-    -- mcp_configs 仅建表占位：本 phase 无读写路径，业务归 Phase 21；
-    -- credential_enc nullable（禁 NOT NULL、禁空串默认）——NULL/空串双态区分是读侧
+    -- mcp_configs v16 一对多形态（D-03）：device_id 内嵌列移除，绑定关系入 mcp_device_rel
+    -- （device_id 单列 UNIQUE——一台设备至多绑一个配置；D-04 冲突拦截在 service 层，DB UNIQUE 兜底）。
+    -- env_json_enc：stdio 环境变量键值对整体 JSON 加密（A4 裁决）；credential_enc：http token，
+    -- nullable（禁 NOT NULL、禁空串默认）——NULL/空串双态区分是读侧
     -- 「列存在性判据、禁试解密」的语义根基（v13:369-370 同款语义注释）。
+    -- source（D-06，默认 manual UI 不暴露）+ last_test_*（D-09 最近测试结果）。
 
     CREATE TABLE IF NOT EXISTS prompt_overrides (
       prompt_id TEXT PRIMARY KEY,
@@ -355,17 +360,31 @@ export function createTables() {
 
     CREATE TABLE IF NOT EXISTS mcp_configs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      device_id TEXT UNIQUE NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       type TEXT NOT NULL CHECK(type IN ('stdio','http')),
       command_or_url TEXT NOT NULL,
       args_json TEXT,
-      env_whitelist_json TEXT,
+      env_json_enc TEXT,
       credential_enc TEXT,
+      source TEXT NOT NULL DEFAULT 'manual',
       enabled INTEGER NOT NULL DEFAULT 1,
+      last_test_at TEXT,
+      last_test_status TEXT,
+      last_test_tool_count INTEGER,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS mcp_device_rel (
+      id TEXT PRIMARY KEY,
+      mcp_config_id INTEGER NOT NULL,
+      device_id TEXT NOT NULL UNIQUE,
+      created_at TEXT DEFAULT (datetime('now','localtime')),
+      FOREIGN KEY (mcp_config_id) REFERENCES mcp_configs(id) ON DELETE CASCADE,
+      FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_mcp_device_rel_mcp ON mcp_device_rel(mcp_config_id);
+    CREATE INDEX IF NOT EXISTS idx_mcp_device_rel_device ON mcp_device_rel(device_id);
   `)
 
   // 散落迁移块（chat_history.session_id / ai_exec_logs.prompt_text+ai_response /
