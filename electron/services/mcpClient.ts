@@ -71,6 +71,13 @@ interface ActiveConnection {
 /** 连接级 Map：key = configId 或 tempKey（连接测试临时键）——不进 sessions/windowSessionMap */
 const connections = new Map<string, ActiveConnection>()
 
+/**
+ * 握手期孤儿清理入口（CR-01）：connectStdio 从 spawn 到 connect 成败落定期间登记，
+ * 使「握手挂起被超时/取消抢占」路径（此时 connections 里尚无该 key，closeConnection 原为空操作）
+ * 也能 destroy transport 并树杀已 spawn 的子进程。
+ */
+const pendingStdioCleanups = new Map<string, () => Promise<void>>()
+
 /** 取消接口：Map<testId, AbortController>（21-04 D-07 取消按钮复用） */
 const testControllers = new Map<string, AbortController>()
 
@@ -143,7 +150,16 @@ export function resolveStdioCommand(command: string, args: string[]): StdioSpawn
 // ---------------------------------------------------------------------------
 
 function structuredError(e: unknown, prefix: string): McpTestError {
-  const err = e as { code?: string | number, errno?: string | number, status?: number, message?: string }
+  const err = e as { code?: string | number, errno?: string | number, status?: number, message?: string, reason?: string }
+  // WR-01：超时/取消等自带人话 reason 的结构化错误（无 message 字段）原样透传——
+  // 否则 String(e) 产出 "[object Object]"，精心构造的文案被丢弃
+  if (err && typeof err.reason === 'string' && typeof err.message !== 'string') {
+    return {
+      code: typeof err.code === 'string' ? err.code : 'MCP_ERROR',
+      reason: err.reason,
+      errno: err.errno
+    }
+  }
   const rawMsg = err && typeof err.message === 'string' ? err.message : String(e)
   let reason: string
   const code = err && err.code
@@ -200,9 +216,43 @@ async function connectStdio(
     stderr: 'pipe'
   })
   const client = new Client({ name: 'network-toplogy', version: '1.4.0' }, { capabilities: {} })
-  await client.connect(transport)
+
+  let registeredPid: number | null = null
+  // CR-02：子进程退出（自然退出/被树杀）即注销登记并断开连接表条目——
+  // 防 idle sweeper 对已被系统复用的陈旧 pid 下 taskkill 误杀无关进程。
+  // 同 key 重连场景由 transport 同一性比对守卫（旧 transport 迟到的 close 不清新连接）。
+  transport.onclose = () => {
+    if (registeredPid !== null) McpProcessRegistry.unregister(registeredPid)
+    const cur = connections.get(key)
+    if (cur && cur.transport === transport) connections.delete(key)
+  }
+
+  // CR-01：spawn 成功但握手失败/挂起被抢占时，也必须 destroy transport + 树杀已 spawn 的子进程。
+  // pid 必须在 close 前读（SDK close 会清空内部 _process 使 pid 变 null）；
+  // killTree 先行（onclose 注销会使后续 killTree 查表不中而漏杀 npx 孙进程链）。
+  const cleanupSpawned = async (): Promise<void> => {
+    const pid = transport.pid
+    connections.delete(key)
+    if (pid !== null) {
+      McpProcessRegistry.register(pid, key)
+      McpProcessRegistry.killTree(pid)
+    }
+    try { await client.close() } catch { /* 关闭失败继续清理 */ }
+    try { await transport.close() } catch { /* 同上 */ }
+    try { await (transport as { destroy?: () => Promise<void> }).destroy?.() } catch { /* 同上 */ }
+  }
+  pendingStdioCleanups.set(key, cleanupSpawned)
+  try {
+    await client.connect(transport)
+  } catch (e) {
+    if (pendingStdioCleanups.get(key) === cleanupSpawned) pendingStdioCleanups.delete(key)
+    await cleanupSpawned()
+    throw e
+  }
+  pendingStdioCleanups.delete(key)
   // transport.pid 在 connect（spawn 完成）后可读——登记树杀面
   const pid = transport.pid
+  registeredPid = pid
   if (pid !== null) McpProcessRegistry.register(pid, key)
   connections.set(key, { client, transport, pid, lastUsedAt: Date.now() })
   return { client, transport }
@@ -250,14 +300,27 @@ async function connectHttp(
   }
 }
 
-/** 关闭并树杀：client.close → transport.destroy → killTree（SSE 残留句柄顺序要求，spike V-3 附注） */
+/**
+ * 关闭并树杀：killTree 先行 → client.close → transport.destroy（SSE 残留句柄顺序要求，spike V-3 附注）。
+ * CR-01：连接尚未建立（握手挂起被超时/取消抢占）时走 pendingStdioCleanups 兜底清理，
+ * 否则该路径原为空操作、已 spawn 的子进程泄露。
+ * CR-02：killTree 必须先于 client.close——close 触发的 onclose 会即时注销 pid，
+ * 顺序颠倒将使 killTree 查表不中而漏杀 npx→cmd→node 孙进程链。
+ */
 async function closeConnection(key: string): Promise<void> {
   const conn = connections.get(key)
-  if (!conn) return
+  if (!conn) {
+    const pending = pendingStdioCleanups.get(key)
+    if (pending) {
+      pendingStdioCleanups.delete(key)
+      await pending()
+    }
+    return
+  }
   connections.delete(key)
+  if (conn.pid !== null) McpProcessRegistry.killTree(conn.pid)
   try { await conn.client.close() } catch { /* 关闭失败继续清理 */ }
   try { await (conn.transport as { destroy?: () => Promise<void> }).destroy?.() } catch { /* 同上 */ }
-  if (conn.pid !== null) McpProcessRegistry.killTree(conn.pid)
 }
 
 // ---------------------------------------------------------------------------
@@ -309,7 +372,7 @@ export async function testConnection(
   // 取消即时性（21-05 修复）：abort 信号参与整体 race——此前 signal 只在阶段间隙检查，
   // 卡死 server 场景下取消要等到 10s 硬超时才生效。race 被 abort 抢占后走 fail 清理路径
   // （closeConnection → killTree 树杀子进程），后台孤儿 work 由 p.catch 吞掉防 unhandled。
-  const cancelErr = () => Object.assign(new Error('已由用户取消'), { code: 'MCP_CANCELLED' })
+  const cancelErr = (): McpTestError => ({ code: 'MCP_CANCELLED', reason: '已由用户取消' })
   const onAbort = new Promise<never>((_, reject) => {
     if (controller.signal.aborted) reject(cancelErr())
     else controller.signal.addEventListener('abort', () => reject(cancelErr()), { once: true })
@@ -329,11 +392,10 @@ export async function testConnection(
             { code: 'MCP_CMD_NOT_FOUND', message: plan.command }, '启动本地程序失败'
           )
         }
-        ;({ client } = await withTimeout(
-          connectStdio(key, config, plan),
-          budget,
-          'stdio 连接（冷启动）'
-        ))
+        // 孤儿 connect 防 unhandled rejection：race 被超时/取消抢占后 connect 仍会迟到 reject
+        const connectP = connectStdio(key, config, plan)
+        connectP.catch(() => { /* 清理由 fail 路径经 pendingStdioCleanups 接管 */ })
+        ;({ client } = await withTimeout(connectP, budget, 'stdio 连接（冷启动）'))
       } catch (e) {
         const err = e as { timedOut?: boolean, code?: string | number }
         if (err?.timedOut) {
@@ -342,13 +404,16 @@ export async function testConnection(
         }
         // 主路径 spawn 失败 → 兜底 process.execPath + ELECTRON_RUN_AS_NODE 重试一次。
         // 21-05 修正：Windows 下命令不存在时 transport close 事件先于 spawn error 到达，
-        // connect 以 CONNECTION_CLOSED 拒绝（ENOENT 被 close 竞态吞掉）——同列兜底触发条件
-        if (plan.fallback && (err?.code === 'ENOENT' || err?.code === 'EACCES' || err?.code === 'CONNECTION_CLOSED')) {
-          ;({ client } = await withTimeout(
-            connectStdio(key, config, plan.fallback),
-            budget,
-            'stdio 连接（ELECTRON_RUN_AS_NODE 兜底）'
-          ))
+        // connect 以 CONNECTION_CLOSED 拒绝（ENOENT 被 close 竞态吞掉）——同列兜底触发条件。
+        // CR-01 补：已被取消/超时抢占时不再重试——此前取消杀掉主路径子进程会触发
+        // CONNECTION_CLOSED，进而重 spawn 兜底子进程造成新的泄露
+        if (
+          !controller.signal.aborted && !err?.timedOut && plan.fallback &&
+          (err?.code === 'ENOENT' || err?.code === 'EACCES' || err?.code === 'CONNECTION_CLOSED')
+        ) {
+          const fallbackP = connectStdio(key, config, plan.fallback)
+          fallbackP.catch(() => { /* 同上：race 抢占后的孤儿 connect */ })
+          ;({ client } = await withTimeout(fallbackP, budget, 'stdio 连接（ELECTRON_RUN_AS_NODE 兜底）'))
         } else {
           return await fail(e, 'stdio 连接失败')
         }
@@ -360,7 +425,7 @@ export async function testConnection(
         return await fail(e, 'HTTP 连接失败')
       }
     }
-    if (controller.signal.aborted) return await fail({ code: 'MCP_CANCELLED' }, '已取消')
+    if (controller.signal.aborted) return await fail(cancelErr(), '已取消')
 
     stage('handshake')
     stage('listing')
@@ -370,7 +435,7 @@ export async function testConnection(
     } catch (e) {
       return await fail(e, '列出工具失败')
     }
-    if (controller.signal.aborted) return await fail({ code: 'MCP_CANCELLED' }, '已取消')
+    if (controller.signal.aborted) return await fail(cancelErr(), '已取消')
 
     const protocolVersion = client.getNegotiatedProtocolVersion() // spike A1 修正：非 getProtocolVersion
     // 连接测试测完即杀——不留连接（T-21-03-04：不持长寿命子进程）

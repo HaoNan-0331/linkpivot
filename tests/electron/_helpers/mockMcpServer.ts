@@ -24,12 +24,13 @@ import readline from 'readline'
 const TOOLS_PER_PAGE = 2
 
 function parseFlags(argv) {
-  const flags = { mode: 'stdio', pages: 1, hang: false, crash: false, structured: false, version: '2025-06-18' }
+  const flags = { mode: 'stdio', pages: 1, hang: false, hangInit: false, crash: false, structured: false, version: '2025-06-18' }
   for (const a of argv) {
     if (a === '--child') continue
     if (a.startsWith('--mode=')) flags.mode = a.slice(7)
     else if (a.startsWith('--pages=')) flags.pages = parseInt(a.slice(8), 10) || 1
     else if (a === '--hang') flags.hang = true
+    else if (a === '--hang-init') flags.hangInit = true
     else if (a === '--crash') flags.crash = true
     else if (a === '--structured') flags.structured = true
     else if (a.startsWith('--version=')) flags.version = a.slice(10)
@@ -80,6 +81,8 @@ function runStdioChild() {
   const initialized = { done: false }
   const rl = readline.createInterface({ input: process.stdin })
   rl.on('line', (line) => {
+    // 握手挂起泄漏路径（CR-01 测试）：任何输入一概不回话、永不退出——spawn 成功但 connect 永不落定
+    if (flags.hangInit) return
     const s = line.trim()
     if (!s) return
     let msg

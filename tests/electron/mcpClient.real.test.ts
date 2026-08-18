@@ -132,6 +132,9 @@ describe('mcpClient 真路径（stdio 三路径 + http 双形态 + 异常分支�
     if (!res.ok) {
       expect(res.error.code).toBe('MCP_TIMEOUT')
       expect(res.error.reason).toContain('列出工具')
+      // WR-01：超时文案完整透传，不得退化为 "[object Object]"
+      expect(res.error.reason).toContain('预算耗尽')
+      expect(res.error.reason).not.toContain('[object Object]')
     }
     expect(elapsed).toBeGreaterThanOrEqual(9000)
     // 超时后结构化错误返回且子进程被树杀（SC5 零残留）
@@ -181,5 +184,55 @@ describe('mcpClient 真路径（stdio 三路径 + http 双形态 + 异常分支�
     // 即时性：远早于 10s 硬超时（race 被 abort 抢占）
     expect(elapsed).toBeLessThan(8000)
     expect(McpProcessRegistry.listActive()).toEqual([])
+  }, 30000)
+
+  // ---- CR-01 / CR-02 回归锁（21 review）----
+
+  /** 按 marker（命令行子串）统计存活的 mock 子进程数（node.exe / electron.exe 兜底形态） */
+  function countProbeChildren(marker: string): number {
+    const out = execSync(
+      `powershell -NoProfile -Command "@(Get-CimInstance Win32_Process -Filter \\"name='node.exe' or name='electron.exe'\\" | Where-Object { $_.CommandLine -like '*${marker}*' }).Count"`,
+      { encoding: 'utf8', windowsHide: true }
+    ).trim()
+    return parseInt(out, 10) || 0
+  }
+
+  it('j) CR-01 握手挂起 + 取消：孤儿 connect 路径子进程零残留（spawn 成功但 connect 未落定）', async () => {
+    const marker = 'nt-mcp-probe-t-j'
+    expect(countProbeChildren(marker)).toBe(0)
+    const p = testConnection('t-j', stdioConfig(['--hang-init', `--probe=${marker}`]))
+    // 等 spawn 完成、握手挂起中：连接表无条目、子进程确已存活
+    await new Promise((r) => setTimeout(r, 2500))
+    expect(_activeConnectionKeys()).toEqual([])
+    expect(countProbeChildren(marker)).toBe(1)
+    expect(cancelTest('t-j')).toBe(true)
+    const res = await p
+    expect(res.ok).toBe(false)
+    if (!res.ok) {
+      expect(res.error.code).toBe('MCP_CANCELLED')
+      expect(res.error.reason).not.toContain('[object Object]')
+    }
+    // 取消清理由 pendingStdioCleanups 兜底接管——树杀后零残留
+    await new Promise((r) => setTimeout(r, 1500))
+    expect(countProbeChildren(marker)).toBe(0)
+    expect(McpProcessRegistry.listActive()).toEqual([])
+  }, 30000)
+
+  it('k) CR-01 握手失败（版本协商被拒）：结构化错误 + 已 spawn 子进程清退', async () => {
+    const res = await testConnection('t-k', stdioConfig(['--version=1999-01-01']))
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(typeof res.error.reason).toBe('string')
+    expect(McpProcessRegistry.listActive()).toEqual([])
+    expect(_activeConnectionKeys()).toEqual([])
+  }, 30000)
+
+  it('l) CR-02 长连接子进程自然退出：onclose 即时注销登记（防 pid 复用误杀）', async () => {
+    const cfg = stdioConfig(['--crash'])
+    const client = await getConnection('t-l', cfg)
+    await expect(client.listTools()).rejects.toThrow()
+    // 进程 close 事件 → transport.onclose → unregister（不依赖 closeConnection/killTree）
+    await new Promise((r) => setTimeout(r, 1500))
+    expect(McpProcessRegistry.listActive()).toEqual([])
+    await closeMcpConnection('t-l')
   }, 30000)
 })
