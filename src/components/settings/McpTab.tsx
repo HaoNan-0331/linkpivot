@@ -416,11 +416,11 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
 
   const columns: ColumnsType<McpConfigDto> = [
     {
-      title: '名称', dataIndex: 'name', width: 240, ellipsis: true,
+      title: '名称', dataIndex: 'name', width: 240,
       render: (v: string, r) => (
-        <Space size={4}>
-          <Text strong ellipsis={{ tooltip: v }} style={{ maxWidth: r.enabled ? undefined : 140 }}>{v}</Text>
-          {!r.enabled && <Tag style={{ flexShrink: 0 }}>已停用</Tag>}
+        <Space size={4} style={{ display: 'flex' }}>
+          <Text strong style={{ whiteSpace: 'normal', wordBreak: 'break-word', minWidth: 0 }}>{v}</Text>
+          {!r.enabled && <Tag style={{ flexShrink: 0, alignSelf: 'flex-start' }}>已停用</Tag>}
         </Space>
       ),
     },
@@ -512,7 +512,7 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
           >
           </Empty>
         ) : (
-          <Table size="small" rowKey="id" columns={columns} dataSource={configs} pagination={false} />
+          <Table size="small" rowKey="id" columns={columns} dataSource={configs} pagination={false} scroll={{ x: 'max-content' }} />
         )}
       </Card>
 
