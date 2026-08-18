@@ -91,11 +91,11 @@ function runStdioChild() {
     if (msg.method === 'initialize') {
       const res = { jsonrpc: '2.0', id: msg.id, result: handleRpc(msg, flags, initialized) }
       process.stdout.write(JSON.stringify(res) + '\n')
-      if (flags.crash) {
-        // 握手完成即崩（进程级崩溃分支）
-        setTimeout(() => process.exit(1), 50)
-      }
       return
+    }
+    if (flags.crash && msg.method === 'tools/list') {
+      // 崩溃分支：握手成功后收到 tools/list 即进程退出（确定性——不等定时器竞态）
+      process.exit(1)
     }
     if (flags.hang && initialized.done && msg.method === 'tools/list') {
       // 卡死分支：进程活着，收到请求不回话

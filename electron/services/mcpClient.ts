@@ -306,7 +306,17 @@ export async function testConnection(
     return { ok: false, error: structuredError(e, prefix) }
   }
 
-  try {
+  // 取消即时性（21-05 修复）：abort 信号参与整体 race——此前 signal 只在阶段间隙检查，
+  // 卡死 server 场景下取消要等到 10s 硬超时才生效。race 被 abort 抢占后走 fail 清理路径
+  // （closeConnection → killTree 树杀子进程），后台孤儿 work 由 p.catch 吞掉防 unhandled。
+  const cancelErr = () => Object.assign(new Error('已由用户取消'), { code: 'MCP_CANCELLED' })
+  const onAbort = new Promise<never>((_, reject) => {
+    if (controller.signal.aborted) reject(cancelErr())
+    else controller.signal.addEventListener('abort', () => reject(cancelErr()), { once: true })
+  })
+
+  const work = async (): Promise<McpTestResult> => {
+   try {
     stage('starting')
     const budget = config.type === 'stdio' ? TEST_STDIO_BUDGET_MS : TEST_HTTP_BUDGET_MS
 
@@ -330,8 +340,10 @@ export async function testConnection(
           await closeConnection(key)
           return { ok: false, error: structuredError(e, 'stdio 连接（冷启动）') }
         }
-        // 主路径 spawn 失败（ENOENT 等）→ 兜底 process.execPath + ELECTRON_RUN_AS_NODE 重试一次
-        if (plan.fallback && (err?.code === 'ENOENT' || err?.code === 'EACCES')) {
+        // 主路径 spawn 失败 → 兜底 process.execPath + ELECTRON_RUN_AS_NODE 重试一次。
+        // 21-05 修正：Windows 下命令不存在时 transport close 事件先于 spawn error 到达，
+        // connect 以 CONNECTION_CLOSED 拒绝（ENOENT 被 close 竞态吞掉）——同列兜底触发条件
+        if (plan.fallback && (err?.code === 'ENOENT' || err?.code === 'EACCES' || err?.code === 'CONNECTION_CLOSED')) {
           ;({ client } = await withTimeout(
             connectStdio(key, config, plan.fallback),
             budget,
@@ -367,6 +379,15 @@ export async function testConnection(
     return { ok: true, protocolVersion, tools }
   } catch (e) {
     return await fail(e, '连接测试失败')
+  }
+  }
+
+  try {
+    const p = work()
+    p.catch(() => { /* race 被 abort 抢占后的孤儿 work——清理已由 fail 路径接管 */ })
+    return await Promise.race([p, onAbort])
+  } catch (e) {
+    return await fail(e, '连接测试已取消')
   } finally {
     testControllers.delete(testId)
   }
