@@ -233,9 +233,14 @@ async function connectHttp(
       err?.code === 'CLIENT_HTTP_NOT_IMPLEMENTED' || err?.status === 404 || err?.status === 405
     if (!isNotStreamable) throw e
     try { await primaryClient.close() } catch { /* 主路径连接未成，close 失败忽略 */ }
-    const base = config.commandOrUrl.replace(/\/+$/, '')
-    const sseUrl = base.endsWith('/sse') ? base : `${base}/sse`
-    const sseTransport = new SSEClientTransport(new URL(sseUrl), {
+    // SSE URL 推导用 URL 解析（21-04 修复）：URL 可能带 query 认证串（?key=xxx），
+    // 字符串 endsWith('/sse') 判定会把 '/sse' 拼到 query 之后（…?key=xxx/sse → 401）。
+    // 规则：pathname 已以 /sse 结尾 → 原样；否则去尾斜杠后补 /sse；query/hash 原样保留。
+    const sseUrl = new URL(config.commandOrUrl)
+    if (!sseUrl.pathname.endsWith('/sse')) {
+      sseUrl.pathname = sseUrl.pathname.replace(/\/+$/, '') + '/sse'
+    }
+    const sseTransport = new SSEClientTransport(sseUrl, {
       requestInit: { headers }
     })
     const sseClient = new Client({ name: 'network-toplogy', version: '1.4.0' }, { capabilities: {} })
