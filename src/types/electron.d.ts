@@ -228,6 +228,44 @@ export interface ElectronAPI {
     keepMine: (id: string) => Promise<{ ok: true }>
     diff: (id: string) => Promise<PromptDiffBase>
   }
+  // Phase 21 (21-02)：mcp.* 通道（mcpIpc 四 secure handler，preload 透传）。
+  // 出口只含 Masked 凭证（****尾4），永无明文/密文（T-21-02-01）。
+  mcp: {
+    list: () => Promise<McpConfigDto[]>
+    save: (dto: McpSaveDto) => Promise<{ ok: true; config: McpConfigDto } | { ok: false; error: string }>
+    delete: (id: number) => Promise<{ ok: true }>
+    setEnabled: (id: number, enabled: boolean) => Promise<{ ok: true }>
+  }
+}
+
+// Phase 21：MCP 配置视图（mcpService.McpConfigView 的 renderer 镜像）
+export interface McpConfigDto {
+  id: number
+  name: string
+  type: 'stdio' | 'http'
+  commandOrUrl: string
+  args: string[]
+  credentialMasked: string | null
+  envKeysMasked: string[]
+  deviceIds: string[]
+  deviceNames: string[]
+  enabled: boolean
+  source: string
+  lastTestAt: string | null
+  lastTestStatus: string | null
+  lastTestToolCount: number | null
+}
+
+export interface McpSaveDto {
+  id?: number | null
+  name: string
+  type: 'stdio' | 'http'
+  commandOrUrl: string
+  args?: string[]
+  env?: Record<string, string> | null
+  credential?: string | null
+  deviceIds?: string[]
+  enabled?: boolean
 }
 
 // Phase 20：提示词注册表条目视图（20-01 PromptService.listEntries 返回形态的 renderer 镜像）

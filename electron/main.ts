@@ -31,6 +31,8 @@ import { registerKbIpc } from './ipc/knowledgeBaseIpc'
 import { setExperienceMasterKey, backfillSeverityFromHistory } from './services/experienceService'
 import { registerExperienceIpc } from './ipc/experienceIpc'
 import { registerExperienceDraftingIpc } from './ipc/experienceDraftingIpc'
+import { McpService } from './services/mcpService'
+import { registerMcpIpc } from './ipc/mcpIpc'
 
 let mainWindow: BrowserWindow | null = null
 let masterKey: string
@@ -99,6 +101,8 @@ app.whenReady().then(() => {
   // 第 8 直接注入器（SEC-06）：systemLog 持模块级 MK 加密 prompt_text_enc/ai_response_enc；
   // aiExecLogger 已由 setAiMasterKey 内部链式注入（ai.ts），不重复。service 不直读 keyManager 红线。
   setSystemLogMasterKey(masterKey)
+  // 第 9 直接注入器（Phase 21）：mcpService 持 private static MK 加密 env_json_enc/credential_enc。
+  McpService.setMcpMasterKey(masterKey)
   // R2: decField 解密失败可观测——masterKey 不匹配 / safeStorage 翻转时写 system_log 告警，避免无声数据丢失。
   // handler 在此注入（解耦：crypto.ts 不依赖 services/DB，保持纯函数可单测）。
   setDecryptFailureHandler(() => {
@@ -193,6 +197,7 @@ app.whenReady().then(() => {
   registerKbIpc()
   registerExperienceIpc()
   registerExperienceDraftingIpc()
+  registerMcpIpc()
   SchedulerService.start()
   BackupScheduler.start()
 

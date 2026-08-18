@@ -102,6 +102,12 @@ const api = {
     keepMine: (id: string) => ipcRenderer.invoke('prompt:keepMine', id),
     diff: (id: string) => ipcRenderer.invoke('prompt:diff', id),
   },
+  mcp: {
+    list: () => ipcRenderer.invoke('mcp:list'),
+    save: (dto: unknown) => ipcRenderer.invoke('mcp:save', dto),
+    delete: (id: number) => ipcRenderer.invoke('mcp:delete', id),
+    setEnabled: (id: number, enabled: boolean) => ipcRenderer.invoke('mcp:setEnabled', id, enabled),
+  },
   export: {
     arpTable: () => ipcRenderer.invoke('export:arpTable'),
     changes: (unacknowledgedOnly?: boolean) => ipcRenderer.invoke('export:changes', unacknowledgedOnly),
