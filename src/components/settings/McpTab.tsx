@@ -415,19 +415,27 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
   }
 
   const columns: ColumnsType<McpConfigDto> = [
-    { title: '名称', dataIndex: 'name', render: (v: string, r) => (<Space size={4}><Text strong>{v}</Text>{!r.enabled && <Tag>已停用</Tag>}</Space>) },
     {
-      title: '类型', dataIndex: 'type', width: 150,
-      render: (v: 'stdio' | 'http') => <Tag color={v === 'stdio' ? 'blue' : 'green'}>{TYPE_LABEL[v]}</Tag>,
+      title: '名称', dataIndex: 'name', width: 240, ellipsis: true,
+      render: (v: string, r) => (
+        <Space size={4}>
+          <Text strong ellipsis={{ tooltip: v }} style={{ maxWidth: r.enabled ? undefined : 140 }}>{v}</Text>
+          {!r.enabled && <Tag style={{ flexShrink: 0 }}>已停用</Tag>}
+        </Space>
+      ),
     },
     {
-      title: '绑定设备', dataIndex: 'deviceNames', width: 200,
+      title: '类型', dataIndex: 'type', width: 140,
+      render: (v: 'stdio' | 'http') => <Tag color={v === 'stdio' ? 'blue' : 'green'} style={{ whiteSpace: 'nowrap' }}>{TYPE_LABEL[v]}</Tag>,
+    },
+    {
+      title: '绑定设备', dataIndex: 'deviceNames', width: 180, ellipsis: true,
       render: (names: string[]) => names.length > 0
-        ? <Space size={4} wrap>{names.map((n, i) => <Tag key={i}>{n}</Tag>)}</Space>
+        ? <Tooltip title={names.join('、')}><span>{names.join('、')}</span></Tooltip>
         : <Text type="secondary">—</Text>,
     },
     {
-      title: '最近测试', width: 200,
+      title: '最近测试', width: 190, ellipsis: true,
       render: (_: unknown, r: McpConfigDto) => {
         if (r.lastTestStatus === 'success') {
           return <Text style={{ color: '#389e0d' }}>成功 · {r.lastTestToolCount ?? 0} 个工具 · {relativeTime(r.lastTestAt)}</Text>
