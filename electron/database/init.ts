@@ -46,7 +46,7 @@ export function createTables() {
       api_key_enc TEXT,
       base_url_enc TEXT,
       model_name_enc TEXT,
-      exec_mode TEXT DEFAULT 'confirm' CHECK(exec_mode IN ('confirm','auto')),
+      exec_mode TEXT DEFAULT 'confirm' CHECK(exec_mode IN ('confirm','smart','auto')),
       created_at TEXT DEFAULT (datetime('now','localtime'))
     );
 

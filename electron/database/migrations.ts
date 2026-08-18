@@ -13,7 +13,7 @@ import { createSystemLog } from '../services/systemLog'
  *      在 createTables() 建好基线表之后、premigration 备份之后执行（D-06）。
  *      init.ts 不直接调用 runMigrations（单一调用点原则）。
  */
-export const MIGRATION_HEAD = 17
+export const MIGRATION_HEAD = 18
 
 interface MigrationStep {
   version: number
@@ -597,6 +597,51 @@ export const v17 = (db: Database.Database): void => {
   step()
 }
 
+/**
+ * v18：Phase 22（22-02）ai_config.exec_mode CHECK 放宽至三档（confirm/smart/auto，D-01）。
+ *
+ * 旧 DDL `CHECK(exec_mode IN ('confirm','auto'))` 使 'smart' 写入触发 SQLITE_CONSTRAINT_CHECK——
+ * plan 原定「无数据迁移」，但存量库约束硬阻塞三档落库，执行期 Rule 3 deviation 补此迁移。
+ * 存量值语义不变（confirm/auto 原值保留），仅放开 CHECK 收纳新档 'smart'。
+ *
+ * 幂等守卫：sqlite_master 查 ai_config.sql——已含 'smart' 特征则 no-op（v5/v6 同构，不靠 user_version）。
+ * 重建走 v5 镜像模式：建新表 → 数据搬迁 → DROP → RENAME。DDL 与 init.ts fresh-install 逐字一致
+ * （双路径一致红线，v7/v8/v13-v17 注释同款要求）。
+ */
+export const v18 = (db: Database.Database): void => {
+  const existing = db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='ai_config'"
+  ).get() as { sql: string } | undefined
+  if (!existing || existing.sql.includes("'smart'")) {
+    return // fresh-install（init.ts 已建三值 CHECK）或已迁移，no-op
+  }
+  const step = db.transaction(() => {
+    db.exec('DROP TABLE IF EXISTS ai_config_new')
+    db.exec(`
+      CREATE TABLE ai_config_new (
+        id TEXT PRIMARY KEY,
+        provider_enc TEXT,
+        api_key_enc TEXT,
+        base_url_enc TEXT,
+        model_name_enc TEXT,
+        vision_base_url_enc TEXT,
+        vision_api_key_enc TEXT,
+        vision_model_enc TEXT,
+        exec_mode TEXT DEFAULT 'confirm' CHECK(exec_mode IN ('confirm','smart','auto')),
+        created_at TEXT DEFAULT (datetime('now','localtime'))
+      );
+      INSERT INTO ai_config_new
+        SELECT id, provider_enc, api_key_enc, base_url_enc, model_name_enc,
+          vision_base_url_enc, vision_api_key_enc, vision_model_enc, exec_mode, created_at
+        FROM ai_config;
+      DROP TABLE ai_config;
+      ALTER TABLE ai_config_new RENAME TO ai_config;
+    `)
+    db.pragma('user_version = 18')
+  })
+  step()
+}
+
 const MIGRATIONS: MigrationStep[] = [
   { version: 1, name: 'chat_history.session_id', run: v1 },
   { version: 2, name: 'ai_exec_logs.prompt_text+ai_response', run: v2 },
@@ -615,6 +660,7 @@ const MIGRATIONS: MigrationStep[] = [
   { version: 15, name: 'prompt_overrides + mcp_configs create (Phase 20 prompt registry / Phase 21 MCP placeholder)', run: v15 },
   { version: 16, name: 'mcp_configs_v16_rebuild', run: v16 },
   { version: 17, name: 'mcp_tools', run: v17 },
+  { version: 18, name: 'ai_config.exec_mode CHECK widen (confirm/smart/auto)', run: v18 },
 ]
 
 /**

@@ -117,6 +117,12 @@ export function saveAiConfig(rawConfig: Record<string, string>): void {
 
 // ---------- Exec mode ----------
 
+/** 执行模式三档（Phase 22 D-01）：confirm=每次确认（最严，默认）/ smart=智能 / auto=全自动（需管理员密码门槛） */
+export type ExecMode = 'confirm' | 'smart' | 'auto'
+
+/** 白名单：三值之外全部拒绝（T-22-05） */
+const EXEC_MODES: ExecMode[] = ['confirm', 'smart', 'auto']
+
 export function getExecMode(): string {
   const row = getDatabase()
     .prepare('SELECT exec_mode FROM ai_config LIMIT 1')
@@ -125,14 +131,17 @@ export function getExecMode(): string {
 }
 
 export function setExecMode(mode: string, password: string): { success: boolean; error?: string } {
-  if (!['confirm', 'auto'].includes(mode)) {
+  if (!EXEC_MODES.includes(mode as ExecMode)) {
     return { success: false, error: '无效的执行模式' }
   }
-  const user = getDatabase()
-    .prepare('SELECT password_hash FROM users LIMIT 1')
-    .get() as any
-  if (!user || !verifyPasswordSync(password, user.password_hash)) {
-    return { success: false, error: '密码验证失败' }
+  // 仅切「全自动」过管理员密码门槛（提权面 T-22-05）；smart/confirm 免门槛
+  if (mode === 'auto') {
+    const user = getDatabase()
+      .prepare('SELECT password_hash FROM users LIMIT 1')
+      .get() as any
+    if (!user || !verifyPasswordSync(password, user.password_hash)) {
+      return { success: false, error: '密码验证失败' }
+    }
   }
   getDatabase()
     .prepare('UPDATE ai_config SET exec_mode = ?')
