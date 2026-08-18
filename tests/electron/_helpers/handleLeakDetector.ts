@@ -15,6 +15,17 @@
 //   - wtfnode best-effort import（装失败/异步失败不阻塞，A4 fallback）
 
 import { beforeEach, afterEach } from 'vitest'
+import { McpProcessRegistry } from '../../../electron/services/mcpProcessRegistry'
+
+export interface HandleLeakOptions {
+  /**
+   * 21-05 扩展：MCP stdio 子进程存活核算（SC5「零残留」断言）。
+   * true 时 afterEach 断言 McpProcessRegistry.listActive() 长度为 0；
+   * 非零（测试泄漏子进程，T-21-05-01）先 cleanupAll 树杀再 fail，错误信息列残留 pid/configId。
+   * 默认 false（既有 12/21-04 前套件不涉及 MCP 子进程，行为不变）。
+   */
+  expectNoMcpChildren?: boolean
+}
 
 /**
  * 注册句柄泄漏检测（beforeEach 取基线 + afterEach 比对）。
@@ -23,10 +34,11 @@ import { beforeEach, afterEach } from 'vitest'
  * 每 it 独立基线，避免跨 it 共享基线致累积泄漏检测失效（CR-01）。
  *
  * @param extraAllow 额外放行的句柄类型（如 mock server 偶发残留 TCPWrap）
+ * @param options.expectNoMcpChildren true 时附带 MCP 子进程零残留断言（21-05）
  *
  * 用法：在 describe 内顶部调用 expectNoHandleLeak()，每个 it 执行后自动检测泄漏。
  */
-export function expectNoHandleLeak(extraAllow: string[] = []): void {
+export function expectNoHandleLeak(extraAllow: string[] = [], options?: HandleLeakOptions): void {
   // baseline 在 beforeEach 取（CR-01：每 it 独立基线，避免跨 it 共享致累积泄漏检测失效）
   // —— Pitfall 5 注意：不取在 beforeAll（avoid vitest runner timer 漂移），beforeEach 取在每个 it 紧贴执行前，
   //    it 间漂移的临时句柄（如 vitest runner 心跳 Timeout）会进入当 it 基线，不会污染下一 it。
@@ -63,6 +75,17 @@ export function expectNoHandleLeak(extraAllow: string[] = []): void {
         }
       }
       throw new Error(`句柄泄漏: ${JSON.stringify(leaked)}`)
+    }
+
+    // 21-05 扩展（T-21-05-01）：MCP stdio 子进程零残留断言。
+    // 非零 = 测试泄漏存活子进程（污染 CI/开发机）——先 cleanupAll 树杀止损，再 fail 并列残留 pid/configId。
+    if (options?.expectNoMcpChildren) {
+      const active = McpProcessRegistry.listActive()
+      if (active.length > 0) {
+        const detail = active.map((a) => `pid=${a.pid} configId=${a.configId}`).join(', ')
+        McpProcessRegistry.cleanupAll(1000)
+        throw new Error(`MCP 子进程残留（应零存活）: ${detail}`)
+      }
     }
   })
 }
