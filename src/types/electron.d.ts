@@ -235,8 +235,47 @@ export interface ElectronAPI {
     save: (dto: McpSaveDto) => Promise<{ ok: true; config: McpConfigDto } | { ok: false; error: string }>
     delete: (id: number) => Promise<{ ok: true }>
     setEnabled: (id: number, enabled: boolean) => Promise<{ ok: true }>
+    testConnection: (payload: McpTestRequestDto) => Promise<McpTestResultDto>
+    cancelTest: (testId: string) => Promise<{ ok: boolean }>
+    /** 订阅连接测试阶段进度，返回清理函数 */
+    onTestProgress: (cb: (data: McpTestProgressDto) => void) => () => void
   }
 }
+
+// Phase 21 (21-04)：连接测试请求——temp 携带表单未保存明文凭证（单向即抛即用，响应永不回含）
+export interface McpTestRequestDto {
+  /** 随机串（renderer 生成），进度事件/取消均按 testId 对应 */
+  testId: string
+  /** 已存配置 id（行操作「测试」/编辑表单测试时携带，结果落库 D-09） */
+  configId?: number | null
+  /** 表单未保存值；env 值哨兵 '****__unchanged__' 表示沿用已存明文 */
+  temp?: {
+    type: 'stdio' | 'http'
+    commandOrUrl?: string
+    args?: string[]
+    env?: Record<string, string>
+    credential?: string
+  } | null
+}
+
+/** 阶段进度事件（T-21-04-04：仅数据字段，无凭证） */
+export interface McpTestProgressDto {
+  testId: string
+  stage: 'starting' | 'handshake' | 'listing'
+  elapsedMs: number
+}
+
+export interface McpToolInfoDto {
+  name: string
+  description?: string
+  inputSchema: unknown
+  annotations?: unknown
+}
+
+/** 连接测试结果（无任何凭证回传字段——T-21-04-01） */
+export type McpTestResultDto =
+  | { ok: true; protocolVersion: string | undefined; tools: McpToolInfoDto[] }
+  | { ok: false; error: { code: string; reason: string; errno?: string | number } }
 
 // Phase 21：MCP 配置视图（mcpService.McpConfigView 的 renderer 镜像）
 export interface McpConfigDto {

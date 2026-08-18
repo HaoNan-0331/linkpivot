@@ -107,6 +107,14 @@ const api = {
     save: (dto: unknown) => ipcRenderer.invoke('mcp:save', dto),
     delete: (id: number) => ipcRenderer.invoke('mcp:delete', id),
     setEnabled: (id: number, enabled: boolean) => ipcRenderer.invoke('mcp:setEnabled', id, enabled),
+    testConnection: (payload: unknown) => ipcRenderer.invoke('mcp:testConnection', payload),
+    cancelTest: (testId: string) => ipcRenderer.invoke('mcp:cancelTest', testId),
+    // 订阅连接测试阶段进度，返回清理函数（T-21-04-04）
+    onTestProgress: (cb: (data: { testId: string; stage: string; elapsedMs: number }) => void) => {
+      const listener = (_e: unknown, data: { testId: string; stage: string; elapsedMs: number }) => cb(data)
+      ipcRenderer.on('mcp:testProgress', listener)
+      return () => ipcRenderer.removeListener('mcp:testProgress', listener)
+    },
   },
   export: {
     arpTable: () => ipcRenderer.invoke('export:arpTable'),
