@@ -10,8 +10,7 @@ import type { Device } from '../../types/device'
 
 const { Text } = Typography
 
-// D-05：stdio 保存门槛——会话内记忆（模块级内存变量，登录会话/renderer 重载自然失效）
-let gatePassedInSession = false
+// D-05（修订 2026-08-18）：stdio 保存门槛——每次「新建」stdio 配置必弹；编辑不弹
 
 /** 未修改凭证哨兵（main 侧 mcpService/mcpIpc 同名常量约定：沿用已存明文，不重传） */
 const UNCHANGED_ENV_SENTINEL = '****__unchanged__'
@@ -345,9 +344,9 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
     }
   }
 
-  // ---- 保存（stdio 首次门槛 D-05；D-04 冲突 Alert）----
+  // ---- 保存（D-05 修订：每次新建 stdio 必弹门槛；编辑不弹；D-04 冲突 Alert）----
   const handleSaveClick = () => {
-    if (form.type === 'stdio' && !gatePassedInSession) {
+    if (form.type === 'stdio' && form.id == null) {
       setGateOpen(true)
       return
     }
@@ -359,7 +358,6 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
       setGateError('输入内容不匹配，请照抄上方引号内的原文')
       return
     }
-    gatePassedInSession = true
     setGateOpen(false)
     setGateInput('')
     setGateError(null)
@@ -504,7 +502,6 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
               </div>
             }
           >
-            <Button type="primary" onClick={openCreate}>新建配置</Button>
           </Empty>
         ) : (
           <Table size="small" rowKey="id" columns={columns} dataSource={configs} pagination={false} />
@@ -574,6 +571,9 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
               </div>
               <div>
                 <Text strong>环境变量</Text>
+                <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 2 }}>
+                  环境变量 = 随程序启动一起传入的隐藏配置（如 API 密钥、功能开关），不显示在命令行里、更安全。仅当 MCP 程序的文档要求设置时才填，一般留空。
+                </div>
                 <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 2 }}>凭证性质值只回显末 4 位，未修改不会重新保存</div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
                   {form.envRows.map((row, i) => (
@@ -622,7 +622,10 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
                 />
               </div>
               <div>
-                <Text strong>认证令牌</Text>
+                <Text strong>认证令牌（选填）</Text>
+                <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 2 }}>
+                  仅支持「静态 Bearer 令牌」：填写后会自动放入请求头 Authorization 中发给对方服务，暂不支持 OAuth 动态授权。若对方服务用网址参数认证（如地址里带 ?key=xxx），直接把 key 保留在服务地址里即可，本框留空。
+                </div>
                 {form.credentialMasked && (
                   <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 2 }}>当前已保存：{form.credentialMasked}（留空 = 不修改）</div>
                 )}
@@ -670,7 +673,7 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
         </div>
       </Modal>
 
-      {/* stdio 首次保存门槛 Modal（D-05，UI-SPEC 文案逐字） */}
+      {/* stdio 新建保存门槛 Modal（D-05 修订：每次新建必弹；编辑不弹） */}
       <Modal
         open={gateOpen}
         title={
@@ -699,7 +702,7 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
           status={gateError ? 'error' : undefined}
         />
         {gateError && <Text type="danger" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>{gateError}</Text>}
-        <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 8 }}>本次登录会话内记住，网络服务 (http) 类型不触发此确认。</div>
+        <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 8 }}>每次新建本地程序 (stdio) 配置都会再次确认；编辑已有配置不触发；网络服务 (http) 类型不触发此确认。</div>
       </Modal>
 
       <ToolDrawer tool={drawerTool} onClose={() => setDrawerTool(null)} />
