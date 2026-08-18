@@ -21,6 +21,8 @@ import { McpService, MAX_BATCH, UNCHANGED_ENV_SENTINEL } from '../services/mcpSe
 import type { McpSaveInput } from '../services/mcpService'
 import { testConnection as runTest, cancelTest } from '../services/mcpClient'
 import type { McpTestResult } from '../services/mcpClient'
+import { McpToolPolicy } from '../services/mcpToolPolicy'
+import type { McpToolCacheRow, McpToolAnnotations } from '../services/mcpToolPolicy'
 import { secure } from '../utils/authGuard'
 
 const MAX_NAME_LENGTH = 100
@@ -202,8 +204,17 @@ export function registerMcpIpc() {
 
     // 已存配置测试结果落库（D-09 最近测试持久化；取消不落库）
     if (configId != null) {
-      if (result.ok) McpService.recordTestResult(configId, 'success', result.tools.length)
-      else if (result.error.code !== 'MCP_CANCELLED') McpService.recordTestResult(configId, 'failed', null)
+      if (result.ok) {
+        McpService.recordTestResult(configId, 'success', result.tools.length)
+        // 22-01：成功即清单缓存落库（mcp_tools，策略值保留；临时配置无 configId 不落）
+        // annotations 在 mcpClient.McpToolInfo 为 unknown（SDK 结构不强断言），此处收窄
+        McpToolPolicy.saveToolCache(configId, result.tools.map((t) => ({
+          ...t,
+          annotations: t.annotations as McpToolAnnotations | undefined,
+        })))
+      } else if (result.error.code !== 'MCP_CANCELLED') {
+        McpService.recordTestResult(configId, 'failed', null)
+      }
     }
     return result
   }))
@@ -212,5 +223,51 @@ export function registerMcpIpc() {
   ipcMain.handle('mcp:cancelTest', secure((_e, testId: string) => {
     if (typeof testId !== 'string' || !testId) throw new Error('参数无效：testId')
     return { ok: cancelTest(testId) }
+  }))
+
+  // ---- 22-01 工具级策略通道（Phase 22，MCS-01/MCS-02；全 secure 包装 T-22-02）----
+
+  /** configId 边界校验（照 mcp:delete 同款） */
+  const assertConfigId = (configId: unknown): number => {
+    if (typeof configId !== 'number' || !Number.isInteger(configId) || configId <= 0) {
+      throw new Error('参数无效：configId')
+    }
+    return configId
+  }
+
+  /**
+   * 工具清单 + 策略读取。每行由 main 侧 isReadOnlyEligible 实时判定并注入
+   * skipConfirmEligible 契约字段——renderer 只消费该布尔，不自带判定规则（T-22-01）。
+   * tool_meta 其余字段原样返回（无敏感数据，T-22-03 展示层截断由 22-05 处理）。
+   */
+  ipcMain.handle('mcp:getToolCache', secure((_e, configId: number) => {
+    const id = assertConfigId(configId)
+    const rows: McpToolCacheRow[] = McpToolPolicy.getToolCache(id)
+    return rows.map((r) => ({
+      ...r,
+      skipConfirmEligible: McpToolPolicy.isReadOnlyEligible({ name: r.name, annotations: r.annotations }),
+    }))
+  }))
+
+  ipcMain.handle('mcp:setToolEnabled', secure((_e, configId: number, toolName: string, enabled: boolean) => {
+    const id = assertConfigId(configId)
+    if (typeof toolName !== 'string' || !toolName) throw new Error('参数无效：toolName')
+    if (typeof enabled !== 'boolean') throw new Error('参数无效：enabled')
+    McpToolPolicy.setEnabled(id, toolName, enabled)
+    return { ok: true }
+  }))
+
+  /**
+   * 免确认开关。service 层双条件守卫拒绝时返回 { ok:false, reason }（不 throw），
+   * renderer 呈现 tooltip 文案。
+   */
+  ipcMain.handle('mcp:setToolSkipConfirm', secure((_e, configId: number, toolName: string, skip: boolean) => {
+    const id = assertConfigId(configId)
+    if (typeof toolName !== 'string' || !toolName) throw new Error('参数无效：toolName')
+    if (typeof skip !== 'boolean') throw new Error('参数无效：skip')
+    const ok = McpToolPolicy.setSkipConfirm(id, toolName, skip)
+    return ok
+      ? { ok: true }
+      : { ok: false, reason: '该工具不满足免确认条件（需 server 声明只读且工具名为只读动词）' }
   }))
 }

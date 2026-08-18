@@ -109,6 +109,12 @@ const api = {
     setEnabled: (id: number, enabled: boolean) => ipcRenderer.invoke('mcp:setEnabled', id, enabled),
     testConnection: (payload: unknown) => ipcRenderer.invoke('mcp:testConnection', payload),
     cancelTest: (testId: string) => ipcRenderer.invoke('mcp:cancelTest', testId),
+    // 22-01 工具级策略通道（skipConfirmEligible 由 main 侧判定下发，renderer 不自带规则）
+    getToolCache: (configId: number) => ipcRenderer.invoke('mcp:getToolCache', configId),
+    setToolEnabled: (configId: number, toolName: string, enabled: boolean) =>
+      ipcRenderer.invoke('mcp:setToolEnabled', configId, toolName, enabled),
+    setToolSkipConfirm: (configId: number, toolName: string, skip: boolean) =>
+      ipcRenderer.invoke('mcp:setToolSkipConfirm', configId, toolName, skip),
     // 订阅连接测试阶段进度，返回清理函数（T-21-04-04）
     onTestProgress: (cb: (data: { testId: string; stage: string; elapsedMs: number }) => void) => {
       const listener = (_e: unknown, data: { testId: string; stage: string; elapsedMs: number }) => cb(data)

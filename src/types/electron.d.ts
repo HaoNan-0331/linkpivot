@@ -239,6 +239,11 @@ export interface ElectronAPI {
     cancelTest: (testId: string) => Promise<{ ok: boolean }>
     /** 订阅连接测试阶段进度，返回清理函数 */
     onTestProgress: (cb: (data: McpTestProgressDto) => void) => () => void
+    // Phase 22 (22-01)：工具级策略通道（skipConfirmEligible 由 main 侧双条件判定下发）
+    getToolCache: (configId: number) => Promise<McpToolCacheDto[]>
+    setToolEnabled: (configId: number, toolName: string, enabled: boolean) => Promise<{ ok: true }>
+    setToolSkipConfirm: (configId: number, toolName: string, skip: boolean) =>
+      Promise<{ ok: true } | { ok: false; reason: string }>
   }
 }
 
@@ -276,6 +281,17 @@ export interface McpToolInfoDto {
 export type McpTestResultDto =
   | { ok: true; protocolVersion: string | undefined; tools: McpToolInfoDto[] }
   | { ok: false; error: { code: string; reason: string; errno?: string | number } }
+
+/** Phase 22 (22-01)：工具清单 + 策略行（skipConfirmEligible 为 main 侧判定结果，renderer 只消费） */
+export interface McpToolCacheDto {
+  name: string
+  description?: string
+  annotations?: { readOnlyHint?: boolean }
+  inputSchema?: unknown
+  enabled: 0 | 1
+  skipConfirm: 0 | 1
+  skipConfirmEligible: boolean
+}
 
 // Phase 21：MCP 配置视图（mcpService.McpConfigView 的 renderer 镜像）
 export interface McpConfigDto {
