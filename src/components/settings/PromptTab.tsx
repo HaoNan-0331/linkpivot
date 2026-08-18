@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
-import { Button, Card, Collapse, Modal, Input, Tag, Badge, Tooltip, Alert, Space, Spin, Typography, message } from 'antd'
+import { Button, Card, Collapse, Modal, Input, Tag, Badge, Tooltip, Alert, Space, Spin, Switch, Typography, message } from 'antd'
 import type { TextAreaRef } from 'antd/es/input/TextArea'
 import { WarningOutlined } from '@ant-design/icons'
 import type { PromptEntryView } from '../../types/electron'
@@ -30,6 +30,8 @@ export default function PromptTab({ refreshKey = 0 }: { refreshKey?: number }) {
   const [gateOpen, setGateOpen] = useState(false)
   const [gateInput, setGateInput] = useState('')
   const [gateError, setGateError] = useState<string | null>(null)
+  // 门槛待编辑条目：门槛未过时只开门槛窗，绝不与编辑器同屏（T-20-09 门槛绕过修复）
+  const [pendingEntry, setPendingEntry] = useState<PromptEntryView | null>(null)
   // 冲突三选（D-01/D-02）
   const [conflictEntry, setConflictEntry] = useState<PromptEntryView | null>(null)
   // 编辑器（D-05）
@@ -74,11 +76,44 @@ export default function PromptTab({ refreshKey = 0 }: { refreshKey?: number }) {
     return diffInline(conflictEntry.overrideContent, conflictEntry.defaultContent)
   }, [conflictEntry])
 
+  // 「仅看变化」窗口化：变化段全保留，相邻 same 段仅留两端各 30 字上下文，中间折叠为省略段
+  const [diffOnlyChanges, setDiffOnlyChanges] = useState(false)
+  const conflictChanges = useMemo(() => conflictDiff.filter((s) => s.type !== 'same').length, [conflictDiff])
+  const DIFF_CTX_CHARS = 30
+  type DiffViewSeg = { type: 'same' | 'add' | 'remove'; text: string; omitted?: number }
+  const conflictDiffView = useMemo<DiffViewSeg[]>(() => {
+    if (!diffOnlyChanges) return conflictDiff
+    const out: DiffViewSeg[] = []
+    conflictDiff.forEach((seg, i) => {
+      if (seg.type !== 'same') { out.push(seg); return }
+      const prevChanged = i > 0 && conflictDiff[i - 1].type !== 'same'
+      const nextChanged = i < conflictDiff.length - 1 && conflictDiff[i + 1].type !== 'same'
+      if (!prevChanged && !nextChanged) return
+      const head = prevChanged ? Math.min(DIFF_CTX_CHARS, seg.text.length) : 0
+      const tail = nextChanged ? Math.min(DIFF_CTX_CHARS, seg.text.length) : 0
+      if (head + tail >= seg.text.length) { out.push(seg); return }
+      if (head > 0) out.push({ type: 'same', text: seg.text.slice(0, head) })
+      out.push({ type: 'same', text: '', omitted: seg.text.length - head - tail })
+      if (tail > 0) out.push({ type: 'same', text: seg.text.slice(seg.text.length - tail) })
+    })
+    return out
+  }, [conflictDiff, diffOnlyChanges])
+
   // 必需变量缺失即时校验（D-05 UI 层；网关层二次校验在 prompt:save）
   const missingVars = useMemo(() => {
     if (!editing) return []
     return editing.requiredVars.filter((v) => !editContent.includes(`{{${v}}}`))
   }, [editing, editContent])
+
+  // 变量面板合并去重：requiredVars（纯名字）与 optionalVars（名字+说明）按 name 并集，
+  // 必需→红 Tag、可选→灰 Tag，说明文字统一挂在变量行内（修复两段重复渲染）
+  const varDocs = useMemo(() => {
+    if (!editing) return []
+    const descMap = new Map(editing.optionalVars.map((v) => [v.name, v.desc]))
+    const requiredSet = new Set(editing.requiredVars)
+    const names = Array.from(new Set([...editing.requiredVars, ...editing.optionalVars.map((v) => v.name)]))
+    return names.map((name) => ({ name, desc: descMap.get(name), required: requiredSet.has(name) }))
+  }, [editing])
 
   const passGate = () => {
     if (gateInput !== '我已知晓风险') {
@@ -90,19 +125,23 @@ export default function PromptTab({ refreshKey = 0 }: { refreshKey?: number }) {
     setGateOpen(false)
     setGateInput('')
     setGateError(null)
+    // 门槛通过后进入待编辑条目（openEntry 记录的 pendingEntry）
+    if (pendingEntry) {
+      setEditing(pendingEntry)
+      setEditContent(pendingEntry.overrideContent ?? pendingEntry.defaultContent)
+      setPendingEntry(null)
+    }
   }
 
-  /** 入口分流：冲突条目 → 三选；其余 → 门槛（未过时）→ 编辑器 */
+  /** 入口分流：冲突条目 → 三选；其余 → 门槛（未过时只开门槛窗，绝不与编辑器同屏）→ 编辑器 */
   const openEntry = (entry: PromptEntryView) => {
     if (entry.conflict && entry.overrideContent != null) {
       setConflictEntry(entry)
       return
     }
     if (!gatePassed) {
+      setPendingEntry(entry)
       setGateOpen(true)
-      // 门槛通过后直接进入该条目编辑器（passGate 里只置态，此处记录待编辑条目）
-      setEditing(entry)
-      setEditContent(entry.overrideContent ?? entry.defaultContent)
       return
     }
     setEditing(entry)
@@ -196,9 +235,9 @@ export default function PromptTab({ refreshKey = 0 }: { refreshKey?: number }) {
         </Tooltip>
       )}
       <Text strong>{entry.id}</Text>
-      <Text type="secondary" style={{ fontSize: 12 }}>v{entry.version}</Text>
+      <Tag style={{ fontSize: 12 }}>官方 v{entry.version}</Tag>
       {entry.overrideContent != null && entry.basedOnVersion != null && (
-        <Tag style={{ fontSize: 12 }}>基于 v{entry.basedOnVersion} 修改</Tag>
+        <Tag color="orange" style={{ fontSize: 12 }}>基于 v{entry.basedOnVersion} 修改</Tag>
       )}
       {entry.safetyCritical && (
         <Tooltip title="⚠ 安全关键——修改可能影响命令确认与注入防护，请谨慎">
@@ -255,8 +294,12 @@ export default function PromptTab({ refreshKey = 0 }: { refreshKey?: number }) {
                   </Paragraph>
                   <Space>
                     <Button type="primary" onClick={() => openEntry(entry)}>编辑</Button>
-                    {entry.overrideContent != null && (
+                    {entry.overrideContent != null ? (
                       <Button danger onClick={() => setResetTarget(entry)}>恢复默认</Button>
+                    ) : (
+                      <Tooltip title="未修改过，当前即官方默认值">
+                        <Button danger disabled>恢复默认</Button>
+                      </Tooltip>
                     )}
                   </Space>
                 </Card>
@@ -279,7 +322,7 @@ export default function PromptTab({ refreshKey = 0 }: { refreshKey?: number }) {
         okText="确认"
         cancelText="取消"
         onOk={passGate}
-        onCancel={() => { setGateOpen(false); setGateInput(''); setGateError(null); setEditing(null) }}
+        onCancel={() => { setGateOpen(false); setGateInput(''); setGateError(null); setPendingEntry(null) }}
       >
         <div style={{ padding: '8px 0', color: '#595959' }}>
           AI 提示词控制助手的行为方式。改错可能导致 AI 回复异常、误判命令，极端情况下需要恢复默认才能修复。请在下方输入「我已知晓风险」继续。
@@ -326,6 +369,19 @@ export default function PromptTab({ refreshKey = 0 }: { refreshKey?: number }) {
           <Text strong>采用新默认</Text>（丢弃你的修改，换成官方新版）/
           <Text strong>手动合并</Text>（在编辑器里把两边改动合到一起）
         </Paragraph>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', marginBottom: 8 }}>
+          <Text style={{ fontSize: 12 }}>
+            <span style={{ background: DIFF_REMOVE_BG, color: DIFF_REMOVE_FG, padding: '0 4px', fontWeight: 600 }}>红底加粗</span>
+            {' '}你的版本独有（将被替换）
+          </Text>
+          <Text style={{ fontSize: 12 }}>
+            <span style={{ background: DIFF_ADD_BG, color: DIFF_ADD_FG, padding: '0 4px', fontWeight: 600 }}>绿底加粗</span>
+            {' '}官方新默认新增
+          </Text>
+          <Text type="secondary" style={{ fontSize: 12 }}>共 {conflictChanges} 处变化</Text>
+          <Switch size="small" checked={diffOnlyChanges} onChange={setDiffOnlyChanges} />
+          <Text type="secondary" style={{ fontSize: 12 }}>仅看变化</Text>
+        </div>
         <div
           style={{
             border: '1px solid #f0f0f0',
@@ -340,17 +396,27 @@ export default function PromptTab({ refreshKey = 0 }: { refreshKey?: number }) {
             overflow: 'auto',
           }}
         >
-          {conflictDiff.map((seg, i) => (
-            <span
-              key={i}
-              style={{
-                background: seg.type === 'remove' ? DIFF_REMOVE_BG : seg.type === 'add' ? DIFF_ADD_BG : undefined,
-                color: seg.type === 'remove' ? DIFF_REMOVE_FG : seg.type === 'add' ? DIFF_ADD_FG : undefined,
-              }}
-            >
-              {seg.text}
-            </span>
-          ))}
+          {conflictDiffView.map((seg, i) => {
+            if (seg.omitted != null) {
+              return (
+                <span key={i} style={{ color: '#bfbfbf', fontStyle: 'italic', fontSize: 12 }}>
+                  {`\n……（省略 ${seg.omitted} 字相同内容）……\n`}
+                </span>
+              )
+            }
+            return (
+              <span
+                key={i}
+                style={{
+                  background: seg.type === 'remove' ? DIFF_REMOVE_BG : seg.type === 'add' ? DIFF_ADD_BG : undefined,
+                  color: seg.type === 'remove' ? DIFF_REMOVE_FG : seg.type === 'add' ? DIFF_ADD_FG : undefined,
+                  fontWeight: seg.type === 'same' ? undefined : 600,
+                }}
+              >
+                {seg.text}
+              </span>
+            )
+          })}
         </div>
       </Modal>
 
@@ -373,6 +439,25 @@ export default function PromptTab({ refreshKey = 0 }: { refreshKey?: number }) {
             message={`无法保存：缺少必需变量 ${missingVars.map((v) => `{{${v}}}`).join('、')}，AI 调用时需要这些占位符才能正确填充信息`}
           />
         )}
+        {/* 默认值对照（PMT-02）：改过的条目编辑时可参照官方默认原文 */}
+        {editing && editing.overrideContent != null && (
+          <Collapse
+            size="small"
+            style={{ marginBottom: 12 }}
+            items={[{
+              key: 'default',
+              label: <Text type="secondary" style={{ fontSize: 12 }}>官方默认值（v{editing.version}）对照 — 点开展开</Text>,
+              children: (
+                <Paragraph
+                  style={{ whiteSpace: 'pre-wrap', fontSize: 12, color: '#595959', fontFamily: 'monospace', marginBottom: 0 }}
+                  ellipsis={{ rows: 4, expandable: true, symbol: '展开全文' }}
+                >
+                  {editing.defaultContent}
+                </Paragraph>
+              ),
+            }]}
+          />
+        )}
         <div style={{ display: 'flex', gap: 16 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <Input.TextArea
@@ -386,19 +471,16 @@ export default function PromptTab({ refreshKey = 0 }: { refreshKey?: number }) {
           <div style={{ width: 240, flexShrink: 0, border: '1px solid #f0f0f0', borderRadius: 4, padding: 8, maxHeight: 480, overflow: 'auto' }}>
             <Text type="secondary" style={{ fontSize: 12 }}>变量（点击插入光标处）</Text>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
-              {editing?.requiredVars.map((name) => (
-                <div key={name} style={{ padding: 8, background: '#fafafa', borderRadius: 4 }}>
-                  <a onClick={() => insertVar(name)} style={{ fontFamily: 'monospace', fontSize: 13 }}>{`{{${name}}}`}</a>
-                  <Tag color="red" style={{ marginLeft: 4, fontSize: 12 }}>必需</Tag>
-                </div>
-              ))}
-              {editing?.optionalVars.map((v) => (
+              {varDocs.map((v) => (
                 <div key={v.name} style={{ padding: 8, background: '#fafafa', borderRadius: 4 }}>
                   <a onClick={() => insertVar(v.name)} style={{ fontFamily: 'monospace', fontSize: 13 }}>{`{{${v.name}}}`}</a>
-                  <div style={{ fontSize: 12, color: '#8c8c8c' }}>{v.desc}</div>
+                  {v.required
+                    ? <Tag color="red" style={{ marginLeft: 4, fontSize: 12 }}>必需</Tag>
+                    : <Tag style={{ marginLeft: 4, fontSize: 12 }}>可选</Tag>}
+                  {v.desc && <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 2 }}>{v.desc}</div>}
                 </div>
               ))}
-              {editing && editing.requiredVars.length === 0 && editing.optionalVars.length === 0 && (
+              {editing && varDocs.length === 0 && (
                 <Text type="secondary" style={{ fontSize: 12 }}>此条目无占位变量</Text>
               )}
             </div>
