@@ -19,7 +19,9 @@ const DIFF_ADD_FG = '#389e0d'
 
 const ipcErrMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
-export default function PromptTab() {
+// D-01：进 tab 时后台扫描——AntD Tabs 切走再切回不重挂面板，
+// 由 SettingsPage 递增 refreshKey 触发本组件重新拉取（切页面重挂载亦触发首次 load）
+export default function PromptTab({ refreshKey = 0 }: { refreshKey?: number }) {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [entries, setEntries] = useState<PromptEntryView[]>([])
@@ -52,7 +54,7 @@ export default function PromptTab() {
     setLoading(false)
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [refreshKey])
 
   const grouped = useMemo(() => {
     const map = new Map<string, PromptEntryView[]>()
