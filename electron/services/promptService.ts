@@ -156,6 +156,20 @@ export class PromptService {
     PromptService.overrideCache?.delete(id)
   }
 
+  /**
+   * 冲突三选「保留我的」：content 不动，仅把 based_on_version 同步为当前 registry 版本
+   * （语义 = 用户已看过官方新默认并裁决保留，冲突解除、黄点熄灭）。幂等：行不存在时 no-op。
+   */
+  static keepOverride(id: string): void {
+    const entry = getRegistryEntry(id)
+    if (!entry) throw new Error(`未知的提示词 id：${id}`)
+    _getDb()
+      .prepare('UPDATE prompt_overrides SET based_on_version = ?, updated_at = CURRENT_TIMESTAMP WHERE prompt_id = ?')
+      .run(entry.version, id)
+    const cached = PromptService.overrideCache?.get(id)
+    if (cached) PromptService.overrideCache?.set(id, { content: cached.content, basedOnVersion: entry.version })
+  }
+
   /** registry 全量 + override 视图（UI 列表；D-07 冲突判定）。 */
   static listEntries(): PromptEntryView[] {
     const overrideRows = _getDb()

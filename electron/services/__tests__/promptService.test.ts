@@ -37,6 +37,16 @@ function makeMockDb() {
           run: (...args: any[]) => ({ changes: rows.delete(String(args[0])) ? 1 : 0 }),
         }
       }
+      if (sql.includes('UPDATE prompt_overrides SET based_on_version')) {
+        return {
+          run: (...args: any[]) => {
+            const row = rows.get(String(args[1]))
+            if (!row) return { changes: 0 }
+            row.based_on_version = Number(args[0])
+            return { changes: 1 }
+          },
+        }
+      }
       if (sql.includes('FROM prompt_overrides')) {
         const byId = sql.includes('WHERE')
         return {
@@ -166,6 +176,20 @@ describe('PromptService', () => {
     const bare = PromptService.getDiffBase('rerank.experience')
     expect(bare.overrideContent).toBeNull()
     expect(bare.basedOnVersion).toBeNull()
+  })
+
+  it('11. keepOverride「保留我的」：content 不动，based_on_version 同步当前版本（冲突解除）', () => {
+    PromptService.saveOverride('kb.pick', '我的版本 {{query}}{{indexBlock}}{{topK}}')
+    // 模拟官方升级：based_on_version 落后一版 → 冲突亮起
+    mock.rows.get('kb.pick')!.based_on_version = 0
+    expect(PromptService.listEntries().find((e) => e.id === 'kb.pick')!.conflict).toBe(true)
+    PromptService.keepOverride('kb.pick')
+    // content 原封不动，版本号同步 → 冲突熄灭
+    expect(mock.rows.get('kb.pick')!.content).toBe('我的版本 {{query}}{{indexBlock}}{{topK}}')
+    expect(mock.rows.get('kb.pick')!.based_on_version).toBe(getRegistryEntry('kb.pick')!.version)
+    expect(PromptService.listEntries().find((e) => e.id === 'kb.pick')!.conflict).toBe(false)
+    // getPrompt 生效值仍是用户版本
+    expect(PromptService.getPrompt('kb.pick')).toBe('我的版本 {{query}}{{indexBlock}}{{topK}}')
   })
 })
 

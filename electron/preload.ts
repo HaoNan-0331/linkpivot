@@ -99,6 +99,7 @@ const api = {
     list: () => ipcRenderer.invoke('prompt:list'),
     save: (id: string, content: string) => ipcRenderer.invoke('prompt:save', id, content),
     reset: (id: string) => ipcRenderer.invoke('prompt:reset', id),
+    keepMine: (id: string) => ipcRenderer.invoke('prompt:keepMine', id),
     diff: (id: string) => ipcRenderer.invoke('prompt:diff', id),
   },
   export: {

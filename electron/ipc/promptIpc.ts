@@ -41,6 +41,13 @@ export function registerPromptIpc() {
     return { ok: true }
   }))
 
+  // 冲突三选「保留我的」：content 不动，based_on_version 同步当前版本（冲突解除，黄点熄灭）
+  ipcMain.handle('prompt:keepMine', secure((_e, id: string) => {
+    if (typeof id !== 'string' || !id) throw new Error('参数无效：id')
+    PromptService.keepOverride(id)
+    return { ok: true }
+  }))
+
   // 三选弹窗数据源（保留我的 / 采用新默认 / 手动合并）
   ipcMain.handle('prompt:diff', secure((_e, id: string) => {
     if (typeof id !== 'string' || !id) throw new Error('参数无效：id')

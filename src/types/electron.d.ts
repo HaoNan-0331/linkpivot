@@ -225,6 +225,7 @@ export interface ElectronAPI {
     list: () => Promise<PromptEntryView[]>
     save: (id: string, content: string) => Promise<{ ok: true } | { ok: false; error: string }>
     reset: (id: string) => Promise<{ ok: true }>
+    keepMine: (id: string) => Promise<{ ok: true }>
     diff: (id: string) => Promise<PromptDiffBase>
   }
 }

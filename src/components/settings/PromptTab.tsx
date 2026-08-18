@@ -200,6 +200,19 @@ export default function PromptTab({ refreshKey = 0 }: { refreshKey?: number }) {
     setResetting(false)
   }
 
+  // 冲突三选「保留我的」：content 不动，based_on_version 同步当前版本（冲突解除，黄点熄灭）
+  const keepMine = async () => {
+    if (!conflictEntry) return
+    try {
+      await window.api.prompt.keepMine(conflictEntry.id)
+      message.success('已保留你的版本（冲突已处理）')
+      setConflictEntry(null)
+      load()
+    } catch (e: unknown) {
+      message.error(ipcErrMsg(e))
+    }
+  }
+
   // 冲突三选：「采用新默认」= reset
   const adoptNewDefault = async () => {
     if (!conflictEntry) return
@@ -346,7 +359,7 @@ export default function PromptTab({ refreshKey = 0 }: { refreshKey?: number }) {
         open={conflictEntry != null}
         title="官方默认已更新"
         footer={[
-          <Button key="keep" onClick={() => setConflictEntry(null)}>保留我的</Button>,
+          <Button key="keep" onClick={keepMine}>保留我的</Button>,
           <Button key="adopt" danger onClick={adoptNewDefault}>采用新默认</Button>,
           <Button
             key="merge"
