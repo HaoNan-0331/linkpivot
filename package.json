@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@ant-design/icons": "^6.2.2",
+    "@modelcontextprotocol/client": "2.0.0",
     "antd": "^6.3.7",
     "better-sqlite3": "12.9.0",
     "iconv-lite": "^0.7.3",
