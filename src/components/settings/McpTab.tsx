@@ -189,6 +189,8 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
   const [form, setForm] = useState<FormState>(emptyForm)
   const [formError, setFormError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  // WR-05：http 已保存令牌的显式清除标记（保存/临时测试均发「清除」语义，不再无通道可清）
+  const [clearCred, setClearCred] = useState(false)
 
   // 门槛（D-05）
   const [gateOpen, setGateOpen] = useState(false)
@@ -242,6 +244,7 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
 
   const openCreate = () => {
     setForm({ ...emptyForm })
+    setClearCred(false)
     setFormError(null)
     setTest(null)
     setFormOpen(true)
@@ -268,11 +271,13 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
     })
     setFormError(null)
     setTest(null)
+    setClearCred(false)
     setFormOpen(true)
   }
 
   // 类型切换：保留名称/绑定，清空另一类型字段（UI-SPEC 交互契约 1）
   const switchType = (type: 'stdio' | 'http') => {
+    setClearCred(false)
     setForm((f) => f.type === type ? f : {
       ...f, type,
       commandOrUrl: '', args: [], envRows: [], credential: '', credentialMasked: null,
@@ -298,8 +303,10 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
         commandOrUrl: form.commandOrUrl || undefined,
         args: form.type === 'stdio' ? form.args : [],
         env: form.type === 'stdio' ? collectEnv() : undefined,
-        // credential：未输入=undefined（沿用已存）；http 输入新值=明文
-        credential: form.type === 'http' && form.credential !== '' ? form.credential : undefined,
+        // credential：未输入=undefined（沿用已存）；http 输入新值=明文；显式清除=空串（WR-05 统一语义）
+        credential: form.type === 'http'
+          ? (clearCred ? '' : form.credential !== '' ? form.credential : undefined)
+          : undefined,
       },
     })
   }
@@ -377,7 +384,10 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
         commandOrUrl: form.commandOrUrl.trim(),
         args: form.type === 'stdio' ? form.args : [],
         env: form.type === 'stdio' ? collectEnv() : null,
-        credential: form.type === 'http' ? (form.credential === '' ? undefined : form.credential) : null,
+        // WR-05：clearCred → null（清空已存令牌）；留空=undefined（沿用）；非空=重设
+        credential: form.type === 'http'
+          ? (clearCred ? null : form.credential === '' ? undefined : form.credential)
+          : null,
         deviceIds: form.deviceIds,
         enabled: true,
       })
@@ -634,11 +644,25 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
                 <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 2 }}>
                   仅支持「静态 Bearer 令牌」：填写后会自动放入请求头 Authorization 中发给对方服务，暂不支持 OAuth 动态授权。若对方服务用网址参数认证（如地址里带 ?key=xxx），直接把 key 保留在服务地址里即可，本框留空。
                 </div>
-                {form.credentialMasked && (
-                  <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 2 }}>当前已保存：{form.credentialMasked}（留空 = 不修改）</div>
+                {form.credentialMasked && !clearCred && (
+                  <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 2 }}>
+                    当前已保存：{form.credentialMasked}（留空 = 不修改）
+                    <Button type="link" size="small" danger style={{ padding: 0, marginLeft: 8 }} onClick={() => setClearCred(true)}>
+                      清除已保存令牌
+                    </Button>
+                  </div>
+                )}
+                {clearCred && (
+                  <div style={{ fontSize: 12, color: '#d46b08', marginTop: 2 }}>
+                    保存后将清除已保存的令牌
+                    <Button type="link" size="small" style={{ padding: 0, marginLeft: 8 }} onClick={() => setClearCred(false)}>
+                      撤销清除（保留原令牌）
+                    </Button>
+                  </div>
                 )}
                 <Input.Password
                   value={form.credential}
+                  disabled={clearCred}
                   onChange={(e) => setForm((f) => ({ ...f, credential: e.target.value }))}
                   placeholder={form.credentialMasked ? '留空则沿用已保存令牌' : 'Bearer Token'}
                   style={{ marginTop: 4 }}
