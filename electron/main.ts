@@ -32,6 +32,7 @@ import { setExperienceMasterKey, backfillSeverityFromHistory } from './services/
 import { registerExperienceIpc } from './ipc/experienceIpc'
 import { registerExperienceDraftingIpc } from './ipc/experienceDraftingIpc'
 import { McpService } from './services/mcpService'
+import { McpProcessRegistry } from './services/mcpProcessRegistry'
 import { registerMcpIpc } from './ipc/mcpIpc'
 
 let mainWindow: BrowserWindow | null = null
@@ -281,6 +282,9 @@ app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(
 
 app.on('before-quit', () => {
   BackupScheduler.stop()
+  // 21-03：MCP stdio 子进程树杀（3s 预算，closeDatabase 之前，同步快路径不新增 async 阻塞）
+  try { McpProcessRegistry.cleanupAll() }
+  catch (e) { console.error('[before-quit] mcp cleanupAll failed:', (e && (e as Error).message) || e) }
   try { closeDatabase() }
   catch (e) { console.error('[before-quit] closeDatabase failed:', (e && (e as Error).message) || e) }
 })

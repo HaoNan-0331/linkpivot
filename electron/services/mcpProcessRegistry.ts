@@ -4,7 +4,7 @@
  * 职责（只管登记与杀，spawn 在 SDK transport 内）：
  *  - register(pid, configId)：pid 全量登记，killTree 只接受登记表内 pid（防滥杀任意进程）
  *  - killTree(pid)：Windows `taskkill /pid X /T /F` 树杀（npx→cmd→node 孙进程链不存活）；
- *    execSync 失败（进程已退）吞错并 unregister；零处 child.kill() 当树杀用（无句柄、不树杀）
+ *    execSync 失败（进程已退）吞错并 unregister；不使用 node child 的 kill（无句柄、不树杀）
  *  - cleanupAll(timeoutMs=3000)：before-quit 同步快路径，逐个 taskkill，总耗时超时即停止继续等待
  *  - listActive()：测试/SC5 断言「测试完成后无存活子进程」
  *
