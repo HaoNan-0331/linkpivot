@@ -13,7 +13,7 @@ import { createSystemLog } from '../services/systemLog'
  *      在 createTables() 建好基线表之后、premigration 备份之后执行（D-06）。
  *      init.ts 不直接调用 runMigrations（单一调用点原则）。
  */
-export const MIGRATION_HEAD = 16
+export const MIGRATION_HEAD = 17
 
 interface MigrationStep {
   version: number
@@ -557,6 +557,46 @@ export const v16 = (db: Database.Database): void => {
   step()
 }
 
+/**
+ * v17：Phase 22（22-01）mcp_tools 工具级策略表（D-02）。
+ *
+ * - 连接测试成功后工具清单（name/description/annotations/inputSchema）持久化缓存落
+ *   tool_meta（JSON 字符串，明文不加密——prompt_overrides 明文先例，工具级开关非敏感）。
+ * - enabled：工具级启用开关（默认 1）；skip_confirm：免确认开关（默认 0，service 层
+ *   双条件守卫 isReadOnlyEligible 拒绝写 1——判定权在 main，renderer 只消费
+ *   skipConfirmEligible 契约字段）。
+ * - UNIQUE(config_id, tool_name)：一配置一工具一行，saveToolCache 覆盖式重建。
+ *
+ * 幂等守卫：sqlite_master 查 mcp_tools.sql——含 'skip_confirm' 列特征即全段 no-op；
+ * 存在但不含特征（旧形态）才 DROP 重建。执行体包 db.transaction（throw 即 ROLLBACK）。
+ * DDL 与 init.ts fresh-install DDL 逐字一致（双路径一致红线，v7/v8/v13-v16 注释同款要求）。
+ */
+export const v17 = (db: Database.Database): void => {
+  const step = db.transaction(() => {
+    const existing = db.prepare(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='mcp_tools'"
+    ).get() as { sql: string } | undefined
+    if (existing && !existing.sql.includes('skip_confirm')) {
+      db.exec('DROP TABLE mcp_tools')
+    }
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS mcp_tools (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        config_id INTEGER NOT NULL,
+        tool_name TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        skip_confirm INTEGER NOT NULL DEFAULT 0,
+        tool_meta TEXT,
+        updated_at TEXT,
+        UNIQUE(config_id, tool_name)
+      );
+    `)
+    db.pragma('user_version = 17')
+  })
+  step()
+}
+
 const MIGRATIONS: MigrationStep[] = [
   { version: 1, name: 'chat_history.session_id', run: v1 },
   { version: 2, name: 'ai_exec_logs.prompt_text+ai_response', run: v2 },
@@ -574,6 +614,7 @@ const MIGRATIONS: MigrationStep[] = [
   { version: 14, name: 'arp_entries.collected_at index (TXN-03) + kb fts triggers image_desc constant NULL (Q10)', run: v14 },
   { version: 15, name: 'prompt_overrides + mcp_configs create (Phase 20 prompt registry / Phase 21 MCP placeholder)', run: v15 },
   { version: 16, name: 'mcp_configs_v16_rebuild', run: v16 },
+  { version: 17, name: 'mcp_tools', run: v17 },
 ]
 
 /**

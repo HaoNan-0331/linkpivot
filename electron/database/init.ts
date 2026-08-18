@@ -385,6 +385,23 @@ export function createTables() {
     );
     CREATE INDEX IF NOT EXISTS idx_mcp_device_rel_mcp ON mcp_device_rel(mcp_config_id);
     CREATE INDEX IF NOT EXISTS idx_mcp_device_rel_device ON mcp_device_rel(device_id);
+
+    -- Phase 22（22-01 v17）：MCP 工具级策略表。DDL 必须与 migrations.ts v17 迁移 DDL
+    -- 逐字一致（双路径一致红线，v7/v8/v13-v16 注释同款要求）。
+    -- tool_meta 存 JSON 字符串（description/annotations/inputSchema），明文不加密
+    -- （prompt_overrides 明文先例，工具级开关非敏感）。skip_confirm 写入由 service 层
+    -- 双条件守卫（isReadOnlyEligible）拒绝不满足者——判定权在 main（T-22-01）。
+
+    CREATE TABLE IF NOT EXISTS mcp_tools (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      config_id INTEGER NOT NULL,
+      tool_name TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      skip_confirm INTEGER NOT NULL DEFAULT 0,
+      tool_meta TEXT,
+      updated_at TEXT,
+      UNIQUE(config_id, tool_name)
+    );
   `)
 
   // 散落迁移块（chat_history.session_id / ai_exec_logs.prompt_text+ai_response /
