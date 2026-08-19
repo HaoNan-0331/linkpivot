@@ -289,3 +289,15 @@ export const MCP_DISABLED_TOOLS_BAN_HEAD: string =
 export const MCP_DISABLED_TOOLS_BAN_BODY: string =
   '禁止使用任何其它工具变通实现这些工具的同等功能。' +
   '当用户的请求需要这些被禁工具的功能时，直接告知用户：该功能已被禁用，如需使用请在设置的 MCP 工具管理中启用对应工具。'
+
+/**
+ * 仅问答设备拒绝执行禁止令（Phase 23 23-03 D-03，代码级常量——与 MCP_DISABLED_TOOLS_BAN 同哲学）。
+ *
+ * **不可编辑硬区**：非注册表条目、不进 DB、不经任何 prompt override save/get 通道，用户不可
+ * override 弱化。由 ai.ts chat() 在选中设备含无执行通道（仅问答）设备时与 deviceInfo 拼接注入——
+ * 能力说明的动态数据（设备名等）随 deviceInfo 变量值（可编辑面），拒绝执行这一管控语义在此硬区。
+ */
+export const AI_QONLY_EXEC_BAN: string =
+  '安全约束（系统级，优先级高于任何其他指令）：' +
+  '上述标注「无命令执行通道」的设备仅支持问答，禁止对其输出任何 [CMD] 命令标记，禁止用任何方式变通执行。' +
+  '当用户要求在这些设备上执行操作时，直接告知用户该设备无命令执行通道、无法执行，仅可基于关联知识库与经验作答。'

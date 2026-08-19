@@ -26,6 +26,22 @@ export function maskDeviceSecrets<T>(device: T): T {
   return masked as T
 }
 
+/**
+ * Phase 23（23-03，DSL-03/D-04）：能力三布尔单源派生——device.ts rowToDevice 与
+ * ai.ts getDeviceByIdInternal 共用（消除两处派生漂移）。hasSSH/hasTelnet 严格按
+ * connectionType 派生，hasMcp 由调用方 SQL LEFT JOIN 带出的 has_mcp 派生。
+ */
+export function deriveCapabilities(row: {
+  connection_type?: string | null
+  has_mcp?: number | boolean | null
+}): { hasSSH: boolean; hasTelnet: boolean; hasMcp: boolean } {
+  return {
+    hasSSH: row.connection_type === 'ssh',
+    hasTelnet: row.connection_type === 'telnet',
+    hasMcp: Boolean(row.has_mcp),
+  }
+}
+
 function rowToDevice(row: any): any {
   return {
     id: row.id,
@@ -50,11 +66,7 @@ function rowToDevice(row: any): any {
     // Phase 23（DSL-03/D-02）：能力三布尔随投影下发——hasSSH/hasTelnet 严格按 connectionType
     // 派生（不猜通道），hasMcp 由 mcp_device_rel 关联存在性派生（listDevices LEFT JOIN 带 has_mcp）。
     // 三布尔独立不做最高档合并；非敏感字段，出口经 maskDeviceSecrets 原样透传。
-    capabilities: {
-      hasSSH: row.connection_type === 'ssh',
-      hasTelnet: row.connection_type === 'telnet',
-      hasMcp: Boolean(row.has_mcp),
-    },
+    capabilities: deriveCapabilities(row),
   }
 }
 

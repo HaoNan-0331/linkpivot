@@ -11,7 +11,8 @@ import { createLog, updateLogStatus, appendLogAiResponse, getLogs, setAiExecLogg
 import { search as kbSearch } from './knowledgeBaseService'
 import { retrieveForAnswer } from './experienceRetrieval'
 import { PromptService } from './promptService'
-import { MCP_INJECTION_GUARD, MCP_DISABLED_TOOLS_BAN_HEAD, MCP_DISABLED_TOOLS_BAN_BODY } from './promptRegistry'
+import { MCP_INJECTION_GUARD, MCP_DISABLED_TOOLS_BAN_HEAD, MCP_DISABLED_TOOLS_BAN_BODY, AI_QONLY_EXEC_BAN } from './promptRegistry'
+import { deriveCapabilities } from './device'
 import { sanitizeUntrusted } from './untrustedText'
 import { McpToolPolicy, type McpToolCacheRow } from './mcpToolPolicy'
 import { McpService } from './mcpService'
@@ -529,9 +530,23 @@ function execOne(client: Client, command: string, perCmdTimeoutMs = 15000, silen
 
 // ---------- Device query helper ----------
 
+// ---------- Phase 23（23-03，D-03/D-04）：设备能力边界 ----------
+
+/**
+ * D-04 [CMD] 白名单判定（fail-closed）：仅 SSH/Telnet 通道设备可执行命令。
+ * capabilities 缺失/undefined 一律按不可执行处理（照 parseMcpToolCalls unknown 校验哲学）。
+ */
+export function isDeviceExecutable(device: any): boolean {
+  return device?.capabilities?.hasSSH === true || device?.capabilities?.hasTelnet === true
+}
+
 export function getDeviceByIdInternal(id: string): any {
   const row = getDatabase()
-    .prepare('SELECT * FROM devices WHERE id = ?')
+    .prepare(
+      `SELECT d.*, (r.device_id IS NOT NULL) AS has_mcp
+       FROM devices d LEFT JOIN mcp_device_rel r ON r.device_id = d.id
+       WHERE d.id = ?`
+    )
     .get(id) as any
   if (!row) return null
   return {
@@ -550,6 +565,9 @@ export function getDeviceByIdInternal(id: string): any {
     password: decField(row.password_enc, MK),
     sshKeyPath: decField(row.ssh_key_path_enc, MK),
     sshKeyContent: decField(row.ssh_key_content_enc, MK),
+    // Phase 23（23-03）：能力三布尔随投影下发（device.ts deriveCapabilities 单源派生，
+    // D-04 白名单判定依赖；缺失按不可执行 fail-closed）
+    capabilities: deriveCapabilities(row),
   }
 }
 
@@ -1208,6 +1226,23 @@ export async function chat(
       }
       multi += '\n\n你可以在不同设备上执行不同命令，请用 [CMD:设备名] 格式指定在哪台设备上执行。'
       deviceInfo = multi
+    }
+    // Phase 23（23-03，D-03/D-05）：能力边界注入——仅问答设备（isDeviceExecutable 为 false）
+    // 在场时追加动态能力声明（进 deviceInfo 变量值，可编辑面）+ 拒绝执行指令（代码级常量
+    // AI_QONLY_EXEC_BAN 硬区，不可编辑弱化）。混选时注入 D-05 语义：命令只作用于可执行
+    // 子集，回复须主动点名跳过的仅问答设备。全可执行设备时不注入（提示词干净）。
+    const qOnlyDevices = targetDevices.filter((d) => !isDeviceExecutable(d))
+    if (qOnlyDevices.length > 0) {
+      const qNames = qOnlyDevices.map((d) => String(d.name)).join('、')
+      if (targetDevices.length === 1) {
+        deviceInfo +=
+          '\n\n能力说明：该设备无命令执行通道（仅可基于关联知识库/经验作答，不可执行命令）。\n' +
+          AI_QONLY_EXEC_BAN
+      } else {
+        deviceInfo +=
+          `\n\n能力说明：以下设备无命令执行通道（仅可问答，不可执行命令）：${qNames}。命令只可作用于其余有执行通道的设备；若用户请求涉及这些仅问答设备，请在回复中主动说明已跳过它们（点名设备名），不要对其输出 [CMD] 标记。\n` +
+          AI_QONLY_EXEC_BAN
+      }
     }
   }
 
