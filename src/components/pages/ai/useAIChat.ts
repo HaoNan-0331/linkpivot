@@ -120,7 +120,7 @@ export function useAIChat(): UseAIChatReturn {
       setDevices(
         devs
           .filter((d) => d.connectionType === 'ssh' || d.connectionType === 'telnet')
-          .map((d) => ({ id: d.id, name: d.name, connectionType: d.connectionType }))
+          .map((d) => ({ id: d.id, name: d.name, connectionType: d.connectionType, capabilities: d.capabilities }))
       )
       if (hasConfig) {
         await loadSessions()

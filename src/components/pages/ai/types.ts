@@ -12,6 +12,13 @@ export interface DeviceOption {
   id: string
   name: string
   connectionType: string
+  // Phase 23（DSL-03/D-02）：能力三布尔，main 经 device:list 投影下发，
+  // renderer 只消费不推导（零本地推导契约，UI 消费在 23-04）。
+  capabilities: {
+    hasSSH: boolean
+    hasTelnet: boolean
+    hasMcp: boolean
+  }
 }
 
 // Phase 11 RETRIEVE-03：引用来源联合类型（kb / experience / session）

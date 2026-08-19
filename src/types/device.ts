@@ -21,6 +21,13 @@ export interface Device {
   lastChecked: string | null
   createdAt: string
   updatedAt: string
+  // Phase 23（DSL-03/D-02）：能力三布尔，main 经 device:list 投影下发（hasMcp 由
+  // mcp_device_rel 派生），renderer 只消费不推导。
+  capabilities: {
+    hasSSH: boolean
+    hasTelnet: boolean
+    hasMcp: boolean
+  }
 }
 
 export interface CreateDeviceDTO {
