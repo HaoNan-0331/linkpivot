@@ -115,7 +115,7 @@ function makeDb(execMode: string, mcpMaxRounds?: number | null): Database.Databa
   return d
 }
 
-function seedMcp(deviceId: string, opts?: { enabled?: number; skipConfirm?: number; configEnabled?: number }) {
+function seedMcp(deviceId: string, opts?: { enabled?: number; skipConfirm?: number; configEnabled?: number; noDisabled?: boolean }) {
   db.prepare(
     "INSERT INTO mcp_configs (id, name, type, command_or_url, enabled) VALUES (1, 'srv-a', 'http', 'http://x', ?)"
   ).run(opts?.configEnabled ?? 1)
@@ -126,9 +126,11 @@ function seedMcp(deviceId: string, opts?: { enabled?: number; skipConfirm?: numb
     'get_status', opts?.enabled ?? 1, opts?.skipConfirm ?? 0,
     JSON.stringify({ description: '查询状态', annotations: { readOnlyHint: true }, inputSchema: { type: 'object' } })
   )
-  db.prepare(
-    'INSERT INTO mcp_tools (config_id, tool_name, enabled, skip_confirm, tool_meta) VALUES (1, ?, ?, 0, ?)'
-  ).run('reboot_device', 0, JSON.stringify({ description: '重启设备', annotations: {} }))
+  if (!opts?.noDisabled) {
+    db.prepare(
+      'INSERT INTO mcp_tools (config_id, tool_name, enabled, skip_confirm, tool_meta) VALUES (1, ?, ?, 0, ?)'
+    ).run('reboot_device', 0, JSON.stringify({ description: '重启设备', annotations: {} }))
+  }
 }
 
 vi.mock('../../../electron/database/connection', () => ({
@@ -235,7 +237,39 @@ describe('注入（MCS-01）：选中绑 MCP 设备才注入，工具说明走 r
     expect(sys).toContain('get_status')
     expect(sys).toContain('查询状态')
     expect(sys).toContain(MCP_INJECTION_GUARD)
-    expect(sys).not.toContain('reboot_device')
+    // 22-05 用户裁决：被禁工具名注入禁用段（AI 知情 + 禁止令），但其描述/Schema 不入可用清单
+    expect(sys).toContain('reboot_device')
+    expect(sys).not.toContain('描述: 重启设备')
+  })
+
+  it('有禁用工具：注入禁用清单 + 禁止令（含工具名/禁止/变通/已被禁用关键句）', async () => {
+    db = makeDb('smart')
+    seedDevice('dev1')
+    seedMcp('dev1') // reboot_device enabled=0
+    const fetchMock = queueReplies('好的，无需工具')
+    await chat([{ role: 'user', content: '重启设备' }], ['dev1'], null)
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as any).body)
+    const sys = body.messages[0].content
+    expect(sys).toContain('已被管理员禁用')
+    expect(sys).toContain('srv-a')
+    expect(sys).toContain('reboot_device')
+    expect(sys).toContain('禁止')
+    expect(sys).toContain('变通')
+    expect(sys).toContain('已被禁用')
+    expect(sys).toContain('MCP 工具管理')
+  })
+
+  it('无禁用工具：不注入禁用令段（提示词干净）', async () => {
+    db = makeDb('smart')
+    seedDevice('dev1')
+    seedMcp('dev1', { noDisabled: true })
+    const fetchMock = queueReplies('好的')
+    await chat([{ role: 'user', content: '查状态' }], ['dev1'], null)
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as any).body)
+    const sys = body.messages[0].content
+    expect(sys).toContain('get_status')
+    expect(sys).not.toContain('已被管理员禁用')
+    expect(sys).not.toContain('变通')
   })
 
   it('未选设备 / 设备未绑 MCP：不注入', async () => {
