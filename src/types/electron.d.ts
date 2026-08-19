@@ -29,7 +29,8 @@ export interface AIExecLog {
   deviceName: string
   command: string
   status: 'approved' | 'rejected' | 'pending' | 'executed' | 'failed'
-  mode: 'confirm' | 'auto'
+  // WR-04 fix（Phase 22 code-review）：main 侧 v18/v19 已放宽三档（createLog mode:'smart' 实际会发生）
+  mode: 'confirm' | 'smart' | 'auto'
   aiReason: string
   promptText: string
   aiResponse: string
@@ -112,7 +113,7 @@ export interface ElectronAPI {
     saveConfig: (config: AIConfig) => Promise<void>
     getCommandWhitelist: () => Promise<string[]>
     saveCommandWhitelist: (list: string[]) => Promise<void>
-    getExecMode: () => Promise<'confirm' | 'auto'>
+    getExecMode: () => Promise<'confirm' | 'smart' | 'auto'>
     setExecMode: (mode: string, password: string) => Promise<{ success: boolean; error?: string }>
     // 22-05 checkpoint：MCP 连续调用轮次上限（合法 1-20，默认 5；非法库值 main 侧 fail-safe 回退 5）
     getMcpMaxRounds: () => Promise<number>
