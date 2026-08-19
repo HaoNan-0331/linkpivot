@@ -7,6 +7,7 @@ import type { ColumnsType } from 'antd/es/table'
 import { WarningOutlined } from '@ant-design/icons'
 import type { McpConfigDto, McpTestRequestDto, McpTestResultDto, McpToolInfoDto } from '../../types/electron'
 import type { Device } from '../../types/device'
+import McpToolManageDrawer from './McpToolManageDrawer'
 
 const { Text } = Typography
 
@@ -201,6 +202,9 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
   const [test, setTest] = useState<TestState | null>(null)
   const testIdRef = useRef<string | null>(null)
   const [drawerTool, setDrawerTool] = useState<McpToolInfoDto | null>(null)
+
+  // D-02 工具管理抽屉（数据源 = mcp:getToolCache 测试缓存）
+  const [toolDrawerConfig, setToolDrawerConfig] = useState<McpConfigDto | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -465,6 +469,7 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
       render: (_: unknown, r: McpConfigDto) => (
         <Space size={4}>
           <Button type="link" size="small" onClick={() => runRowTest(r)}>测试</Button>
+          <Button type="link" size="small" onClick={() => setToolDrawerConfig(r)}>工具</Button>
           <Button type="link" size="small" onClick={() => openEdit(r)}>编辑</Button>
           <Popconfirm
             title={`删除配置「${r.name}」？将同时解除与 ${r.deviceIds.length} 台设备的绑定。`}
@@ -738,6 +743,13 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
       </Modal>
 
       <ToolDrawer tool={drawerTool} onClose={() => setDrawerTool(null)} />
+
+      {/* D-02 工具级管理抽屉（启用/免确认，数据源 getToolCache） */}
+      <McpToolManageDrawer
+        open={toolDrawerConfig != null}
+        onClose={() => setToolDrawerConfig(null)}
+        config={toolDrawerConfig}
+      />
     </div>
   )
 }
