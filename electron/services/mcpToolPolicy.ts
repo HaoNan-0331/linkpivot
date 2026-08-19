@@ -24,6 +24,25 @@ import { getDatabase } from '../database/connection'
 export const MAX_TOOLS_PER_CONFIG = 500
 
 /**
+ * WR-07 fix（Phase 22 code-review）：单条 tool_meta JSON 序列化尺寸上限（64_000 字符）。
+ * MCP server 为不可信来源——单条巨型 description/inputSchema 会明文膨胀 DB、撑爆
+ * mcp:getToolCache IPC 传输与成功面板渲染。超限降级：先丢展示字段（description/
+ * inputSchema），仍超限则 annotations 只保留 readOnlyHint（skip_confirm 判定依赖，
+ * 不可随展示字段一并丢弃）。
+ */
+export const MAX_TOOL_META_CHARS = 64_000
+
+/** tool_meta 序列化（带 WR-07 两级降级；annotations 的 readOnlyHint 永不因超限丢失） */
+function serializeToolMeta(t: McpToolCacheInput): string {
+  const meta = { description: t.description ?? null, annotations: t.annotations ?? null, inputSchema: t.inputSchema ?? null }
+  let s = JSON.stringify(meta)
+  if (s.length <= MAX_TOOL_META_CHARS) return s
+  s = JSON.stringify({ description: null, annotations: meta.annotations, inputSchema: null })
+  if (s.length <= MAX_TOOL_META_CHARS) return s
+  return JSON.stringify({ description: null, annotations: { readOnlyHint: t.annotations?.readOnlyHint ?? null }, inputSchema: null })
+}
+
+/**
  * 本地只读工具名正则（planner 定初始集）：
  * 以只读动词前缀开头（get/show/list/read/status/query/ping/health/describe）
  * 或名字中含 _get / _list 段（如 device_get_info）。
@@ -111,11 +130,7 @@ export class McpToolPolicy {
           t.name,
           old?.enabled ?? 1,
           old?.skip_confirm ?? 0,
-          JSON.stringify({
-            description: t.description ?? null,
-            annotations: t.annotations ?? null,
-            inputSchema: t.inputSchema ?? null,
-          })
+          serializeToolMeta(t) // WR-07：单条尺寸上限 + 两级降级
         )
       }
     })

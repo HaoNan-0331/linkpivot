@@ -151,3 +151,37 @@ describe('setEnabled / setSkipConfirm / getEnabledTools / getSkipConfirmTools', 
     expect(McpToolPolicy.getEnabledTools(1).map((t) => t.name)).toEqual(['reboot_device'])
   })
 })
+
+// ---------- Phase 22 code-review WR-07：单条 tool_meta 尺寸上限 ----------
+
+describe('saveToolCache 单条 tool_meta 尺寸上限（WR-07）', () => {
+  it('巨型 description → 落库 meta ≤ 64_000 字符，description 置空、annotations（readOnlyHint）保留', () => {
+    McpToolPolicy.saveToolCache(1, [
+      { name: 'get_huge', description: 'd'.repeat(200_000), annotations: { readOnlyHint: true }, inputSchema: { type: 'object' } },
+    ])
+    const row = McpToolPolicy.getToolCache(1)[0]
+    const g = McpToolPolicy as unknown as { db(): { prepare(sql: string): { get(): { tool_meta: string } } } }
+    const metaLen = g.db().prepare('SELECT tool_meta FROM mcp_tools WHERE config_id = 1').get().tool_meta.length
+    expect(metaLen).toBeLessThanOrEqual(64_000)
+    expect(row.description).toBeUndefined() // 展示字段被降级丢弃
+    expect(row.inputSchema).toBeUndefined()
+    expect(row.annotations?.readOnlyHint).toBe(true) // 策略判定依赖保留
+  })
+
+  it('巨型 inputSchema 同样降级，且 hint=true 的免确认可勾性不受影响', () => {
+    McpToolPolicy.saveToolCache(1, [
+      { name: 'get_big_schema', annotations: { readOnlyHint: true }, inputSchema: { props: 'x'.repeat(300_000) } },
+    ])
+    expect(McpToolPolicy.setSkipConfirm(1, 'get_big_schema', true)).toBe(true)
+  })
+
+  it('正常尺寸 meta 原样落库（不受上限影响）', () => {
+    McpToolPolicy.saveToolCache(1, [
+      { name: 'get_normal', description: '正常描述', annotations: { readOnlyHint: false }, inputSchema: { type: 'object' } },
+    ])
+    const row = McpToolPolicy.getToolCache(1)[0]
+    expect(row.description).toBe('正常描述')
+    expect(row.inputSchema).toEqual({ type: 'object' })
+    expect(row.annotations?.readOnlyHint).toBe(false)
+  })
+})
