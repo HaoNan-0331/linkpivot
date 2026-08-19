@@ -130,6 +130,54 @@ vi.mock('../../../electron/database/connection', () => ({
 }))
 
 import { sanitizeUntrusted } from '../../../electron/services/untrustedText'
+import { McpToolPolicy } from '../../../electron/services/mcpToolPolicy'
+
+// ---------- Task 2: classifyTool / classifyBatch（三档矩阵，MCS-02/D-04） ----------
+
+const RO = { name: 'get_status', annotations: { readOnlyHint: true } }
+const RO_NOT_ELIGIBLE = { name: 'reboot_device', annotations: { readOnlyHint: true } }
+
+describe('classifyTool 三档矩阵', () => {
+  const skip = new Set(['get_status'])
+
+  it('confirm 档总闸：任何工具（含已勾免确认）→ confirm', () => {
+    expect(McpToolPolicy.classifyTool('confirm', 'get_status', skip, RO)).toBe('confirm')
+    expect(McpToolPolicy.classifyTool('confirm', 'reboot_device', skip, RO_NOT_ELIGIBLE)).toBe('confirm')
+  })
+
+  it('smart 档：已勾免确认且双条件满足 → execute；未勾/不满足 → confirm', () => {
+    expect(McpToolPolicy.classifyTool('smart', 'get_status', skip, RO)).toBe('execute')
+    expect(McpToolPolicy.classifyTool('smart', 'reboot_device', skip, RO_NOT_ELIGIBLE)).toBe('confirm')
+    expect(McpToolPolicy.classifyTool('smart', 'get_status', new Set(), RO)).toBe('confirm')
+  })
+
+  it('auto 档：全部 → execute', () => {
+    expect(McpToolPolicy.classifyTool('auto', 'reboot_device', new Set(), RO_NOT_ELIGIBLE)).toBe('execute')
+  })
+
+  it('skipConfirm 勾了但 readOnlyEligible=false（库值被外改）→ 强制 confirm（防御纵深）', () => {
+    expect(McpToolPolicy.classifyTool('smart', 'reboot_device', new Set(['reboot_device']), RO_NOT_ELIGIBLE)).toBe('confirm')
+  })
+})
+
+describe('classifyBatch（D-04 批次语义）', () => {
+  it('批次内全部 execute → execute_all（smart 整批直执）', () => {
+    expect(
+      McpToolPolicy.classifyBatch('smart', [RO, { name: 'get_info', annotations: { readOnlyHint: true } }], new Set(['get_status', 'get_info']))
+    ).toBe('execute_all')
+  })
+
+  it('任一 confirm → confirm_each', () => {
+    expect(
+      McpToolPolicy.classifyBatch('smart', [RO, RO_NOT_ELIGIBLE], new Set(['get_status', 'reboot_device']))
+    ).toBe('confirm_each')
+    expect(McpToolPolicy.classifyBatch('confirm', [RO], new Set(['get_status']))).toBe('confirm_each')
+  })
+
+  it('空批次 → confirm_each（从严）', () => {
+    expect(McpToolPolicy.classifyBatch('smart', [], new Set())).toBe('confirm_each')
+  })
+})
 
 // ---------- Task 1: sanitizeUntrusted ----------
 
