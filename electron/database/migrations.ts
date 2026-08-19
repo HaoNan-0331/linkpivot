@@ -13,7 +13,7 @@ import { createSystemLog } from '../services/systemLog'
  *      在 createTables() 建好基线表之后、premigration 备份之后执行（D-06）。
  *      init.ts 不直接调用 runMigrations（单一调用点原则）。
  */
-export const MIGRATION_HEAD = 20
+export const MIGRATION_HEAD = 21
 
 interface MigrationStep {
   version: number
@@ -715,6 +715,24 @@ export const v20 = (db: Database.Database): void => {
   step()
 }
 
+/**
+ * v21：Phase 22（22-05 checkpoint 追加）ai_config.mcp_max_rounds——MCP 连续调用轮次上限系统设置可调。
+ *
+ * 旧硬编码 MAX_MCP_TOOL_ROUNDS=5 改为读 ai_config.mcp_max_rounds（合法 1-20，
+ * 非法一律 fail-safe 回退 5，见 ai.ts getMcpMaxRounds）。仅加列，无需重建表。
+ *
+ * 幂等守卫：hasColumn——列已存在 no-op（v2/v20 同构，不靠 user_version）。
+ */
+export const v21 = (db: Database.Database): void => {
+  const step = db.transaction(() => {
+    if (!hasColumn(db, 'ai_config', 'mcp_max_rounds')) {
+      db.exec('ALTER TABLE ai_config ADD COLUMN mcp_max_rounds INTEGER NOT NULL DEFAULT 5')
+    }
+    db.pragma('user_version = 21')
+  })
+  step()
+}
+
 const MIGRATIONS: MigrationStep[] = [
   { version: 1, name: 'chat_history.session_id', run: v1 },
   { version: 2, name: 'ai_exec_logs.prompt_text+ai_response', run: v2 },
@@ -736,6 +754,7 @@ const MIGRATIONS: MigrationStep[] = [
   { version: 18, name: 'ai_config.exec_mode CHECK widen (confirm/smart/auto)', run: v18 },
   { version: 19, name: 'ai_exec_logs.mode CHECK widen (confirm/smart/auto)', run: v19 },
   { version: 20, name: 'ai_exec_logs 补回 v19 误丢的 prompt_text/ai_response 明文列', run: v20 },
+  { version: 21, name: 'ai_config.mcp_max_rounds（MCP 轮次上限系统设置可调）', run: v21 },
 ]
 
 /**

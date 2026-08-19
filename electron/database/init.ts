@@ -47,6 +47,7 @@ export function createTables() {
       base_url_enc TEXT,
       model_name_enc TEXT,
       exec_mode TEXT DEFAULT 'confirm' CHECK(exec_mode IN ('confirm','smart','auto')),
+      mcp_max_rounds INTEGER NOT NULL DEFAULT 5,
       created_at TEXT DEFAULT (datetime('now','localtime'))
     );
 

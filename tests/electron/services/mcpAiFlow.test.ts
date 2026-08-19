@@ -535,14 +535,15 @@ describe('getMcpMaxRounds / setMcpMaxRounds（读写 + fail-safe 校验）', () 
 })
 
 describe('轮次上限配置驱动主循环（22-05 checkpoint 需求）', () => {
+  // 注意：db 必须在 seed 之前建好（轮次值随 makeDb 注入），故各用例内先 makeDb 再 seed
   beforeEach(() => {
-    seedDevice('dev1')
-    seedMcp('dev1', { skipConfirm: 1 })
     vi.mocked(callToolWithTimeout).mockResolvedValue({ ok: 1 } as any)
   })
 
   it('上限=1：等价旧单轮行为——仅执行 1 次后回注上限提示收尾', async () => {
     db = makeDb('smart', 1)
+    seedDevice('dev1')
+    seedMcp('dev1', { skipConfirm: 1 })
     const fetchMock = queueReplies(CALL_MARKER, CALL_MARKER, '单轮收尾')
     const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
     expect(out).toBe('单轮收尾')
@@ -555,6 +556,8 @@ describe('轮次上限配置驱动主循环（22-05 checkpoint 需求）', () =>
 
   it('上限=20：6 轮标记全部执行（不超过 5 的旧硬编码不再截断）', async () => {
     db = makeDb('smart', 20)
+    seedDevice('dev1')
+    seedMcp('dev1', { skipConfirm: 1 })
     queueReplies(
       CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, '六轮收尾'
     )
@@ -565,6 +568,8 @@ describe('轮次上限配置驱动主循环（22-05 checkpoint 需求）', () =>
 
   it('配置非法（21）→ fail-safe 回退 5：第 6 轮不执行', async () => {
     db = makeDb('smart', 21)
+    seedDevice('dev1')
+    seedMcp('dev1', { skipConfirm: 1 })
     queueReplies(
       CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, '回退收尾'
     )
@@ -575,6 +580,8 @@ describe('轮次上限配置驱动主循环（22-05 checkpoint 需求）', () =>
 
   it('默认（未配置，DEFAULT 5）：行为与旧硬编码一致', async () => {
     db = makeDb('smart')
+    seedDevice('dev1')
+    seedMcp('dev1', { skipConfirm: 1 })
     queueReplies(
       CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, '默认收尾'
     )

@@ -698,12 +698,41 @@ async function runMcpCall(
 /**
  * 22-05 用户裁决（checkpoint）：MCP 工具链主循环由单轮改为**有界循环**——
  * AI 回注结果后的再回复若仍含标记则继续执行（连续多步工具调用场景），超过
- * MAX_MCP_TOOL_ROUNDS 轮不再执行，回注上限提示后取一次收尾回答。
+ * 配置上限（ai_config.mcp_max_rounds）不再执行，回注上限提示后取一次收尾回答。
+ * 22-05 checkpoint 追加：上限由硬编码改为系统设置可调（合法 1-20，非法 fail-safe 回退 5）。
  */
-export const MAX_MCP_TOOL_ROUNDS = 5
+export const DEFAULT_MAX_MCP_TOOL_ROUNDS = 5
+export const MCP_MAX_ROUNDS_UPPER_BOUND = 20
 
-const MCP_ROUND_LIMIT_PROMPT =
-  '工具调用轮次已达上限（5），请基于以上已获得的工具结果直接总结回答，不要再输出工具调用标记。'
+/** 读 ai_config.mcp_max_rounds；NULL/非整数/<1/>20（含列缺失异常）一律回退 5（fail-safe） */
+export function getMcpMaxRounds(): number {
+  try {
+    const row = getDatabase()
+      .prepare('SELECT mcp_max_rounds FROM ai_config LIMIT 1')
+      .get() as { mcp_max_rounds?: number | null } | undefined
+    const v = Number(row?.mcp_max_rounds)
+    if (!Number.isInteger(v) || v < 1 || v > MCP_MAX_ROUNDS_UPPER_BOUND) {
+      return DEFAULT_MAX_MCP_TOOL_ROUNDS
+    }
+    return v
+  } catch {
+    return DEFAULT_MAX_MCP_TOOL_ROUNDS
+  }
+}
+
+/** 设置页写入口：仅收纳 1-20 整数，非法值拒绝落库（不静默钳制，错误显式回传 UI） */
+export function setMcpMaxRounds(rounds: number): { success: boolean; error?: string } {
+  if (!Number.isInteger(rounds) || rounds < 1 || rounds > MCP_MAX_ROUNDS_UPPER_BOUND) {
+    return { success: false, error: `MCP 轮次上限必须在 1-${MCP_MAX_ROUNDS_UPPER_BOUND} 之间` }
+  }
+  getDatabase()
+    .prepare('UPDATE ai_config SET mcp_max_rounds = ?')
+    .run(rounds)
+  return { success: true }
+}
+
+const mcpRoundLimitPrompt = (maxRounds: number): string =>
+  `工具调用轮次已达上限（${maxRounds}），请基于以上已获得的工具结果直接总结回答，不要再输出工具调用标记。`
 
 const MCP_PARSE_FAIL_TEXT =
   '（AI 回复中的 MCP 工具调用标记解析失败，未执行任何工具调用；请检查提示词配置后重试）'
@@ -774,21 +803,23 @@ async function runMcpToolLoop(
 ): Promise<McpLoopResult> {
   let reply = startReply
   let limitPrompted = false
+  // 上限每轮循环入口读取一次（配置热更后新一轮生效；fail-safe 回退 5）
+  const maxRounds = getMcpMaxRounds()
   for (;;) {
     const { valid: mcpCalls, hadMarker } = parseMcpToolCalls(reply, ctx.mcpContexts)
     if (mcpCalls.length === 0) {
       // 无有效标记 → 当前回复即最终回答（清洗任何残留标记段，含畸形/闭合段）
       return { kind: 'final', reply: hadMarker ? stripMcpMarkers(reply) || MCP_PARSE_FAIL_TEXT : reply }
     }
-    // 超限：第 MAX 轮执行完后仍含标记 → 不执行，回注上限提示取一次收尾回复
-    if (state.rounds >= MAX_MCP_TOOL_ROUNDS) {
+    // 超限：第 maxRounds 轮执行完后仍含标记 → 不执行，回注上限提示取一次收尾回复
+    if (state.rounds >= maxRounds) {
       if (limitPrompted) {
         // 收尾回复仍顽固输出标记：剥离后作为最终回答（不再发起调用，防死循环）
         return { kind: 'final', reply: stripMcpMarkers(reply) || MCP_PARSE_FAIL_TEXT }
       }
       limitPrompted = true
       state.extra.push({ role: 'assistant', content: reply })
-      state.extra.push({ role: 'user', content: MCP_ROUND_LIMIT_PROMPT })
+      state.extra.push({ role: 'user', content: mcpRoundLimitPrompt(maxRounds) })
       reply = await callAI(ctx.config, [...ctx.fullMessages, ...state.extra])
       continue
     }
@@ -1235,7 +1266,7 @@ export async function chat(
   // 复用 confirm_required 协议整批弹窗（confirm 档总闸压制 per-tool）。
   if (mcpContexts.length > 0) {
     // 22-05 用户裁决（checkpoint）：单轮改有界循环——回注后的再回复仍含标记则继续执行
-    //（上限 MAX_MCP_TOOL_ROUNDS，超限回注上限提示取收尾回答）；confirm 档每轮独立弹窗，
+    //（上限 ai_config.mcp_max_rounds 可调，超限回注上限提示取收尾回答）；confirm 档每轮独立弹窗，
     // 确认后带循环状态（轮次 + 累积回注）续跑。既有单轮行为不变（rounds=0 时回落原路径）。
     const loopCtx: McpLoopCtx = {
       fullMessages,
