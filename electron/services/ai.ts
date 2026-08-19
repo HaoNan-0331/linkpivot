@@ -1156,6 +1156,23 @@ function buildExpAnswerPayload(
 // ---------- Main chat ----------
 
 /**
+ * Phase 23（23-03 复验反馈）：设备类型中文映射（注入 deviceInfo，让 AI 知道目标是
+ * 服务器还是网络设备，从而选对命令风格）。兜底「未分类」，与 getDeviceByIdInternal
+ * 的 deviceType 投影（row.device_type || 'generic'）同语义。
+ */
+const DEVICE_TYPE_LABELS: Record<string, string> = {
+  router: '路由器',
+  switch: '交换机',
+  firewall: '防火墙',
+  server: '服务器',
+  generic: '未分类',
+}
+
+function deviceTypeLabel(deviceType: unknown): string {
+  return DEVICE_TYPE_LABELS[String(deviceType || 'generic')] || '未分类'
+}
+
+/**
  * Phase 23 Plan 04 C2：[EXP_SEARCH] 命中经验的注入文本构造（user-role 回注，T-23-05）。
  *
  * 可信度分级标注：hasTargetDevices（对话有选中设备）时按每条经验的 linked 标志分级——
@@ -1218,11 +1235,11 @@ export async function chat(
     }
     if (targetDevices.length === 1) {
       const d = targetDevices[0]
-      deviceInfo = `\n\n当前目标设备信息：\n- 名称: ${d.name}\n- IP: ${d.ipAddress}\n- 厂商: ${d.vendor || '未知'}\n- 型号: ${d.model || '未知'}\n- 版本: ${d.version || '未知'}`
+      deviceInfo = `\n\n当前目标设备信息：\n- 名称: ${d.name}\n- 类型: ${deviceTypeLabel(d.deviceType)}\n- IP: ${d.ipAddress}\n- 厂商: ${d.vendor || '未知'}\n- 型号: ${d.model || '未知'}\n- 版本: ${d.version || '未知'}`
     } else if (targetDevices.length > 1) {
       let multi = '\n\n当前目标设备（多台）：'
       for (const d of targetDevices) {
-        multi += `\n---\n- 名称: ${d.name}\n- IP: ${d.ipAddress}\n- 厂商: ${d.vendor || '未知'}\n- 型号: ${d.model || '未知'}\n- 版本: ${d.version || '未知'}`
+        multi += `\n---\n- 名称: ${d.name}\n- 类型: ${deviceTypeLabel(d.deviceType)}\n- IP: ${d.ipAddress}\n- 厂商: ${d.vendor || '未知'}\n- 型号: ${d.model || '未知'}\n- 版本: ${d.version || '未知'}`
       }
       multi += '\n\n你可以在不同设备上执行不同命令，请用 [CMD:设备名] 格式指定在哪台设备上执行。'
       deviceInfo = multi
@@ -1298,6 +1315,10 @@ export async function chat(
     // 可编辑 registry 条目，恒注入（不依赖设备绑定）——AI 不知用法就不会打标。
     '\n\n' +
     PromptService.getPrompt('ai.chat.resourceMap') +
+    // Phase 23（23-03 复验反馈）：命令风格指引——按设备类型选命令风格（服务器→Linux
+    // 只读命令、网络设备→show/display）。可编辑 registry 条目，仅选中设备时注入
+    //（无目标设备时指引无意义，提示词保持干净）。
+    (targetDevices.length > 0 ? '\n\n' + PromptService.getPrompt('ai.chat.cmdStyle') : '') +
     mcpInjection
 
   const fullMessages: Array<{ role: string; content: string }> = [

@@ -116,6 +116,25 @@ export const PROMPT_REGISTRY: PromptRegistryEntry[] = [
     description: 'AI 资源地图：四手段清单 + 场景倾向性建议 + [EXP_SEARCH] 用法（用户可编辑）',
   },
   {
+    id: 'ai.chat.cmdStyle',
+    version: 1,
+    // Phase 23（23-03 复验反馈）命令风格指引条目：服务器类设备（Linux）与网络设备
+    // 命令风格不同——AI 不知设备类型时会对服务器生成 show/display 类网络设备命令。
+    // 设备类型动态数据随 deviceInfo 变量值注入（「类型: 服务器」等），本条目为纯静态
+    // 风格规则（可编辑面）；无安全管控语义，无硬区常量。由 ai.ts chat() 在选中设备
+    // 时拼接注入（无目标设备不注入）。
+    content:
+      '命令风格指引（按设备类型选择命令风格，设备类型见上方设备信息「类型」字段）：\n' +
+      '- 类型为「服务器」（Linux 系统）→ 使用 Linux 只读命令，如：uname -a（内核/系统版本）、hostnamectl（主机与系统信息）、uptime、df -h、free -m、ip addr、ps aux\n' +
+      '- 不要对服务器使用网络设备命令（show version / display version 在 Linux 上不存在）\n' +
+      '- 类型为「路由器 / 交换机 / 防火墙」等网络设备 → 使用对应厂商 CLI 只读命令（华为/H3C 用 display，Cisco 用 show）\n' +
+      '- 类型为「未分类」→ 优先根据厂商/型号字段推断命令风格，无法推断时在回复中说明并给出两种风格的命令\n' +
+      '所有命令仍必须是只读查询命令，禁止修改配置类命令。',
+    requiredVars: [],
+    group: 'AI 对话',
+    description: '命令风格指引：按设备类型（服务器/网络设备）选择命令风格（用户可编辑）',
+  },
+  {
     id: 'discovery.vendor',
     version: 1,
     // 原样搬移自 discovery.ts:98-122 commandPrompt（纯静态，设备列表在 user message）

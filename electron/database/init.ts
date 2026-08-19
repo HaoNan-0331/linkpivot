@@ -110,7 +110,20 @@ export function createTables() {
       ('w5', 'quit'),
       ('w6', 'ping'),
       ('w7', 'traceroute'),
-      ('w8', 'terminal');
+      ('w8', 'terminal'),
+      -- Phase 23（23-03 复验反馈）：服务器只读第一批（INSERT OR IGNORE 新 id，
+      -- 存量库启动时增量补种）。排除 cat（任意文件读）/ top、vi、less（交互式挂死
+      -- SSH exec）/ systemctl（首词匹配连带 start/stop/reboot 子命令）/ sudo。
+      ('w9', 'uname'),
+      ('w10', 'hostnamectl'),
+      ('w11', 'uptime'),
+      ('w12', 'df'),
+      ('w13', 'free'),
+      ('w14', 'ps'),
+      ('w15', 'ip'),
+      ('w16', 'netstat'),
+      ('w17', 'ss'),
+      ('w18', 'ifconfig');
 
     -- IP Management tables (from network-ip merge)
 
