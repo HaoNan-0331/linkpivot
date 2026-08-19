@@ -1,11 +1,15 @@
 import { useMemo, useState } from 'react'
-import { Checkbox, Input, Tag } from 'antd'
+import { Checkbox, Input, Popover, Tag } from 'antd'
 import type { DeviceOption } from './types'
 
 /**
- * 全设备选择器（Phase 23 / DSL-01，D-01/D-02/D-09）。
+ * 全设备选择器（Phase 23 / DSL-01，D-01/D-02/D-09；23-04 反馈1 收起态重构）。
  *
- * - D-01: Input 按名称/IP 即时过滤 + Checkbox 平铺列表（无分组折叠、无筛选 chip）
+ * - 收起态一行：已选设备名摘要（≤3 台直列，>3 台「前2名 等 N 台」；未选时引导文案），
+ *   不压缩对话区面积；未选时显示引导文案「点击选择目标设备」
+ * - hover 浮层展开完整选择器（Popover trigger="hover"——浮层本身属 trigger 容器，
+ *   移入列表不消失，移开整体收起；比纯 hover-in-list 更稳，交互失败可降级 click）
+ * - D-01: 浮层内 Input 按名称/IP 即时过滤 + Checkbox 平铺列表（无分组折叠、无筛选 chip）
  * - D-02: 每行能力 Tag 并列标注——绿=可执行(hasSSH||hasTelnet) / 蓝=可调MCP(hasMcp) /
  *   灰=仅问答（三布尔全 false）；双能力设备双 Tag 并列渲染
  * - D-09: 选中 >10 台 inline 黄色提示，不 disable 不阻止
@@ -36,12 +40,24 @@ export default function DeviceSelector({
     onChange(checked ? [...selectedDevices, id] : selectedDevices.filter((i) => i !== id))
   }
 
-  return (
-    <div style={{ minWidth: 280, maxWidth: 400 }}>
-      <Input.Search
+  // 收起态摘要（反馈1）：已选名称直列，>3 台截断为「前2 等 N 台」；未选显示引导
+  const selectedNames = selectedDevices
+    .map((id) => devices.find((d) => d.id === id)?.name)
+    .filter((n): n is string => !!n)
+  const summary =
+    selectedNames.length === 0
+      ? '点击选择目标设备'
+      : selectedNames.length <= 3
+        ? `已选：${selectedNames.join('、')}`
+        : `已选：${selectedNames.slice(0, 2).join('、')} 等 ${selectedNames.length} 台`
+
+  const panel = (
+    <div style={{ width: 320 }}>
+      <div style={{ fontWeight: 500, marginBottom: 6, fontSize: 13 }}>选择目标设备</div>
+      <Input
         allowClear
         size="small"
-        placeholder="搜索名称/IP..."
+        placeholder="搜索设备名称"
         value={keyword}
         onChange={(e) => setKeyword(e.target.value)}
         style={{ marginBottom: 4 }}
@@ -86,5 +102,32 @@ export default function DeviceSelector({
         </Tag>
       )}
     </div>
+  )
+
+  return (
+    <Popover
+      content={panel}
+      trigger="hover"
+      placement="bottomRight"
+      mouseEnterDelay={0.15}
+      overlayStyle={{ maxWidth: 360 }}
+    >
+      <div
+        style={{
+          maxWidth: 360,
+          padding: '4px 10px',
+          border: '1px solid #d9d9d9',
+          borderRadius: 6,
+          fontSize: 13,
+          color: selectedNames.length > 0 ? 'rgba(0,0,0,0.88)' : '#999',
+          cursor: 'pointer',
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis'
+        }}
+      >
+        {summary}
+      </div>
+    </Popover>
   )
 }
