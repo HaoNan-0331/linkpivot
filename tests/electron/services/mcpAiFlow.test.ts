@@ -407,6 +407,20 @@ describe('确认流（confirm 档总闸 / smart 未勾免确认）', () => {
     expect(emitted[0]).toMatchObject({ type: 'tool_result', status: 'success', server: 'srv-a', tool: 'get_status' })
     expect(fetchMock.mock.calls.length).toBe(2)
   })
+
+  it('CR-02 拒绝路径：MCP 批次拒绝 → logIds 置 rejected + MCP 语义文案（不走通用空命令分支）', async () => {
+    setup('smart')
+    queueReplies(CALL_MARKER)
+    const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
+    const execId = JSON.parse(out).execId
+    const final = await confirmCommand(execId, false)
+    // MCP 语义文案（通用分支文案是「用户拒绝了所有命令的执行。」）
+    expect(final).toBe('用户拒绝了所有 MCP 工具调用的执行。')
+    // 审计日志被置 rejected（createLog mock 恒返 'log-1'），不再停留 pending
+    expect(updateLogStatus).toHaveBeenCalledWith('log-1', 'rejected')
+    // 拒绝不触发任何工具执行 / 后续 callAI
+    expect(callToolWithTimeout).not.toHaveBeenCalled()
+  })
 })
 
 describe('SC3 注入端到端：不可信工具描述/结果夹带指令不改变确认路径', () => {

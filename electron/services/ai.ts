@@ -960,6 +960,16 @@ export async function confirmCommand(
   if (!batch) throw new Error('未找到待确认命令')
   pendingBatches.delete(batchId)
 
+  // CR-02 fix（Phase 22 code-review）：MCP 批次拒绝分支必须先于通用拒绝分支——
+  // MCP 批次 commands 恒为 []，通用分支先执行会空遍历（logIds 永停留 pending）
+  // 且返回错误文案，MCP 专用拒绝分支成死代码。
+  if (!approved && batch.mcp) {
+    for (const logId of batch.mcp.logIds) updateLogStatus(logId, 'rejected')
+    const msg = '用户拒绝了所有 MCP 工具调用的执行。'
+    saveChatMessage('assistant', msg, null, batch.sessionId)
+    return msg
+  }
+
   if (!approved) {
     for (const cmd of batch.commands) {
       updateLogStatus(cmd.logId, 'rejected')
@@ -974,12 +984,6 @@ export async function confirmCommand(
   // 22-05 有界循环：确认后执行本批调用 → 回注（累积）→ 续跑 runMcpToolLoop——下一轮
   // 再含标记则再次弹窗（返回 confirm_required），无标记则收尾返回最终回答。
   if (batch.mcp) {
-    if (!approved) {
-      for (const logId of batch.mcp.logIds) updateLogStatus(logId, 'rejected')
-      const msg = '用户拒绝了所有 MCP 工具调用的执行。'
-      saveChatMessage('assistant', msg, null, batch.sessionId)
-      return msg
-    }
     const results: string[] = []
     for (let i = 0; i < batch.mcp.calls.length; i++) {
       updateLogStatus(batch.mcp.logIds[i], 'approved')
