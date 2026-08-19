@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
 
 /**
@@ -117,7 +117,9 @@ vi.mock('../../../electron/database/connection', () => ({
 }))
 
 import { encField } from '../../../electron/utils/crypto'
-import { chat, setAiMasterKey } from '../../../electron/services/ai'
+import { chat, setAiMasterKey, isDeviceExecutable } from '../../../electron/services/ai'
+import { isCommandAllowed } from '../../../electron/services/commandSafety'
+import { AI_QONLY_EXEC_BAN } from '../../../electron/services/promptRegistry'
 
 /** fetch 队列 mock：callAI 逐次消费 replies */
 function queueReplies(...replies: string[]) {
@@ -217,5 +219,115 @@ describe('EXP_SEARCH 标记协议（Phase 23 23-02）', () => {
     const body = JSON.parse((fetchMock.mock.calls[0][1] as any).body)
     expect(body.messages[0].content).toContain(RESOURCE_MAP_TEXT)
     expect(body.messages[0].content).toContain('[EXP_SEARCH] 用法')
+  })
+})
+
+// ---------- Phase 23 Plan 23-03 —— CMD 白名单防御 + 能力声明注入（D-03/D-04/D-05） ----------
+
+/** 插入设备（connectionType=null → capabilities 三布尔全 false → 仅问答） */
+function insertDevice(id: string, name: string, connectionType: string | null) {
+  db.prepare(
+    'INSERT INTO devices (id, name_enc, ip_enc, connection_type) VALUES (?, ?, ?, ?)'
+  ).run(id, encField(name, MK), encField('10.0.0.1', MK), connectionType)
+}
+
+describe('CMD 白名单防御 + 能力声明注入（Phase 23 23-03）', () => {
+  afterEach(() => {
+    vi.mocked(isCommandAllowed).mockReturnValue({ allowed: false, reason: 'mock 拒绝' } as any)
+  })
+
+  it('isDeviceExecutable 矩阵：ssh/telnet 可执行，三布尔全 false、capabilities 缺失、null 均 fail-closed 不可执行（D-04）', () => {
+    expect(isDeviceExecutable({ capabilities: { hasSSH: true, hasTelnet: false, hasMcp: false } })).toBe(true)
+    expect(isDeviceExecutable({ capabilities: { hasSSH: false, hasTelnet: true, hasMcp: false } })).toBe(true)
+    expect(isDeviceExecutable({ capabilities: { hasSSH: false, hasTelnet: false, hasMcp: true } })).toBe(false)
+    expect(isDeviceExecutable({ capabilities: undefined })).toBe(false)
+    expect(isDeviceExecutable(null)).toBe(false)
+  })
+
+  it('单台仅问答设备打 [CMD]：白名单拦截 → 回注「无执行通道」说明重试一次（点名设备），干净回复收尾（D-04）', async () => {
+    insertDevice('q1', '仅问答机', null)
+    const fetchMock = queueReplies(
+      '我来执行 [CMD:仅问答机] display version[/CMD]',
+      '该设备无命令执行通道，无法执行，仅可基于知识库作答。'
+    )
+    const out = await chat([{ role: 'user', content: '查版本' }], ['q1'], null)
+    expect(fetchMock.mock.calls.length).toBe(2) // 回注重试恰好一次
+    const second = JSON.parse((fetchMock.mock.calls[1][1] as any).body)
+    const promptMsg = second.messages.find(
+      (m: any) => m.role === 'user' && m.content.includes('无命令执行通道')
+    )
+    expect(promptMsg).toBeTruthy()
+    expect(promptMsg.content).toContain('仅问答机') // 点名设备 + 原因
+    expect(out).toBe('该设备无命令执行通道，无法执行，仅可基于知识库作答。')
+    expect(out).not.toContain('[CMD')
+  })
+
+  it('顽固再犯：重试后仍对仅问答设备打标 → strip 标记收尾，命令不进执行/确认流（D-04）', async () => {
+    insertDevice('q1', '仅问答机', null)
+    const fetchMock = queueReplies(
+      '顽固 [CMD:仅问答机] display version[/CMD]',
+      '再犯 [CMD:仅问答机] display clock[/CMD]'
+    )
+    const out = await chat([{ role: 'user', content: '查时间' }], ['q1'], null)
+    expect(fetchMock.mock.calls.length).toBe(2) // 只重试一次，不再无限回注
+    expect(out).toBe('再犯') // 标记被 strip，命令未执行
+    expect(out).not.toContain('[CMD')
+  })
+
+  it('混选并存：[CMD:可执行A] 入确认流、[CMD:仅问答B] 被拒并显式回传（D-05 非整单拒绝）', async () => {
+    insertDevice('a1', '可执行A', 'ssh')
+    insertDevice('b1', '仅问答B', null)
+    vi.mocked(isCommandAllowed).mockReturnValue({ allowed: true, reason: '' } as any)
+    const fetchMock = queueReplies('[CMD:可执行A] display version[/CMD] [CMD:仅问答B] display arp[/CMD]')
+    const out = await chat([{ role: 'user', content: '批量查询' }], ['a1', 'b1'], null)
+    expect(fetchMock.mock.calls.length).toBe(1) // 混选不回注重试
+    const payload = JSON.parse(out)
+    expect(payload.type).toBe('confirm_required')
+    expect(payload.commands).toHaveLength(1)
+    expect(payload.commands[0].deviceName).toBe('可执行A')
+    const rejected = payload.rejectedCommands.find((r: any) => r.command === 'display arp')
+    expect(rejected).toBeTruthy()
+    expect(rejected.reason).toContain('无命令执行通道')
+  })
+
+  it('不存在设备名：既有拒绝路径不变（未找到指定设备，不因白名单改造回退）', async () => {
+    insertDevice('a1', '可执行A', 'ssh')
+    queueReplies('[CMD:幽灵设备] display version[/CMD]')
+    const out = await chat([{ role: 'user', content: '查版本' }], ['a1'], null)
+    expect(out).toContain('未找到指定设备: 幽灵设备')
+    expect(out).toContain('被拒绝')
+  })
+
+  it('能力声明注入：单台仅问答含能力说明 + 硬区禁止令；混选含跳过语义与点名；全可执行均不出现（D-03/D-05）', async () => {
+    // 单台仅问答
+    insertDevice('q1', '仅问答机', null)
+    let fetchMock = queueReplies('好的')
+    await chat([{ role: 'user', content: '你好' }], ['q1'], null)
+    let sys = JSON.parse((fetchMock.mock.calls[0][1] as any).body).messages[0].content
+    expect(sys).toContain('能力说明')
+    expect(sys).toContain('仅问答机')
+    expect(sys).toContain(AI_QONLY_EXEC_BAN) // 硬区拒绝执行指令拼接注入
+
+    // 混选：跳过语义 + 点名仅问答设备
+    db = makeDb()
+    db.prepare('INSERT INTO ai_config (id, api_key_enc) VALUES (?, ?)').run('cfg1', encField('test-key', MK))
+    insertDevice('a1', '可执行A', 'ssh')
+    insertDevice('q1', '仅问答机', null)
+    fetchMock = queueReplies('好的')
+    await chat([{ role: 'user', content: '你好' }], ['a1', 'q1'], null)
+    sys = JSON.parse((fetchMock.mock.calls[0][1] as any).body).messages[0].content
+    expect(sys).toContain('仅问答机')
+    expect(sys).toContain('跳过')
+    expect(sys).toContain(AI_QONLY_EXEC_BAN)
+
+    // 全可执行：均不注入（提示词干净）
+    db = makeDb()
+    db.prepare('INSERT INTO ai_config (id, api_key_enc) VALUES (?, ?)').run('cfg1', encField('test-key', MK))
+    insertDevice('a1', '可执行A', 'ssh')
+    fetchMock = queueReplies('好的')
+    await chat([{ role: 'user', content: '你好' }], ['a1'], null)
+    sys = JSON.parse((fetchMock.mock.calls[0][1] as any).body).messages[0].content
+    expect(sys).not.toContain('能力说明')
+    expect(sys).not.toContain(AI_QONLY_EXEC_BAN)
   })
 })
