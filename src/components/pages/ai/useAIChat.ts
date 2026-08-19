@@ -166,7 +166,9 @@ export function useAIChat(): UseAIChatReturn {
         return
       }
 
-      setMessages([...newMessages, { role: 'assistant', content: parsed.content }])
+      setMessages([...newMessages, parsed.kind === 'toolResult'
+        ? { role: 'assistant', content: '', toolResult: parsed.toolResult }
+        : { role: 'assistant', content: parsed.content }])
     } catch (e: unknown) {
       const errMsg = `错误: ${e instanceof Error ? e.message : String(e)}`
       setMessages([...newMessages, { role: 'assistant', content: errMsg }])
@@ -190,8 +192,10 @@ export function useAIChat(): UseAIChatReturn {
       if (parsed.kind === 'answer') {
         setMessages((prev) => [...prev, { role: 'assistant', content: parsed.content, references: parsed.references }])
       } else {
-        // 纯文本回复（无 references）——原降级路径
-        setMessages((prev) => [...prev, { role: 'assistant', content: parsed.content }])
+        // 纯文本回复（无 references）——原降级路径；tool_result 变体挂卡片数据源
+        setMessages((prev) => [...prev, parsed.kind === 'toolResult'
+          ? { role: 'assistant', content: '', toolResult: parsed.toolResult }
+          : { role: 'assistant', content: parsed.content }])
       }
     } catch (e: unknown) {
       message.error(e instanceof Error ? e.message : String(e))

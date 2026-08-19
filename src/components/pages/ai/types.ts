@@ -33,12 +33,38 @@ export interface ChatMsg {
   content: string
   createdAt?: string
   references?: ReferenceItem[]
+  // Phase 22（22-05，D-03）：tool_result 事件入列后的结构化卡片数据源
+  toolResult?: ToolResultMessage
+}
+
+/**
+ * MCP 工具调用结果载荷（Phase 22 / 22-05，D-03）。
+ * 契约固定于 22-03 main 侧 ToolResultPayload（ai:toolResult webContents.send 下发），
+ * renderer 侧唯一数据源，字段逐字对齐；resultJson 已在 main 侧 sanitizeUntrusted 清洗。
+ */
+export interface ToolResultMessage {
+  type: 'tool_result'
+  server: string
+  tool: string
+  deviceName: string
+  argsJson: string
+  resultJson: string
+  status: 'success' | 'failed' | 'timeout'
+  errorText?: string
 }
 
 export interface ConfirmData {
   type: 'confirm_required'
   execId: string
-  commands: Array<{ deviceName: string; command: string }>
+  // Phase 22（22-05）：MCP 工具确认复用本协议，commands 元素可携带可选
+  // server/tool/argsJson 字段（22-03 下发，renderer 按字段存在性区分命令/工具行）
+  commands: Array<{
+    deviceName: string
+    command: string
+    server?: string
+    tool?: string
+    argsJson?: string
+  }>
   rejectedCommands?: Array<{ command: string; reason: string }>
   aiExplanation: string
 }

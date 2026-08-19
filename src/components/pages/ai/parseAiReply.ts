@@ -1,4 +1,4 @@
-import type { ConfirmData, ReferenceItem } from './types'
+import type { ConfirmData, ReferenceItem, ToolResultMessage } from './types'
 
 /**
  * parseAiReply —— AI 应答解析纯函数（Phase 19 REN-02 / 审计 R-M5，D-10）。
@@ -17,15 +17,44 @@ export type ParsedAiReply =
   | { kind: 'plain'; content: string }
   | { kind: 'confirm'; content: string; confirm: ConfirmData }
   | { kind: 'answer'; content: string; references: ReferenceItem[] }
+  | { kind: 'toolResult'; toolResult: ToolResultMessage }
 
 const isStr = (v: unknown): v is string => typeof v === 'string'
+
+const TOOL_RESULT_STATUSES = ['success', 'failed', 'timeout'] as const
+
+/**
+ * tool_result 载荷逐字段 unknown 校验（Phase 22 / 22-05，T-22-16 fail-closed）。
+ * 消费方有二：parseAiReply 字符串解析分支 + useAIChat `ai:toolResult` 事件订阅
+ * （事件 payload 为 unknown，校验失败整条丢弃，不降级展示）。
+ */
+export function isValidToolResultPayload(v: unknown): v is ToolResultMessage {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return false
+  const p = v as Record<string, unknown>
+  return (
+    p.type === 'tool_result' &&
+    isStr(p.server) &&
+    isStr(p.tool) &&
+    isStr(p.deviceName) &&
+    isStr(p.argsJson) &&
+    isStr(p.resultJson) &&
+    isStr(p.status) &&
+    (TOOL_RESULT_STATUSES as readonly string[]).includes(p.status)
+  )
+}
 
 // ConfirmData 载荷校验：execId/aiExplanation string + commands 形状合法（缺任一降级 plain）。
 // WR-04：谓词签名产出 narrowing，confirm 分支消费免 as 断言（校验体逻辑不变）。
 function isValidConfirmPayload(p: Record<string, unknown>): p is {
   execId: string
   aiExplanation: string
-  commands: Array<{ deviceName: string; command: string }>
+  commands: Array<{
+    deviceName: string
+    command: string
+    server?: string
+    tool?: string
+    argsJson?: string
+  }>
   rejectedCommands?: unknown[]
 } {
   if (!isStr(p.execId) || !isStr(p.aiExplanation)) return false
@@ -35,7 +64,11 @@ function isValidConfirmPayload(p: Record<string, unknown>): p is {
       c !== null &&
       typeof c === 'object' &&
       isStr((c as Record<string, unknown>).deviceName) &&
-      isStr((c as Record<string, unknown>).command)
+      isStr((c as Record<string, unknown>).command) &&
+      // Phase 22（22-05）：MCP 工具行可选字段——存在即必须 string（畸形行整批拒绝 fail-closed）
+      ((c as Record<string, unknown>).server === undefined || isStr((c as Record<string, unknown>).server)) &&
+      ((c as Record<string, unknown>).tool === undefined || isStr((c as Record<string, unknown>).tool)) &&
+      ((c as Record<string, unknown>).argsJson === undefined || isStr((c as Record<string, unknown>).argsJson))
   )
 }
 
@@ -100,6 +133,9 @@ export function parseAiReply(raw: string): ParsedAiReply {
       commands: p.commands.map((c) => ({
         deviceName: c.deviceName,
         command: c.command,
+        ...(c.server !== undefined ? { server: c.server } : {}),
+        ...(c.tool !== undefined ? { tool: c.tool } : {}),
+        ...(c.argsJson !== undefined ? { argsJson: c.argsJson } : {}),
       })),
     }
     if (Array.isArray(p.rejectedCommands)) {
@@ -108,6 +144,13 @@ export function parseAiReply(raw: string): ParsedAiReply {
         .map((c) => ({ command: c.command, reason: c.reason }))
     }
     return { kind: 'confirm', content: '', confirm }
+  }
+
+  // tool_result（Phase 22 / 22-05，D-03）：逐字段校验合法才产出 toolResult（非法降级 plain）
+  if (p.type === 'tool_result') {
+    if (!isValidToolResultPayload(p)) return { kind: 'plain', content: raw }
+    const toolResult: ToolResultMessage = { ...p }
+    return { kind: 'toolResult', toolResult }
   }
 
   if (p.type === 'kb_answer' || p.type === 'exp_answer') {
