@@ -126,6 +126,90 @@ describe('parseAiReply 异常输入防御（T-19-06）', () => {
     expect(r.kind === 'answer' && r.references).toEqual([{ kind: 'experience', expId: 'ok', title: 'good' }])
   })
 
+describe('parseAiReply Phase 22 tool 载荷扩展（22-05，T-22-16 fail-closed）', () => {
+  const validToolResult = {
+    type: 'tool_result',
+    server: 'mock-server',
+    tool: 'set_vlan',
+    deviceName: 'SW-Core',
+    argsJson: '{"vlan":10}',
+    resultJson: '{"ok":true}',
+    status: 'success',
+  }
+
+  it('合法 tool_result 载荷——解析为 toolResult 类型（22-03 契约字段全量）', () => {
+    const r = parseAiReply(JSON.stringify(validToolResult))
+    expect(r).toEqual({ kind: 'toolResult', toolResult: { ...validToolResult } })
+  })
+
+  it('tool_result 含 errorText（failed/timeout 态）——透传可选字段', () => {
+    const raw = JSON.stringify({ ...validToolResult, status: 'timeout', errorText: '工具调用超时' })
+    const r = parseAiReply(raw)
+    expect(r.kind).toBe('toolResult')
+    if (r.kind !== 'toolResult') return
+    expect(r.toolResult.status).toBe('timeout')
+    expect(r.toolResult.errorText).toBe('工具调用超时')
+  })
+
+  it('畸形 tool_result（字段缺失/类型错/status 越界）——降级 plain 不进 tool 分支', () => {
+    const bad: Array<Record<string, unknown>> = [
+      { ...validToolResult, server: 123 },
+      { ...validToolResult, tool: undefined },
+      { ...validToolResult, argsJson: { vlan: 1 } },
+      { ...validToolResult, resultJson: null },
+      { ...validToolResult, status: 'error' },
+      { ...validToolResult, status: 'SUCCESS' },
+      { type: 'tool_result', server: 's' },
+    ]
+    for (const b of bad) {
+      expect(parseAiReply(JSON.stringify(b)).kind).toBe('plain')
+    }
+  })
+
+  it('tool_result 类型字段错（type 非 tool_result 字面量）——降级 plain', () => {
+    const raw = JSON.stringify({ ...validToolResult, type: 'tool-result' })
+    expect(parseAiReply(raw).kind).toBe('plain')
+  })
+
+  it('confirm_required 混合 MCP 工具行与普通命令行——均通过校验，MCP 可选字段透传', () => {
+    const raw = JSON.stringify({
+      type: 'confirm_required',
+      execId: 'exec-mcp-1',
+      aiExplanation: '需要调用 MCP 工具',
+      commands: [
+        { deviceName: 'SW-Core', command: 'display version' },
+        { deviceName: 'SW-Core', command: 'set_vlan', server: 'mock-server', tool: 'set_vlan', argsJson: '{"vlan":10}' },
+      ],
+    })
+    const r = parseAiReply(raw)
+    expect(r.kind).toBe('confirm')
+    if (r.kind !== 'confirm') return
+    expect(r.confirm.commands[0]).toEqual({ deviceName: 'SW-Core', command: 'display version' })
+    expect(r.confirm.commands[1]).toEqual({
+      deviceName: 'SW-Core', command: 'set_vlan', server: 'mock-server', tool: 'set_vlan', argsJson: '{"vlan":10}',
+    })
+  })
+
+  it('confirm_required MCP 行可选字段类型错（argsJson 非 string）——畸形行被拒降级 plain', () => {
+    const raw = JSON.stringify({
+      type: 'confirm_required',
+      execId: 'e',
+      aiExplanation: 'a',
+      commands: [{ deviceName: 'SW', command: 'c', server: 1, tool: 't', argsJson: 'x' }],
+    })
+    expect(parseAiReply(raw).kind).toBe('plain')
+  })
+
+  it('tool_result 非 JSON 事件对象经 isValidToolResultPayload——合法 true / 畸形 false（useAIChat 事件订阅消费）', async () => {
+    const mod = await import('@/components/pages/ai/parseAiReply')
+    expect(mod.isValidToolResultPayload(validToolResult)).toBe(true)
+    expect(mod.isValidToolResultPayload({ ...validToolResult, status: 'oops' })).toBe(false)
+    expect(mod.isValidToolResultPayload(null)).toBe(false)
+    expect(mod.isValidToolResultPayload('tool_result')).toBe(false)
+    expect(mod.isValidToolResultPayload([validToolResult])).toBe(false)
+  })
+})
+
   it('未知 type / 无 type 的 JSON——按普通文本原样返回', () => {
     expect(parseAiReply(JSON.stringify({ foo: 'bar' }))).toEqual({
       kind: 'plain',
