@@ -11,7 +11,7 @@ import { createLog, updateLogStatus, appendLogAiResponse, getLogs, setAiExecLogg
 import { search as kbSearch } from './knowledgeBaseService'
 import { retrieveForAnswer } from './experienceRetrieval'
 import { PromptService } from './promptService'
-import { MCP_INJECTION_GUARD } from './promptRegistry'
+import { MCP_INJECTION_GUARD, MCP_DISABLED_TOOLS_BAN_HEAD, MCP_DISABLED_TOOLS_BAN_BODY } from './promptRegistry'
 import { sanitizeUntrusted } from './untrustedText'
 import { McpToolPolicy, type McpToolCacheRow } from './mcpToolPolicy'
 import { McpService } from './mcpService'
@@ -574,6 +574,8 @@ interface McpCallContext {
   device: any
   tools: McpToolCacheRow[]
   skipConfirmSet: Set<string>
+  /** 被禁工具名清单（22-05 裁决：注入提示词让 AI 知情 + 禁止令，无禁用为空数组） */
+  disabledTools: string[]
 }
 
 /** 解析后的合法工具调用（server/tool 已对照注入清单白名单校验） */
@@ -607,6 +609,7 @@ function buildMcpContexts(targetDevices: any[]): McpCallContext[] {
         device: dev,
         tools,
         skipConfirmSet: McpToolPolicy.getSkipConfirmTools(rel.id),
+        disabledTools: McpToolPolicy.getDisabledToolNames(rel.id),
       })
     } catch (err) {
       console.warn('[ai.chat] MCP context build failed, skip device:', (err as Error).message)
@@ -1206,6 +1209,20 @@ export async function chat(
         .replaceAll('{{tools}}', () => sections.join('\n\n')) +
       '\n' +
       MCP_INJECTION_GUARD
+    // 22-05 用户裁决（能力管控语义）：任一 server 存在被禁工具时追加禁用清单 + 禁止令，
+    // 让 AI 知情并拒绝用其它工具变通实现（被动拦截挡不住 evaluate 类万能工具变通）；
+    // 禁止令措辞为代码级常量（不可编辑硬区），工具名经 sanitizeUntrusted 清洗；
+    // 无任何禁用工具时不注入该段（提示词干净）。
+    const disabledSections = mcpContexts
+      .filter((ctx) => ctx.disabledTools.length > 0)
+      .map(
+        (ctx) =>
+          `${ctx.serverName}: ${ctx.disabledTools.map((n) => sanitizeUntrusted(n, 200)).join(', ')}`
+      )
+    if (disabledSections.length > 0) {
+      mcpInjection +=
+        '\n' + MCP_DISABLED_TOOLS_BAN_HEAD + disabledSections.join('；') + '。\n' + MCP_DISABLED_TOOLS_BAN_BODY
+    }
   }
   const systemPrompt =
     PromptService.getPrompt('ai.chat.systemPrompt')

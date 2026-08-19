@@ -183,6 +183,17 @@ export class McpToolPolicy {
     return McpToolPolicy.getToolCache(configId).filter((t) => t.enabled === 1)
   }
 
+  /**
+   * 被禁工具名清单（22-05 用户裁决：禁用清单注入 AI 提示词 + 禁止令，让 AI 知情并
+   * 拒绝用其它工具变通实现被禁功能——纯被动拦截挡不住 evaluate 类万能工具变通）。
+   */
+  static getDisabledToolNames(configId: number): string[] {
+    const rows = McpToolPolicy.db().prepare(
+      'SELECT tool_name FROM mcp_tools WHERE config_id = ? AND enabled = 0 ORDER BY tool_name'
+    ).all(configId) as Array<{ tool_name: string }>
+    return rows.map((r) => r.tool_name)
+  }
+
   /** 已开免确认的工具名集合（22-03 exec 决策数据源） */
   static getSkipConfirmTools(configId: number): Set<string> {
     const rows = McpToolPolicy.db().prepare(
