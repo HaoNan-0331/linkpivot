@@ -738,6 +738,14 @@ const MCP_PARSE_FAIL_TEXT =
   '（AI 回复中的 MCP 工具调用标记解析失败，未执行任何工具调用；请检查提示词配置后重试）'
 
 /**
+ * 22-05 人工验证 Bug 2 修复：有标记但全部无效（工具被禁用/捏造）≠ 真 final——
+ * 直接把剥掉标记的半截话当最终回答会造成回复截断且 AI 不自知。改为回注不可用提示
+ * 再取一次回复（invalidPrompted 一次性标志防死循环；重试不计入工具轮次，无工具执行）。
+ */
+const MCP_UNAVAILABLE_TOOL_PROMPT =
+  '你尝试调用的工具不存在或已被禁用（当前可用工具清单见上文注入），请改用可用工具继续，或直接告知用户该操作无法完成。'
+
+/**
  * 标记清洗（22-05 修复）：移除完整 `[MCP_TOOL_CALL]...[/MCP_TOOL_CALL]` 段（含闭合标签，
  * DOTALL 非贪婪）；无闭合的畸形段沿开始标记到行尾兜底；孤立闭合标签一并移除——
  * 最终回答绝不允许标记原文漏进气泡。
@@ -803,13 +811,22 @@ async function runMcpToolLoop(
 ): Promise<McpLoopResult> {
   let reply = startReply
   let limitPrompted = false
+  let invalidPrompted = false
   // 上限每轮循环入口读取一次（配置热更后新一轮生效；fail-safe 回退 5）
   const maxRounds = getMcpMaxRounds()
   for (;;) {
     const { valid: mcpCalls, hadMarker } = parseMcpToolCalls(reply, ctx.mcpContexts)
     if (mcpCalls.length === 0) {
-      // 无有效标记 → 当前回复即最终回答（清洗任何残留标记段，含畸形/闭合段）
-      return { kind: 'final', reply: hadMarker ? stripMcpMarkers(reply) || MCP_PARSE_FAIL_TEXT : reply }
+      if (!hadMarker) return { kind: 'final', reply }
+      // 有标记但全无效（禁用/捏造/畸形）→ 回注不可用提示重试一次（Bug 2）；顽固输出 strip 后 final
+      if (invalidPrompted) {
+        return { kind: 'final', reply: stripMcpMarkers(reply) || MCP_PARSE_FAIL_TEXT }
+      }
+      invalidPrompted = true
+      state.extra.push({ role: 'assistant', content: reply })
+      state.extra.push({ role: 'user', content: MCP_UNAVAILABLE_TOOL_PROMPT })
+      reply = await callAI(ctx.config, [...ctx.fullMessages, ...state.extra])
+      continue
     }
     // 超限：第 maxRounds 轮执行完后仍含标记 → 不执行，回注上限提示取一次收尾回复
     if (state.rounds >= maxRounds) {

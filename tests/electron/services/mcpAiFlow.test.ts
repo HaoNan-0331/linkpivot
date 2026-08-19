@@ -256,22 +256,24 @@ describe('标记解析 fail-closed（T-22-09）：畸形/未知不进执行', ()
     seedMcp('dev1', { skipConfirm: 1 })
   })
 
-  it('畸形 JSON → 降级 plain 回复（标记剥离，不执行）', async () => {
-    queueReplies('分析中 [MCP_TOOL_CALL]not-json-xxx')
+  it('畸形 JSON → 不执行，回注不可用提示后新回复收尾（Bug 2 语义，标记不漏进气泡）', async () => {
+    const fetchMock = queueReplies('分析中 [MCP_TOOL_CALL]not-json-xxx', '好的，直接回答。')
     const emitted: any[] = []
     const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null, (p) => emitted.push(p))
     expect(callToolWithTimeout).not.toHaveBeenCalled()
     expect(emitted).toHaveLength(0)
+    expect(out).toBe('好的，直接回答。')
     expect(out).not.toContain('[MCP_TOOL_CALL]')
+    expect(fetchMock.mock.calls.length).toBe(2)
   })
 
-  it('未知工具名 / 缺字段 / 未知 server → 不执行', async () => {
+  it('未知工具名 / 缺字段 / 未知 server → 不执行（回注后新回复收尾）', async () => {
     for (const bad of [
       '[MCP_TOOL_CALL]{"server":"srv-a","tool":"evil_tool","args":{}}',
       '[MCP_TOOL_CALL]{"server":"srv-a","args":{}}',
       '[MCP_TOOL_CALL]{"server":"no-such","tool":"get_status","args":{}}',
     ]) {
-      queueReplies(bad)
+      queueReplies(bad, '无法调用该工具的回复')
       await chat([{ role: 'user', content: '查' }], ['dev1'], null)
       expect(callToolWithTimeout).not.toHaveBeenCalled()
     }
