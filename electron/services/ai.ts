@@ -1483,6 +1483,69 @@ export async function chat(
     return failClosedResponse
   }
 
+  // ---- Phase 23（23-03，D-04）：[CMD] 白名单防御（fail-closed）----
+  // 命令标记的目标设备必须可执行（isDeviceExecutable：hasSSH||hasTelnet；capabilities 缺失
+  // 按不可执行）。仅问答设备命中 → 标记无效：全量被拒时回注「该设备无执行通道」说明重试一次
+  //（照 invalidPrompted 一次性标志模式），再犯 strip 标记收尾；混选时命令作用于可执行子集、
+  // 被拒标记转 rejectedCommands 显式回传（D-05 非整单拒绝）。不存在设备名走既有拒绝路径不变。
+  const qOnlyRejections: Array<{ deviceName: string; cmd: string; reason: string }> = []
+  if (targetDevices.length > 0 && commands.length > 0) {
+    let qOnlyPrompted = false
+    const resolveTarget = (deviceName: string): any => {
+      if (deviceName) {
+        const trimmed = deviceName.trim().toLowerCase()
+        return targetDevices.find((d) => d.name.trim().toLowerCase() === trimmed)
+      }
+      return targetDevices[0]
+    }
+    for (;;) {
+      const blocked: Array<{ deviceName: string; cmd: string }> = []
+      const pass: Array<{ deviceName: string; cmd: string }> = []
+      for (const c of commands) {
+        const dev = resolveTarget(c.deviceName)
+        if (dev && !isDeviceExecutable(dev)) {
+          blocked.push({ deviceName: String(dev.name), cmd: c.cmd })
+        } else {
+          pass.push(c)
+        }
+      }
+      if (blocked.length === 0) break
+      if (pass.length > 0 || qOnlyPrompted) {
+        // 混选（D-05）：可执行子集继续走既有安全链路；被拒标记显式回传。
+        // 顽固再犯（pass 为空）：strip 标记收尾，命令不进执行/确认流。
+        for (const b of blocked) {
+          qOnlyRejections.push({ ...b, reason: '该设备无命令执行通道（仅可问答），命令未执行' })
+        }
+        if (pass.length === 0) {
+          finalAiReply = finalAiReply
+            .replace(/\[CMD(?::[^\]]*)?\][\s\S]*?\[\/CMD\]/g, '')
+            .replace(/\[CMD(?::[^\]]*)?\][^\n]*\n?/g, '')
+            .replace(/\[\/CMD\]/g, '')
+            .trim()
+        }
+        commands.length = 0
+        commands.push(...pass)
+        break
+      }
+      qOnlyPrompted = true
+      const qNames = [...new Set(blocked.map((b) => b.deviceName))].join('、')
+      finalAiReply = await callAI(config, [
+        ...fullMessages,
+        { role: 'assistant', content: finalAiReply },
+        {
+          role: 'user',
+          content: `以下 [CMD] 命令标记指向的设备无命令执行通道（仅可问答），已被系统拦截未执行：${qNames}。请直接回答用户问题，或仅对有执行通道的设备输出 [CMD] 命令标记；不要再对无命令执行通道的设备输出 [CMD] 标记。`,
+        },
+      ])
+      commands.length = 0
+      const reParse = /\[CMD(?::([^\]]+))?\](.*?)\[\/CMD\]/g
+      let m2: RegExpExecArray | null
+      while ((m2 = reParse.exec(finalAiReply)) !== null) {
+        commands.push({ deviceName: (m2[1] || '').trim(), cmd: m2[2].trim() })
+      }
+    }
+  }
+
   // No commands or no devices — just return the reply
   if (commands.length === 0 || targetDevices.length === 0) {
     saveChatMessage('user', messages[messages.length - 1]?.content || '', null, sessionId)
@@ -1553,6 +1616,9 @@ export async function chat(
       command: cmd,
     })
   }
+
+  // D-04 白名单被拒标记并入拒绝清单（confirm UI / 拒绝说明 / auto 结果回注统一可见）
+  rejectedCommands.push(...qOnlyRejections)
 
   // No allowed commands — return AI reply + rejection notices
   if (allowedCommands.length === 0) {
