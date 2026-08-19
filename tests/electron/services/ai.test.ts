@@ -35,6 +35,7 @@ vi.mock('../../../electron/services/experienceRetrieval', () => ({
   retrieveForAnswer: (...args: any[]) => retrieveForAnswerMock(...args),
 }))
 const RESOURCE_MAP_TEXT = '资源地图测试文本。[EXP_SEARCH] 用法：输出标记查询经验库，优先查经验库。'
+const CMD_STYLE_TEXT = '命令风格指引测试文本：服务器用 uname/hostnamectl，网络设备用 show/display。'
 vi.mock('../../../electron/services/promptService', () => ({
   PromptService: {
     getPrompt: vi.fn((id: string) =>
@@ -42,7 +43,9 @@ vi.mock('../../../electron/services/promptService', () => ({
         ? '{{deviceInfo}}{{experienceContext}}'
         : id === 'ai.chat.resourceMap'
           ? RESOURCE_MAP_TEXT
-          : ''
+          : id === 'ai.chat.cmdStyle'
+            ? CMD_STYLE_TEXT
+            : ''
     ),
   },
 }))
@@ -329,5 +332,53 @@ describe('CMD 白名单防御 + 能力声明注入（Phase 23 23-03）', () => {
     sys = JSON.parse((fetchMock.mock.calls[0][1] as any).body).messages[0].content
     expect(sys).not.toContain('能力说明')
     expect(sys).not.toContain(AI_QONLY_EXEC_BAN)
+  })
+})
+
+// ---------- Phase 23（23-03 复验反馈）—— 服务器类设备命令适配 ----------
+
+/** 插入带类型设备（device_type 注入断言用） */
+function insertTypedDevice(id: string, name: string, deviceType: string, connectionType: string | null) {
+  db.prepare(
+    'INSERT INTO devices (id, name_enc, ip_enc, device_type, connection_type) VALUES (?, ?, ?, ?, ?)'
+  ).run(id, encField(name, MK), encField('10.0.0.1', MK), deviceType, connectionType)
+}
+
+describe('设备类型注入 + 命令风格指引（Phase 23 23-03 复验反馈）', () => {
+  it('单台服务器：deviceInfo 含「类型: 服务器」，命令风格指引注入', async () => {
+    insertTypedDevice('srv1', 'kali', 'server', 'ssh')
+    const fetchMock = queueReplies('好的')
+    await chat([{ role: 'user', content: '查询版本信息' }], ['srv1'], null)
+    const sys = JSON.parse((fetchMock.mock.calls[0][1] as any).body).messages[0].content
+    expect(sys).toContain('类型: 服务器')
+    expect(sys).toContain(CMD_STYLE_TEXT)
+  })
+
+  it('混选服务器+路由器：多台段各自标注类型（中文映射），网络设备为「类型: 路由器」', async () => {
+    insertTypedDevice('srv1', 'kali', 'server', 'ssh')
+    insertTypedDevice('r1', '核心路由', 'router', 'ssh')
+    const fetchMock = queueReplies('好的')
+    await chat([{ role: 'user', content: '查询所有设备的版本信息' }], ['srv1', 'r1'], null)
+    const sys = JSON.parse((fetchMock.mock.calls[0][1] as any).body).messages[0].content
+    expect(sys).toContain('类型: 服务器')
+    expect(sys).toContain('类型: 路由器')
+    expect(sys).toContain(CMD_STYLE_TEXT)
+  })
+
+  it('未分类兜底：device_type 为空 → 「类型: 未分类」', async () => {
+    db.prepare(
+      'INSERT INTO devices (id, name_enc, ip_enc, connection_type) VALUES (?, ?, ?, ?)'
+    ).run('g1', encField('裸机', MK), encField('10.0.0.9', MK), 'ssh')
+    const fetchMock = queueReplies('好的')
+    await chat([{ role: 'user', content: '查版本' }], ['g1'], null)
+    const sys = JSON.parse((fetchMock.mock.calls[0][1] as any).body).messages[0].content
+    expect(sys).toContain('类型: 未分类')
+  })
+
+  it('无目标设备：命令风格指引不注入（提示词干净）', async () => {
+    const fetchMock = queueReplies('好的')
+    await chat([{ role: 'user', content: '你好' }], undefined, null)
+    const sys = JSON.parse((fetchMock.mock.calls[0][1] as any).body).messages[0].content
+    expect(sys).not.toContain(CMD_STYLE_TEXT)
   })
 })
