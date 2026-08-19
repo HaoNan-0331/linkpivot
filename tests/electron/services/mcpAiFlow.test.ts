@@ -389,6 +389,87 @@ describe('SC3 注入端到端：不可信工具描述/结果夹带指令不改�
   })
 })
 
+// ---------- 22-05 用户裁决：连续调用有界循环 + 标记清洗修复 ----------
+
+const CALL_MARKER_2 = '[MCP_TOOL_CALL]{"server":"srv-a","tool":"get_status","args":{"y":2}}[/MCP_TOOL_CALL]'
+const MCP_FALLBACK_TEXT = '（AI 回复中的 MCP 工具调用标记解析失败，未执行任何工具调用；请检查提示词配置后重试）'
+
+describe('连续调用有界循环（22-05 用户裁决）', () => {
+  beforeEach(() => {
+    db = makeDb('smart')
+    seedDevice('dev1')
+    seedMcp('dev1', { skipConfirm: 1 })
+    vi.mocked(callToolWithTimeout).mockResolvedValue({ ok: 1 } as any)
+  })
+
+  it('连续两轮标记：两轮工具各执行/下发/审计一次，followUp 结果累积，最终回复无标记残留', async () => {
+    const fetchMock = queueReplies(CALL_MARKER, CALL_MARKER_2, '两轮后的最终总结')
+    const emitted: any[] = []
+    const out = await chat([{ role: 'user', content: '查状态' }], ['dev1'], null, (p) => emitted.push(p))
+    expect(out).toBe('两轮后的最终总结')
+    expect(out).not.toContain('[MCP_TOOL_CALL]')
+    // 两轮工具各执行 1 次 / tool_result 各下发 1 次 / 审计各 1 条
+    expect(callToolWithTimeout).toHaveBeenCalledTimes(2)
+    expect(emitted).toHaveLength(2)
+    expect(emitted[0].argsJson).toBe('{"x":1}')
+    expect(emitted[1].argsJson).toBe('{"y":2}')
+    expect(createLog).toHaveBeenCalledTimes(2)
+    // followUp 累积：第 3 次 callAI 请求体含两条工具结果回注（user-role）
+    const third = JSON.parse((fetchMock.mock.calls[2][1] as any).body)
+    const resultMsgs = third.messages.filter(
+      (m: any) => m.role === 'user' && m.content.includes('MCP 工具调用的原始返回')
+    )
+    expect(resultMsgs).toHaveLength(2)
+    // 累积上下文：两轮 assistant 标记回复都在
+    expect(third.messages.filter((m: any) => m.role === 'assistant').length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('超限：连续 6 轮标记 → 工具仅执行 5 次，第 6 轮不执行，回注上限提示后收尾', async () => {
+    const fetchMock = queueReplies(
+      CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, '超限收尾总结'
+    )
+    const emitted: any[] = []
+    const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null, (p) => emitted.push(p))
+    expect(out).toBe('超限收尾总结')
+    expect(callToolWithTimeout).toHaveBeenCalledTimes(5)
+    expect(emitted).toHaveLength(5)
+    // 收尾那次 callAI（第 7 次）请求体含上限提示回注（user-role）
+    const last = JSON.parse((fetchMock.mock.calls[6][1] as any).body)
+    expect(last.messages.some(
+      (m: any) => m.role === 'user' && m.content.includes('工具调用轮次已达上限')
+    )).toBe(true)
+  })
+
+  it('确认流多轮：每轮独立弹窗，确认后带循环状态续跑（拒绝语义不变由既有测试锁死）', async () => {
+    const fetchMock = queueReplies(CALL_MARKER, CALL_MARKER_2, '确认流两轮总结')
+    const emitted: any[] = []
+    const out1 = await chat([{ role: 'user', content: '查' }], ['dev1'], null, (p) => emitted.push(p))
+    const execId1 = JSON.parse(out1).execId
+    // 第 1 轮确认后：执行 + 回注 → 第 2 轮又含标记 → 再次 confirm_required
+    const out2 = await confirmCommand(execId1, true)
+    expect(JSON.parse(out2).type).toBe('confirm_required')
+    expect(callToolWithTimeout).toHaveBeenCalledTimes(1)
+    const execId2 = JSON.parse(out2).execId
+    // 第 2 轮确认后：执行 + 回注 → 纯文本收尾
+    const final = await confirmCommand(execId2, true)
+    expect(final).toBe('确认流两轮总结')
+    expect(callToolWithTimeout).toHaveBeenCalledTimes(2)
+    expect(emitted).toHaveLength(2)
+    expect(fetchMock.mock.calls.length).toBe(3)
+  })
+
+  it('标记清洗：最终回复含完整闭合段（未知工具 fail-closed）时整段移除，闭合标签不漏进气泡', async () => {
+    queueReplies(`前文 [MCP_TOOL_CALL]{"server":"srv-a","tool":"evil_tool","args":{}}[/MCP_TOOL_CALL] 后文`)
+    const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
+    expect(callToolWithTimeout).not.toHaveBeenCalled()
+    expect(out).toContain('前文')
+    expect(out).toContain('后文')
+    expect(out).not.toContain('[MCP_TOOL_CALL]')
+    expect(out).not.toContain('[/MCP_TOOL_CALL]')
+    expect(out).not.toBe(MCP_FALLBACK_TEXT)
+  })
+})
+
 // ---------- Task 1: sanitizeUntrusted ----------
 
 describe('sanitizeUntrusted（T-22-08/T-22-10）', () => {
