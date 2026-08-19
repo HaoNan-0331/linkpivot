@@ -1,9 +1,9 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { message } from 'antd'
 import type { ChatSession } from '@/types/ai'
 import type { ConfirmDraftsResult } from '@/types/experience'
 import type { UseAIChatReturn, DeviceOption, ChatMsg, ConfirmData } from './types'
-import { parseAiReply } from './parseAiReply'
+import { parseAiReply, isValidToolResultPayload } from './parseAiReply'
 
 /**
  * useAIChat —— AIPage page-local 会话态自定义 hook（FE-01 / D-5-1）。
@@ -44,8 +44,18 @@ export function useAIChat(): UseAIChatReturn {
   const [reviewInitialDraftIds, setReviewInitialDraftIds] = useState<string[]>([])
   const [pendingDraftCount, setPendingDraftCount] = useState(0)
 
-  const loadSessions = useCallback(async () => {
-    const list = await window.api.ai.listSessions()
+  // Phase 22（22-05，D-03）：main→renderer `ai:toolResult` 事件订阅（22-03 下发契约，
+  // 每次 MCP 工具调用完成后推送——含确认后执行分支，故必须走事件而非 chat 响应体）。
+  // T-22-16 fail-closed：payload 为 unknown，逐字段校验失败整条丢弃（不降级展示、不入对话流）。
+  useEffect(() => {
+    const unsubscribe = window.api.ai.onToolResult((payload: unknown) => {
+      if (!isValidToolResultPayload(payload)) return
+      setMessages((prev) => [...prev, { role: 'assistant', content: '', toolResult: payload }])
+    })
+    return unsubscribe
+  }, [])
+
+  const loadSessions = useCallback(async () => {    const list = await window.api.ai.listSessions()
     setSessions(list)
     if (!currentSessionId) {
       if (list.length > 0) {

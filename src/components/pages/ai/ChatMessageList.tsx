@@ -5,6 +5,7 @@ import type { ChatMsg, ReferenceItem } from './types'
 import type { Experience } from '@/types/experience'
 import ExperienceDetailModal from '../../knowledge/ExperienceDetailModal'
 import SessionMessagesModal from './SessionMessagesModal'
+import ToolResultCard from './ToolResultCard'
 
 interface ChatMessageListProps {
   messages: ChatMsg[]
@@ -98,6 +99,13 @@ export default function ChatMessageList({ messages, loading }: ChatMessageListPr
         </div>
       )}
       {messages.map((msg, idx) => (
+        // Phase 22（22-05，D-03）：tool_result 消息渲染结构化卡片——次级块视觉，
+        // 不套 AI 气泡样式（卡片与 AI 解读气泡分离，T-22-18）
+        msg.toolResult ? (
+          <div key={msg.id || idx} style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 12 }}>
+            <ToolResultCard data={msg.toolResult} />
+          </div>
+        ) : (
         <div
           key={msg.id || idx}
           style={{
@@ -133,6 +141,7 @@ export default function ChatMessageList({ messages, loading }: ChatMessageListPr
             )}
           </div>
         </div>
+        )
       ))}
       {loading && (
         <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 12 }}>

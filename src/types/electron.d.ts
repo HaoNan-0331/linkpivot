@@ -105,6 +105,8 @@ export interface ElectronAPI {
   }
   ai: {
     chat: (messages: Array<{ role: 'user' | 'assistant'; content: string }>, deviceIds?: string[], sessionId?: string) => Promise<string>
+    // Phase 22（22-03/22-05，D-03）：main→renderer 工具结果推送订阅（返回解绑函数）
+    onToolResult: (cb: (payload: unknown) => void) => () => void
     discoverTopology: (deviceIds: string[]) => Promise<DiscoverResult>
     getConfig: () => Promise<AIConfig | null>
     saveConfig: (config: AIConfig) => Promise<void>
