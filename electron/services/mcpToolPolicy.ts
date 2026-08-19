@@ -181,4 +181,44 @@ export class McpToolPolicy {
     ).all(configId) as Array<{ tool_name: string }>
     return new Set(rows.map((r) => r.tool_name))
   }
+
+  // ---------- Phase 22（22-03）三档确认分类（纯静态方法，MCS-02/D-04） ----------
+
+  /**
+   * 单工具三档分类（纯函数，无 DB）：
+   * - confirm 档总闸：任何工具（含已勾免确认）一律 'confirm'（MCS-02 优先级语义）；
+   * - auto 档：全部 'execute'；
+   * - smart 档：skipConfirmSet.has(name) **AND** isReadOnlyEligible(row) 双查——
+   *   库内 skip_confirm 值可能被外改（防御纵深），实时以 annotations 重判（不信任库值）。
+   */
+  static classifyTool(
+    execMode: 'confirm' | 'smart' | 'auto',
+    toolName: string,
+    skipConfirmSet: Set<string>,
+    cacheRow: { name: string; annotations?: McpToolAnnotations }
+  ): 'confirm' | 'execute' {
+    if (execMode === 'confirm') return 'confirm'
+    if (execMode === 'auto') return 'execute'
+    // smart：双条件缺一不可
+    if (!skipConfirmSet.has(toolName)) return 'confirm'
+    return McpToolPolicy.isReadOnlyEligible(cacheRow) ? 'execute' : 'confirm'
+  }
+
+  /**
+   * 批次分类（D-04）：批次内全部 classify='execute' → 'execute_all'（smart 整批直执）；
+   * 任一 'confirm' 或空批次 → 'confirm_each'（从严）。
+   */
+  static classifyBatch(
+    execMode: 'confirm' | 'smart' | 'auto',
+    tools: Array<{ name: string; annotations?: McpToolAnnotations }>,
+    skipConfirmSet: Set<string>
+  ): 'execute_all' | 'confirm_each' {
+    if (tools.length === 0) return 'confirm_each'
+    for (const t of tools) {
+      if (McpToolPolicy.classifyTool(execMode, t.name, skipConfirmSet, t) === 'confirm') {
+        return 'confirm_each'
+      }
+    }
+    return 'execute_all'
+  }
 }
