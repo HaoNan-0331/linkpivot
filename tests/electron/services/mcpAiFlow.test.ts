@@ -501,7 +501,7 @@ describe('标记全无效（禁用/捏造工具）：回注不可用提示重试
     // 重试那次 callAI 请求体含「不可用」回注提示（user-role）
     const second = JSON.parse((fetchMock.mock.calls[1][1] as any).body)
     expect(second.messages.some(
-      (m: any) => m.role === 'user' && m.content.includes('工具不存在或已被禁用')
+      (m: any) => m.role === 'user' && m.content.includes('已被管理员禁用') && m.content.includes('禁止使用任何其它工具变通实现')
     )).toBe(true)
     expect(out).toBe('browser_navigate 已被禁用，无法打开网页，请手动访问。')
     // 重试不计入工具轮次（无工具执行）：callAI 恰好 2 次
