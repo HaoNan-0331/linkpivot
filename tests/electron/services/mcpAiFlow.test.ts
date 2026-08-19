@@ -137,7 +137,8 @@ import { McpToolPolicy } from '../../../electron/services/mcpToolPolicy'
 // ---------- Task 2: classifyTool / classifyBatch（三档矩阵，MCS-02/D-04） ----------
 
 const RO = { name: 'get_status', annotations: { readOnlyHint: true } }
-const RO_NOT_ELIGIBLE = { name: 'reboot_device', annotations: { readOnlyHint: true } }
+// 22-04 单条件裁决后：不可免确认 = server 未声明只读（无 hint），名字正则不再参与可勾判定
+const RO_NOT_ELIGIBLE = { name: 'reboot_device', annotations: {} }
 
 describe('classifyTool 三档矩阵', () => {
   const skip = new Set(['get_status'])

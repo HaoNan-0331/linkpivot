@@ -1,12 +1,14 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import Database from 'better-sqlite3'
-import { McpToolPolicy, READONLY_TOOL_NAME_RE } from '../../../electron/services/mcpToolPolicy'
+import { McpToolPolicy, isVerifiedReadOnlyName } from '../../../electron/services/mcpToolPolicy'
 
 /**
  * Phase 22 Plan 22-01 Task 2 —— McpToolPolicy（工具级策略 service）真路径验证。
  *
- * 双条件判定（MCS-02 从严）：readOnlyHint=true（server 声明）AND 工具名匹配本地只读正则
- * （本地自主裁决，不信任 server 单方声明）才允许 skip_confirm=true。
+ * 单条件判定（22-04 用户裁决，推翻 22-01 双条件）：readOnlyHint=true（server 声明）即
+ * 免确认可勾——通用 MCP server（如 playwright 全系 browser_*）名字不命中网络设备风格
+ * 正则，双条件下免确认功能形同虚设。名字正则降级为展示层「已验证只读」加强标记
+ * （isVerifiedReadOnlyName），不影响可勾性。
  *
  * 安全域：内存库（:memory:）无落盘；经 _setDbGetter 注入（mcpService 同款惯例）。
  */
@@ -33,31 +35,33 @@ beforeEach(() => {
   McpToolPolicy._setDbGetter(() => db)
 })
 
-describe('isReadOnlyEligible 双条件判定矩阵', () => {
-  it('hint=true + 名字匹配只读正则 → true', () => {
+describe('isReadOnlyEligible 单条件判定矩阵（22-04 用户裁决）', () => {
+  it('hint=true → true，无论名字是否命中只读正则', () => {
     expect(McpToolPolicy.isReadOnlyEligible({ name: 'get_status', annotations: { readOnlyHint: true } })).toBe(true)
-    expect(McpToolPolicy.isReadOnlyEligible({ name: 'list_interfaces', annotations: { readOnlyHint: true } })).toBe(true)
-    expect(McpToolPolicy.isReadOnlyEligible({ name: 'query_arp_table', annotations: { readOnlyHint: true } })).toBe(true)
+    expect(McpToolPolicy.isReadOnlyEligible({ name: 'reboot_device', annotations: { readOnlyHint: true } })).toBe(true)
+    // 通用 MCP server 命名（playwright 全系 browser_*）也只看 hint
+    expect(McpToolPolicy.isReadOnlyEligible({ name: 'browser_snapshot', annotations: { readOnlyHint: true } })).toBe(true)
   })
 
-  it('hint=true 但名字不匹配正则（如 reboot_device）→ false', () => {
-    expect(McpToolPolicy.isReadOnlyEligible({ name: 'reboot_device', annotations: { readOnlyHint: true } })).toBe(false)
-    expect(McpToolPolicy.isReadOnlyEligible({ name: 'delete_config', annotations: { readOnlyHint: true } })).toBe(false)
-  })
-
-  it('hint 缺失/false → 一律 false（MCS-02 从严）', () => {
+  it('hint 缺失/false → 一律 false（单条件从严侧）', () => {
     expect(McpToolPolicy.isReadOnlyEligible({ name: 'get_status' })).toBe(false)
     expect(McpToolPolicy.isReadOnlyEligible({ name: 'get_status', annotations: {} })).toBe(false)
     expect(McpToolPolicy.isReadOnlyEligible({ name: 'get_status', annotations: { readOnlyHint: false } })).toBe(false)
+    // 名字命中正则但 server 未声明只读 → 不可勾（正则不单独构成可勾条件）
+    expect(McpToolPolicy.isReadOnlyEligible({ name: 'show_version', annotations: { readOnlyHint: false } })).toBe(false)
+  })
+})
+
+describe('isVerifiedReadOnlyName 展示层加强标记判定', () => {
+  it('网络设备风格只读动词前缀 / _get_ / _list_ 段 → true', () => {
+    for (const n of ['get_x', 'show_x', 'list_x', 'read_x', 'status_x', 'query_x', 'ping_x', 'health_x', 'describe_x', 'device_get_info', 'node_list_all']) {
+      expect(isVerifiedReadOnlyName(n)).toBe(true)
+    }
   })
 
-  it('READONLY_TOOL_NAME_RE 导出且覆盖只读动词前缀', () => {
-    expect(READONLY_TOOL_NAME_RE).toBeInstanceOf(RegExp)
-    for (const n of ['get_x', 'show_x', 'list_x', 'read_x', 'status_x', 'query_x', 'ping_x', 'health_x', 'describe_x']) {
-      expect(READONLY_TOOL_NAME_RE.test(n)).toBe(true)
-    }
-    for (const n of ['reboot_x', 'write_x', 'exec_x', 'set_x']) {
-      expect(READONLY_TOOL_NAME_RE.test(n)).toBe(false)
+  it('通用命名（browser_* 等）→ false（仅展示降档，不影响可勾性）', () => {
+    for (const n of ['browser_snapshot', 'browser_navigate', 'reboot_x', 'write_x', 'exec_x', 'set_x']) {
+      expect(isVerifiedReadOnlyName(n)).toBe(false)
     }
   })
 })
@@ -113,7 +117,7 @@ describe('setEnabled / setSkipConfirm / getEnabledTools / getSkipConfirmTools', 
   beforeEach(() => {
     McpToolPolicy.saveToolCache(1, [
       { name: 'get_status', annotations: { readOnlyHint: true } },
-      { name: 'reboot_device', annotations: { readOnlyHint: true } }, // hint 有但名字不匹配
+      { name: 'reboot_device', annotations: { readOnlyHint: true } }, // hint=true：单条件下也可免确认
       { name: 'ping_host' },
     ])
   })
@@ -125,11 +129,10 @@ describe('setEnabled / setSkipConfirm / getEnabledTools / getSkipConfirmTools', 
     expect(McpToolPolicy.getEnabledTools(1).map((t) => t.name)).toEqual(['get_status', 'ping_host'])
   })
 
-  it('setSkipConfirm(true) 对不满足双条件的工具被拒绝', () => {
-    expect(McpToolPolicy.setSkipConfirm(1, 'reboot_device', true)).toBe(false) // 名字不匹配
-    expect(McpToolPolicy.getToolCache(1).find((t) => t.name === 'reboot_device')!.skipConfirm).toBe(0)
+  it('setSkipConfirm(true) 对无 hint 的工具被拒绝；hint=true（无论名字）放行', () => {
+    expect(McpToolPolicy.setSkipConfirm(1, 'reboot_device', true)).toBe(true) // hint=true 即可（22-04 单条件）
     expect(McpToolPolicy.setSkipConfirm(1, 'ping_host', true)).toBe(false) // 无 hint
-    expect(McpToolPolicy.setSkipConfirm(1, 'get_status', true)).toBe(true) // 双条件满足
+    expect(McpToolPolicy.setSkipConfirm(1, 'get_status', true)).toBe(true)
     expect(McpToolPolicy.setSkipConfirm(1, 'get_status', false)).toBe(true) // 关闭不受限
     expect(McpToolPolicy.setSkipConfirm(1, 'nonexistent_tool', true)).toBe(false) // 行不存在
   })
