@@ -20,7 +20,13 @@ import Database from 'better-sqlite3'
  * 安全域：内存库（`:memory:`）无落盘；只跑 v16 本体不碰 runMigrations/system log。
  */
 
-import { v16, v17 } from '../../electron/database/migrations'
+import { v16, v17, v19, v20 } from '../../electron/database/migrations'
+import { encField } from '../../electron/utils/crypto'
+import {
+  appendLogAiResponse,
+  setAiExecLoggerMasterKey,
+  _setAiExecLoggerDbGetter,
+} from '../../electron/services/aiExecLogger'
 
 /** v15 占位形态基线：devices + prompt_overrides + 旧 mcp_configs（DDL 照抄 v15 迁移段） */
 function createV15Schema(db: Database.Database): void {
@@ -229,5 +235,156 @@ describe('v17 mcp_tools', () => {
     expect(() => insert.run(1, 'get_status')).toThrow(/UNIQUE/i)
     insert.run(2, 'get_status') // 不同 config 同名工具合法
     db.close()
+  })
+})
+
+/**
+ * Phase 22 Plan 22-05 收尾 —— 22-03 v19 回归修复（ai_exec_logs 丢明文列）验证。
+ *
+ * 回归根因：v19 重建 ai_exec_logs 时 DDL 只含 prompt_text_enc/ai_response_enc，
+ * 丢了明文列 prompt_text/ai_response——SEC-06 运行时代码（appendLogAiResponse /
+ * backfillAiExecLogEnc / getLogs）在「明文列存在」假设下写 SQL，运行时报
+ * no such column: prompt_text。
+ *
+ * 修复：v19 DDL 补回两明文列（对 fresh-v19 生效）+ v20 迁移给已跑丢列版 v19 的
+ * 存量库补列（hasColumn 守卫幂等）+ init.ts fresh DDL 同步。
+ *
+ * 用例：
+ *   a) pre-v19 形态库跑 v19 → 新表含两明文列 + _enc 列，明文数据搬迁保活
+ *   b) 丢列版 v19 存量库跑 v20 → 两列补回，既有 _enc 密文保活，user_version=20
+ *   c) v20 幂等重跑 no-op
+ *   d) appendLogAiResponse 在 v20 库上正常执行（SELECT/UPDATE 不再 no such column）
+ *   e) init.ts fresh ai_exec_logs DDL 含两明文列，与 v19 修正后 DDL 列集一致
+ */
+describe('v19 fix + v20 ai_exec_logs 补明文列', () => {
+  const TEST_MK = 'v20-test-master-key'
+
+  /** pre-v19 形态：v13 后 ai_exec_logs（含明文 + _enc 列，mode CHECK 两值） */
+  function createPreV19Table(db: Database.Database): void {
+    db.exec(`
+      CREATE TABLE ai_exec_logs (
+        id TEXT PRIMARY KEY,
+        device_id TEXT,
+        device_name_enc TEXT,
+        command TEXT NOT NULL,
+        status TEXT CHECK(status IN ('approved','rejected','pending','executed','failed')),
+        mode TEXT CHECK(mode IN ('confirm','auto')),
+        ai_reason TEXT,
+        prompt_text TEXT,
+        ai_response TEXT,
+        prompt_text_enc TEXT,
+        ai_response_enc TEXT,
+        created_at TEXT DEFAULT (datetime('now','localtime'))
+      );
+    `)
+  }
+
+  /** 丢列版 v19 形态：无明文列（22-03 回归产物），user_version=19 */
+  function createBuggyV19Table(db: Database.Database): void {
+    db.exec(`
+      CREATE TABLE ai_exec_logs (
+        id TEXT PRIMARY KEY,
+        device_id TEXT,
+        device_name_enc TEXT,
+        command TEXT NOT NULL,
+        status TEXT CHECK(status IN ('approved','rejected','pending','executed','failed')),
+        mode TEXT CHECK(mode IN ('confirm','smart','auto')),
+        ai_reason TEXT,
+        prompt_text_enc TEXT,
+        ai_response_enc TEXT,
+        created_at TEXT DEFAULT (datetime('now','localtime'))
+      );
+    `)
+    db.pragma('user_version = 19')
+  }
+
+  function columnsOf(db: Database.Database, table: string): string[] {
+    return (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((r) => r.name)
+  }
+
+  it('a) pre-v19 库跑 v19 后新表含两明文列（DDL 修正）且明文数据搬迁保活', () => {
+    const db = new Database(':memory:')
+    createPreV19Table(db)
+    db.prepare(
+      "INSERT INTO ai_exec_logs (id, device_id, device_name_enc, command, status, mode, ai_reason, prompt_text, ai_response) VALUES ('r1', 'd1', NULL, 'show ver', 'executed', 'confirm', 'ok', '旧明文 prompt', '旧明文 response')"
+    ).run()
+
+    v19(db)
+
+    const cols = columnsOf(db, 'ai_exec_logs')
+    expect(cols).toContain('prompt_text')
+    expect(cols).toContain('ai_response')
+    expect(cols).toContain('prompt_text_enc')
+    expect(cols).toContain('ai_response_enc')
+    expect(getTableSql(db, 'ai_exec_logs')).toContain("'smart'")
+    const row = db.prepare('SELECT prompt_text, ai_response FROM ai_exec_logs WHERE id = ?').get('r1') as any
+    expect(row.prompt_text).toBe('旧明文 prompt')
+    expect(row.ai_response).toBe('旧明文 response')
+    db.close()
+  })
+
+  it('b) 丢列版 v19 存量库跑 v20 → 两列补回，_enc 密文保活，user_version=20', () => {
+    const db = new Database(':memory:')
+    createBuggyV19Table(db)
+    const encP = encField('密文 prompt', TEST_MK)
+    const encR = encField('密文 response', TEST_MK)
+    db.prepare(
+      "INSERT INTO ai_exec_logs (id, device_id, device_name_enc, command, status, mode, ai_reason, prompt_text_enc, ai_response_enc) VALUES ('r1', 'd1', NULL, 'display', 'executed', 'smart', 'why', ?, ?)"
+    ).run(encP, encR)
+
+    v20(db)
+
+    const cols = columnsOf(db, 'ai_exec_logs')
+    expect(cols).toContain('prompt_text')
+    expect(cols).toContain('ai_response')
+    const row = db.prepare('SELECT prompt_text, ai_response, prompt_text_enc, ai_response_enc FROM ai_exec_logs WHERE id = ?').get('r1') as any
+    expect(row.prompt_text).toBeNull() // 补列为 NULL，不触碰既有密文
+    expect(row.prompt_text_enc).toBe(encP)
+    expect(row.ai_response_enc).toBe(encR)
+    expect(db.pragma('user_version', { simple: true })).toBe(20)
+    db.close()
+  })
+
+  it('c) v20 重复执行幂等（列已存在 no-op，不 throw）', () => {
+    const db = new Database(':memory:')
+    createBuggyV19Table(db)
+    v20(db)
+    expect(() => v20(db)).not.toThrow()
+    expect(db.pragma('user_version', { simple: true })).toBe(20)
+    db.close()
+  })
+
+  it('d) appendLogAiResponse 在 v20 库上正常执行（不再 no such column: prompt_text）', () => {
+    const db = new Database(':memory:')
+    createBuggyV19Table(db)
+    v20(db)
+    db.prepare(
+      "INSERT INTO ai_exec_logs (id, device_id, device_name_enc, command, status, mode, ai_reason, prompt_text_enc, ai_response_enc) VALUES ('r1', 'd1', NULL, 'show cpu', 'executed', 'smart', 'ok', ?, ?)"
+    ).run(encField('first prompt', TEST_MK), encField('first response', TEST_MK))
+
+    setAiExecLoggerMasterKey(TEST_MK)
+    _setAiExecLoggerDbGetter(() => db)
+    try {
+      expect(() => appendLogAiResponse('r1', 'second prompt', 'second response')).not.toThrow()
+      const row = db.prepare('SELECT prompt_text, ai_response, prompt_text_enc, ai_response_enc FROM ai_exec_logs WHERE id = ?').get('r1') as any
+      expect(row.prompt_text_enc).not.toBeNull()
+      expect(row.prompt_text).toBeNull() // append 写全量 _enc 后明文列即刻清空
+    } finally {
+      _setAiExecLoggerDbGetter(() => { throw new Error('neutral') })
+      setAiExecLoggerMasterKey('')
+    }
+    db.close()
+  })
+
+  it('e) init.ts fresh ai_exec_logs DDL 含两明文列（与 v20 后结构一致）', () => {
+    const root = path.resolve(__dirname, '../..')
+    const initSrc = fs.readFileSync(path.join(root, 'electron/database/init.ts'), 'utf-8')
+    const m = initSrc.match(/CREATE TABLE IF NOT EXISTS ai_exec_logs \(([\s\S]*?)\);/)
+    expect(m).toBeTruthy()
+    const ddl = m![1]
+    expect(ddl).toContain('prompt_text TEXT')
+    expect(ddl).toContain('ai_response TEXT')
+    expect(ddl).toContain('prompt_text_enc TEXT')
+    expect(ddl).toContain('ai_response_enc TEXT')
   })
 })
