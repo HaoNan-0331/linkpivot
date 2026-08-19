@@ -47,11 +47,28 @@ function rowToDevice(row: any): any {
     lastChecked: row.last_checked || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    // Phase 23（DSL-03/D-02）：能力三布尔随投影下发——hasSSH/hasTelnet 严格按 connectionType
+    // 派生（不猜通道），hasMcp 由 mcp_device_rel 关联存在性派生（listDevices LEFT JOIN 带 has_mcp）。
+    // 三布尔独立不做最高档合并；非敏感字段，出口经 maskDeviceSecrets 原样透传。
+    capabilities: {
+      hasSSH: row.connection_type === 'ssh',
+      hasTelnet: row.connection_type === 'telnet',
+      hasMcp: Boolean(row.has_mcp),
+    },
   }
 }
 
 export function listDevices() {
-  return (getDatabase().prepare('SELECT * FROM devices ORDER BY created_at DESC').all() as any[]).map(rowToDevice)
+  // DSL-03：单条 SQL LEFT JOIN 派生 hasMcp（mcp_device_rel.device_id UNIQUE 保证一对一，无重复行）；
+  // prepare 在 .all() 调用处一次构造、map 外复用，无 N+1；无缓存现查（锁定决策）。
+  return (
+    getDatabase().prepare(`
+      SELECT d.*, (r.device_id IS NOT NULL) AS has_mcp
+      FROM devices d
+      LEFT JOIN mcp_device_rel r ON r.device_id = d.id
+      ORDER BY d.created_at DESC
+    `).all() as any[]
+  ).map(rowToDevice)
 }
 
 export function createDevice(data: any) {
