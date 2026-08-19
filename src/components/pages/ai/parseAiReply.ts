@@ -19,6 +19,27 @@ export type ParsedAiReply =
   | { kind: 'answer'; content: string; references: ReferenceItem[] }
   | { kind: 'toolResult'; toolResult: ToolResultMessage }
 
+/**
+ * parsed → 追加用 assistant 消息行（Phase 22 code-review CR-01）。
+ * 消费方必须以函数式更新 `setMessages((prev) => [...prev, ...parsedToMessages(parsed)])`
+ * 追加——禁止基于发送前 snapshot 的整体替换（会覆盖 await 期间 ai:toolResult 事件
+ * 追加进对话流的工具结果卡片）。本纯函数即该语义的可测锚点。
+ */
+export function parsedToMessages(parsed: ParsedAiReply): Array<{
+  role: 'assistant'
+  content: string
+  references?: ReferenceItem[]
+  toolResult?: ToolResultMessage
+}> {
+  if (parsed.kind === 'answer') {
+    return [{ role: 'assistant', content: parsed.content, references: parsed.references }]
+  }
+  if (parsed.kind === 'toolResult') {
+    return [{ role: 'assistant', content: '', toolResult: parsed.toolResult }]
+  }
+  return [{ role: 'assistant', content: parsed.content }]
+}
+
 const isStr = (v: unknown): v is string => typeof v === 'string'
 
 const TOOL_RESULT_STATUSES = ['success', 'failed', 'timeout'] as const

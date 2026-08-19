@@ -3,7 +3,7 @@ import { message } from 'antd'
 import type { ChatSession } from '@/types/ai'
 import type { ConfirmDraftsResult } from '@/types/experience'
 import type { UseAIChatReturn, DeviceOption, ChatMsg, ConfirmData } from './types'
-import { parseAiReply, isValidToolResultPayload } from './parseAiReply'
+import { parseAiReply, parsedToMessages, isValidToolResultPayload } from './parseAiReply'
 
 /**
  * useAIChat —— AIPage page-local 会话态自定义 hook（FE-01 / D-5-1）。
@@ -170,18 +170,17 @@ export function useAIChat(): UseAIChatReturn {
         setLoading(false)
         return
       }
-      if (parsed.kind === 'answer') {
-        setMessages([...newMessages, { role: 'assistant', content: parsed.content, references: parsed.references }])
+      // CR-01 fix（Phase 22 code-review）：post-await 一律函数式更新——await 期间
+      // ai:toolResult 事件已按 prev 追加过工具结果卡片，基于发送前 newMessages snapshot
+      // 的整体替换会把卡片整批丢弃（D-03 核心交付在主发送路径不可见）。与 handleConfirm 对齐。
+      if (parsed.kind === 'answer' || parsed.kind === 'toolResult' || parsed.kind === 'plain') {
+        setMessages((prev) => [...prev, ...parsedToMessages(parsed)])
         setLoading(false)
         return
       }
-
-      setMessages([...newMessages, parsed.kind === 'toolResult'
-        ? { role: 'assistant', content: '', toolResult: parsed.toolResult }
-        : { role: 'assistant', content: parsed.content }])
     } catch (e: unknown) {
       const errMsg = `错误: ${e instanceof Error ? e.message : String(e)}`
-      setMessages([...newMessages, { role: 'assistant', content: errMsg }])
+      setMessages((prev) => [...prev, { role: 'assistant', content: errMsg }])
     }
     setLoading(false)
   }, [input, loading, currentSessionId, messages, selectedDevices])
@@ -208,14 +207,8 @@ export function useAIChat(): UseAIChatReturn {
         setConfirmInFlight(false) // Phase 14-02：视觉锁释放（弹窗重新打开自行接管交互）
         return // 不 setLoading(false)——保持 loading 等待下一次用户确认
       }
-      if (parsed.kind === 'answer') {
-        setMessages((prev) => [...prev, { role: 'assistant', content: parsed.content, references: parsed.references }])
-      } else {
-        // 纯文本回复（无 references）——原降级路径；tool_result 变体挂卡片数据源
-        setMessages((prev) => [...prev, parsed.kind === 'toolResult'
-          ? { role: 'assistant', content: '', toolResult: parsed.toolResult }
-          : { role: 'assistant', content: parsed.content }])
-      }
+      // CR-01 fix：与 handleSend 共用 parsedToMessages（函数式追加语义单一来源）
+      setMessages((prev) => [...prev, ...parsedToMessages(parsed)])
     } catch (e: unknown) {
       message.error(e instanceof Error ? e.message : String(e))
     }

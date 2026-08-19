@@ -218,3 +218,47 @@ describe('parseAiReply Phase 22 tool 载荷扩展（22-05，T-22-16 fail-closed�
     expect(parseAiReply(JSON.stringify({ type: 'other', content: 'x' })).kind).toBe('plain')
   })
 })
+
+// ---------- Phase 22 code-review CR-01：函数式追加语义（parsedToMessages） ----------
+// 语义锚点：await chat 期间 ai:toolResult 事件已向 messages 追加卡片行；chat 返回后
+// 最终回答必须以 prev 为基准函数式追加——任何基于发送前 snapshot 的整体替换都会丢卡片。
+// renderer 无组件测试工具链，此处锁死纯函数层等价断言；React state 行为列入人工验证项。
+describe('parsedToMessages 函数式追加语义（CR-01）', () => {
+  const toolResultCard = {
+    role: 'assistant' as const,
+    content: '',
+    toolResult: {
+      type: 'tool_result' as const,
+      server: 'srv-a',
+      tool: 'get_status',
+      deviceName: 'dev1',
+      argsJson: '{}',
+      resultJson: '{"ok":1}',
+      status: 'success' as const,
+    },
+  }
+  // 模拟 handleSend await 期间事件订阅追加后的最新 state（含卡片 + 用户消息）
+  const prevWithCards = [
+    { role: 'user' as const, content: '查状态' },
+    toolResultCard,
+  ]
+
+  it('最终回答落地后，prev 中的 tool_result 卡片仍存在（不被 snapshot 覆盖）', async () => {
+    const { parsedToMessages } = await import('@/components/pages/ai/parseAiReply')
+    const parsed = parseAiReply(JSON.stringify({ type: 'kb_answer', content: '总结', references: [] }))
+    // 函数式更新语义：newMessages = [...prev, ...parsedToMessages(parsed)]
+    const next = [...prevWithCards, ...parsedToMessages(parsed)]
+    expect(next).toHaveLength(3)
+    expect(next[1]).toEqual(toolResultCard) // 卡片保留
+    expect(next[2]).toMatchObject({ role: 'assistant', content: '总结' })
+  })
+
+  it('toolResult/plain 变体映射正确（卡片行 content 空 / plain 带 content）', async () => {
+    const { parsedToMessages } = await import('@/components/pages/ai/parseAiReply')
+    expect(parsedToMessages(parseAiReply(JSON.stringify({
+      type: 'tool_result', server: 's', tool: 't', deviceName: 'd',
+      argsJson: '{}', resultJson: '', status: 'success',
+    })))).toEqual([{ role: 'assistant', content: '', toolResult: expect.objectContaining({ tool: 't' }) }])
+    expect(parsedToMessages(parseAiReply('纯文本'))).toEqual([{ role: 'assistant', content: '纯文本' }])
+  })
+})
