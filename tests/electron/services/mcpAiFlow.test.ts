@@ -681,3 +681,18 @@ describe('轮次上限配置驱动主循环（22-05 checkpoint 需求）', () =>
     expect(callToolWithTimeout).toHaveBeenCalledTimes(5)
   })
 })
+
+// ---------- Phase 22 code-review WR-02：sanitizeUntrusted 非法 maxLen fail-closed ----------
+
+describe('sanitizeUntrusted 非法 maxLen fail-closed（WR-02）', () => {
+  it('maxLen 0/负数/NaN/Infinity → 返回空串，不返回未截断全文', () => {
+    const long = 'a'.repeat(5000)
+    for (const bad of [0, -1, NaN, Infinity, -Infinity]) {
+      expect(sanitizeUntrusted(long, bad)).toBe('')
+    }
+  })
+
+  it('合法小上限（如 1）仍正常截断', () => {
+    expect(sanitizeUntrusted('abcdef', 1)).toBe('a…[已截断至 1 字符]')
+  })
+})

@@ -36,16 +36,19 @@ function neutralizeMarkers(text: string): string {
 /**
  * 不可信文本清洗：先中和协议标记，再截断至 maxLen（超长附截断标记）。
  * 空/非字符串输入返回 ''（安全空值）。
+ * WR-02 fix（Phase 22 code-review）：maxLen 非法（0/负数/NaN/Infinity）fail-closed
+ * 返回 ''——安全纯函数对非法参数从严，绝不放行未截断全文进 LLM 上下文。
  */
 export function sanitizeUntrusted(text: string, maxLen: number): string {
   if (typeof text !== 'string' || text.length === 0) return ''
-  const safeLen = Number.isFinite(maxLen) && maxLen > 0 ? Math.floor(maxLen) : 0
+  if (!Number.isFinite(maxLen) || maxLen <= 0) return ''
+  const safeLen = Math.floor(maxLen)
   let neutralized: string
   try {
     neutralized = neutralizeMarkers(text)
   } catch {
     return ''
   }
-  if (safeLen === 0 || neutralized.length <= safeLen) return neutralized
+  if (neutralized.length <= safeLen) return neutralized
   return neutralized.slice(0, safeLen) + `…[已截断至 ${safeLen} 字符]`
 }
