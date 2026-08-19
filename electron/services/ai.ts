@@ -1233,7 +1233,12 @@ export async function chat(
   const systemPrompt =
     PromptService.getPrompt('ai.chat.systemPrompt')
       .replaceAll('{{deviceInfo}}', () => deviceInfo)
-      .replaceAll('{{experienceContext}}', () => '') + mcpInjection
+      .replaceAll('{{experienceContext}}', () => '') +
+    // Phase 23（23-02，D-07）：资源地图（四手段清单 + 倾向性建议 + [EXP_SEARCH] 用法），
+    // 可编辑 registry 条目，恒注入（不依赖设备绑定）——AI 不知用法就不会打标。
+    '\n\n' +
+    PromptService.getPrompt('ai.chat.resourceMap') +
+    mcpInjection
 
   const fullMessages: Array<{ role: string; content: string }> = [
     { role: 'system', content: systemPrompt },
