@@ -13,7 +13,7 @@ import { createSystemLog } from '../services/systemLog'
  *      在 createTables() 建好基线表之后、premigration 备份之后执行（D-06）。
  *      init.ts 不直接调用 runMigrations（单一调用点原则）。
  */
-export const MIGRATION_HEAD = 19
+export const MIGRATION_HEAD = 20
 
 interface MigrationStep {
   version: number
@@ -671,18 +671,46 @@ export const v19 = (db: Database.Database): void => {
         status TEXT CHECK(status IN ('approved','rejected','pending','executed','failed')),
         mode TEXT CHECK(mode IN ('confirm','smart','auto')),
         ai_reason TEXT,
+        prompt_text TEXT,
+        ai_response TEXT,
         prompt_text_enc TEXT,
         ai_response_enc TEXT,
         created_at TEXT DEFAULT (datetime('now','localtime'))
       );
       INSERT INTO ai_exec_logs_new
         SELECT id, device_id, device_name_enc, command, status, mode, ai_reason,
-          prompt_text_enc, ai_response_enc, created_at
+          prompt_text, ai_response, prompt_text_enc, ai_response_enc, created_at
         FROM ai_exec_logs;
       DROP TABLE ai_exec_logs;
       ALTER TABLE ai_exec_logs_new RENAME TO ai_exec_logs;
     `)
     db.pragma('user_version = 19')
+  })
+  step()
+}
+
+/**
+ * v20：Phase 22（22-05）补回 v19 误丢的 ai_exec_logs.prompt_text / ai_response 明文列。
+ *
+ * 22-03 的 v19 重建 ai_exec_logs 时新表 DDL 只含 prompt_text_enc / ai_response_enc，
+ * 丢了明文列——SEC-06 运行时代码（aiExecLogger appendLogAiResponse / backfillAiExecLogEnc /
+ * getLogs）在「明文列存在」假设下写 SQL，确认执行后的第二次 AI 调用记录路径报
+ * no such column: prompt_text（22-05 人工验证发现）。
+ *
+ * 修复方案（已裁决）：补列，不改运行时代码——旧行明文/新行密文两态兼容设计恢复成立。
+ * v19 DDL 已同步修正（只对未跑 v19 的库生效）；本迁移对已跑丢列版 v19 的存量库补列。
+ *
+ * 幂等守卫：hasColumn——列已存在 no-op（v2 同构，不靠 user_version）。
+ */
+export const v20 = (db: Database.Database): void => {
+  const step = db.transaction(() => {
+    if (!hasColumn(db, 'ai_exec_logs', 'prompt_text')) {
+      db.exec('ALTER TABLE ai_exec_logs ADD COLUMN prompt_text TEXT')
+    }
+    if (!hasColumn(db, 'ai_exec_logs', 'ai_response')) {
+      db.exec('ALTER TABLE ai_exec_logs ADD COLUMN ai_response TEXT')
+    }
+    db.pragma('user_version = 20')
   })
   step()
 }
@@ -707,6 +735,7 @@ const MIGRATIONS: MigrationStep[] = [
   { version: 17, name: 'mcp_tools', run: v17 },
   { version: 18, name: 'ai_config.exec_mode CHECK widen (confirm/smart/auto)', run: v18 },
   { version: 19, name: 'ai_exec_logs.mode CHECK widen (confirm/smart/auto)', run: v19 },
+  { version: 20, name: 'ai_exec_logs 补回 v19 误丢的 prompt_text/ai_response 明文列', run: v20 },
 ]
 
 /**

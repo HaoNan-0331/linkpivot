@@ -63,6 +63,8 @@ export function createTables() {
       status TEXT CHECK(status IN ('approved','rejected','pending','executed','failed')),
       mode TEXT CHECK(mode IN ('confirm','smart','auto')),
       ai_reason TEXT,
+      prompt_text TEXT,
+      ai_response TEXT,
       prompt_text_enc TEXT,
       ai_response_enc TEXT,
       created_at TEXT DEFAULT (datetime('now','localtime'))
