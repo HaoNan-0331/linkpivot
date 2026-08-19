@@ -1186,31 +1186,14 @@ export async function chat(
     }
   }
 
-  // Phase 11 D-11-1 b 自动预取：每轮对话自动检索经验库（不靠 AI 自主标记）。
-  // retrieveForAnswer 内部整体 try/catch，异常时 expReferences=[] 继续正常答（D-11-9 不阻塞主路径）。
-  const userMessage = messages[messages.length - 1]?.content || ''
+  // Phase 23（23-02，D-10）：自动预取彻底移除——经验检索只在 AI 回复含 [EXP_SEARCH] 标记时
+  // 由下方拦截分支触发（四手段全 AI 自主编排，D-06）。expReferences 也改由该命中分支产出
+  // （buildExpAnswerPayload/mapExpRefs 溯源路径不变，D-08 UI 卡片不变）。
   let expReferences: Array<{ exp_id: string; title: string; source_session_id: string | null; unsupported: boolean }> = []
-  let experienceContext = ''
-  try {
-    const retrieval = await retrieveForAnswer({ userMessage, deviceIds })
-    if (retrieval.injected.length > 0) {
-      const expContext = retrieval.injected.map((e, i) =>
-        `[经验${i + 1}: ${e.title}${e.unsupported ? '（⚠ 此条经验命令已失支持，请提示用户手动执行或更新白名单）' : ''}]\n${e.content}`
-      ).join('\n\n')
-      experienceContext = `\n\n以下是经验库中检索到的相关经验（仅供参考，回答末尾无需标注来源）：\n${expContext}`
-      expReferences = retrieval.injected.map((e) => ({
-        exp_id: e.exp_id,
-        title: e.title,
-        source_session_id: e.source_session_id ?? null,
-        unsupported: e.unsupported,
-      }))
-    }
-  } catch (err) {
-    console.warn('[ai.chat] experience retrieval failed, continue without injection:', (err as Error).message)
-  }
 
   // Phase 20 PMT-01：systemPrompt 静态头收敛到 promptRegistry（用户可 override），
-  // 动态注入段（deviceInfo/experienceContext）按 registry 占位符填入，值与收敛前逐字一致。
+  // 动态注入段（deviceInfo）按 registry 占位符填入；experienceContext 占位符自 23-02
+  // 自动预取移除后恒填空串（registry 契约保留，历史 override 兼容）。
   // Phase 22（22-03，MCS-01/MCS-04）：选中设备绑定 MCP 时追加工具清单注入——
   // 说明文本源自 getPrompt('ai.chat.mcpTools')（可编辑面），末尾拼接代码级常量
   // MCP_INJECTION_GUARD（不可编辑硬区，fail-closed）；工具描述/Schema 为不可信文本，
@@ -1250,7 +1233,7 @@ export async function chat(
   const systemPrompt =
     PromptService.getPrompt('ai.chat.systemPrompt')
       .replaceAll('{{deviceInfo}}', () => deviceInfo)
-      .replaceAll('{{experienceContext}}', () => experienceContext) + mcpInjection
+      .replaceAll('{{experienceContext}}', () => '') + mcpInjection
 
   const fullMessages: Array<{ role: string; content: string }> = [
     { role: 'system', content: systemPrompt },
@@ -1314,6 +1297,51 @@ export async function chat(
     } catch {
       // KB search failed — strip the tag and use original reply
       finalAiReply = aiReply.replace(/\[KB_SEARCH\].*?\[\/KB_SEARCH\]/gs, '').trim()
+    }
+  }
+
+  // ---- Phase 23（23-02，D-06/D-10）：[EXP_SEARCH] 经验库标记协议（与 KB_SEARCH 同构）----
+  // 循环外单次二段式（planner 裁决）：不并入 runMcpToolLoop、不计 mcp_max_rounds。
+  // 检索执行体 = retrieveForAnswer（编排骨架不变，仅调用时机改为 AI 主动打标）；
+  // 结果只回注 **user-role** 消息（绝不进 system prompt，T-23-05），回注文本经
+  // sanitizeUntrusted 清洗截断（T-23-05）；query 仅作检索关键词（T-23-04）。
+  const expSearchMatch = finalAiReply.match(/\[EXP_SEARCH\](.*?)\[\/EXP_SEARCH\]/s)
+  if (expSearchMatch) {
+    const expQuery = sanitizeUntrusted(expSearchMatch[1].trim(), 500)
+    try {
+      const retrieval = await retrieveForAnswer({ userMessage: expQuery, deviceIds })
+      if (retrieval.injected.length > 0) {
+        const expContext = retrieval.injected.map((e, i) =>
+          `[经验${i + 1}: ${e.title}${e.unsupported ? '（⚠ 此条经验命令已失支持，请提示用户手动执行或更新白名单）' : ''}]\n${sanitizeUntrusted(e.content, 4000)}`
+        ).join('\n\n')
+        // expReferences 溯源产出（原自动预取段迁移至此，payload 结构不变，D-08）
+        expReferences = retrieval.injected.map((e) => ({
+          exp_id: e.exp_id,
+          title: e.title,
+          source_session_id: e.source_session_id ?? null,
+          unsupported: e.unsupported,
+        }))
+        const followUpMessages = [
+          ...fullMessages,
+          { role: 'assistant', content: aiReply },
+          {
+            role: 'user',
+            content: `以下是经验库中检索到的相关经验（关键词: "${expQuery}"）：\n\n${expContext}\n\n请参考以上经验回答用户的问题，回答末尾无需标注来源。如果经验中没有相关信息，请说明。回答中不要包含 [EXP_SEARCH] 标记。`,
+          },
+        ]
+        finalAiReply = await callAI(config, followUpMessages)
+      } else {
+        // 未命中回注说明（无 expReferences 空卡片）
+        const followUpMessages = [
+          ...fullMessages,
+          { role: 'assistant', content: aiReply },
+          { role: 'user', content: `经验库中未找到与"${expQuery}"相关的经验。请基于你已有的知识回答，并说明经验库中暂无相关经验。回答中不要包含 [EXP_SEARCH] 标记。` },
+        ]
+        finalAiReply = await callAI(config, followUpMessages)
+      }
+    } catch {
+      // 检索失败 — strip 标记降级（照 KB catch 形态）
+      finalAiReply = finalAiReply.replace(/\[EXP_SEARCH\].*?\[\/EXP_SEARCH\]/gs, '').trim()
     }
   }
 
