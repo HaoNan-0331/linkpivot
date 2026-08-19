@@ -93,8 +93,9 @@ export const PROMPT_REGISTRY: PromptRegistryEntry[] = [
   },
   {
     id: 'ai.chat.resourceMap',
-    version: 1,
-    // Phase 23（23-02，D-07）资源地图条目：四手段清单 + 场景倾向性建议 + [EXP_SEARCH] 用法。
+    version: 2,
+    // Phase 23（23-02 D-07 建；23-04 反馈7 C3 强化经验库指引）资源地图条目：
+    // 四手段清单 + 场景倾向性建议 + [EXP_SEARCH] 用法。
     // 纯静态（无 {{var}} 占位），由 ai.ts chat() 拼接在 systemPrompt 末尾（用户可编辑）。
     content:
       '你可用的资源手段清单（按问题自主选择，可组合多手段综合作答）：\n' +
@@ -104,11 +105,12 @@ export const PROMPT_REGISTRY: PromptRegistryEntry[] = [
       '- [CMD:设备名]命令[/CMD]：在目标设备上执行只读查询命令\n' +
       '使用建议：\n' +
       '- 配置变更、故障处理、历史踩坑类问题 → 优先 [EXP_SEARCH] 查经验库\n' +
+      '- 涉及历史处理/经验类提问（如「你处理过X吗」「之前怎么解决的」）必先查经验库再回答，不得凭通用知识直接作答历史经验类问题\n' +
       '- 产品概念、默认账号/密码、参数规格、配置方法说明 → 优先 [KB_SEARCH] 查资料库\n' +
       '- 设备实时状态、运行数据 → 用 MCP 工具或 [CMD] 命令\n' +
       '- 可组合多手段综合作答（如先查经验库再查资料库）。\n' +
       '[EXP_SEARCH] 用法：在回复中单独输出一行标记 [EXP_SEARCH]关键词[/EXP_SEARCH]，' +
-      '系统会返回相关经验片段，你基于这些内容回答。每次最多使用一次 EXP_SEARCH。',
+      '系统会返回相关经验片段（已按与当前设备的关联度排序并标注可信度分级），你基于这些内容回答。每次最多使用一次 EXP_SEARCH。',
     requiredVars: [],
     group: 'AI 对话',
     description: 'AI 资源地图：四手段清单 + 场景倾向性建议 + [EXP_SEARCH] 用法（用户可编辑）',

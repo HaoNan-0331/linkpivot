@@ -27,7 +27,8 @@ export interface RerankEntry {
 
 export interface RerankInput {
   userMessage: string
-  candidates: Array<{ exp_id: string; title: string; content_preview: string }>
+  /** Phase 23 Plan 04 C4：isGlobal 标志随候选透传（不进 prompt，仅调用方降权用）。 */
+  candidates: Array<{ exp_id: string; title: string; content_preview: string; isGlobal?: boolean }>
   demoMode?: boolean
 }
 

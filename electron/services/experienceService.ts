@@ -143,6 +143,10 @@ export interface ListExperiencesOpts {
    * 隐含 includeInvalid=true 语义（失效经验默认被 bi-temporal 过滤剔除，invalidOnly 强制纳入）。
    * UI 状态 Select 选「已失效」时走此路径，避免传 status='invalid'（失效行 status 列仍 'published'，查不到）。 */
   invalidOnly?: boolean
+  /** Phase 23 Plan 04 C1：仅 deviceId 模式生效——检索池 = 关联选中设备的经验 ∪ 全局经验
+   * （exp 无 exp_device_rel 行）。默认 false 保持浏览页筛选语义（INNER JOIN 仅关联经验）零回归。
+   * 仅经验检索路径（experienceRetrieval）传 true；行携带 isGlobal 布尔供可信度分级标注。 */
+  includeGlobal?: boolean
 }
 
 /**
@@ -345,6 +349,36 @@ export function listExperiences(opts: ListExperiencesOpts): PaginatedResult<any>
 
   const conn = db()
   let rowsSql: string
+  if (deviceIds.length > 0 && opts.includeGlobal === true) {
+    // Phase 23 Plan 04 C1：检索池并集——LEFT JOIN + (r.device_id IN (...) OR r.device_id IS NULL)。
+    // 全局经验（无 exp_device_rel 行）LEFT JOIN 后 r.* 全 NULL 经 IS NULL 分支纳入；
+    // 仅关联其它设备的经验 r.device_id 非 NULL 且不在 IN 集 → 排除。
+    // device_hit = 该经验命中选中设备的关联行数（SUM，GROUP BY e.id 聚合后 >0 即关联当前设备），
+    // 供调用方（experienceRetrieval → ai.ts）做「关联当前设备/全局经验」可信度分级标注（C2）。
+    const inPlaceholders = deviceIds.map(() => '?').join(',')
+    const hitSum = `SUM(CASE WHEN r.device_id IS NOT NULL THEN 1 ELSE 0 END) AS device_hit`
+    rowsSql =
+      `SELECT e.*, ${deviceCountSub}, ${hitSum} FROM experiences e ` +
+      `LEFT JOIN exp_device_rel r ON e.id = r.experience_id ` +
+      `WHERE (r.device_id IN (${inPlaceholders}) OR r.device_id IS NULL)` +
+      (conditions.length > 0 ? ' AND ' + conditions.join(' AND ') : '') +
+      ` GROUP BY e.id ORDER BY e.created_at DESC, e.id DESC`
+    rowsSql = injectLimitOffset(rowsSql)
+    const rowsParams = [...deviceIds, ...params, limit, offset]
+    const rows = (conn.prepare(rowsSql).all(...rowsParams) as any[]).map((raw) => {
+      const r = rowToExperience(raw)
+      r.isGlobal = !(Number(raw.device_hit) > 0)
+      delete r.device_hit
+      return r
+    })
+    const totalSql =
+      `SELECT COUNT(DISTINCT e.id) AS cnt FROM experiences e ` +
+      `LEFT JOIN exp_device_rel r ON e.id = r.experience_id ` +
+      `WHERE (r.device_id IN (${inPlaceholders}) OR r.device_id IS NULL)` +
+      (conditions.length > 0 ? ' AND ' + conditions.join(' AND ') : '')
+    const total = (conn.prepare(totalSql).get(...deviceIds, ...params) as any).cnt
+    return { rows, total, truncated: rows.length < total }
+  }
   if (deviceIds.length > 0) {
     // JOIN exp_device_rel 反查，多选 IN 占位（参数化，非拼接值 T-10-01 mitigate）。
     // GROUP BY e.id 去重：一条经验关联多个选中设备时 JOIN 产生多行，去重后恰返 1 次（Test 5 守护）。

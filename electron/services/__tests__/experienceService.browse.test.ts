@@ -259,6 +259,65 @@ class MemDb {
       }
     }
 
+    // Phase 23 Plan 04 C1：includeGlobal 并集行查询——LEFT JOIN + (r.device_id IN (...) OR r.device_id IS NULL) + device_hit
+    const igListMatch = sql.match(
+      /^SELECT\s+e\.\*,.*?AS\s+device_count,\s*SUM\(CASE WHEN r\.device_id IS NOT NULL THEN 1 ELSE 0 END\)\s+AS\s+device_hit\s+FROM\s+experiences\s+e\s+LEFT\s+JOIN\s+exp_device_rel\s+r\s+ON\s+e\.id\s*=\s*r\.experience_id\s+WHERE\s+\(r\.device_id\s+IN\s*\(([^)]+)\)\s+OR\s+r\.device_id\s+IS\s+NULL\)(\s+AND\s+(.+?))?\s+GROUP\s+BY\s+e\.id\s+ORDER\s+BY\s+e\.created_at\s+DESC/i
+    )
+    if (igListMatch) {
+      const placeholderCount = igListMatch[1].split(',').filter((s) => s.trim() === '?').length
+      const condClause = igListMatch[3] ? igListMatch[3].replace(/^AND\s+/i, '') : undefined
+      return {
+        all: (...vals: any[]) => {
+          const t = this.tables.get('experiences')
+          if (!t) return []
+          const deviceIds = vals.slice(0, placeholderCount)
+          const remaining = vals.slice(placeholderCount, vals.length - 2) // 尾部 limit/offset
+          const rel = this.tables.get('exp_device_rel')
+          const relRows = rel ? Array.from(rel.rows.values()) : []
+          const out: Row[] = []
+          for (const r of t.rows.values()) {
+            const mine = relRows.filter((rr) => rr.experience_id === r.id)
+            if (mine.length === 0) {
+              out.push({ ...r, device_count: 0, device_hit: 0 }) // 全局经验 → IS NULL 分支
+            } else {
+              const hit = mine.filter((rr) => deviceIds.includes(rr.device_id))
+              if (hit.length > 0) out.push({ ...r, device_count: mine.length, device_hit: hit.length })
+              // 仅关联其它设备 → 排除
+            }
+          }
+          const rows = condClause ? this.applyConditions(out, condClause, remaining) : out
+          rows.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
+          return rows
+        },
+      }
+    }
+
+    // Phase 23 Plan 04 C1：includeGlobal 并集 total 计数（LEFT JOIN 变体）
+    const igCountMatch = sql.match(
+      /^SELECT\s+COUNT\(DISTINCT\s+e\.id\)\s+AS\s+(\w+)\s+FROM\s+experiences\s+e\s+LEFT\s+JOIN\s+exp_device_rel\s+r\s+ON\s+e\.id\s*=\s*r\.experience_id\s+WHERE\s+\(r\.device_id\s+IN\s*\(([^)]+)\)\s+OR\s+r\.device_id\s+IS\s+NULL\)(\s+AND\s+(.+))?$/i
+    )
+    if (igCountMatch) {
+      const alias = igCountMatch[1]
+      const placeholderCount = igCountMatch[2] ? igCountMatch[2].split(',').filter((s) => s.trim() === '?').length : 0
+      return {
+        get: (...vals: any[]) => {
+          const t = this.tables.get('experiences')
+          if (!t) return { [alias]: 0 }
+          const deviceIds = vals.slice(0, placeholderCount)
+          const remaining = vals.slice(placeholderCount)
+          const rel = this.tables.get('exp_device_rel')
+          const relRows = rel ? Array.from(rel.rows.values()) : []
+          let rows: Row[] = Array.from(t.rows.values()).map((r) => ({ ...r }))
+          rows = rows.filter((r) => {
+            const mine = relRows.filter((rr) => rr.experience_id === r.id)
+            return mine.length === 0 || mine.some((rr) => deviceIds.includes(rr.device_id))
+          })
+          if (igCountMatch[4]) rows = this.applyConditions(rows, igCountMatch[4], remaining)
+          return { [alias]: rows.length }
+        },
+      }
+    }
+
     // SELECT COUNT(DISTINCT e.id) AS cnt —— multi-device total 去重计数
     const distinctCountMatch = sql.match(/^SELECT\s+COUNT\(DISTINCT\s+e\.id\)\s+AS\s+(\w+)\s+FROM\s+experiences\s+e\s+JOIN\s+exp_device_rel\s+r\s+ON\s+e\.id\s*=\s*r\.experience_id\s+WHERE\s+r\.device_id\s+IN\s*\(([^)]+)\)(\s+AND\s+(.+))?$/i)
     if (distinctCountMatch) {

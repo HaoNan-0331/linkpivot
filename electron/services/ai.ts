@@ -1138,6 +1138,31 @@ function buildExpAnswerPayload(
 // ---------- Main chat ----------
 
 /**
+ * Phase 23 Plan 04 C2：[EXP_SEARCH] 命中经验的注入文本构造（user-role 回注，T-23-05）。
+ *
+ * 可信度分级标注：hasTargetDevices（对话有选中设备）时按每条经验的 linked 标志分级——
+ * 关联当前设备 →「（关联当前设备，高可信）」；全局经验 →「（全局经验，来自其它设备场景，供参考）」，
+ * 引导 AI 区分采纳力度。unsupported（命令失支持）提示与分级标注叠加。正文经 sanitizeUntrusted 截断清洗。
+ */
+export function buildExpContextText(
+  injected: Array<{ title: string; content: string; unsupported?: boolean; linked?: boolean }>,
+  hasTargetDevices: boolean
+): string {
+  return injected
+    .map((e, i) => {
+      let meta = ''
+      if (hasTargetDevices) {
+        meta = e.linked ? '（关联当前设备，高可信）' : '（全局经验，来自其它设备场景，供参考）'
+      }
+      const unsupportedTip = e.unsupported
+        ? '（⚠ 此条经验命令已失支持，请提示用户手动执行或更新白名单）'
+        : ''
+      return `[经验${i + 1}: ${e.title}${meta}${unsupportedTip}]\n${sanitizeUntrusted(e.content, 4000)}`
+    })
+    .join('\n\n')
+}
+
+/**
  * T-20-04 fail-closed 判定：AI 回复命令结构解析失败。
  * 判定规则：回复含 [CMD(:name)?] 开标签但提取不到任何完整命令块（标签未闭合），
  * 或提取出的命令体为空串——两类都视为「改坏提示词导致的畸形回复」。
@@ -1316,9 +1341,7 @@ export async function chat(
     try {
       const retrieval = await retrieveForAnswer({ userMessage: expQuery, deviceIds })
       if (retrieval.injected.length > 0) {
-        const expContext = retrieval.injected.map((e, i) =>
-          `[经验${i + 1}: ${e.title}${e.unsupported ? '（⚠ 此条经验命令已失支持，请提示用户手动执行或更新白名单）' : ''}]\n${sanitizeUntrusted(e.content, 4000)}`
-        ).join('\n\n')
+        const expContext = buildExpContextText(retrieval.injected, !!(deviceIds && deviceIds.length > 0))
         // expReferences 溯源产出（原自动预取段迁移至此，payload 结构不变，D-08）
         expReferences = retrieval.injected.map((e) => ({
           exp_id: e.exp_id,

@@ -25,6 +25,8 @@ import { RELEVANCE_THRESHOLD } from './experienceRerank'
 export const INJECT_LIMIT = 5
 /** 粗筛捞候选上限（喂精排），= INJECT_LIMIT * 4。 */
 export const MAX_CANDIDATES = INJECT_LIMIT * 4
+/** Phase 23 Plan 04 C4：全局经验（未关联当前选中设备）rerank 降权系数——同分时关联设备经验优先。 */
+export const GLOBAL_RERANK_FACTOR = 0.85
 
 export interface RetrieveInput {
   userMessage: string
@@ -39,6 +41,9 @@ export interface RetrieveResult {
     content: string
     source_session_id: string | null
     unsupported: boolean
+    /** Phase 23 Plan 04 C2 供源：是否关联当前选中设备（true=关联/高可信，false=全局经验）。
+     * 仅 deviceIds 非空时携带；search 分支（无选中设备）无分级语义，不带该字段。 */
+    linked?: boolean
   }>
   reranked: Array<{ exp_id: string; score: number; reason: string }>
   finalAnswer: string
@@ -69,21 +74,30 @@ export async function retrieveForAnswer(input: RetrieveInput): Promise<RetrieveR
   // 否则 Phase 8 AI 起草 + Phase 9 未确认的 draft 经验会被注入 systemPrompt + incReuseCount 刷新，
   // 直接违反 milestone 红线③「AI 产出永远先进 draft 人工确认才 published」。
   const opts = input.deviceIds && input.deviceIds.length > 0
-    ? { deviceId: input.deviceIds, status: 'published' as const, includeInvalid: false, limit: MAX_CANDIDATES }
+    ? { deviceId: input.deviceIds, status: 'published' as const, includeInvalid: false, includeGlobal: true, limit: MAX_CANDIDATES }
     : { search: input.userMessage, status: 'published' as const, includeInvalid: false, limit: MAX_CANDIDATES }
   const { rows } = listExperiences(opts)
   if (rows.length === 0) return empty  // 空库短路：不调精排 LLM
 
-  // 3. 精排（粗筛候选喂 LLM 强 schema 打分）
+  // 3. 精排（粗筛候选喂 LLM 强 schema 打分；候选携带 isGlobal 供 C4 降权）
+  const hasDevices = !!(input.deviceIds && input.deviceIds.length > 0)
+  const isGlobalMap = new Map(rows.map((r: any) => [r.id as string, !!r.isGlobal]))
   const candidates = rows.map((r: any) => ({
     exp_id: r.id,
     title: r.title,
     content_preview: (r.content || '').slice(0, 150),
+    ...(hasDevices ? { isGlobal: !!r.isGlobal } : {}),
   }))
   const entries = await rerank({ userMessage: input.userMessage, candidates })
 
   // 4. 阈值过滤 + top INJECT_LIMIT（D-11-4）
-  const passed = entries
+  //    Phase 23 Plan 04 C4：有选中设备时全局经验 rerank 分 ×GLOBAL_RERANK_FACTOR 降权
+  //    （阈值判定在降权后——原分过阈值但降权跌破的全局经验让位给关联经验）。
+  const adjusted = entries.map((e) => ({
+    ...e,
+    score: hasDevices && isGlobalMap.get(e.exp_id) ? e.score * GLOBAL_RERANK_FACTOR : e.score,
+  }))
+  const passed = adjusted
     .filter((e) => e.score >= RELEVANCE_THRESHOLD)
     .sort((a, b) => b.score - a.score)
     .slice(0, INJECT_LIMIT)
@@ -121,6 +135,7 @@ export async function retrieveForAnswer(input: RetrieveInput): Promise<RetrieveR
       content: row.content,
       source_session_id: row.source_session_id ?? null,
       unsupported,
+      ...(hasDevices ? { linked: !isGlobalMap.get(row.id) } : {}),
     })
   }
 
