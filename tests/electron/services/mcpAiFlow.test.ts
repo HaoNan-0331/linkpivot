@@ -463,15 +463,56 @@ describe('连续调用有界循环（22-05 用户裁决）', () => {
     expect(fetchMock.mock.calls.length).toBe(3)
   })
 
-  it('标记清洗：最终回复含完整闭合段（未知工具 fail-closed）时整段移除，闭合标签不漏进气泡', async () => {
-    queueReplies(`前文 [MCP_TOOL_CALL]{"server":"srv-a","tool":"evil_tool","args":{}}[/MCP_TOOL_CALL] 后文`)
+  it('标记清洗：无效标记段触发回注重试后纯文本收尾；顽固闭合段整段移除不漏进气泡', async () => {
+    // Bug 2 修复后：无效标记不再直接当 final，而是回注不可用提示取一次新回复
+    const fetchMock = queueReplies(
+      `前文 [MCP_TOOL_CALL]{"server":"srv-a","tool":"evil_tool","args":{}}[/MCP_TOOL_CALL] 后文`,
+      '顽固 [MCP_TOOL_CALL]{"server":"srv-a","tool":"evil_tool","args":{}}[/MCP_TOOL_CALL] 收尾'
+    )
     const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
     expect(callToolWithTimeout).not.toHaveBeenCalled()
-    expect(out).toContain('前文')
-    expect(out).toContain('后文')
+    // 重试仅 1 次，顽固输出 strip 后作最终回答（含闭合段整段移除）
+    expect(fetchMock.mock.calls.length).toBe(2)
+    expect(out).toContain('顽固')
+    expect(out).toContain('收尾')
     expect(out).not.toContain('[MCP_TOOL_CALL]')
     expect(out).not.toContain('[/MCP_TOOL_CALL]')
     expect(out).not.toBe(MCP_FALLBACK_TEXT)
+  })
+})
+
+// ---------- 22-05 人工验证 Bug 2：禁用工具被调用 → 回注不可用提示重试，不截断当 final ----------
+
+describe('标记全无效（禁用/捏造工具）：回注不可用提示重试一次（Bug 2 修复）', () => {
+  const BAD_MARKER = '[MCP_TOOL_CALL]{"server":"srv-a","tool":"browser_navigate","args":{"url":"baidu.com"}}'
+
+  beforeEach(() => {
+    db = makeDb('smart')
+    seedDevice('dev1')
+    seedMcp('dev1', { skipConfirm: 1 }) // 启用清单只有 get_status
+  })
+
+  it('AI 调用禁用工具 → 不执行、回注不可用提示再调 callAI、第二次纯文本正常收尾', async () => {
+    const fetchMock = queueReplies(`我来打开百度 ${BAD_MARKER}`, 'browser_navigate 已被禁用，无法打开网页，请手动访问。')
+    const out = await chat([{ role: 'user', content: '打开百度' }], ['dev1'], null)
+    expect(callToolWithTimeout).not.toHaveBeenCalled()
+    // 重试那次 callAI 请求体含「不可用」回注提示（user-role）
+    const second = JSON.parse((fetchMock.mock.calls[1][1] as any).body)
+    expect(second.messages.some(
+      (m: any) => m.role === 'user' && m.content.includes('工具不存在或已被禁用')
+    )).toBe(true)
+    expect(out).toBe('browser_navigate 已被禁用，无法打开网页，请手动访问。')
+    // 重试不计入工具轮次（无工具执行）：callAI 恰好 2 次
+    expect(fetchMock.mock.calls.length).toBe(2)
+  })
+
+  it('顽固再输出无效标记 → 第二次直接 strip 后 final，不死循环', async () => {
+    const fetchMock = queueReplies(BAD_MARKER, `仍想调用 ${BAD_MARKER} 改用别的`, '第三次不该被调用')
+    const out = await chat([{ role: 'user', content: '打开百度' }], ['dev1'], null)
+    expect(callToolWithTimeout).not.toHaveBeenCalled()
+    expect(fetchMock.mock.calls.length).toBe(2) // 只重试 1 次
+    expect(out).toContain('仍想调用')
+    expect(out).not.toContain('[MCP_TOOL_CALL]')
   })
 })
 
