@@ -2,14 +2,16 @@
  * McpToolPolicy —— Phase 22 MCP 工具级策略 service（22-01，MCS-01/MCS-02）。
  *
  * 职责：连接测试成功后的工具清单缓存持久化（mcp_tools 表）+ 工具级 enabled/skip_confirm
- * CRUD + 双条件只读判定（判定权单一来源在 main，renderer 只消费 skipConfirmEligible 契约字段）。
+ * CRUD + 单条件只读判定（判定权单一来源在 main，renderer 只消费 skipConfirmEligible 契约字段）。
  *
  * 形态：静态类 facade（CONVENTIONS 红线，mcpService 同款），非加密数据无 MK，
  * 测试经 _setDbGetter 注入内存库。
  *
- * 双条件判定（MCS-02 从严，T-22-01）：
- *   server 声明 readOnlyHint=true **AND** 工具名匹配本地只读正则 → 才可 skip_confirm=1。
- *   两个条件缺一不可：不信任 server 单方声明（hint 可伪造），也不只凭名字（get_ 前缀可被恶意复用）。
+ * 单条件判定（22-04 用户裁决，推翻 22-01 双条件设计）：
+ *   server 声明 readOnlyHint=true 即可 skip_confirm=1（信任 server 自称）。
+ *   原双条件（hint AND 名字正则）下通用 MCP server（如 playwright 全系 browser_*）名字
+ *   永不命中网络设备风格正则，真只读工具全部置灰，免确认功能形同虚设。
+ *   名字正则保留但降级为展示层「已验证只读」加强标记（isVerifiedReadOnlyName）。
  *
  * tool_meta 为 MCP server 不可信数据（T-22-03）：仅 JSON.stringify 存储，
  * 读出后 renderer 只做展示，不参与 SQL 拼接；后续展示/回注截断清洗由 22-03/22-05 处理。
@@ -25,9 +27,17 @@ export const MAX_TOOLS_PER_CONFIG = 500
  * 本地只读工具名正则（planner 定初始集）：
  * 以只读动词前缀开头（get/show/list/read/status/query/ping/health/describe）
  * 或名字中含 _get / _list 段（如 device_get_info）。
+ *
+ * 22-04 裁决后不再参与可勾性判定，仅供展示层「已验证只读」加强标记
+ * （见 isVerifiedReadOnlyName）。
  */
 export const READONLY_TOOL_NAME_RE =
   /^(get_|show_|list_|read_|status_|query_|ping_|health_|describe_)|_get_|_list_/
+
+/** 展示层加强标记：工具名是否命中本地只读正则（hint=true 且命中 → 「已验证只读」Tag） */
+export function isVerifiedReadOnlyName(name: string): boolean {
+  return READONLY_TOOL_NAME_RE.test(name)
+}
 
 /** MCP server 返回的工具 annotations（SDK v2 结构，只关心 readOnlyHint） */
 export interface McpToolAnnotations {
@@ -66,12 +76,11 @@ export class McpToolPolicy {
   }
 
   /**
-   * 双条件只读判定（MCS-02）：readOnlyHint=true AND 名字匹配 READONLY_TOOL_NAME_RE。
-   * 无 hint 一律 false（从严）。
+   * 单条件只读判定（22-04 用户裁决）：readOnlyHint === true 即可免确认（信任 server 自称）。
+   * 无 hint / hint=false 一律 false。名字正则不再参与（降级为展示层标记）。
    */
   static isReadOnlyEligible(tool: { name: string; annotations?: McpToolAnnotations }): boolean {
-    if (!tool.annotations?.readOnlyHint) return false
-    return READONLY_TOOL_NAME_RE.test(tool.name)
+    return tool.annotations?.readOnlyHint === true
   }
 
   /**
@@ -146,7 +155,7 @@ export class McpToolPolicy {
 
   /**
    * 免确认开关（T-22-01 提权防线）：写 1 前调 isReadOnlyEligible 守卫，
-   * 不满足双条件返回 false 拒绝写入；关 0（撤回免确认）不受限。
+   * 不满足单条件（readOnlyHint!==true）返回 false 拒绝写入；关 0（撤回免确认）不受限。
    */
   static setSkipConfirm(configId: number, toolName: string, skip: boolean): boolean {
     const conn = McpToolPolicy.db()
@@ -199,7 +208,7 @@ export class McpToolPolicy {
   ): 'confirm' | 'execute' {
     if (execMode === 'confirm') return 'confirm'
     if (execMode === 'auto') return 'execute'
-    // smart：双条件缺一不可
+    // smart：库内勾选 + 实时单条件重判，缺一即 confirm
     if (!skipConfirmSet.has(toolName)) return 'confirm'
     return McpToolPolicy.isReadOnlyEligible(cacheRow) ? 'execute' : 'confirm'
   }

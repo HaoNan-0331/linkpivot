@@ -7,9 +7,9 @@ const { Text } = Typography
 
 const ipcErrMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
-/** 置灰原因（UI-SPEC 逐字文案；判定权在 main，renderer 只消费 skipConfirmEligible） */
+/** 置灰原因（22-04 裁决后单条件文案；判定权在 main，renderer 只消费 skipConfirmEligible） */
 const SKIP_CONFIRM_INELIGIBLE_TIP =
-  '需同时满足：工具自声明为只读，且工具名匹配本地只读规则。此工具不满足，只能逐次确认。'
+  '该工具未被 MCP server 声明为只读（readOnlyHint），只能逐次确认。'
 
 interface Props {
   open: boolean
@@ -77,9 +77,17 @@ export default function McpToolManageDrawer({ open, onClose, config }: Props) {
       render: (v: string | undefined) => (v ? <Tooltip title={v}><span>{v}</span></Tooltip> : <Text type="secondary">—</Text>),
     },
     {
-      title: '只读', width: 70,
+      title: '只读', width: 90,
+      // 两档 Tag（22-04 裁决）：hint=true 且名字命中正则 →「已验证只读」（加强标记）；
+      // 仅 hint=true →「只读」。均消费 main 下发字段，组件无本地判定。
       render: (_: unknown, record: McpToolCacheDto) =>
-        record.annotations?.readOnlyHint === true ? <Tag color="success">只读</Tag> : null,
+        record.annotations?.readOnlyHint === true ? (
+          record.verifiedReadOnly ? (
+            <Tag color="success">已验证只读</Tag>
+          ) : (
+            <Tag color="success">只读</Tag>
+          )
+        ) : null,
     },
     {
       title: '启用', dataIndex: 'enabled', width: 70,

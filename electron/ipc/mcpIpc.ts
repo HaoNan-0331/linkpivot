@@ -23,6 +23,7 @@ import { testConnection as runTest, cancelTest } from '../services/mcpClient'
 import type { McpTestResult } from '../services/mcpClient'
 import { McpToolPolicy } from '../services/mcpToolPolicy'
 import type { McpToolCacheRow, McpToolAnnotations } from '../services/mcpToolPolicy'
+import { isVerifiedReadOnlyName } from '../services/mcpToolPolicy'
 import { secure } from '../utils/authGuard'
 
 const MAX_NAME_LENGTH = 100
@@ -238,6 +239,8 @@ export function registerMcpIpc() {
   /**
    * 工具清单 + 策略读取。每行由 main 侧 isReadOnlyEligible 实时判定并注入
    * skipConfirmEligible 契约字段——renderer 只消费该布尔，不自带判定规则（T-22-01）。
+   * 22-04：另注入 verifiedReadOnly（名字命中只读正则，展示层「已验证只读」两档 Tag 用），
+   * 纯展示增强，不影响可勾性（可勾性单条件 = skipConfirmEligible）。
    * tool_meta 其余字段原样返回（无敏感数据，T-22-03 展示层截断由 22-05 处理）。
    */
   ipcMain.handle('mcp:getToolCache', secure((_e, configId: number) => {
@@ -246,6 +249,7 @@ export function registerMcpIpc() {
     return rows.map((r) => ({
       ...r,
       skipConfirmEligible: McpToolPolicy.isReadOnlyEligible({ name: r.name, annotations: r.annotations }),
+      verifiedReadOnly: isVerifiedReadOnlyName(r.name),
     }))
   }))
 
@@ -258,7 +262,7 @@ export function registerMcpIpc() {
   }))
 
   /**
-   * 免确认开关。service 层双条件守卫拒绝时返回 { ok:false, reason }（不 throw），
+   * 免确认开关。service 层只读判定守卫拒绝时返回 { ok:false, reason }（不 throw），
    * renderer 呈现 tooltip 文案。
    */
   ipcMain.handle('mcp:setToolSkipConfirm', secure((_e, configId: number, toolName: string, skip: boolean) => {

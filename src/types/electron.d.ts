@@ -239,7 +239,7 @@ export interface ElectronAPI {
     cancelTest: (testId: string) => Promise<{ ok: boolean }>
     /** 订阅连接测试阶段进度，返回清理函数 */
     onTestProgress: (cb: (data: McpTestProgressDto) => void) => () => void
-    // Phase 22 (22-01)：工具级策略通道（skipConfirmEligible 由 main 侧双条件判定下发）
+    // Phase 22 (22-01)：工具级策略通道（skipConfirmEligible 由 main 侧只读判定下发）
     getToolCache: (configId: number) => Promise<McpToolCacheDto[]>
     setToolEnabled: (configId: number, toolName: string, enabled: boolean) => Promise<{ ok: true }>
     setToolSkipConfirm: (configId: number, toolName: string, skip: boolean) =>
@@ -291,6 +291,8 @@ export interface McpToolCacheDto {
   enabled: 0 | 1
   skipConfirm: 0 | 1
   skipConfirmEligible: boolean
+  /** 22-04：名字命中本地只读正则（展示层「已验证只读」两档 Tag，纯展示，不影响可勾性） */
+  verifiedReadOnly: boolean
 }
 
 // Phase 21：MCP 配置视图（mcpService.McpConfigView 的 renderer 镜像）
