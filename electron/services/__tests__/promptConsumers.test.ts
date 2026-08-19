@@ -82,7 +82,7 @@ import { encField } from '../../utils/crypto'
 import { PROMPT_REGISTRY, getRegistryEntry } from '../promptRegistry'
 import { buildDraftingPrompt, buildVerdictPrompt } from '../draftingService'
 import { buildRerankPrompt } from '../experienceRerank'
-import { chat, confirmCommand, setAiMasterKey } from '../ai'
+import { chat, confirmCommand, setAiMasterKey, buildExpContextText } from '../ai'
 
 const MK = 'test-mk-for-prompt-consumers'
 
@@ -228,5 +228,31 @@ describe('ai.chat confirm 解析失败 fail-closed（T-20-04 / PMT-04）', () =>
     const payload = JSON.parse(raw)
     expect(payload.type).toBe('confirm_required')
     expect(payload.commands).toEqual([{ deviceName: 'SW-Core', command: 'display version' }])
+  })
+})
+
+// ---------- Phase 23 Plan 04 C2：经验注入文本可信度分级标注 ----------
+
+describe('buildExpContextText（EXP_SEARCH 注入文本分级标注）', () => {
+  const injected = [
+    { exp_id: 'e1', title: '核心交换机离线排查', content: '检查电源', source_session_id: null, unsupported: false, linked: true },
+    { exp_id: 'e2', title: '通用巡检经验', content: '日常巡检', source_session_id: null, unsupported: false, linked: false },
+    { exp_id: 'e3', title: '含失效命令经验', content: 'reboot 重启', source_session_id: null, unsupported: true, linked: true },
+  ]
+
+  it('有目标设备时：linked 标注「关联当前设备，高可信」，全局标注「全局经验…供参考」', () => {
+    const text = buildExpContextText(injected, true)
+    expect(text).toContain('[经验1: 核心交换机离线排查（关联当前设备，高可信）]')
+    expect(text).toContain('[经验2: 通用巡检经验（全局经验，来自其它设备场景，供参考）]')
+    // unsupported 提示仍保留（与分级标注叠加）
+    expect(text).toContain('此条经验命令已失支持')
+  })
+
+  it('无目标设备时：不做分级标注（无「关联当前设备」字样），unsupported 提示保留', () => {
+    const text = buildExpContextText(injected, false)
+    expect(text).toContain('[经验1: 核心交换机离线排查]')
+    expect(text).not.toContain('关联当前设备')
+    expect(text).not.toContain('全局经验')
+    expect(text).toContain('此条经验命令已失支持')
   })
 })

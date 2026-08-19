@@ -356,4 +356,78 @@ describe('retrieveForAnswer（编排）', () => {
     const r = await retrieveForAnswer({ userMessage: '我的运维问题' })
     expect(r.finalAnswer).toBe('我的运维问题')
   })
+
+  // ---------- Phase 23 Plan 04 C1/C4：全局经验并入检索池 + rerank 降权 ----------
+
+  it('30. 有勾选设备 → deviceId 分支 opts.includeGlobal=true（C1 检索池并集）', async () => {
+    listExperiencesMock.mockReturnValue({ rows: [], total: 0 })
+    await retrieveForAnswer({ userMessage: '问题', deviceIds: ['d1'] })
+    const opts = listExperiencesMock.mock.calls[0][0]
+    expect(opts.includeGlobal).toBe(true)
+  })
+
+  it('31. C4 全局经验 rerank 降权 ×0.85——同分时关联经验排前；降权后跌破阈值剔除', async () => {
+    listExperiencesMock.mockReturnValue({
+      rows: [
+        makeRow({ id: 'e-linked', isGlobal: false }),
+        makeRow({ id: 'e-global', isGlobal: true }),
+      ],
+      total: 2,
+    })
+    // LLM 打分：全局 0.9 > 关联 0.8；降权后 global=0.765 < linked=0.8 → 关联优先
+    callAIMock.mockResolvedValueOnce(
+      JSON.stringify([
+        { exp_id: 'e-global', score: 0.9, reason: 'r' },
+        { exp_id: 'e-linked', score: 0.8, reason: 'r' },
+      ])
+    )
+    const r = await retrieveForAnswer({ userMessage: '问题', deviceIds: ['d1'] })
+    expect(r.injected.map((e: any) => e.exp_id)).toEqual(['e-linked', 'e-global'])
+    expect(r.reranked[0].exp_id).toBe('e-linked')
+    expect(r.reranked[0].score).toBeCloseTo(0.8)
+    expect(r.reranked[1].score).toBeCloseTo(0.9 * 0.85)
+  })
+
+  it('31b. C4 边界——全局经验原始分 0.65（过阈值），降权后 0.5525 < 0.6 被剔除', async () => {
+    listExperiencesMock.mockReturnValue({
+      rows: [makeRow({ id: 'e-g', isGlobal: true }), makeRow({ id: 'e-l', isGlobal: false })],
+      total: 2,
+    })
+    callAIMock.mockResolvedValueOnce(
+      JSON.stringify([
+        { exp_id: 'e-g', score: 0.65, reason: 'r' },
+        { exp_id: 'e-l', score: 0.7, reason: 'r' },
+      ])
+    )
+    const r = await retrieveForAnswer({ userMessage: '问题', deviceIds: ['d1'] })
+    expect(r.injected.map((e: any) => e.exp_id)).toEqual(['e-l'])
+  })
+
+  it('32. C2 供源——injected[].linked 标注（关联=true / 全局=false）', async () => {
+    listExperiencesMock.mockReturnValue({
+      rows: [makeRow({ id: 'e-l', isGlobal: false }), makeRow({ id: 'e-g', isGlobal: true })],
+      total: 2,
+    })
+    callAIMock.mockResolvedValueOnce(
+      JSON.stringify([
+        { exp_id: 'e-l', score: 0.9, reason: 'r' },
+        { exp_id: 'e-g', score: 0.9, reason: 'r' },
+      ])
+    )
+    const r = await retrieveForAnswer({ userMessage: '问题', deviceIds: ['d1'] })
+    const linked = r.injected.find((e: any) => e.exp_id === 'e-l') as any
+    const global = r.injected.find((e: any) => e.exp_id === 'e-g') as any
+    expect(linked.linked).toBe(true)
+    expect(global.linked).toBe(false)
+  })
+
+  it('33. 无勾选设备（search 分支）→ 无 isGlobal 语义：不降权、injected 不带 linked', async () => {
+    listExperiencesMock.mockReturnValue({ rows: [makeRow({ id: 'e1' })], total: 1 })
+    callAIMock.mockResolvedValueOnce(JSON.stringify([{ exp_id: 'e1', score: 0.62, reason: 'r' }]))
+    const r = await retrieveForAnswer({ userMessage: '问题' })
+    // 0.62 过阈值；若被误降权 0.527 < 0.6 会被剔除
+    expect(r.injected).toHaveLength(1)
+    expect((r.injected[0] as any).linked).toBeUndefined()
+    expect(r.reranked[0].score).toBeCloseTo(0.62)
+  })
 })

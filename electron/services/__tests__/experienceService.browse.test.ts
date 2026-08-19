@@ -826,6 +826,42 @@ describe('Phase 10 Plan 04 WR-01: tags LIKE ESCAPE 转义', () => {
   })
 })
 
+describe('Phase 23 Plan 04 C1: deviceId 检索池 = 关联设备经验 ∪ 全局经验（includeGlobal）', () => {
+  function seedC1(db: any) {
+    // exp-linked：关联选中设备 A
+    insertExpRaw(db, 'exp-linked')
+    db.tables.get('exp_device_rel').rows.set('rl', { id: 'rl', experience_id: 'exp-linked', device_id: 'A' })
+    // exp-global：无任何 exp_device_rel 行（全局经验）
+    insertExpRaw(db, 'exp-global')
+    // exp-other：仅关联未选中设备 C（不得进入检索池）
+    insertExpRaw(db, 'exp-other')
+    db.tables.get('exp_device_rel').rows.set('ro', { id: 'ro', experience_id: 'exp-other', device_id: 'C' })
+  }
+
+  it('Test C1-a: includeGlobal=true → 关联 ∪ 全局，仅关联其它设备的排除；行带 isGlobal 标注', () => {
+    const db = mockDbRef.current
+    seedC1(db)
+    const res = listExperiences({ deviceId: ['A'], includeGlobal: true, includeInvalid: true })
+    const ids = res.rows.map((r: any) => r.id)
+    expect(ids).toContain('exp-linked')
+    expect(ids).toContain('exp-global')
+    expect(ids).not.toContain('exp-other')
+    const linked = res.rows.find((r: any) => r.id === 'exp-linked') as any
+    const global = res.rows.find((r: any) => r.id === 'exp-global') as any
+    expect(linked.isGlobal).toBe(false)
+    expect(global.isGlobal).toBe(true)
+    expect(res.total).toBe(2)
+  })
+
+  it('Test C1-b: 默认（无 includeGlobal）行为不变——仅返关联经验（浏览页筛选零回归）', () => {
+    const db = mockDbRef.current
+    seedC1(db)
+    const res = listExperiences({ deviceId: ['A'], includeInvalid: true })
+    const ids = res.rows.map((r: any) => r.id)
+    expect(ids).toEqual(['exp-linked'])
+  })
+})
+
 describe('Phase 10 Plan 04 WR-02: setExperienceDevices 单事务原子', () => {
   it('diff：[A,B] → [B,C] = A 删、C 加，最终关联 = [B,C]', () => {
     const db = mockDbRef.current
