@@ -761,6 +761,21 @@ export function stripMcpMarkers(reply: string): string {
     .trim()
 }
 
+/**
+ * WR-06 fix（Phase 22 code-review）：剥离 [CMD(:设备名)]...[/CMD] 协议标记（保留
+ * 命令体文本供参考），未闭合开标签沿标签到行尾一并移除、孤立闭合标签移除；
+ * 命中标记时追加「未执行的命令请求」提示——混合协议收尾回复绝不带标记原文进气泡。
+ */
+export function stripCmdMarkersWithNotice(reply: string): string {
+  if (!/\[CMD/.test(reply)) return reply
+  const stripped = reply
+    .replace(/\[CMD(?::[^\]]*)?\]([\s\S]*?)\[\/CMD\]/g, (_m, cmd: string) => cmd.trim())
+    .replace(/\[CMD(?::[^\]]*)?\][^\n]*\n?/g, '')
+    .replace(/\[\/CMD\]/g, '')
+    .trim()
+  return `${stripped}\n\n（注意：以上回复中包含未执行的命令请求，已剥离命令标记；如需执行请重新发送指令让 AI 单独输出命令。）`
+}
+
 /** 循环共享上下文（chat() 构造；确认挂起后经 pendingBatches 原样带回复跑） */
 interface McpLoopCtx {
   fullMessages: Array<{ role: string; content: string }>
@@ -997,11 +1012,15 @@ export async function confirmCommand(
       saveChatMessage('assistant', `等待确认 ${res.count} 个 MCP 工具调用...`, null, batch.sessionId)
       return res.payload
     }
-    saveChatMessage('assistant', res.reply, null, batch.sessionId)
+    // WR-06 fix（Phase 22 code-review）：收尾回复若混用 [CMD] 协议标记，本分支无法
+    // 复用 chat() 的完整命令解析/确认管线——至少剥离标记 + 显式提示「含未执行的
+    // 命令请求」，绝不把协议垃圾原文漏进气泡（fail-safe：未执行，但用户可感知）。
+    const finalReply = stripCmdMarkersWithNotice(res.reply)
+    saveChatMessage('assistant', finalReply, null, batch.sessionId)
     if (batch.expReferences && batch.expReferences.length > 0) {
-      return buildExpAnswerPayload(res.reply, batch.expReferences)
+      return buildExpAnswerPayload(finalReply, batch.expReferences)
     }
-    return res.reply
+    return finalReply
   }
 
   // T-20-04 fail-closed 空命令批次（回复解析失败回落的人工确认）：无命令可执行，
@@ -1324,13 +1343,10 @@ export async function chat(
       return res.payload
     }
     finalAiReply = res.reply
-    if (loopState.rounds > 0) {
-      // 执行过工具轮次：清洗后的收尾回答直接返回（与 22-03 单轮直执返回路径一致）
-      saveChatMessage('user', messages[messages.length - 1]?.content || '', null, sessionId)
-      saveChatMessage('assistant', finalAiReply, null, sessionId)
-      if (expReferences.length > 0) return buildExpAnswerPayload(finalAiReply, expReferences)
-      return finalAiReply
-    }
+    // WR-06 fix（Phase 22 code-review）：rounds>0 不再早返回——混合协议收尾回复若含
+    // [CMD] 标记，必须继续走下方命令解析/确认链路（早返回会让命令原文带标记漏进气泡，
+    // 且该回复的确认意图完全失效）。无命令时下方 :1376 起的常规路径完成落库与
+    // kb+exp references 合并（顺带修复 IN-06 的 kbReferences 丢弃）。
   }
 
   // Extract [CMD:device]...[/CMD] or [CMD]...[/CMD] blocks

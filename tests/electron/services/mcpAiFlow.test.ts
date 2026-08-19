@@ -696,3 +696,37 @@ describe('sanitizeUntrusted 非法 maxLen fail-closed（WR-02）', () => {
     expect(sanitizeUntrusted('abcdef', 1)).toBe('a…[已截断至 1 字符]')
   })
 })
+
+// ---------- Phase 22 code-review WR-06：MCP 收尾（rounds>0）不早返回，继续走 [CMD] 解析 ----------
+
+describe('WR-06：混合协议收尾回复的 [CMD] 标记不漏进气泡', () => {
+  it('confirmCommand MCP 收尾回复含 [CMD] → 剥离标记 + 未执行提示，原文不漏进气泡', async () => {
+    db = makeDb('confirm')
+    seedDevice('dev1')
+    seedMcp('dev1') // confirm 档总闸：工具走确认
+    const fetchMock = queueReplies(CALL_MARKER, '排查结论如下 [CMD:dev1]display version[/CMD]')
+    vi.mocked(callToolWithTimeout).mockResolvedValue({ ok: 1 } as any)
+
+    const out1 = await chat([{ role: 'user', content: '查状态并查版本' }], ['dev1'], null)
+    expect(JSON.parse(out1).type).toBe('confirm_required') // 第一轮：MCP 工具确认
+    const final = await confirmCommand(JSON.parse(out1).execId, true)
+
+    // 修复前：MCP 收尾 finalReply 原样返回 → [CMD:dev1] 协议标记原文漏进气泡且用户无感知
+    expect(final).not.toContain('[CMD')
+    expect(final).not.toContain('[/CMD]')
+    // 命令体保留可读 + 显式提示「未执行的命令请求」
+    expect(final).toContain('display version')
+    expect(final).toContain('未执行的命令请求')
+    expect(fetchMock.mock.calls.length).toBe(2) // 工具回注一次 + 收尾一次，无多余调用
+  })
+
+  it('stripCmdMarkersWithNotice 纯函数：闭合段保留命令体 / 未闭合开标签移除 / 无标记原样返回', async () => {
+    const { stripCmdMarkersWithNotice } = await import('../../../electron/services/ai')
+    expect(stripCmdMarkersWithNotice('纯回复')).toBe('纯回复')
+    const out = stripCmdMarkersWithNotice('结论 [CMD:sw1]display version[/CMD] 与 [CMD:sw2]未闭合')
+    expect(out).not.toContain('[CMD')
+    expect(out).toContain('display version')
+    expect(out).toContain('未执行的命令请求')
+    expect(out).not.toContain('未闭合')
+  })
+})
