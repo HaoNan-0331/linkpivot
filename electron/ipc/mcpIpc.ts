@@ -84,6 +84,11 @@ export function registerMcpIpc() {
     if (dto.credential !== undefined && dto.credential !== null && typeof dto.credential !== 'string') {
       throw new Error('参数无效：credential')
     }
+    // WR-01 fix（Phase 22 code-review）：持久化路径 credential 补长度上限（与 temp 测试路径
+    // MAX_ENV_VALUE_LENGTH 同标准）——防兆级 credential 落库（AES 密文同步膨胀 + 解密成本无界）
+    if (dto.credential != null && dto.credential.length > MAX_ENV_VALUE_LENGTH) {
+      throw new Error(`参数无效：credential 超长（上限 ${MAX_ENV_VALUE_LENGTH} 字符）`)
+    }
     if (dto.enabled !== undefined && typeof dto.enabled !== 'boolean') {
       throw new Error('参数无效：enabled 必须为 boolean')
     }
@@ -203,8 +208,13 @@ export function registerMcpIpc() {
       try { e.sender.send('mcp:testProgress', { testId, stage, elapsedMs }) } catch { /* webContents 已销毁，忽略 */ }
     })
 
-    // 已存配置测试结果落库（D-09 最近测试持久化；取消不落库）
-    if (configId != null) {
+    // 已存配置测试结果落库（D-09 最近测试持久化；取消不落库）。
+    // WR-03 fix（Phase 22 code-review）：携带 temp（编辑表单未保存值）的组合测试不落库——
+    // 用户试了个不同 server 版本后放弃保存，若覆盖 mcp_tools 策略缓存，已存配置的
+    // enabled/skip_confirm 策略会对不上号（禁用清单/免确认设置静默失效，策略漂移）。
+    // 只有行级「测试」（temp 为 null/undefined，基于已存配置）才写缓存与测试记录。
+    const persistable = configId != null && (temp === undefined || temp === null)
+    if (persistable) {
       if (result.ok) {
         McpService.recordTestResult(configId, 'success', result.tools.length)
         // 22-01：成功即清单缓存落库（mcp_tools，策略值保留；临时配置无 configId 不落）
