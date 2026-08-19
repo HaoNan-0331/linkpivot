@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
-import { Spin, Select, Typography } from 'antd'
+import { Spin, Typography } from 'antd'
 import { ExclamationCircleOutlined } from '@ant-design/icons'
 import { useAIChat } from './ai/useAIChat'
+import DeviceSelector from './ai/DeviceSelector'
 import ChatSessionList from './ai/ChatSessionList'
 import ChatMessageList from './ai/ChatMessageList'
 import ChatInput from './ai/ChatInput'
@@ -72,18 +73,15 @@ export default function AIPage() {
         onDelete={chat.handleDeleteSession}
       />
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: 16, minWidth: 0 }}>
-        {/* Header（编排层归属，issue 3）：设备多选 Select 经 hook 消费 */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        {/* Header（编排层归属，issue 3）：设备选择经 hook 消费。
+            Phase 23（DSL-01/D-01/D-02/D-09）：Select 替换为 DeviceSelector
+            （全设备平铺 + 搜索过滤 + 三档能力 Tag 并列 + >10 台软警告）。 */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
           <Title level={4} style={{ margin: 0 }}>AI 助手</Title>
-          <Select
-            mode="multiple"
-            allowClear
-            placeholder="选择目标设备（可多选）"
-            style={{ minWidth: 280, maxWidth: 400 }}
-            value={chat.selectedDevices}
+          <DeviceSelector
+            devices={chat.devices}
+            selectedDevices={chat.selectedDevices}
             onChange={chat.setSelectedDevices}
-            options={chat.devices.map((d) => ({ value: d.id, label: `${d.name} (${(d.connectionType || 'unknown').toUpperCase()})` }))}
-            maxTagCount="responsive"
           />
         </div>
         <ChatMessageList messages={chat.messages} loading={chat.loading} />
