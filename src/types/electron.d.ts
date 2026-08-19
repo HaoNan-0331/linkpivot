@@ -114,6 +114,9 @@ export interface ElectronAPI {
     saveCommandWhitelist: (list: string[]) => Promise<void>
     getExecMode: () => Promise<'confirm' | 'auto'>
     setExecMode: (mode: string, password: string) => Promise<{ success: boolean; error?: string }>
+    // 22-05 checkpoint：MCP 连续调用轮次上限（合法 1-20，默认 5；非法库值 main 侧 fail-safe 回退 5）
+    getMcpMaxRounds: () => Promise<number>
+    setMcpMaxRounds: (rounds: number) => Promise<{ success: boolean; error?: string }>
     confirmCommand: (execId: string, approved: boolean) => Promise<string>
     getLogs: (limit?: number) => Promise<AIExecLog[]>
     getChatHistory: () => Promise<ChatMessage[]>

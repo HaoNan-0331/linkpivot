@@ -10,7 +10,7 @@ import { generateCaptcha, login, isFirstRun, initAdmin } from './services/auth'
 import { setDeviceMasterKey, listDevices, createDevice, updateDevice, deleteDevice, getDeviceById, maskDeviceSecrets } from './services/device'
 import { setTopologyMasterKey, listTopologies, getTopologyById, createTopology, updateTopology, deleteTopology, exportTopology, importTopology } from './services/topology'
 import { setConnectionMasterKey, openTerminal, openWebSafe, writeToSession, writeByWebContentsId, disconnectSession, testDeviceConnection } from './services/connection'
-import { setAiMasterKey, chat, getAiConfigMasked, saveAiConfig, getCommandWhitelist, saveCommandWhitelist, getExecMode, setExecMode, confirmCommand, getAiLogs, getChatHistory, saveChatMessage as aiSaveChatMessage, createSession, listSessions, getSessionMessages, deleteSession, updateSessionTitle } from './services/ai'
+import { setAiMasterKey, chat, getAiConfigMasked, saveAiConfig, getCommandWhitelist, saveCommandWhitelist, getExecMode, setExecMode, getMcpMaxRounds, setMcpMaxRounds, confirmCommand, getAiLogs, getChatHistory, saveChatMessage as aiSaveChatMessage, createSession, listSessions, getSessionMessages, deleteSession, updateSessionTitle } from './services/ai'
 import { discoverTopology } from './services/discovery'
 import { getSystemLogs, createSystemLog, setSystemLogMasterKey, backfillSystemLogEnc } from './services/systemLog'
 import { backfillAiExecLogEnc } from './services/aiExecLogger'
@@ -263,6 +263,9 @@ app.whenReady().then(() => {
   ipcMain.handle('ai:saveCommandWhitelist', secure((_e, list) => saveCommandWhitelist(list)))
   ipcMain.handle('ai:getExecMode', secure(() => getExecMode()))
   ipcMain.handle('ai:setExecMode', secure((_e, mode, password) => setExecMode(mode, password)))
+  // 22-05 checkpoint：MCP 连续调用轮次上限系统设置可调（读侧 fail-safe，写侧 1-20 校验）
+  ipcMain.handle('ai:getMcpMaxRounds', secure(() => getMcpMaxRounds()))
+  ipcMain.handle('ai:setMcpMaxRounds', secure((_e, rounds) => setMcpMaxRounds(rounds)))
   ipcMain.handle('ai:confirmCommand', secure((_e, execId, approved) => confirmCommand(execId, approved)))
   ipcMain.handle('ai:getLogs', secure((_e, limit) => getAiLogs(limit)))
   ipcMain.handle('ai:getChatHistory', secure(() => getChatHistory()))

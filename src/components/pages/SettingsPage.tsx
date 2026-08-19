@@ -4,6 +4,7 @@ import { LogoutOutlined, PlayCircleOutlined, DatabaseOutlined } from '@ant-desig
 import { useAuthStore } from '../../stores/authStore'
 import CommandWhitelistEditor from '../settings/CommandWhitelistEditor'
 import ExecModeSwitch from '../settings/ExecModeSwitch'
+import McpRoundsInput from '../settings/McpRoundsInput'
 import PromptTab from '../settings/PromptTab'
 import McpTab from '../settings/McpTab'
 import type { AIConfig } from '../../types/electron'
@@ -186,6 +187,7 @@ export default function SettingsPage() {
       </Card>
       <div style={{ marginBottom: 16 }}><CommandWhitelistEditor /></div>
       <div style={{ marginBottom: 16 }}><ExecModeSwitch /></div>
+      <div style={{ marginBottom: 16 }}><McpRoundsInput /></div>
       <Divider />
       <Space>
         <Button icon={<LogoutOutlined />} danger onClick={logout}>退出登录</Button>

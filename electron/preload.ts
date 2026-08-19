@@ -50,6 +50,9 @@ const api = {
     saveCommandWhitelist: (list: string[]) => ipcRenderer.invoke('ai:saveCommandWhitelist', list),
     getExecMode: () => ipcRenderer.invoke('ai:getExecMode'),
     setExecMode: (mode: string, password: string) => ipcRenderer.invoke('ai:setExecMode', mode, password),
+    // 22-05 checkpoint：MCP 轮次上限读写
+    getMcpMaxRounds: () => ipcRenderer.invoke('ai:getMcpMaxRounds'),
+    setMcpMaxRounds: (rounds: number) => ipcRenderer.invoke('ai:setMcpMaxRounds', rounds),
     confirmCommand: (execId: string, approved: boolean) => ipcRenderer.invoke('ai:confirmCommand', execId, approved),
     getLogs: (limit?: number) => ipcRenderer.invoke('ai:getLogs', limit),
     getChatHistory: () => ipcRenderer.invoke('ai:getChatHistory'),

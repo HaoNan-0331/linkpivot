@@ -18,6 +18,7 @@ if (!(window as any).api) {
   let systemLogs = load<any[]>('systemLogs', [])
   let aiConfig = load<any>('aiConfig', null)
   let execMode = load<string>('execMode', 'confirm')
+  let mcpMaxRounds = load<number>('mcpMaxRounds', 5)
   let adminInitialized = load<boolean>('adminInit', false)
 
   let currentUser: any = null
@@ -128,6 +129,11 @@ if (!(window as any).api) {
       saveCommandWhitelist: async (list: string[]) => { commandWhitelist = [...list]; save('whitelist', commandWhitelist); return { success: true } },
       getExecMode: async () => execMode,
       setExecMode: async (mode: string, _password: string) => { execMode = mode; save('execMode', execMode); return { success: true } },
+      getMcpMaxRounds: async () => mcpMaxRounds,
+      setMcpMaxRounds: async (rounds: number) => {
+        if (!Number.isInteger(rounds) || rounds < 1 || rounds > 20) return { success: false, error: 'MCP 轮次上限必须在 1-20 之间' }
+        mcpMaxRounds = rounds; save('mcpMaxRounds', mcpMaxRounds); return { success: true }
+      },
       confirmCommand: async (_execId: string, _approved: boolean) => '命令已执行（模拟）',
       getLogs: async (_limit?: number) => [...execLogs],
       getChatHistory: async () => [...chatHistory],
