@@ -117,10 +117,16 @@ export function useAIChat(): UseAIChatReturn {
   const loadData = useCallback(async (hasConfig: boolean) => {
     try {
       const devs = await window.api.device.list()
+      // Phase 23（DSL-01）：移除 SSH/Telnet 前置过滤，全设备进入 AI 上下文；
+      // capabilities/ipAddress 由 main 投影下发，renderer 只消费不推导。
       setDevices(
-        devs
-          .filter((d) => d.connectionType === 'ssh' || d.connectionType === 'telnet')
-          .map((d) => ({ id: d.id, name: d.name, connectionType: d.connectionType, capabilities: d.capabilities }))
+        devs.map((d) => ({
+          id: d.id,
+          name: d.name,
+          ipAddress: d.ipAddress,
+          connectionType: d.connectionType,
+          capabilities: d.capabilities
+        }))
       )
       if (hasConfig) {
         await loadSessions()

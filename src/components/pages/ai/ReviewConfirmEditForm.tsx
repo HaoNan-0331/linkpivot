@@ -51,12 +51,9 @@ export default function ReviewConfirmEditForm({
   const [devices, setDevices] = useState<Array<{ id: string; name: string }>>([])
 
   useEffect(() => {
+    // Phase 23（DSL-01）：经验关联设备放开为全设备（与 AI 选择器范围一致）
     window.api.device.list().then((all: Device[]) =>
-      setDevices(
-        all
-          .filter((d) => d.connectionType === 'ssh' || d.connectionType === 'telnet')
-          .map((d) => ({ id: d.id, name: d.name }))
-      )
+      setDevices(all.map((d) => ({ id: d.id, name: d.name })))
     ).catch(() => setDevices([]))
   }, [])
 
