@@ -67,13 +67,14 @@ let db: Database.Database
 // MK 常量：makeDb（模块内先声明）与 Task 3 的 setAiMasterKey 共用（import 提升，TDZ 无虞——调用发生在模块求值后）
 const MK_SEED = 'test-mk-22-03'
 
-function makeDb(execMode: string): Database.Database {
+function makeDb(execMode: string, mcpMaxRounds?: number | null): Database.Database {
   const d = new Database(':memory:')
   d.exec(`
     CREATE TABLE ai_config (
       id TEXT PRIMARY KEY, provider_enc TEXT, api_key_enc TEXT, base_url_enc TEXT, model_name_enc TEXT,
       vision_base_url_enc TEXT, vision_api_key_enc TEXT, vision_model_enc TEXT,
-      exec_mode TEXT DEFAULT 'confirm', created_at TEXT DEFAULT (datetime('now','localtime'))
+      exec_mode TEXT DEFAULT 'confirm', mcp_max_rounds INTEGER DEFAULT 5,
+      created_at TEXT DEFAULT (datetime('now','localtime'))
     );
     CREATE TABLE command_whitelist (id TEXT PRIMARY KEY, pattern TEXT NOT NULL UNIQUE);
     CREATE TABLE chat_history (
@@ -108,6 +109,9 @@ function makeDb(execMode: string): Database.Database {
     INSERT INTO ai_config (id, api_key_enc) VALUES ('cfg1', ?);
   `)
   d.prepare('UPDATE ai_config SET exec_mode = ?, api_key_enc = ?').run(execMode, encField('test-key', MK_SEED))
+  if (mcpMaxRounds !== undefined) {
+    d.prepare('UPDATE ai_config SET mcp_max_rounds = ?').run(mcpMaxRounds)
+  }
   return d
 }
 
@@ -186,7 +190,7 @@ describe('classifyBatch（D-04 批次语义）', () => {
 
 import { encField } from '../../../electron/utils/crypto'
 import { MCP_INJECTION_GUARD } from '../../../electron/services/promptRegistry'
-import { chat, confirmCommand, setAiMasterKey } from '../../../electron/services/ai'
+import { chat, confirmCommand, setAiMasterKey, getMcpMaxRounds, setMcpMaxRounds } from '../../../electron/services/ai'
 import { callToolWithTimeout } from '../../../electron/services/mcpClient'
 import { createLog, updateLogStatus } from '../../../electron/services/aiExecLogger'
 
@@ -498,5 +502,84 @@ describe('sanitizeUntrusted（T-22-08/T-22-10）', () => {
     expect(sanitizeUntrusted(null as unknown as string, 200)).toBe('')
     expect(sanitizeUntrusted(undefined as unknown as string, 200)).toBe('')
     expect(sanitizeUntrusted(123 as unknown as string, 200)).toBe('')
+  })
+})
+
+// ---------- 22-05 checkpoint 追加：MCP 轮次上限系统设置可调 ----------
+
+describe('getMcpMaxRounds / setMcpMaxRounds（读写 + fail-safe 校验）', () => {
+  it('合法值 1/5/20 读取生效；setMcpMaxRounds 落库', () => {
+    for (const v of [1, 5, 20]) {
+      db = makeDb('smart', v)
+      expect(getMcpMaxRounds()).toBe(v)
+    }
+    db = makeDb('smart')
+    expect(setMcpMaxRounds(12).success).toBe(true)
+    expect(getMcpMaxRounds()).toBe(12)
+  })
+
+  it('非法值（0/负数/21/NULL/非整数）读取一律回退 5（fail-safe）', () => {
+    for (const bad of [0, -3, 21, null]) {
+      db = makeDb('smart', bad)
+      expect(getMcpMaxRounds()).toBe(5)
+    }
+  })
+
+  it('setMcpMaxRounds 拒绝 1-20 之外与非整数值（不落库）', () => {
+    db = makeDb('smart', 7)
+    for (const bad of [0, -1, 21, 1.5, NaN]) {
+      expect(setMcpMaxRounds(bad).success).toBe(false)
+    }
+    expect(getMcpMaxRounds()).toBe(7)
+  })
+})
+
+describe('轮次上限配置驱动主循环（22-05 checkpoint 需求）', () => {
+  beforeEach(() => {
+    seedDevice('dev1')
+    seedMcp('dev1', { skipConfirm: 1 })
+    vi.mocked(callToolWithTimeout).mockResolvedValue({ ok: 1 } as any)
+  })
+
+  it('上限=1：等价旧单轮行为——仅执行 1 次后回注上限提示收尾', async () => {
+    db = makeDb('smart', 1)
+    const fetchMock = queueReplies(CALL_MARKER, CALL_MARKER, '单轮收尾')
+    const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
+    expect(out).toBe('单轮收尾')
+    expect(callToolWithTimeout).toHaveBeenCalledTimes(1)
+    const last = JSON.parse((fetchMock.mock.calls[2][1] as any).body)
+    expect(last.messages.some(
+      (m: any) => m.role === 'user' && m.content.includes('工具调用轮次已达上限')
+    )).toBe(true)
+  })
+
+  it('上限=20：6 轮标记全部执行（不超过 5 的旧硬编码不再截断）', async () => {
+    db = makeDb('smart', 20)
+    queueReplies(
+      CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, '六轮收尾'
+    )
+    const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
+    expect(out).toBe('六轮收尾')
+    expect(callToolWithTimeout).toHaveBeenCalledTimes(6)
+  })
+
+  it('配置非法（21）→ fail-safe 回退 5：第 6 轮不执行', async () => {
+    db = makeDb('smart', 21)
+    queueReplies(
+      CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, '回退收尾'
+    )
+    const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
+    expect(out).toBe('回退收尾')
+    expect(callToolWithTimeout).toHaveBeenCalledTimes(5)
+  })
+
+  it('默认（未配置，DEFAULT 5）：行为与旧硬编码一致', async () => {
+    db = makeDb('smart')
+    queueReplies(
+      CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, '默认收尾'
+    )
+    const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
+    expect(out).toBe('默认收尾')
+    expect(callToolWithTimeout).toHaveBeenCalledTimes(5)
   })
 })

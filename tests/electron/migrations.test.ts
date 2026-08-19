@@ -20,7 +20,7 @@ import Database from 'better-sqlite3'
  * 安全域：内存库（`:memory:`）无落盘；只跑 v16 本体不碰 runMigrations/system log。
  */
 
-import { v16, v17, v19, v20 } from '../../electron/database/migrations'
+import { v16, v17, v19, v20, v21 } from '../../electron/database/migrations'
 import { encField } from '../../electron/utils/crypto'
 import {
   appendLogAiResponse,
@@ -386,5 +386,72 @@ describe('v19 fix + v20 ai_exec_logs 补明文列', () => {
     expect(ddl).toContain('ai_response TEXT')
     expect(ddl).toContain('prompt_text_enc TEXT')
     expect(ddl).toContain('ai_response_enc TEXT')
+  })
+})
+
+/**
+ * Phase 22 Plan 22-05 checkpoint 追加 —— v21 迁移（ai_config.mcp_max_rounds 系统设置可调）。
+ *
+ * 用例：
+ *   a) v20 形态库跑 v21 → mcp_max_rounds 列补上，默认 5，user_version=21
+ *   b) v21 幂等重跑 no-op（hasColumn 守卫，既有值保活）
+ *   c) init.ts fresh ai_config DDL 含 mcp_max_rounds 列
+ */
+describe('v21 ai_config.mcp_max_rounds', () => {
+  function createV20Form(db: Database.Database): void {
+    db.exec(`
+      CREATE TABLE ai_config (
+        id TEXT PRIMARY KEY,
+        provider_enc TEXT,
+        api_key_enc TEXT,
+        base_url_enc TEXT,
+        model_name_enc TEXT,
+        vision_base_url_enc TEXT,
+        vision_api_key_enc TEXT,
+        vision_model_enc TEXT,
+        exec_mode TEXT DEFAULT 'confirm' CHECK(exec_mode IN ('confirm','smart','auto')),
+        created_at TEXT DEFAULT (datetime('now','localtime'))
+      );
+    `)
+    db.pragma('user_version = 20')
+  }
+
+  function columnsOf(db: Database.Database, table: string): string[] {
+    return (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((r) => r.name)
+  }
+
+  it('a) v20 形态库跑 v21 → 补 mcp_max_rounds 列（存量行默认 5），user_version=21', () => {
+    const db = new Database(':memory:')
+    createV20Form(db)
+    db.prepare("INSERT INTO ai_config (id) VALUES ('cfg1')").run()
+
+    v21(db)
+
+    expect(columnsOf(db, 'ai_config')).toContain('mcp_max_rounds')
+    const row = db.prepare('SELECT mcp_max_rounds FROM ai_config WHERE id = ?').get('cfg1') as any
+    expect(row.mcp_max_rounds).toBe(5)
+    expect(db.pragma('user_version', { simple: true })).toBe(21)
+    db.close()
+  })
+
+  it('b) v21 幂等重跑 no-op（列已存在不 throw，用户改过的值保活）', () => {
+    const db = new Database(':memory:')
+    createV20Form(db)
+    db.prepare("INSERT INTO ai_config (id) VALUES ('cfg1')").run()
+    v21(db)
+    db.prepare('UPDATE ai_config SET mcp_max_rounds = 12').run()
+
+    expect(() => v21(db)).not.toThrow()
+    const row = db.prepare('SELECT mcp_max_rounds FROM ai_config WHERE id = ?').get('cfg1') as any
+    expect(row.mcp_max_rounds).toBe(12)
+    db.close()
+  })
+
+  it('c) init.ts fresh ai_config DDL 含 mcp_max_rounds 列', () => {
+    const root = path.resolve(__dirname, '../..')
+    const initSrc = fs.readFileSync(path.join(root, 'electron/database/init.ts'), 'utf-8')
+    const m = initSrc.match(/CREATE TABLE IF NOT EXISTS ai_config \(([\s\S]*?)\);/)
+    expect(m).toBeTruthy()
+    expect(m![1]).toContain('mcp_max_rounds INTEGER NOT NULL DEFAULT 5')
   })
 })
