@@ -199,6 +199,15 @@ export function useAIChat(): UseAIChatReturn {
       const result = await window.api.ai.confirmCommand(confirmData.execId, approved)
       // Phase 19 REN-02：原 Phase 11 UAT fix 内联解析段（:222-238）收敛为 parseAiReply（与 handleSend 同语义）
       const parsed = parseAiReply(result)
+      // 22-05 人工验证 Bug 1 修复：确认档第二次工具调用时 main 侧 confirmCommand 会再返回
+      // confirm_required（有界循环下一批调用）——与 handleSend 同款分支：重新弹窗 + 保持
+      // loading，绝不当最终回复入列（否则第二轮无弹窗、对话卡死）。
+      if (parsed.kind === 'confirm') {
+        setPendingConfirm(parsed.confirm)
+        confirmInFlightRef.current = false // WR-01 fix：释放同步锁供下一轮确认
+        setConfirmInFlight(false) // Phase 14-02：视觉锁释放（弹窗重新打开自行接管交互）
+        return // 不 setLoading(false)——保持 loading 等待下一次用户确认
+      }
       if (parsed.kind === 'answer') {
         setMessages((prev) => [...prev, { role: 'assistant', content: parsed.content, references: parsed.references }])
       } else {
