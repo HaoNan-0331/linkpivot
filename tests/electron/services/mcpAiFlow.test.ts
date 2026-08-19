@@ -441,6 +441,7 @@ describe('连续调用有界循环（22-05 用户裁决）', () => {
   })
 
   it('确认流多轮：每轮独立弹窗，确认后带循环状态续跑（拒绝语义不变由既有测试锁死）', async () => {
+    db.prepare('UPDATE mcp_tools SET skip_confirm = 0').run() // 未勾免确认 → confirm 档
     const fetchMock = queueReplies(CALL_MARKER, CALL_MARKER_2, '确认流两轮总结')
     const emitted: any[] = []
     const out1 = await chat([{ role: 'user', content: '查' }], ['dev1'], null, (p) => emitted.push(p))

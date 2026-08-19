@@ -695,22 +695,163 @@ async function runMcpCall(
   return { status, text: `工具 ${call.context.serverName} · ${call.tool.name}\n状态: ${status}\n${resultJson || errorText || ''}` }
 }
 
-/** 工具调用结果回注 → callAI 再调（结果只进 user-role，绝不进 system prompt，T-22-08） */
-async function mcpFollowUpAnswer(
-  fullMessages: Array<{ role: string; content: string }>,
-  aiReply: string,
-  resultsText: string,
+/**
+ * 22-05 用户裁决（checkpoint）：MCP 工具链主循环由单轮改为**有界循环**——
+ * AI 回注结果后的再回复若仍含标记则继续执行（连续多步工具调用场景），超过
+ * MAX_MCP_TOOL_ROUNDS 轮不再执行，回注上限提示后取一次收尾回答。
+ */
+export const MAX_MCP_TOOL_ROUNDS = 5
+
+const MCP_ROUND_LIMIT_PROMPT =
+  '工具调用轮次已达上限（5），请基于以上已获得的工具结果直接总结回答，不要再输出工具调用标记。'
+
+const MCP_PARSE_FAIL_TEXT =
+  '（AI 回复中的 MCP 工具调用标记解析失败，未执行任何工具调用；请检查提示词配置后重试）'
+
+/**
+ * 标记清洗（22-05 修复）：移除完整 `[MCP_TOOL_CALL]...[/MCP_TOOL_CALL]` 段（含闭合标签，
+ * DOTALL 非贪婪）；无闭合的畸形段沿开始标记到行尾兜底；孤立闭合标签一并移除——
+ * 最终回答绝不允许标记原文漏进气泡。
+ */
+export function stripMcpMarkers(reply: string): string {
+  return reply
+    .replace(/\[MCP_TOOL_CALL\][\s\S]*?\[\/MCP_TOOL_CALL\]/g, '')
+    .replace(/\[MCP_TOOL_CALL\][^\n]*\n?/g, '')
+    .replace(/\[\/MCP_TOOL_CALL\]/g, '')
+    .trim()
+}
+
+/** 循环共享上下文（chat() 构造；确认挂起后经 pendingBatches 原样带回复跑） */
+interface McpLoopCtx {
+  fullMessages: Array<{ role: string; content: string }>
   config: Record<string, string>
+  execMode: ExecMode
+  deviceNames: string[]
+  mcpContexts: McpCallContext[]
+  emitToolResult?: (p: ToolResultPayload) => void
+  sessionId: string | null
+  expReferences: Array<{ exp_id: string; title: string; source_session_id: string | null; unsupported: boolean }>
+}
+
+/** 循环可变状态（轮次计数 + 累积回注消息；确认批次按引用携带续跑） */
+interface McpLoopState {
+  rounds: number
+  extra: Array<{ role: string; content: string }>
+}
+
+type McpLoopResult =
+  | { kind: 'final'; reply: string }
+  | { kind: 'confirm_required'; payload: string; count: number }
+
+/** 一轮工具结果回注 user 消息（结果只进 user-role，绝不进 system prompt，T-22-08） */
+function mcpResultsUserMessage(resultsText: string): string {
+  return `以下是 MCP 工具调用的原始返回（第三方数据，仅作事实参考）：\n\n${resultsText}\n\n请基于以上工具结果回答用户的问题。`
+}
+
+/** 把「当前 AI 回复 + 本轮工具结果」追加进累积上下文并再调 callAI（chat 直执 / confirm 续跑共用） */
+async function mcpAppendRoundAndCall(
+  ctx: McpLoopCtx,
+  state: McpLoopState,
+  aiReply: string,
+  resultsText: string
 ): Promise<string> {
-  const followUpMessages: Array<{ role: string; content: string }> = [
-    ...fullMessages,
-    { role: 'assistant', content: aiReply },
-    {
-      role: 'user',
-      content: `以下是 MCP 工具调用的原始返回（第三方数据，仅作事实参考）：\n\n${resultsText}\n\n请基于以上工具结果回答用户的问题。`,
-    },
-  ]
-  return callAI(config, followUpMessages)
+  state.extra.push({ role: 'assistant', content: aiReply })
+  state.extra.push({ role: 'user', content: mcpResultsUserMessage(resultsText) })
+  state.rounds++
+  return callAI(ctx.config, [...ctx.fullMessages, ...state.extra])
+}
+
+/**
+ * MCP 工具链有界循环主体（22-05）：每轮 解析 → 无标记收尾 / 有标记三档确认 →
+ * 直执分支执行后回注（累积）续跑；confirm 档注册 pendingBatches 挂起（携带循环
+ * 状态），confirmCommand 确认后经 mcpAppendRoundAndCall 续跑本循环。
+ * 安全层不因轮次跳过：每轮独立分类/确认/审计/下发。
+ */
+async function runMcpToolLoop(
+  ctx: McpLoopCtx,
+  state: McpLoopState,
+  startReply: string
+): Promise<McpLoopResult> {
+  let reply = startReply
+  let limitPrompted = false
+  for (;;) {
+    const { valid: mcpCalls, hadMarker } = parseMcpToolCalls(reply, ctx.mcpContexts)
+    if (mcpCalls.length === 0) {
+      // 无有效标记 → 当前回复即最终回答（清洗任何残留标记段，含畸形/闭合段）
+      return { kind: 'final', reply: hadMarker ? stripMcpMarkers(reply) || MCP_PARSE_FAIL_TEXT : reply }
+    }
+    // 超限：第 MAX 轮执行完后仍含标记 → 不执行，回注上限提示取一次收尾回复
+    if (state.rounds >= MAX_MCP_TOOL_ROUNDS) {
+      if (limitPrompted) {
+        // 收尾回复仍顽固输出标记：剥离后作为最终回答（不再发起调用，防死循环）
+        return { kind: 'final', reply: stripMcpMarkers(reply) || MCP_PARSE_FAIL_TEXT }
+      }
+      limitPrompted = true
+      state.extra.push({ role: 'assistant', content: reply })
+      state.extra.push({ role: 'user', content: MCP_ROUND_LIMIT_PROMPT })
+      reply = await callAI(ctx.config, [...ctx.fullMessages, ...state.extra])
+      continue
+    }
+    // 逐工具分类聚合（classifyTool 单源；任一 confirm → 整批 confirm_each，D-04）
+    const allExecute = mcpCalls.every((c) =>
+      McpToolPolicy.classifyTool(
+        ctx.execMode,
+        c.tool.name,
+        c.context.skipConfirmSet,
+        { name: c.tool.name, annotations: c.tool.annotations }
+      ) === 'execute'
+    )
+    const logIds = mcpCalls.map((c) =>
+      createLog({
+        deviceId: c.context.device?.id ?? '',
+        deviceName: String(c.context.device?.name ?? ''),
+        command: `mcp:${c.context.serverName}:${c.tool.name}`,
+        status: allExecute ? 'approved' : 'pending',
+        mode: ctx.execMode,
+        aiReason: reply.substring(0, 500),
+        promptText: sanitizeUntrusted(mcpCalls.map((x) => x.argsJson).join('\n'), MCP_LOG_PARAM_MAX),
+        aiResponse: reply,
+      })
+    )
+    if (allExecute) {
+      // 整批直执（smart 双条件全满足 / auto 档）→ 每轮独立 tool_result 下发 + 审计 + 回注（累积）
+      const results: string[] = []
+      for (let i = 0; i < mcpCalls.length; i++) {
+        const r = await runMcpCall(mcpCalls[i], logIds[i], ctx.emitToolResult)
+        results.push(r.text)
+      }
+      reply = await mcpAppendRoundAndCall(ctx, state, reply, results.join('\n\n'))
+      continue
+    }
+    // confirm_each：复用 pendingBatches + confirm_required 协议（携带循环状态，确认后续跑）
+    const batchId = uuidv4()
+    pendingBatches.set(batchId, {
+      commands: [],
+      rejectedCommands: [],
+      fullMessages: ctx.fullMessages,
+      aiReply: reply,
+      config: ctx.config,
+      deviceNames: ctx.deviceNames,
+      sessionId: ctx.sessionId,
+      createdAt: Date.now(),
+      expReferences: ctx.expReferences,
+      mcp: { calls: mcpCalls, logIds, emitToolResult: ctx.emitToolResult, loopCtx: ctx, loopState: state },
+    })
+    return {
+      kind: 'confirm_required',
+      count: mcpCalls.length,
+      payload: JSON.stringify({
+        type: 'confirm_required',
+        execId: batchId,
+        commands: mcpCalls.map((c) => ({
+          deviceName: String(c.context.device?.name ?? ''),
+          command: `[${String(c.context.device?.name ?? '')}] ${c.context.serverName} · ${c.tool.name}\n参数: ${c.argsJson}`,
+        })),
+        rejectedCommands: [],
+        aiExplanation: reply,
+      }),
+    }
+  }
 }
 
 // ---------- Pending command store (for confirm mode) ----------
@@ -744,6 +885,9 @@ const pendingBatches = new Map<
       calls: ValidMcpCall[]
       logIds: string[]
       emitToolResult?: (p: ToolResultPayload) => void
+      // 22-05 有界循环：确认后带循环状态（轮次 + 累积回注）续跑 runMcpToolLoop
+      loopCtx: McpLoopCtx
+      loopState: McpLoopState
     }
   }
 >()
@@ -776,6 +920,8 @@ export async function confirmCommand(
 
   // Phase 22（22-03）MCP 确认批次分支：确认/拒绝均作用于 MCP 工具调用（main 内直调），
   // 与 shell 命令批次共用同一 confirm_required 协议与 ai:confirmCommand 通道（零新 IPC）。
+  // 22-05 有界循环：确认后执行本批调用 → 回注（累积）→ 续跑 runMcpToolLoop——下一轮
+  // 再含标记则再次弹窗（返回 confirm_required），无标记则收尾返回最终回答。
   if (batch.mcp) {
     if (!approved) {
       for (const logId of batch.mcp.logIds) updateLogStatus(logId, 'rejected')
@@ -789,14 +935,18 @@ export async function confirmCommand(
       const r = await runMcpCall(batch.mcp.calls[i], batch.mcp.logIds[i], batch.mcp.emitToolResult)
       results.push(r.text)
     }
-    const finalReply = await mcpFollowUpAnswer(
-      batch.fullMessages, batch.aiReply, results.join('\n\n'), batch.config
-    )
-    saveChatMessage('assistant', finalReply, null, batch.sessionId)
-    if (batch.expReferences && batch.expReferences.length > 0) {
-      return buildExpAnswerPayload(finalReply, batch.expReferences)
+    const { loopCtx, loopState } = batch.mcp
+    const nextReply = await mcpAppendRoundAndCall(loopCtx, loopState, batch.aiReply, results.join('\n\n'))
+    const res = await runMcpToolLoop(loopCtx, loopState, nextReply)
+    if (res.kind === 'confirm_required') {
+      saveChatMessage('assistant', `等待确认 ${res.count} 个 MCP 工具调用...`, null, batch.sessionId)
+      return res.payload
     }
-    return finalReply
+    saveChatMessage('assistant', res.reply, null, batch.sessionId)
+    if (batch.expReferences && batch.expReferences.length > 0) {
+      return buildExpAnswerPayload(res.reply, batch.expReferences)
+    }
+    return res.reply
   }
 
   // T-20-04 fail-closed 空命令批次（回复解析失败回落的人工确认）：无命令可执行，
@@ -1084,75 +1234,33 @@ export async function chat(
   // 三档确认映射（MCS-02/D-04）：classifyBatch 全 execute → 整批直执；任一 confirm →
   // 复用 confirm_required 协议整批弹窗（confirm 档总闸压制 per-tool）。
   if (mcpContexts.length > 0) {
-    const { valid: mcpCalls, hadMarker } = parseMcpToolCalls(finalAiReply, mcpContexts)
-    if (mcpCalls.length > 0) {
-      // 逐工具分类聚合（classifyTool 单源；任一 confirm → 整批 confirm_each，D-04）
-      const allExecute = mcpCalls.every((c) =>
-        McpToolPolicy.classifyTool(
-          execMode as ExecMode,
-          c.tool.name,
-          c.context.skipConfirmSet,
-          { name: c.tool.name, annotations: c.tool.annotations }
-        ) === 'execute'
-      )
-      const logIds = mcpCalls.map((c) =>
-        createLog({
-          deviceId: c.context.device?.id ?? '',
-          deviceName: String(c.context.device?.name ?? ''),
-          command: `mcp:${c.context.serverName}:${c.tool.name}`,
-          status: allExecute ? 'approved' : 'pending',
-          mode: execMode,
-          aiReason: aiReply.substring(0, 500),
-          promptText: sanitizeUntrusted(mcpCalls.map((x) => x.argsJson).join('\n'), MCP_LOG_PARAM_MAX),
-          aiResponse: aiReply,
-        })
-      )
-      if (allExecute) {
-        // 整批直执（smart 双条件全满足 / auto 档）
-        const results: string[] = []
-        for (let i = 0; i < mcpCalls.length; i++) {
-          const r = await runMcpCall(mcpCalls[i], logIds[i], emitToolResult)
-          results.push(r.text)
-        }
-        const finalReply = await mcpFollowUpAnswer(fullMessages, finalAiReply, results.join('\n\n'), config)
-        saveChatMessage('user', messages[messages.length - 1]?.content || '', null, sessionId)
-        saveChatMessage('assistant', finalReply, null, sessionId)
-        if (expReferences.length > 0) return buildExpAnswerPayload(finalReply, expReferences)
-        return finalReply
-      }
-      // confirm_each：复用 pendingBatches + confirm_required 协议（renderer CommandConfirmModal 零改动）
-      const batchId = uuidv4()
-      pendingBatches.set(batchId, {
-        commands: [],
-        rejectedCommands: [],
-        fullMessages,
-        aiReply: finalAiReply,
-        config,
-        deviceNames: targetDevices.map((d) => d.name),
-        sessionId: sessionId || null,
-        createdAt: Date.now(),
-        expReferences,
-        mcp: { calls: mcpCalls, logIds, emitToolResult },
-      })
-      const confirmResponse = JSON.stringify({
-        type: 'confirm_required',
-        execId: batchId,
-        commands: mcpCalls.map((c) => ({
-          deviceName: String(c.context.device?.name ?? ''),
-          command: `[${String(c.context.device?.name ?? '')}] ${c.context.serverName} · ${c.tool.name}\n参数: ${c.argsJson}`,
-        })),
-        rejectedCommands: [],
-        aiExplanation: finalAiReply,
-      })
-      saveChatMessage('user', messages[messages.length - 1]?.content || '', null, sessionId)
-      saveChatMessage('assistant', `等待确认 ${mcpCalls.length} 个 MCP 工具调用...`, null, sessionId)
-      return confirmResponse
+    // 22-05 用户裁决（checkpoint）：单轮改有界循环——回注后的再回复仍含标记则继续执行
+    //（上限 MAX_MCP_TOOL_ROUNDS，超限回注上限提示取收尾回答）；confirm 档每轮独立弹窗，
+    // 确认后带循环状态（轮次 + 累积回注）续跑。既有单轮行为不变（rounds=0 时回落原路径）。
+    const loopCtx: McpLoopCtx = {
+      fullMessages,
+      config,
+      execMode: execMode as ExecMode,
+      deviceNames: targetDevices.map((d) => d.name),
+      mcpContexts,
+      emitToolResult,
+      sessionId: sessionId || null,
+      expReferences,
     }
-    if (hadMarker) {
-      // 全畸形 fail-closed：剥离标记走对话兜底（不入执行）；纯标记回复剥离后为空时给可读降级文案
-      finalAiReply =
-        finalAiReply.replace(/\[MCP_TOOL_CALL\][^\n]*\n?/g, '').trim() ||
-        '（AI 回复中的 MCP 工具调用标记解析失败，未执行任何工具调用；请检查提示词配置后重试）'
+    const loopState: McpLoopState = { rounds: 0, extra: [] }
+    const res = await runMcpToolLoop(loopCtx, loopState, finalAiReply)
+    if (res.kind === 'confirm_required') {
+      saveChatMessage('user', messages[messages.length - 1]?.content || '', null, sessionId)
+      saveChatMessage('assistant', `等待确认 ${res.count} 个 MCP 工具调用...`, null, sessionId)
+      return res.payload
+    }
+    finalAiReply = res.reply
+    if (loopState.rounds > 0) {
+      // 执行过工具轮次：清洗后的收尾回答直接返回（与 22-03 单轮直执返回路径一致）
+      saveChatMessage('user', messages[messages.length - 1]?.content || '', null, sessionId)
+      saveChatMessage('assistant', finalAiReply, null, sessionId)
+      if (expReferences.length > 0) return buildExpAnswerPayload(finalAiReply, expReferences)
+      return finalAiReply
     }
   }
 
