@@ -250,7 +250,13 @@ app.whenReady().then(() => {
   ipcMain.handle('terminal:write', secure((e, data) => writeByWebContentsId(e.sender.id, data)))
 
   // AI IPC
-  ipcMain.handle('ai:chat', secure((_e, messages, deviceIds, sessionId) => chat(messages, deviceIds, sessionId)))
+  ipcMain.handle('ai:chat', secure((e, messages, deviceIds, sessionId) =>
+    // Phase 22（22-03，D-03）：每次 MCP 工具调用完成后经 ai:toolResult 推送结构化载荷
+    // （22-05 ToolResultCard 唯一数据来源）。renderer 失活时 send 抛错不阻塞对话流。
+    chat(messages, deviceIds, sessionId, (p) => {
+      try { e.sender.send('ai:toolResult', p) } catch { /* window closed */ }
+    })
+  ))
   ipcMain.handle('ai:getConfig', secure(() => getAiConfigMasked()))
   ipcMain.handle('ai:saveConfig', secure((_e, config) => saveAiConfig(config)))
   ipcMain.handle('ai:getCommandWhitelist', secure(() => getCommandWhitelist()))

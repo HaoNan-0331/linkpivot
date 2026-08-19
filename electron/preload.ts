@@ -37,6 +37,12 @@ const api = {
   },
   ai: {
     chat: (messages: unknown[], deviceIds?: string[], sessionId?: string) => ipcRenderer.invoke('ai:chat', messages, deviceIds, sessionId),
+    // Phase 22（22-03，D-03）：main→renderer 工具结果推送订阅（返回解绑函数）
+    onToolResult: (cb: (payload: unknown) => void) => {
+      const listener = (_e: unknown, payload: unknown) => cb(payload)
+      ipcRenderer.on('ai:toolResult', listener as never)
+      return () => ipcRenderer.removeListener('ai:toolResult', listener as never)
+    },
     discoverTopology: (deviceIds: string[]) => ipcRenderer.invoke('ai:discoverTopology', deviceIds),
     getConfig: () => ipcRenderer.invoke('ai:getConfig'),
     saveConfig: (config: unknown) => ipcRenderer.invoke('ai:saveConfig', config),

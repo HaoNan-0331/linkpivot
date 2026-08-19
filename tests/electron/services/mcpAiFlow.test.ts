@@ -64,6 +64,9 @@ vi.mock('../../../electron/services/mcpService', () => ({
 
 let db: Database.Database
 
+// MK 常量：makeDb（模块内先声明）与 Task 3 的 setAiMasterKey 共用（import 提升，TDZ 无虞——调用发生在模块求值后）
+const MK_SEED = 'test-mk-22-03'
+
 function makeDb(execMode: string): Database.Database {
   const d = new Database(':memory:')
   d.exec(`
@@ -102,9 +105,9 @@ function makeDb(execMode: string): Database.Database {
       updated_at TEXT DEFAULT (datetime('now','localtime')),
       UNIQUE(config_id, tool_name)
     );
-    INSERT INTO ai_config (id, api_key_enc) VALUES ('cfg1', 'k');
+    INSERT INTO ai_config (id, api_key_enc) VALUES ('cfg1', ?);
   `)
-  d.prepare('UPDATE ai_config SET exec_mode = ?').run(execMode)
+  d.prepare('UPDATE ai_config SET exec_mode = ?, api_key_enc = ?').run(execMode, encField('test-key', MK_SEED))
   return d
 }
 
@@ -121,7 +124,7 @@ function seedMcp(deviceId: string, opts?: { enabled?: number; skipConfirm?: numb
   )
   db.prepare(
     'INSERT INTO mcp_tools (config_id, tool_name, enabled, skip_confirm, tool_meta) VALUES (1, ?, ?, 0, ?)'
-  ).run('reboot_device', 1, JSON.stringify({ description: '重启设备', annotations: {} }))
+  ).run('reboot_device', 0, JSON.stringify({ description: '重启设备', annotations: {} }))
 }
 
 vi.mock('../../../electron/database/connection', () => ({
@@ -186,7 +189,7 @@ import { chat, confirmCommand, setAiMasterKey } from '../../../electron/services
 import { callToolWithTimeout } from '../../../electron/services/mcpClient'
 import { createLog, updateLogStatus } from '../../../electron/services/aiExecLogger'
 
-const MK = 'test-mk-22-03'
+const MK = MK_SEED
 
 function seedDevice(id: string) {
   db.prepare('INSERT INTO devices (id, name_enc, ip_enc, connection_type) VALUES (?, ?, ?, ?)').run(
