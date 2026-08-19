@@ -116,12 +116,22 @@ if (!(window as any).api) {
       },
       discoverTopology: async (_deviceIds: string[]) => ({ nodes: [], edges: [], failedDevices: [] }),
       getConfig: async () => aiConfig ? { ...aiConfig, apiKey: aiConfig.apiKey ? `****${aiConfig.apiKey.slice(-4)}` : '' } : null,
+      // WR-05 fix（Phase 22 code-review）：mock 补 onToolResult（照 preload API 形状）——
+      // useAIChat mount 即订阅，缺失时浏览器 dev 模式 AI 页面 undefined is not a function 崩渲染
+      onToolResult: (_cb: (payload: unknown) => void) => {
+        console.log('[mock] ai.onToolResult subscribed (no-op)')
+        return () => {}
+      },
       saveConfig: async (config: any) => {
         // Merge: only overwrite non-masked fields
         const merged = { ...aiConfig, ...config }
         // If apiKey looks masked, keep the old one
         if (config.apiKey && config.apiKey.startsWith('****')) {
           merged.apiKey = aiConfig?.apiKey || ''
+        }
+        // WR-05 fix：visionApiKey 掩码剥离与 apiKey 同款（对齐 main 侧 stripMaskedKeys 兜底）
+        if (config.visionApiKey && config.visionApiKey.startsWith('****')) {
+          merged.visionApiKey = aiConfig?.visionApiKey || ''
         }
         aiConfig = merged; save('aiConfig', aiConfig); return { success: true }
       },
