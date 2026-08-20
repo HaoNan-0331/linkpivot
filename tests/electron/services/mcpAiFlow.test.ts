@@ -568,6 +568,57 @@ describe('标记全无效（禁用/捏造工具）：回注不可用提示重试
 
 // ---------- Task 1: sanitizeUntrusted ----------
 
+describe('Bug B（生产实测）：畸形 [MCP_TOOL_CALL] 自然语言载荷标记不漏进气泡', () => {
+  // 用户实测：工具调用失败后用户说「重试」→ AI 回复
+  // [MCP_TOOL_CALL]查询设备当前CPU状态[/MCP_TOOL_CALL]（自然语言载荷非 JSON）
+  // → 标记原文直接显示在气泡。两类出口兜底：contexts 空（不进 MCP 循环）+ loop 内变体回归。
+
+  it('主复现：设备未绑 MCP（mcpContexts 空，不进 runMcpToolLoop）→ 最终回复零标记原文', async () => {
+    db = makeDb('smart')
+    seedDevice('dev1') // 无 MCP 绑定 → mcpContexts=[]，MCP 分支整体跳过
+    queueReplies('好的，我查一下\n[MCP_TOOL_CALL]查询设备当前CPU状态[/MCP_TOOL_CALL]\n稍等')
+    const out = await chat([{ role: 'user', content: '重试' }], ['dev1'], null)
+    expect(out).not.toContain('[MCP_TOOL_CALL')
+    expect(out).not.toContain('[/MCP_TOOL_CALL]')
+    // 剥离的只是标记段，正文保留
+    expect(out).toContain('好的，我查一下')
+  })
+
+  it('主复现（未选设备）：零 targetDevices → 同样零标记漏出', async () => {
+    db = makeDb('smart')
+    queueReplies('结果如下 [MCP_TOOL_CALL]查询设备当前CPU状态[/MCP_TOOL_CALL]')
+    const out = await chat([{ role: 'user', content: '重试' }], [], null)
+    expect(out).not.toContain('[MCP_TOOL_CALL')
+  })
+
+  it('带闭合标签变体（绑定设备，进 loop invalidPrompted）→ 回注重试一次后收尾，零标记', async () => {
+    db = makeDb('smart')
+    seedDevice('dev1')
+    seedMcp('dev1', { skipConfirm: 1 })
+    const fetchMock = queueReplies(
+      '[MCP_TOOL_CALL]查询设备当前CPU状态[/MCP_TOOL_CALL]',
+      '已改为直接回答'
+    )
+    const out = await chat([{ role: 'user', content: '重试' }], ['dev1'], null)
+    // 走了回注重试（2 次 callAI），不是首答直通
+    expect(fetchMock.mock.calls.length).toBe(2)
+    expect(out).toBe('已改为直接回答')
+    expect(callToolWithTimeout).not.toHaveBeenCalled()
+  })
+
+  it('顽固再犯（回注后仍输出畸形标记）→ strip 收尾 + 解析失败说明兜底', async () => {
+    db = makeDb('smart')
+    seedDevice('dev1')
+    seedMcp('dev1', { skipConfirm: 1 })
+    queueReplies(
+      '[MCP_TOOL_CALL]查询设备当前CPU状态[/MCP_TOOL_CALL]',
+      '[MCP_TOOL_CALL]再犯一次[/MCP_TOOL_CALL]'
+    )
+    const out = await chat([{ role: 'user', content: '重试' }], ['dev1'], null)
+    expect(out).not.toContain('[MCP_TOOL_CALL')
+  })
+})
+
 describe('sanitizeUntrusted（T-22-08/T-22-10）', () => {
   it('超长输入被截断至上限并附截断标记', () => {
     const long = 'a'.repeat(500)

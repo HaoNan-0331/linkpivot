@@ -1128,7 +1128,8 @@ export async function confirmCommand(
     },
   ]
 
-  const finalReply = await callAI(batch.config, followUpMessages)
+  // Bug B 同源出口兜底：确认后追评回复 fail-safe 剥离 MCP/exp/kb 残留标记
+  const finalReply = stripMcpMarkers(stripExpKbSearchMarkers(await callAI(batch.config, followUpMessages)))
 
   // Append second AI interaction to all related logs
   const secondPrompt = JSON.stringify(followUpMessages, null, 2)
@@ -1486,6 +1487,12 @@ export async function chat(
     // kb+exp references 合并（顺带修复 IN-06 的 kbReferences 丢弃）。
   }
 
+  // Bug B（生产实测，出口兜底）：mcpContexts 为空（未选设备 / 配置禁用 / 绑定缺失）时
+  // 上方 MCP 分支整体跳过——历史会话中的标记样例可能诱导模型输出畸形
+  // [MCP_TOOL_CALL] 自然语言载荷标记，此前无任何出口 strip，标记原文直接漏进气泡。
+  // 此处无条件 fail-safe 剥离（上下文非空时 loop 收尾回复已不含标记，此为幂等兜底）。
+  finalAiReply = stripMcpMarkers(finalAiReply)
+
   // Extract [CMD:device]...[/CMD] or [CMD]...[/CMD] blocks
   const cmdRegex = /\[CMD(?::([^\]]+))?\](.*?)\[\/CMD\]/g
   const commands: Array<{ deviceName: string; cmd: string }> = []
@@ -1775,7 +1782,9 @@ export async function chat(
     },
   ]
 
-  const finalReply = await callAI(config, followUpMessages)
+  // Bug B 同源出口兜底：命令执行追评回复可能夹带畸形 MCP 标记（历史标记样例诱导），
+  // 此前无 strip 直进气泡——统一 fail-safe 剥离（exp/kb 残留标记同此处理）
+  const finalReply = stripMcpMarkers(stripExpKbSearchMarkers(await callAI(config, followUpMessages)))
 
   saveChatMessage('user', messages[messages.length - 1]?.content || '', null, sessionId)
   saveChatMessage('assistant', finalReply, null, sessionId)
