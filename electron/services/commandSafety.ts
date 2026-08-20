@@ -19,6 +19,10 @@ const BLOCKED_FIRST_WORDS = new Set([
   'write', 'save', 'commit', 'undo', 'system-view', 'system', 'interface', 'vlan',
   'acl', 'aaa', 'ospf', 'bgp', 'route-map', 'traffic-filter', 'traffic-policy',
   'password', 'no',
+  // WR-01 fix（Phase 23 code-review）：enable（进入特权模式）补入黑名单——system-view
+  // 已在列。即使存量库 command_whitelist 仍残留 enable/system-view 种子行，黑名单
+  // 优先于白名单匹配，AI 执行通道立即 fail-closed。
+  'enable',
 ])
 
 export function isCommandAllowed(

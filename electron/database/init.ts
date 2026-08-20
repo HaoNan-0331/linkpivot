@@ -102,11 +102,12 @@ export function createTables() {
       created_at TEXT DEFAULT (datetime('now','localtime'))
     );
 
+    -- WR-01 fix（Phase 23 code-review）：移除 enable/system-view 种子——配置模式命令
+    -- 违反「只读查询命令」红线，不得经白名单进入 AI 执行流。存量库已有行由
+    -- commandSafety 黑名单首词兜底拦截（黑名单优先于白名单，立即生效）。
     INSERT OR IGNORE INTO command_whitelist (id, pattern) VALUES
       ('w1', 'display'),
       ('w2', 'show'),
-      ('w3', 'enable'),
-      ('w4', 'system-view'),
       ('w5', 'quit'),
       ('w6', 'ping'),
       ('w7', 'traceroute'),

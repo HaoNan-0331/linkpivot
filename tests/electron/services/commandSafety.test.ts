@@ -84,6 +84,23 @@ describe('commandSafety 服务器只读命令扩域（Phase 23 23-03 复验反�
     }
   })
 
+  // ---------- WR-01 fix（Phase 23 code-review）：配置模式命令出种子 + 黑名单兜底 ----------
+
+  it('WR-01：enable/system-view 即便在白名单中也拒绝（黑名单首词兜底，存量库立即生效）', () => {
+    const legacyWl = ['display', 'show', 'enable', 'system-view', 'ping']
+    expect(isCommandAllowed('enable', legacyWl).allowed).toBe(false)
+    expect(isCommandAllowed('system-view', legacyWl).allowed).toBe(false)
+    expect(isCommandAllowed('ENABLE', legacyWl).allowed).toBe(false)
+  })
+
+  it('WR-01：默认种子不再含 enable/system-view（新库干净）', async () => {
+    const { createTables } = await import('../../../electron/database/init')
+    createTables()
+    const patterns = (initDb.prepare('SELECT pattern FROM command_whitelist').all() as any[]).map((r) => r.pattern)
+    expect(patterns).not.toContain('enable')
+    expect(patterns).not.toContain('system-view')
+  })
+
   it('命令风格指引条目存在：ai.chat.cmdStyle 覆盖服务器/网络设备双风格', async () => {
     const { PROMPT_REGISTRY } = await import('../../../electron/services/promptRegistry')
     const entry = PROMPT_REGISTRY.find((e) => e.id === 'ai.chat.cmdStyle')
