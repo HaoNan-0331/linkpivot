@@ -644,29 +644,49 @@ function buildMcpContexts(targetDevices: any[]): McpCallContext[] {
 export function parseMcpToolCalls(
   reply: string,
   contexts: McpCallContext[]
-): { valid: ValidMcpCall[]; hadMarker: boolean } {
+): { valid: ValidMcpCall[]; hadMarker: boolean; malformed: boolean } {
   const hadMarker = reply.includes('[MCP_TOOL_CALL]')
-  if (!hadMarker) return { valid: [], hadMarker: false }
+  if (!hadMarker) return { valid: [], hadMarker: false, malformed: false }
   const valid: ValidMcpCall[] = []
+  // Phase 23（用户规划裁决）：畸形分诊——载荷非 JSON/缺字段/类型错 → malformed=true
+  // （触发格式纠正回注重试）；合法 JSON 但工具不在清单 → malformed=false（走 22 期管控文案）
+  let malformed = false
+  let totalMarkers = 0
+  const markerRe = /\[MCP_TOOL_CALL\]/g
+  while (markerRe.exec(reply) !== null) totalMarkers++
+  let matchedMarkers = 0
   const re = /\[MCP_TOOL_CALL\]\s*(\{[^\n]*\})/g
   let m: RegExpExecArray | null
   while ((m = re.exec(reply)) !== null) {
+    matchedMarkers++
     try {
       const parsed: unknown = JSON.parse(m[1])
-      if (typeof parsed !== 'object' || parsed === null) continue
+      if (typeof parsed !== 'object' || parsed === null) {
+        malformed = true
+        continue
+      }
       const { server, tool, args } = parsed as Record<string, unknown>
-      if (typeof server !== 'string' || typeof tool !== 'string') continue
-      if (typeof args !== 'object' || args === null || Array.isArray(args)) continue
+      if (typeof server !== 'string' || typeof tool !== 'string') {
+        malformed = true
+        continue
+      }
+      if (typeof args !== 'object' || args === null || Array.isArray(args)) {
+        malformed = true
+        continue
+      }
       const ctx = contexts.find((c) => c.serverName === server)
-      if (!ctx) continue
+      if (!ctx) continue // 合法 JSON，server 不在清单 → 管控语义，非畸形
       const toolRow = ctx.tools.find((t) => t.name === tool)
-      if (!toolRow) continue
+      if (!toolRow) continue // 合法 JSON，工具不在白名单 → 管控语义，非畸形
       valid.push({ context: ctx, tool: toolRow, args: args as Record<string, unknown>, argsJson: JSON.stringify(args) })
     } catch {
-      // 畸形 JSON：跳过该标记（fail-closed 不入执行）
+      // 畸形 JSON：跳过该标记（fail-closed 不入执行）→ 纠格分诊
+      malformed = true
     }
   }
-  return { valid, hadMarker }
+  // 存在无 JSON 载荷的标记（自然语言载荷等）→ 畸形
+  if (matchedMarkers < totalMarkers) malformed = true
+  return { valid, hadMarker, malformed }
 }
 
 /** 审计参数/结果摘要截断上限（truncate 先于加密，T-22-11/T-22-13） */
@@ -765,6 +785,14 @@ const MCP_PARSE_FAIL_TEXT =
  */
 const MCP_UNAVAILABLE_TOOL_PROMPT =
   '你尝试调用的工具不存在或已被管理员禁用。禁止使用任何其它工具变通实现同等操作。请直接回复用户：该操作涉及的工具已被禁用，无法执行；如需执行请在设置的 MCP 工具管理中启用对应工具。'
+
+/**
+ * Phase 23（用户规划裁决）：AI 输出畸形标记载荷（自然语言非 JSON / 缺字段 / 类型错）时，
+ * 不再沿用「工具不可用」管控文案，而是纠格式后允许重新发起本次调用——纠格重试一次，
+ * 仍畸形则由 invalidPrompted 一次性标志兜底 strip 收尾（与管控提示共享上限，防死循环）。
+ */
+const MCP_FORMAT_RETRY_PROMPT =
+  '你尝试调用 MCP 工具，但标记载荷格式错误——载荷必须是单行 JSON 对象 {"server":"服务名","tool":"工具名","args":{参数对象}}。请按正确格式重新发起本次调用，不要用自然语言描述调用意图。'
 
 /**
  * 标记清洗（22-05 修复）：移除完整 `[MCP_TOOL_CALL]...[/MCP_TOOL_CALL]` 段（含闭合标签，
@@ -866,18 +894,20 @@ async function runMcpToolLoop(
   // 上限每轮循环入口读取一次（配置热更后新一轮生效；fail-safe 回退 5）
   const maxRounds = getMcpMaxRounds()
   for (;;) {
-    const { valid: mcpCalls, hadMarker } = parseMcpToolCalls(reply, ctx.mcpContexts)
+    const { valid: mcpCalls, hadMarker, malformed } = parseMcpToolCalls(reply, ctx.mcpContexts)
     if (mcpCalls.length === 0) {
       // WR-05 fix：循环内回复不触发 EXP/KB 检索（嵌套异步复杂度，planner 裁决二期），
       // 但至少 fail-safe 剥离标记——死标记不得经循环收尾漏进气泡。
       if (!hadMarker) return { kind: 'final', reply: stripExpKbSearchMarkers(reply) }
-      // 有标记但全无效（禁用/捏造/畸形）→ 回注不可用提示重试一次（Bug 2）；顽固输出 strip 后 final
+      // 有标记但全无效 → 分诊回注重试一次（Phase 23 用户裁决）：畸形载荷（非 JSON/缺字段/
+      // 类型错）回注格式纠正提示允许重新发起调用；合法 JSON 但工具不在清单沿用 22 期管控
+      // 文案。两类共享 invalidPrompted 一次性上限——纠格/管控后仍顽固 → strip 后 final 防死循环。
       if (invalidPrompted) {
         return { kind: 'final', reply: stripExpKbSearchMarkers(stripMcpMarkers(reply)) || MCP_PARSE_FAIL_TEXT }
       }
       invalidPrompted = true
       state.extra.push({ role: 'assistant', content: reply })
-      state.extra.push({ role: 'user', content: MCP_UNAVAILABLE_TOOL_PROMPT })
+      state.extra.push({ role: 'user', content: malformed ? MCP_FORMAT_RETRY_PROMPT : MCP_UNAVAILABLE_TOOL_PROMPT })
       reply = await callAI(ctx.config, [...ctx.fullMessages, ...state.extra])
       continue
     }
