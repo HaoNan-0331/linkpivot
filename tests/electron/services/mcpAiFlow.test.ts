@@ -619,6 +619,96 @@ describe('Bug B（生产实测）：畸形 [MCP_TOOL_CALL] 自然语言载荷标
   })
 })
 
+// ---------- 畸形标记载荷格式纠正回注（用户规划裁决：纠格重试，非拒绝非静默 strip） ----------
+
+describe('畸形载荷分诊：malformed → 格式纠正回注重试；工具不在清单 → 管控文案', () => {
+  beforeEach(() => {
+    db = makeDb('smart')
+    seedDevice('dev1')
+    seedMcp('dev1', { skipConfirm: 1 }) // get_status 免确认直执
+    vi.mocked(callToolWithTimeout).mockResolvedValue({ ok: 1 } as any)
+  })
+
+  it('场景①：自然语言载荷 → 回注格式纠正提示（含 JSON 格式关键句）→ 第二次合法标记真正发起调用', async () => {
+    const fetchMock = queueReplies(
+      '[MCP_TOOL_CALL]查询设备当前CPU状态[/MCP_TOOL_CALL]',
+      CALL_MARKER,
+      '纠格后的最终总结'
+    )
+    const emitted: any[] = []
+    const out = await chat([{ role: 'user', content: '重试' }], ['dev1'], null, (p) => emitted.push(p))
+    // 重试那次 callAI 请求体含格式纠正提示（user-role，含 JSON 格式关键句），且不是管控文案
+    const second = JSON.parse((fetchMock.mock.calls[1][1] as any).body)
+    const retryMsgs = second.messages.filter(
+      (m: any) => m.role === 'user' && m.content.includes('标记载荷格式错误')
+    )
+    expect(retryMsgs).toHaveLength(1)
+    expect(retryMsgs[0].content).toContain('{"server"')
+    expect(retryMsgs[0].content).not.toContain('已被管理员禁用')
+    // 第二次合法标记 → 工具调用真正发起（直执路径）+ tool_result 下发 + 收尾总结
+    expect(callToolWithTimeout).toHaveBeenCalledTimes(1)
+    expect(emitted).toHaveLength(1)
+    expect(emitted[0]).toMatchObject({ type: 'tool_result', server: 'srv-a', tool: 'get_status', status: 'success' })
+    expect(out).toBe('纠格后的最终总结')
+    expect(fetchMock.mock.calls.length).toBe(3)
+  })
+
+  it('场景②：纠格一次后仍畸形 → strip 收尾不死循环（共享 invalidPrompted 上限 1 次）', async () => {
+    const fetchMock = queueReplies(
+      '[MCP_TOOL_CALL]查询设备当前CPU状态[/MCP_TOOL_CALL]',
+      '[MCP_TOOL_CALL]再犯一次[/MCP_TOOL_CALL]'
+    )
+    const out = await chat([{ role: 'user', content: '重试' }], ['dev1'], null)
+    expect(callToolWithTimeout).not.toHaveBeenCalled()
+    expect(fetchMock.mock.calls.length).toBe(2) // 只纠格重试 1 次
+    expect(out).not.toContain('[MCP_TOOL_CALL')
+  })
+
+  it('场景③：合法 JSON 但工具不在清单 → 仍走管控文案（22 期行为回归锁死，不误入纠格）', async () => {
+    const fetchMock = queueReplies(
+      '[MCP_TOOL_CALL]{"server":"srv-a","tool":"browser_navigate","args":{"url":"baidu.com"}}',
+      'browser_navigate 已被禁用，无法执行。'
+    )
+    const out = await chat([{ role: 'user', content: '打开百度' }], ['dev1'], null)
+    expect(callToolWithTimeout).not.toHaveBeenCalled()
+    const second = JSON.parse((fetchMock.mock.calls[1][1] as any).body)
+    const promptMsgs = second.messages.filter((m: any) => m.role === 'user')
+    const lastUser = promptMsgs[promptMsgs.length - 1]
+    expect(lastUser.content).toContain('已被管理员禁用')
+    expect(lastUser.content).not.toContain('标记载荷格式错误')
+    expect(out).toBe('browser_navigate 已被禁用，无法执行。')
+  })
+
+  it('parseMcpToolCalls 细分：畸形 JSON / 缺字段 / 类型错 → malformed=true；未知工具/未知 server → malformed=false', async () => {
+    const { parseMcpToolCalls } = await import('../../../electron/services/ai')
+    const ctxs: any[] = [{
+      configId: 1, serverName: 'srv-a', device: { id: 'dev1', name: 'dev1' },
+      tools: [{ name: 'get_status', annotations: {} }], skipConfirmSet: new Set(), disabledTools: [],
+    }]
+    // 畸形：自然语言载荷（无 JSON）/ JSON 解析失败 / 缺字段 / args 类型错
+    for (const bad of [
+      '[MCP_TOOL_CALL]查询CPU状态[/MCP_TOOL_CALL]',
+      '[MCP_TOOL_CALL]not-json',
+      '[MCP_TOOL_CALL]{"server":"srv-a","args":{}}',
+      '[MCP_TOOL_CALL]{"server":"srv-a","tool":"get_status","args":[1,2]}',
+    ]) {
+      expect(parseMcpToolCalls(bad, ctxs).malformed).toBe(true)
+    }
+    // 合法 JSON 但工具不在清单 / 未知 server → malformed=false（hadMarker=true）
+    for (const bad of [
+      '[MCP_TOOL_CALL]{"server":"srv-a","tool":"evil_tool","args":{}}',
+      '[MCP_TOOL_CALL]{"server":"no-such","tool":"get_status","args":{}}',
+    ]) {
+      const r = parseMcpToolCalls(bad, ctxs)
+      expect(r.malformed).toBe(false)
+      expect(r.hadMarker).toBe(true)
+    }
+    // 无标记 / 全合法：malformed=false 向后兼容
+    expect(parseMcpToolCalls('普通回复', ctxs).malformed).toBe(false)
+    expect(parseMcpToolCalls(CALL_MARKER, ctxs).valid).toHaveLength(1)
+  })
+})
+
 describe('sanitizeUntrusted（T-22-08/T-22-10）', () => {
   it('超长输入被截断至上限并附截断标记', () => {
     const long = 'a'.repeat(500)
