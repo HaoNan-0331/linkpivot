@@ -31,6 +31,12 @@ import type { McpDecodedConfig } from './mcpService'
 /** env 白名单（21-RESEARCH Pattern 3）——显式拷贝，禁止 spread process.env */
 const SAFE_BASE = ['PATH', 'SYSTEMROOT', 'SYSTEMDRIVE', 'COMSPEC', 'TEMP', 'TMP', 'APPDATA', 'USERPROFILE', 'LANG']
 
+/**
+ * node 工具链命令清单（24-04 Gap #1）：这些命令 spawn 失败（ENOENT / Windows close 竞态
+ * CONNECTION_CLOSED）时，最大可能是该机未安装 Node.js——给出针对性提示而非裸透 Connection closed。
+ */
+const NODE_TOOLCHAIN_COMMANDS = ['npx', 'node', 'npm', 'nodemon']
+
 export const RPC_TOLISTOOLS_MS = 10000
 export const RPC_CALLTOOL_MS = 60000
 /** stdio 连接测试冷启动总预算（spawn + 握手 + listTools 全程） */
@@ -270,8 +276,23 @@ async function connectHttp(
   if (cleanCredential) headers.Authorization = `Bearer ${cleanCredential}`
 
   // 主路径：Streamable HTTP
+  // 24-04 Gap #2（分支 B）：SDK transport 收到 401 后会内部自行 GET /sse 探测 legacy 协议，
+  // 最终以 405 形态 reject——首个 401 响应体被 SDK 吞掉，catch 面无从还原根因。
+  // 注入只读响应的 fetch wrapper 记录首个 >=400 的 { status, bodyText }（不记录请求头，
+  // Authorization 不落任何日志/错误文案——T-24-13），供 catch 面还原真实根因（401 优先于 405）。
+  let firstHttpError: { status: number, bodyText: string } | null = null
+  const recordingFetch: typeof fetch = async (input, init) => {
+    const res = await fetch(input, init)
+    if (!firstHttpError && res.status >= 400) {
+      let bodyText = ''
+      try { bodyText = await res.clone().text() } catch { /* body 读取失败不阻断 */ }
+      firstHttpError = { status: res.status, bodyText }
+    }
+    return res
+  }
   const primaryTransport = new StreamableHTTPClientTransport(new URL(config.commandOrUrl), {
-    requestInit: { headers }
+    requestInit: { headers },
+    fetch: recordingFetch
   })
   const primaryClient = new Client({ name: 'network-toplogy', version: '1.4.0' }, { capabilities: {} })
   try {
@@ -279,6 +300,25 @@ async function connectHttp(
     connections.set(key, { client: primaryClient, transport: primaryTransport, pid: null, lastUsedAt: Date.now() })
     return { client: primaryClient, transport: primaryTransport }
   } catch (e) {
+    // 24-04 Gap #2：首个 4xx 为 401 → 鉴权失败是真实根因，优先于面上 405 透出，
+    // 不再走 SSE fallback（fallback 探测只会二次失败并掩盖根因）。
+    // reason 只透出服务端返回的 error.message（服务端语义），零处内插本地 credential。
+    // TS 控制流分析不跟踪闭包赋值（wrapper 在 connect 期间已写入）——读点显式断言还原宽类型
+    const rec = firstHttpError as unknown as { status: number, bodyText: string } | null
+    if (rec?.status === 401) {
+      try { await primaryClient.close() } catch { /* 连接未成，close 失败忽略 */ }
+      let srvMsg = ''
+      try {
+        const parsed = JSON.parse(rec.bodyText) as { error?: { message?: string } }
+        srvMsg = typeof parsed?.error?.message === 'string' ? parsed.error.message : ''
+      } catch { /* body 非 JSON 回退面上 message */ }
+      const fallbackMsg = (e as { message?: string })?.message ?? 'HTTP 401'
+      throw {
+        code: 'MCP_HTTP_UNAUTHORIZED',
+        reason: `HTTP 连接失败：鉴权失败（HTTP 401）——${srvMsg || fallbackMsg}，请检查 token/凭证是否正确`,
+        errno: 401
+      }
+    }
     // SSE-only 旧对端显式 fallback（spike V-3）：仅 connect 期 404/405 类错误降级，
     // 运行期异常/凭证错误原样抛出；两层各建独立 Client
     const err = e as { code?: string, status?: number }
@@ -418,6 +458,22 @@ export async function testConnection(
           fallbackP.catch(() => { /* 同上：race 抢占后的孤儿 connect */ })
           ;({ client } = await withTimeout(fallbackP, budget, 'stdio 连接（ELECTRON_RUN_AS_NODE 兜底）'))
         } else {
+          // 24-04 Gap #1 分诊：node 工具链命令（npx 无兜底；node/npm/nodemon 兜底也失败）
+          // ENOENT / CONNECTION_CLOSED（Windows close 竞态吞 ENOENT，21-05 已知形态）时，
+          // 最大可能是该机未安装 Node.js——针对性提示并保留底层错误（不吞细节）
+          const err = e as { code?: string | number, message?: string, errno?: string | number }
+          const cmdLowered = config.commandOrUrl.toLowerCase()
+          if (
+            NODE_TOOLCHAIN_COMMANDS.includes(cmdLowered) &&
+            (err?.code === 'ENOENT' || err?.code === 'CONNECTION_CLOSED')
+          ) {
+            const rawMsg = typeof err?.message === 'string' ? err.message : String(e)
+            return await fail({
+              code: 'MCP_NODE_MISSING',
+              reason: `stdio 连接失败：命令 \`${config.commandOrUrl}\` 不存在，该机可能未安装 Node.js——请安装 Node.js 后重试（原始错误：${rawMsg}${err?.code ? ` / ${String(err.code)}` : ''}）`,
+              errno: err?.errno ?? (typeof err?.code === 'string' || typeof err?.code === 'number' ? err.code : undefined)
+            }, 'stdio 连接失败')
+          }
           return await fail(e, 'stdio 连接失败')
         }
       }
