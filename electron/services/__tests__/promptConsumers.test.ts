@@ -149,9 +149,9 @@ describe('7 处 prompt 调用点收敛到 PromptService.getPrompt（PMT-01）', 
     expect(system).toBe(getRegistryEntry('rerank.experience')!.content)
   })
 
-  it('registry 恰好 9 条（口径锁死：真实 LLM prompt 调用点 + 资源地图/禁止令两条静态条目）', () => {
-    // 7 处 LLM 调用点 + ai.chat.resourceMap（23-02 D-07）+ kb.pick
-    expect(PROMPT_REGISTRY).toHaveLength(9)
+  it('registry 恰好 10 条（口径锁死：真实 LLM prompt 调用点 + 资源地图/cmdStyle/禁止令静态条目）', () => {
+    // 7 处 LLM 调用点 + ai.chat.resourceMap（23-02 D-07）+ ai.chat.cmdStyle（23-03）+ kb.pick
+    expect(PROMPT_REGISTRY).toHaveLength(10)
   })
 
   // 重依赖模块（ai / discovery / kb）源码级收敛断言：内联 prompt 已删、getPrompt(id) 接入
