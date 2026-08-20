@@ -263,8 +263,11 @@ async function connectHttp(
   config: McpDecodedConfig
 ): Promise<{ client: Client, transport: Transport }> {
   // token 只进 Authorization header，URL 构造零处拼接凭证（T-21-03-03）
+  // Bug A（生产实测）：存量脏 credential 带粘贴引入的 \t/\n/BOM 前后缀 → LocalProtocolError
+  // Illegal header——构造前防御性 strip（存量数据自愈，不要求用户重输）
   const headers: Record<string, string> = {}
-  if (config.credential) headers.Authorization = `Bearer ${config.credential}`
+  const cleanCredential = (config.credential ?? '').replace(/^[\s\uFEFF\u00A0]+|[\s\uFEFF\u00A0]+$/g, '')
+  if (cleanCredential) headers.Authorization = `Bearer ${cleanCredential}`
 
   // 主路径：Streamable HTTP
   const primaryTransport = new StreamableHTTPClientTransport(new URL(config.commandOrUrl), {

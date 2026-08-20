@@ -98,7 +98,11 @@ export function registerMcpIpc() {
       if (dto.deviceIds.some((d) => typeof d !== 'string' || !d)) throw new Error('参数无效：deviceIds 元素')
     }
     // 业务拒绝（D-04 绑定冲突等）走 { ok:false, error }，不以异常形式抛给 renderer
-    return McpService.saveConfig(dto)
+    // Bug A（生产实测）：粘贴引入的 \t/\n 前后缀致 http Authorization 非法 header——
+    // 保存入口 trim（新数据干净）；全空白 credential 归一为 null（清空）
+    const credential =
+      dto.credential != null && dto.credential.trim() !== '' ? dto.credential.trim() : null
+    return McpService.saveConfig({ ...dto, commandOrUrl: dto.commandOrUrl.trim(), credential })
   }))
 
   // 删除（Popconfirm；mcp_device_rel 随 FK CASCADE 级联）
@@ -150,7 +154,7 @@ export function registerMcpIpc() {
       if (!temp || typeof temp !== 'object') throw new Error('参数无效：temp')
       if (!VALID_TYPES.includes(temp.type)) throw new Error(`参数无效：type 必须是 ${VALID_TYPES.join('/')}`)
       const commandOrUrl = typeof temp.commandOrUrl === 'string' && temp.commandOrUrl.trim() !== ''
-        ? temp.commandOrUrl
+        ? temp.commandOrUrl.trim() // Bug A：测试入口同步 trim（未保存表单值）
         : base?.commandOrUrl
       if (typeof commandOrUrl !== 'string' || commandOrUrl.trim() === '') {
         throw new Error('参数无效：commandOrUrl 不能为空')
@@ -193,7 +197,8 @@ export function registerMcpIpc() {
         if (typeof temp.credential !== 'string' || temp.credential.length > MAX_ENV_VALUE_LENGTH) {
           throw new Error('参数无效：credential')
         }
-        credential = temp.credential
+        // Bug A：明文凭证即抛即用前 trim；全空白归一为 null（清空）
+        credential = temp.credential.trim() !== '' ? temp.credential.trim() : null
       }
       config = { type: temp.type, commandOrUrl, args, env, credential }
     } else if (base) {

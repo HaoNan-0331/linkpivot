@@ -87,6 +87,60 @@ describe('WR-01：mcp:save credential 长度上限（与 temp 路径同标准 20
   })
 })
 
+describe('Bug A（生产实测）：credential / commandOrUrl 保存与测试入口防御性 trim', () => {
+  const baseDto = { name: 'cfg', type: 'http', commandOrUrl: 'http://x' } as const
+
+  it('mcp:save：credential 带 \\t\\n 前后缀 → 落库前被 trim', () => {
+    const save = handlers.get('mcp:save')!
+    save({}, { ...baseDto, credential: '\ttoken-abc \n' })
+    expect(McpService.saveConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ credential: 'token-abc' })
+    )
+  })
+
+  it('mcp:save：commandOrUrl 带首尾空白 → 落库前被 trim', () => {
+    const save = handlers.get('mcp:save')!
+    save({}, { ...baseDto, commandOrUrl: '  http://x/y\r\n' })
+    expect(McpService.saveConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ commandOrUrl: 'http://x/y' })
+    )
+  })
+
+  it('mcp:save：credential 全空白 → 视为清空（null），不留纯空白脏值', () => {
+    const save = handlers.get('mcp:save')!
+    save({}, { ...baseDto, credential: ' \t ' })
+    expect(McpService.saveConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ credential: null })
+    )
+  })
+
+  it('temp 测试通道：credential / commandOrUrl 带首尾空白 → 进 runTest 前被 trim', async () => {
+    const test = handlers.get('mcp:testConnection')! as (...a: unknown[]) => Promise<unknown>
+    await test({}, {
+      testId: 't-12345678',
+      temp: { type: 'http', commandOrUrl: ' http://dirty/mcp\t', credential: '\n tok-dirty ' },
+    })
+    expect(runTest).toHaveBeenCalledWith(
+      't-12345678',
+      expect.objectContaining({ commandOrUrl: 'http://dirty/mcp', credential: 'tok-dirty' }),
+      expect.anything()
+    )
+  })
+
+  it('temp 测试通道：credential 全空白 → 清空为 null', async () => {
+    const test = handlers.get('mcp:testConnection')! as (...a: unknown[]) => Promise<unknown>
+    await test({}, {
+      testId: 't-12345678',
+      temp: { type: 'http', commandOrUrl: 'http://x', credential: ' \n\t' },
+    })
+    expect(runTest).toHaveBeenCalledWith(
+      't-12345678',
+      expect.objectContaining({ credential: null }),
+      expect.anything()
+    )
+  })
+})
+
 describe('WR-03：temp 测试（configId+temp）不污染已存配置策略缓存/测试记录', () => {
   it('configId + temp 组合成功 → 不 saveToolCache / 不 recordTestResult（未保存的表单值）', async () => {
     const test = handlers.get('mcp:testConnection')! as (...a: unknown[]) => Promise<unknown>

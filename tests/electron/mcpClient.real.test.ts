@@ -105,6 +105,23 @@ describe('mcpClient 真路径（stdio 三路径 + http 双形态 + 异常分支�
     }
   }, 30000)
 
+  it('d3) Bug A：credential 带 \\t\\n 前后缀 → header 构造前被 trim（存量脏数据自愈）', async () => {
+    const srv = await startMockHttpMcpServer({ pages: 1 })
+    try {
+      const res = await testConnection('t-d3', {
+        type: 'http',
+        commandOrUrl: `http://127.0.0.1:${srv.port}/mcp`,
+        args: [], env: {}, credential: '\tsecret-token-12345\r\n'
+      })
+      expect(res.ok).toBe(true)
+      // 对端收到的 Authorization 必须是干净 Bearer（无任何空白字符）
+      expect(srv.authHeaders).toContain('Bearer secret-token-12345')
+      for (const h of srv.authHeaders) expect(h).toBe(h.trim())
+    } finally {
+      await srv.close()
+    }
+  }, 30000)
+
   it('d2) SSE-only + query string 对端：显式 fallback 握手成功（c8a4848 回归锁）', async () => {
     const srv = await startMockHttpMcpServer({ sseOnly: true, pages: 1 })
     try {
