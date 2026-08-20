@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest'
 import { execSync } from 'child_process'
 import fs from 'fs'
+import os from 'os'
+import path from 'path'
+import http from 'http'
 
 /**
  * Phase 21 Plan 21-05 Task 2 —— mcpClient 真路径三分支测试（SC3/SC4/SC5）。
@@ -251,5 +254,70 @@ describe('mcpClient 真路径（stdio 三路径 + http 双形态 + 异常分支�
     await new Promise((r) => setTimeout(r, 1500))
     expect(McpProcessRegistry.listActive()).toEqual([])
     await closeMcpConnection('t-l')
+  }, 30000)
+
+  // ---- 24-04 gap 修复回归锁（Gap #1 无 Node 分诊 / Gap #2 HTTP 401 透出）----
+
+  it('m) Gap #1 无 Node.js 环境：npx + 空 PATH → 报错含「可能未安装 Node.js」且保留底层错误', async () => {
+    // 复现机制：buildChildEnv 中用户 env 覆盖 SAFE_BASE 拷贝的 PATH → cross-spawn 在空 PATH 下
+    // 解析不到 npx；npx 分支无 ELECTRON_RUN_AS_NODE 兜底 → 直接落 fail('stdio 连接失败')——精准命中分诊点
+    const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'empty-path-'))
+    try {
+      const res = await testConnection('t-m', {
+        type: 'stdio',
+        commandOrUrl: 'npx',
+        args: ['-y', '@modelcontextprotocol/server-everything'],
+        env: { PATH: emptyDir },
+        credential: null
+      })
+      expect(res.ok).toBe(false)
+      if (!res.ok) {
+        // 针对性中文提示（command 属 node 工具链清单）
+        expect(res.error.reason).toContain('可能未安装 Node.js')
+        // 底层错误线索不吞（ENOENT 或 CONNECTION_CLOSED 竞态形态任一）
+        expect(
+          res.error.reason.includes('ENOENT') ||
+          res.error.reason.includes('Connection closed') ||
+          String(res.error.errno ?? '').includes('ENOENT')
+        ).toBe(true)
+      }
+    } finally {
+      try { fs.rmSync(emptyDir, { recursive: true, force: true }) } catch { /* 清理容错 */ }
+    }
+  }, 30000)
+
+  it('n) Gap #2 HTTP 401 被掩蔽：真实状态码 401 与服务端 message 透出（不被 /sse 探测 405 掩盖）', async () => {
+    // 复刻真机掩盖链路：POST 主端点 401 + JSON body → SDK transport 内部 GET /mcp/sse 探测 → 405
+    const server = http.createServer((req, res) => {
+      if (req.method === 'POST') {
+        res.writeHead(401, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: { message: 'Invalid or expired token' } }))
+        return
+      }
+      // SDK 内部 legacy SSE 探测（GET …/sse）与任意 GET：405
+      res.writeHead(405).end()
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const port = (server.address() as { port: number }).port
+    try {
+      const res = await testConnection('t-n', {
+        type: 'http',
+        commandOrUrl: `http://127.0.0.1:${port}/mcp`,
+        args: [], env: {}, credential: 'wrong-token'
+      })
+      expect(res.ok).toBe(false)
+      if (!res.ok) {
+        // 结果导向断言：401 作为真实状态码透出 + 服务端 message 可见
+        expect(res.error.reason).toContain('401')
+        expect(res.error.reason).toContain('Invalid or expired token')
+        // 405 不得作为主状态码掩盖 401（401 必须在 405 之前出现或 405 不出现）
+        const i401 = res.error.reason.indexOf('401')
+        const i405 = res.error.reason.indexOf('405')
+        expect(i401).toBeGreaterThanOrEqual(0)
+        expect(i405 === -1 || i401 < i405).toBe(true)
+      }
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
   }, 30000)
 })
