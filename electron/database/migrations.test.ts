@@ -161,12 +161,11 @@ describe('v11 ai_system_logs CHECK widen security 迁移', () => {
     expect(initDdl).toContain(expectedStatusCheck)
   })
 
-  it('4. MIGRATION_HEAD=16（注册完整性静态守卫，防 bump 漏改）', async () => {
+  it('4. MIGRATION_HEAD=21（注册完整性静态守卫，防 bump 漏改）', async () => {
     const mod = await import('./migrations')
-    // Phase 18 18-02：v14 注册后 MIGRATION_HEAD=14；
-    // Phase 20 20-01：v15 prompt_overrides + mcp_configs 两表迁移注册，HEAD 从 14 bump 到 15；
-    // Phase 21 21-01：v16 mcp_configs 一对多重建注册，HEAD 从 15 bump 到 16
-    expect(mod.MIGRATION_HEAD).toBe(16)
+    // Phase 18 18-02：v14；Phase 20 20-01：v15；Phase 21 21-01：v16；
+    // Phase 22/23 期 v17~v21 逐版 bump，当前 HEAD=21（24-03 收官复核随实际值校正）
+    expect(mod.MIGRATION_HEAD).toBe(21)
   })
 
   it('5. v13 双路径 DDL 一致：v13 ALTER 列定义串与 init.ts 三处 fresh-install DDL 特征串逐字一致', () => {

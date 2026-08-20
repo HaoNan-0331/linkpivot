@@ -14,6 +14,10 @@ class MemDb {
     if (/^SELECT \* FROM devices WHERE id = \?$/.test(norm)) {
       return { get: () => this.deviceRow }
     }
+    // Phase 23-03：getDeviceByIdInternal 改 LEFT JOIN mcp_device_rel 投影 has_mcp
+    if (/^SELECT d\.\*, \(r\.device_id IS NOT NULL\) AS has_mcp FROM devices d LEFT JOIN mcp_device_rel r ON r\.device_id = d\.id WHERE d\.id = \?$/.test(norm)) {
+      return { get: () => (this.deviceRow ? { ...this.deviceRow, has_mcp: 0 } : null) }
+    }
     throw new Error('mock DB 未实现的语句: ' + sql)
   }
 }
