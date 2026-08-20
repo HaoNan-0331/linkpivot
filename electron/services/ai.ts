@@ -780,6 +780,21 @@ export function stripMcpMarkers(reply: string): string {
 }
 
 /**
+ * WR-03 fix（Phase 23 code-review）：剥离 [EXP_SEARCH]/[KB_SEARCH] 协议标记——
+ * 完整段（含闭合，DOTALL 非贪婪）、未闭合开标签沿标签到行尾、孤立闭合标签三层兜底
+ * （照 stripMcpMarkers 惯例）。二次回复模型不服从提示词时，死标记绝不漏进气泡。
+ */
+export function stripExpKbSearchMarkers(reply: string): string {
+  if (!/\[(?:EXP|KB)_SEARCH\]/.test(reply) && !/\[\/(?:EXP|KB)_SEARCH\]/.test(reply)) return reply
+  return reply
+    .replace(/\[EXP_SEARCH\][\s\S]*?\[\/EXP_SEARCH\]/g, '')
+    .replace(/\[KB_SEARCH\][\s\S]*?\[\/KB_SEARCH\]/g, '')
+    .replace(/\[(?:EXP|KB)_SEARCH\][^\n]*\n?/g, '')
+    .replace(/\[\/(?:EXP|KB)_SEARCH\]/g, '')
+    .trim()
+}
+
+/**
  * WR-06 fix（Phase 22 code-review）：剥离 [CMD(:设备名)]...[/CMD] 协议标记（保留
  * 命令体文本供参考），未闭合开标签沿标签到行尾一并移除、孤立闭合标签移除；
  * 命中标记时追加「未执行的命令请求」提示——混合协议收尾回复绝不带标记原文进气泡。
@@ -853,10 +868,12 @@ async function runMcpToolLoop(
   for (;;) {
     const { valid: mcpCalls, hadMarker } = parseMcpToolCalls(reply, ctx.mcpContexts)
     if (mcpCalls.length === 0) {
-      if (!hadMarker) return { kind: 'final', reply }
+      // WR-05 fix：循环内回复不触发 EXP/KB 检索（嵌套异步复杂度，planner 裁决二期），
+      // 但至少 fail-safe 剥离标记——死标记不得经循环收尾漏进气泡。
+      if (!hadMarker) return { kind: 'final', reply: stripExpKbSearchMarkers(reply) }
       // 有标记但全无效（禁用/捏造/畸形）→ 回注不可用提示重试一次（Bug 2）；顽固输出 strip 后 final
       if (invalidPrompted) {
-        return { kind: 'final', reply: stripMcpMarkers(reply) || MCP_PARSE_FAIL_TEXT }
+        return { kind: 'final', reply: stripExpKbSearchMarkers(stripMcpMarkers(reply)) || MCP_PARSE_FAIL_TEXT }
       }
       invalidPrompted = true
       state.extra.push({ role: 'assistant', content: reply })
@@ -868,7 +885,7 @@ async function runMcpToolLoop(
     if (state.rounds >= maxRounds) {
       if (limitPrompted) {
         // 收尾回复仍顽固输出标记：剥离后作为最终回答（不再发起调用，防死循环）
-        return { kind: 'final', reply: stripMcpMarkers(reply) || MCP_PARSE_FAIL_TEXT }
+        return { kind: 'final', reply: stripExpKbSearchMarkers(stripMcpMarkers(reply)) || MCP_PARSE_FAIL_TEXT }
       }
       limitPrompted = true
       state.extra.push({ role: 'assistant', content: reply })
@@ -1033,7 +1050,7 @@ export async function confirmCommand(
     // WR-06 fix（Phase 22 code-review）：收尾回复若混用 [CMD] 协议标记，本分支无法
     // 复用 chat() 的完整命令解析/确认管线——至少剥离标记 + 显式提示「含未执行的
     // 命令请求」，绝不把协议垃圾原文漏进气泡（fail-safe：未执行，但用户可感知）。
-    const finalReply = stripCmdMarkersWithNotice(res.reply)
+    const finalReply = stripCmdMarkersWithNotice(stripExpKbSearchMarkers(res.reply))
     saveChatMessage('assistant', finalReply, null, batch.sessionId)
     if (batch.expReferences && batch.expReferences.length > 0) {
       return buildExpAnswerPayload(finalReply, batch.expReferences)
@@ -1332,6 +1349,10 @@ export async function chat(
   const kbSearchMatch = aiReply.match(/\[KB_SEARCH\](.*?)\[\/KB_SEARCH\]/s)
   let kbReferences: Array<{ docTitle: string; chunkTitle: string; docId: string }> = []
   let finalAiReply = aiReply
+  // WR-02/WR-05 fix（Phase 23 code-review）：KB/EXP 回注轮收敛到共享累积上下文——
+  // 后续二段式（EXP/qOnly 重试）与 MCP 循环 loopCtx.fullMessages 都以此为基底，
+  // 模型不再丢失已注入的文档/经验上下文。
+  const extraContext: Array<{ role: string; content: string }> = []
 
   if (kbSearchMatch) {
     const searchQuery = kbSearchMatch[1].trim()
@@ -1361,24 +1382,18 @@ export async function chat(
           docId: r.document_id,
         }))
 
-        // Feed results back to AI for final answer
-        const followUpMessages = [
-          ...fullMessages,
-          { role: 'assistant', content: aiReply },
-          {
-            role: 'user',
-            content: `以下是资料库检索到的相关文档片段（关键词: "${searchQuery}"）：\n\n${kbContext}\n\n请基于以上文档内容回答用户的问题。如果文档中没有相关信息，请说明。回答中不要包含 [KB_SEARCH] 标记。`,
-          },
-        ]
-        finalAiReply = await callAI(config, followUpMessages)
+        // Feed results back to AI for final answer（WR-02：回注轮入共享 extraContext）
+        extraContext.push({ role: 'assistant', content: aiReply })
+        extraContext.push({
+          role: 'user',
+          content: `以下是资料库检索到的相关文档片段（关键词: "${searchQuery}"）：\n\n${kbContext}\n\n请基于以上文档内容回答用户的问题。如果文档中没有相关信息，请说明。回答中不要包含 [KB_SEARCH] 标记。`,
+        })
+        finalAiReply = await callAI(config, [...fullMessages, ...extraContext])
       } else {
         // No results found — let AI know
-        const followUpMessages = [
-          ...fullMessages,
-          { role: 'assistant', content: aiReply },
-          { role: 'user', content: `资料库中未找到与"${searchQuery}"相关的文档。请基于你已有的知识回答，并说明资料库中暂无相关文档。回答中不要包含 [KB_SEARCH] 标记。` },
-        ]
-        finalAiReply = await callAI(config, followUpMessages)
+        extraContext.push({ role: 'assistant', content: aiReply })
+        extraContext.push({ role: 'user', content: `资料库中未找到与"${searchQuery}"相关的文档。请基于你已有的知识回答，并说明资料库中暂无相关文档。回答中不要包含 [KB_SEARCH] 标记。` })
+        finalAiReply = await callAI(config, [...fullMessages, ...extraContext])
       }
     } catch {
       // KB search failed — strip the tag and use original reply
@@ -1405,9 +1420,12 @@ export async function chat(
           source_session_id: e.source_session_id ?? null,
           unsupported: e.unsupported,
         }))
+        // WR-02 fix：assistant 轮用改写后的最终回复（KB 命中时 finalAiReply 是基于
+        // KB 回注的第二次回复），KB 轮消息已在共享 extraContext 中——历史自洽。
         const followUpMessages = [
           ...fullMessages,
-          { role: 'assistant', content: aiReply },
+          ...extraContext,
+          { role: 'assistant', content: finalAiReply },
           {
             role: 'user',
             content: `以下是经验库中检索到的相关经验（关键词: "${expQuery}"）：\n\n${expContext}\n\n请参考以上经验回答用户的问题，回答末尾无需标注来源。如果经验中没有相关信息，请说明。回答中不要包含 [EXP_SEARCH] 标记。`,
@@ -1418,7 +1436,8 @@ export async function chat(
         // 未命中回注说明（无 expReferences 空卡片）
         const followUpMessages = [
           ...fullMessages,
-          { role: 'assistant', content: aiReply },
+          ...extraContext,
+          { role: 'assistant', content: finalAiReply },
           { role: 'user', content: `经验库中未找到与"${expQuery}"相关的经验。请基于你已有的知识回答，并说明经验库中暂无相关经验。回答中不要包含 [EXP_SEARCH] 标记。` },
         ]
         finalAiReply = await callAI(config, followUpMessages)
@@ -1429,6 +1448,10 @@ export async function chat(
     }
   }
 
+  // WR-03 fix：二次回复 fail-safe 剥离残留 [EXP_SEARCH]/[KB_SEARCH] 标记（提示词
+  // 约束非强制，模型不服从时死标记不得漏进 saveChatMessage/用户气泡）。
+  finalAiReply = stripExpKbSearchMarkers(finalAiReply)
+
   // ---- Phase 22（22-03）MCP 工具调用分支（[MCP_TOOL_CALL] 文本标记协议）----
   // 解析 fail-closed（T-22-09）：畸形/未知 server/未知工具不入执行；
   // 三档确认映射（MCS-02/D-04）：classifyBatch 全 execute → 整批直执；任一 confirm →
@@ -1438,7 +1461,9 @@ export async function chat(
     //（上限 ai_config.mcp_max_rounds 可调，超限回注上限提示取收尾回答）；confirm 档每轮独立弹窗，
     // 确认后带循环状态（轮次 + 累积回注）续跑。既有单轮行为不变（rounds=0 时回落原路径）。
     const loopCtx: McpLoopCtx = {
-      fullMessages,
+      // WR-05 fix：MCP 循环上下文以 KB/EXP 回注轮为基底（原样传原始数组会丢已注入
+      // 的文档/经验上下文，多轮工具调用期间与单轮行为不一致）。
+      fullMessages: [...fullMessages, ...extraContext],
       config,
       execMode: execMode as ExecMode,
       deviceNames: targetDevices.map((d) => d.name),
@@ -1550,14 +1575,15 @@ export async function chat(
       }
       qOnlyPrompted = true
       const qNames = [...new Set(blocked.map((b) => b.deviceName))].join('、')
-      finalAiReply = await callAI(config, [
+      finalAiReply = stripExpKbSearchMarkers(await callAI(config, [
         ...fullMessages,
+        ...extraContext,
         { role: 'assistant', content: finalAiReply },
         {
           role: 'user',
           content: `以下 [CMD] 命令标记指向的设备无命令执行通道（仅可问答），已被系统拦截未执行：${qNames}。请直接回答用户问题，或仅对有执行通道的设备输出 [CMD] 命令标记；不要再对无命令执行通道的设备输出 [CMD] 标记。`,
         },
-      ])
+      ]))
       commands.length = 0
       const reParse = /\[CMD(?::([^\]]+))?\](.*?)\[\/CMD\]/g
       let m2: RegExpExecArray | null
@@ -1620,9 +1646,11 @@ export async function chat(
       command: cmd,
       status: safety.allowed ? (execMode === 'auto' ? 'approved' : 'pending') : 'rejected',
       mode: execMode,
-      aiReason: aiReply.substring(0, 500),
+      // WR-06 fix：审计留痕用最终改写后回复（命令解析基于 finalAiReply，二者同源），
+      // 不用带 [EXP_SEARCH]/[KB_SEARCH] 原文的第一次中间态。
+      aiReason: finalAiReply.substring(0, 500),
       promptText: JSON.stringify(fullMessages, null, 2),
-      aiResponse: aiReply,
+      aiResponse: finalAiReply,
     })
 
     if (!safety.allowed) {
@@ -1644,9 +1672,25 @@ export async function chat(
   // No allowed commands — return AI reply + rejection notices
   if (allowedCommands.length === 0) {
     const rejectionText = rejectedCommands.map((r) => `命令 [${r.deviceName}] ${r.cmd} 被拒绝: ${r.reason}`).join('\n')
-    const fullReply = aiReply + '\n\n' + rejectionText
+    // WR-04 fix：用最终改写后回复（EXP 回注/qOnly 重试版本，已 strip 标记），不用
+    // 原始 aiReply（含 [EXP_SEARCH]/[CMD] 原文中间态）；并补齐 references 包装——
+    // 该路径不再断流（与其余三条返回路径同构）。
+    const fullReply = finalAiReply + '\n\n' + rejectionText
     saveChatMessage('user', messages[messages.length - 1]?.content || '', null, sessionId)
     saveChatMessage('assistant', fullReply, null, sessionId)
+    if (kbReferences.length > 0 && expReferences.length > 0) {
+      const refs = [
+        ...kbReferences.map((r: any) => ({ kind: 'kb', docTitle: r.docTitle, chunkTitle: r.chunkTitle, docId: r.docId })),
+        ...mapExpRefs(expReferences),
+      ]
+      return JSON.stringify({ type: 'exp_answer', content: fullReply, references: refs })
+    }
+    if (kbReferences.length > 0) {
+      return JSON.stringify({ type: 'kb_answer', content: fullReply, references: kbReferences })
+    }
+    if (expReferences.length > 0) {
+      return buildExpAnswerPayload(fullReply, expReferences)
+    }
     return fullReply
   }
 
@@ -1657,7 +1701,9 @@ export async function chat(
       commands: allowedCommands,
       rejectedCommands,
       fullMessages,
-      aiReply,
+      // WR-06 fix：批次与弹窗解释用最终改写后回复（qOnly 重试/EXP 回注后的版本，
+      // 已 strip 标记）——confirmCommand 兜底分析同源受益。
+      aiReply: finalAiReply,
       config,
       deviceNames: targetDevices.map((d) => d.name),
       sessionId: sessionId || null,
@@ -1670,7 +1716,7 @@ export async function chat(
       execId: batchId,
       commands: allowedCommands.map((c) => ({ deviceName: c.deviceName, command: c.command })),
       rejectedCommands: rejectedCommands.map((r) => ({ command: r.cmd, reason: r.reason })),
-      aiExplanation: aiReply,
+      aiExplanation: finalAiReply,
     })
     saveChatMessage('user', messages[messages.length - 1]?.content || '', null, sessionId)
     saveChatMessage('assistant', `等待确认 ${allowedCommands.length} 条命令...`, null, sessionId)

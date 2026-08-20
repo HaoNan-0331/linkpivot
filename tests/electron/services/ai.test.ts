@@ -120,9 +120,10 @@ vi.mock('../../../electron/database/connection', () => ({
 }))
 
 import { encField } from '../../../electron/utils/crypto'
-import { chat, setAiMasterKey, isDeviceExecutable } from '../../../electron/services/ai'
+import { chat, setAiMasterKey, isDeviceExecutable, stripExpKbSearchMarkers } from '../../../electron/services/ai'
 import { isCommandAllowed } from '../../../electron/services/commandSafety'
 import { AI_QONLY_EXEC_BAN } from '../../../electron/services/promptRegistry'
+import { search as kbSearch } from '../../../electron/services/knowledgeBaseService'
 
 /** fetch 队列 mock：callAI 逐次消费 replies */
 function queueReplies(...replies: string[]) {
@@ -380,5 +381,95 @@ describe('设备类型注入 + 命令风格指引（Phase 23 23-03 复验反馈�
     await chat([{ role: 'user', content: '你好' }], undefined, null)
     const sys = JSON.parse((fetchMock.mock.calls[0][1] as any).body).messages[0].content
     expect(sys).not.toContain(CMD_STYLE_TEXT)
+  })
+})
+
+// ---------- Phase 23 code-review 回归（WR-02 ~ WR-06） ----------
+
+const KB_ROWS = {
+  rows: [
+    { content: 'ARP 表异常时先查接口计数。', document: { title: '排障手册' }, title: 'ARP 章节', document_id: 'doc1', images: [] },
+  ],
+}
+
+describe('Phase 23 code-review 回归（WR-02 ~ WR-06）', () => {
+  afterEach(() => {
+    vi.mocked(isCommandAllowed).mockReturnValue({ allowed: false, reason: 'mock 拒绝' } as any)
+    vi.mocked(kbSearch).mockReset()
+    vi.mocked(kbSearch).mockResolvedValue({ rows: [] } as any)
+  })
+
+  it('WR-02：KB+EXP 同轮命中，EXP 回注历史含 KB 轮 user 消息且 assistant 轮用改写后回复（自洽）', async () => {
+    vi.mocked(kbSearch).mockResolvedValue(KB_ROWS as any)
+    retrieveForAnswerMock.mockResolvedValue(EXP_HIT)
+    insertDevice('a1', '可执行A', 'ssh')
+    const fetchMock = queueReplies(
+      '先查文档 [KB_SEARCH]ARP 异常[/KB_SEARCH]',
+      '根据文档：查接口计数。再查经验 [EXP_SEARCH]ARP 异常[/EXP_SEARCH]',
+      '综合文档与经验：先 display arp 再查接口计数。'
+    )
+    const out = await chat([{ role: 'user', content: 'ARP 异常怎么排查' }], ['a1'], null)
+    // 第三次 callAI 上下文：KB 轮 user 消息 + assistant 轮为 KB 改写后回复 + EXP user 消息
+    const third = JSON.parse((fetchMock.mock.calls[2][1] as any).body)
+    expect(third.messages.some((m: any) => m.role === 'user' && m.content.includes('资料库检索到的相关文档片段'))).toBe(true)
+    expect(third.messages.some((m: any) => m.role === 'assistant' && m.content.includes('根据文档：查接口计数'))).toBe(true)
+    expect(third.messages.some((m: any) => m.role === 'user' && m.content.includes('经验库中检索到的相关经验'))).toBe(true)
+    // 混合 references：kb + experience（Phase 11 WR-01 合并路径）
+    const payload = JSON.parse(out)
+    expect(payload.type).toBe('exp_answer')
+    expect(payload.references).toHaveLength(2)
+  })
+
+  it('WR-03：二次回复仍含 [EXP_SEARCH] 标记 → fail-safe 剥离，气泡零残留', async () => {
+    retrieveForAnswerMock.mockResolvedValue(EXP_MISS)
+    queueReplies(
+      '查经验 [EXP_SEARCH]q[/EXP_SEARCH]',
+      '结果 [EXP_SEARCH]再查一个[/EXP_SEARCH] 收尾'
+    )
+    const out = await chat([{ role: 'user', content: '问题' }], ['dev1'], null)
+    expect(out).not.toContain('[EXP_SEARCH]')
+    expect(out).not.toContain('[&#91;EXP_SEARCH&#93;')
+    expect(out).toContain('结果')
+    expect(out).toContain('收尾')
+  })
+
+  it('WR-04：命令全拒路径用最终回复 + 补 expReferences 包装（断流修复）', async () => {
+    retrieveForAnswerMock.mockResolvedValue(EXP_HIT)
+    insertDevice('a1', '可执行A', 'ssh')
+    // 默认 isCommandAllowed mock = 拒绝
+    queueReplies(
+      '先查经验 [EXP_SEARCH]ARP 异常[/EXP_SEARCH]',
+      '根据经验分析如下 [CMD:可执行A] display version[/CMD]'
+    )
+    const out = await chat([{ role: 'user', content: '查版本' }], ['a1'], null)
+    const payload = JSON.parse(out)
+    expect(payload.type).toBe('exp_answer')
+    expect(payload.content).toContain('根据经验分析如下')
+    expect(payload.content).toContain('被拒绝')
+    expect(payload.content).not.toContain('[EXP_SEARCH]')
+    expect(payload.references).toHaveLength(1)
+  })
+
+  it('WR-06：confirm 弹窗 aiExplanation 用最终回复（无 EXP 标记残留）', async () => {
+    retrieveForAnswerMock.mockResolvedValue(EXP_HIT)
+    insertDevice('a1', '可执行A', 'ssh')
+    vi.mocked(isCommandAllowed).mockReturnValue({ allowed: true, reason: '' } as any)
+    queueReplies(
+      '先查经验 [EXP_SEARCH]ARP 异常[/EXP_SEARCH]',
+      '基于经验建议执行 [CMD:可执行A] display version[/CMD]'
+    )
+    const out = await chat([{ role: 'user', content: '查版本' }], ['a1'], null)
+    const payload = JSON.parse(out)
+    expect(payload.type).toBe('confirm_required')
+    expect(payload.aiExplanation).toBe('基于经验建议执行 [CMD:可执行A] display version[/CMD]')
+    expect(payload.aiExplanation).not.toContain('[EXP_SEARCH]')
+  })
+
+  it('stripExpKbSearchMarkers 单元：完整段/未闭合开标签/孤立闭合标签三层剥离（WR-03/WR-05）', () => {
+    expect(stripExpKbSearchMarkers('前 [EXP_SEARCH]kw[/EXP_SEARCH] 后')).toBe('前  后')
+    expect(stripExpKbSearchMarkers('前 [KB_SEARCH]kw[/KB_SEARCH] 后')).toBe('前  后')
+    expect(stripExpKbSearchMarkers('未闭合 [EXP_SEARCH]kw 到行尾\n第二行')).toBe('未闭合 第二行')
+    expect(stripExpKbSearchMarkers('孤立闭合 [/EXP_SEARCH] 残留')).toBe('孤立闭合  残留')
+    expect(stripExpKbSearchMarkers('干净回复')).toBe('干净回复')
   })
 })
