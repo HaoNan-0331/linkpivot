@@ -1,6 +1,6 @@
 {
   "name": "network-topology-manager",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "网络拓扑管理工具",
   "main": "dist-electron/main.js",
   "scripts": {
