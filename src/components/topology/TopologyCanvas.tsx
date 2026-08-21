@@ -55,12 +55,11 @@ interface TopologyCanvasProps {
   onDeleteSelected?: () => void
   onEditSelectedNode?: () => void
   onSelectionChange?: (nodeIds: string[], edgeIds: string[]) => void
-  snapEnabled?: boolean
   // Phase 26 / D-13：视野中心（画布坐标）ref 注出口——供新增设备最近空位落点计算
   viewportCenterRef?: { current: { x: number; y: number } }
   // Phase 26 / D-14 高频拖拽路径：读 nodesRef.current（ref-mirror 红线，无闭包 stale）
   nodesRef?: { current: TopologyNode[] }
-  // Phase 26 / D-05：参考线/网格吸附命中——拖动节点落点回写（仅变更节点换引用）
+  // Phase 26 / D-05：参考线吸附命中——拖动节点落点回写（仅变更节点换引用）
   onGuideSnap?: (nodeId: string, pos: Point) => void
   // Phase 26 / D-04：推挤让位映射（被压节点 → 新位置，拖动节点永不在内）
   onPushAside?: (moves: Map<string, Point>) => void
@@ -131,7 +130,6 @@ export default function TopologyCanvas({
   onDeleteSelected,
   onEditSelectedNode,
   onSelectionChange,
-  snapEnabled = false,
   viewportCenterRef,
   nodesRef,
   onGuideSnap,
@@ -196,8 +194,8 @@ export default function TopologyCanvas({
 
   // Phase 26 / 26-04 再工 spec ①⑤（拖拽中，高频路径——只做轻量事）：
   // 每帧仅「节点跟鼠标走（RF 内置）+ 参考线吸附判定」，不做推挤/不移动其它节点。
-  // 次序规则：参考线吸附命中 > 网格对齐（RF 内置 snapToGrid={snapEnabled} 承担，
-  // 自定义路径 grid 传 null 防双重 snap/互相掩盖）> 自由落点。
+  // 次序规则：参考线吸附命中 > 自由落点（D-11 网格吸附已移除，checkpoint round 3
+  // 用户裁决「没有太大意义」）。
   // guides setState 仅在段内容变化时触发（浅比较段数/坐标，非每帧 set 新数组）。
   // 全程读 nodesRef.current（ref-mirror 红线），无闭包 state 读取。
   const handleNodeDrag = useCallback(
@@ -208,7 +206,7 @@ export default function TopologyCanvas({
       const others = all.filter((n) => n.id !== node.id).map(toLayoutNode)
       if (others.length === 0) return
       const candidate = { x: node.position.x, y: node.position.y }
-      const res = snapWithAntiOverlap(candidate, node.id, others, null)
+      const res = snapWithAntiOverlap(candidate, node.id, others)
       if (res.snapped && (res.pos.x !== candidate.x || res.pos.y !== candidate.y)) {
         onGuideSnap(node.id, res.pos)
         setGuidesIfChanged(
@@ -230,7 +228,6 @@ export default function TopologyCanvas({
   // 鼠标松开时若拖动节点落点与其它设备重叠 → 被 overlapping 的设备弹开到最近空位
   // （resolvePushAside 红线：拖动节点永不在 moves 内，落点不动）。150ms 平滑滑开
   // 动画由 DeviceNode CSS transition 承担（dragging=false 时生效）。
-  // 网格对齐已由 RF 内置 snapToGrid 在拖拽过程完成，松手不再二次 snap。
   const handleNodeDragStop = useCallback(
     (_event: MouseEvent, node: TopologyNode) => {
       setGuidesIfChanged([])
@@ -269,8 +266,6 @@ export default function TopologyCanvas({
         onNodeDragStop={handleNodeDragStop}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
-        snapToGrid={snapEnabled}
-        snapGrid={[20, 20]}
         fitView
         defaultEdgeOptions={{
           type: 'edgeWithInterfaces',

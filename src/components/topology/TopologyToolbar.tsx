@@ -7,7 +7,6 @@ import {
   ImportOutlined,
   ExportOutlined,
   ApartmentOutlined,
-  BorderOutlined,
 } from '@ant-design/icons'
 
 // Phase 19 / REN-02（P14）：字段 optional 化——与 TopologySummary 对齐，兼容持久化历史 JSON
@@ -29,8 +28,6 @@ interface TopologyToolbarProps {
   onOrganizeLayout: () => void
   // Phase 26 / 26-04 再工 spec ④：画布选中设备数——tooltip 动态文案
   selectedCount: number
-  snapEnabled: boolean
-  onToggleSnap: () => void
   isLayoutPreviewing: boolean
 }
 
@@ -45,8 +42,6 @@ export default function TopologyToolbar({
   onExport,
   onOrganizeLayout,
   selectedCount,
-  snapEnabled,
-  onToggleSnap,
   isLayoutPreviewing,
 }: TopologyToolbarProps) {
   const [newModalOpen, setNewModalOpen] = useState(false)
@@ -182,17 +177,7 @@ export default function TopologyToolbar({
           整理布局
         </Button>
       </Tooltip>
-      <Tooltip title="开启后拖放设备自动对齐 20px 网格，便于横平竖直手动排版；关闭则自由落点">
-        <Button
-          block
-          size="small"
-          icon={<BorderOutlined />}
-          type={snapEnabled ? 'primary' : 'default'}
-          onClick={onToggleSnap}
-        >
-          网格吸附
-        </Button>
-      </Tooltip>
+      {/* D-11 网格吸附按钮已移除（26-04 checkpoint round 3 用户裁决「没有太大意义」） */}
       <Button
         block
         size="small"

@@ -37,8 +37,6 @@ export default function TopologyPage() {
   // Phase 26 / D-08：单步快照（布局应用前捕获，逐节点浅拷 position，禁结构化共享）
   const layoutSnapshotRef = useRef<TopologyNode[] | null>(null)
   const [isLayoutPreviewing, setIsLayoutPreviewing] = useState(false)
-  // Phase 26 / D-11：网格吸附 toggle，默认关闭
-  const [snapEnabled, setSnapEnabled] = useState(false)
   // Phase 26 / D-13：视野中心（画布坐标）——由 TopologyCanvas 经 useStore 换算写入，供新增设备落点
   const viewportCenterRef = useRef({ x: 0, y: 0 })
   // FE-03 (D-5-4): ref-mirror 同步最新 nodes/edges，供注册一次但需读最新拓扑的回调读取，消除 stale closure。
@@ -352,12 +350,10 @@ export default function TopologyPage() {
       onExport: handleExport,
       onOrganizeLayout: handleOrganizeLayout,
       selectedCount: selectedNodeIds.size,
-      snapEnabled,
-      onToggleSnap: () => setSnapEnabled((v) => !v),
       isLayoutPreviewing,
     })
     return () => setToolbarState(null)
-  }, [topologies, currentTopologyId, handleTopologyChange, handleNew, saveTopology, handleDelete, handleImport, handleExport, handleOrganizeLayout, selectedNodeIds, snapEnabled, isLayoutPreviewing, setToolbarState])
+  }, [topologies, currentTopologyId, handleTopologyChange, handleNew, saveTopology, handleDelete, handleImport, handleExport, handleOrganizeLayout, selectedNodeIds, isLayoutPreviewing, setToolbarState])
 
   const handleConnect = useCallback(
     (connection: Connection, sourceInterface: string, targetInterface: string) => {
@@ -489,7 +485,6 @@ export default function TopologyPage() {
         onDeleteSelected={handleDeleteSelected}
         onEditSelectedNode={handleEditSelectedNode}
         onSelectionChange={handleCanvasSelectionChange}
-        snapEnabled={snapEnabled}
         viewportCenterRef={viewportCenterRef}
         nodesRef={nodesRef}
         onGuideSnap={handleGuideSnap}

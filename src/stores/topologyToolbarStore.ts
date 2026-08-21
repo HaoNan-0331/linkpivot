@@ -13,9 +13,7 @@ interface TopologyToolbarState {
   onOrganizeLayout: () => void
   // Phase 26 / 26-04 再工 spec ④：画布选中设备数——整理布局 tooltip 按选中态动态文案
   selectedCount: number
-  // Phase 26 / D-11：网格吸附 toggle（默认关闭）+ 预览态标记（防误离开拦截，T-26-03-03）
-  snapEnabled: boolean
-  onToggleSnap: () => void
+  // Phase 26 / D-11：网格吸附已移除（checkpoint round 3 用户裁决）；预览态标记（防误离开拦截，T-26-03-03）
   isLayoutPreviewing: boolean
 }
 

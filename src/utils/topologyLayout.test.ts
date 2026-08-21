@@ -241,17 +241,23 @@ describe('resolvePushAside', () => {
 })
 
 describe('snapWithAntiOverlap', () => {
-  it('网格 20 下 (37,51) → (40,60) snapped:true', () => {
+  // 26-04 checkpoint round 3：网格吸附整体移除（用户裁决「没有太大意义」），
+  // 仅保留参考线对齐（GUIDE_THRESHOLD）；无参考线候选时原样返回自由落点。
+  it('无参考线候选 → 原样返回候选坐标 snapped:false（网格吸附已移除）', () => {
     const r = snapWithAntiOverlap({ x: 37, y: 51 }, 'a', [])
-    expect(r.pos).toEqual({ x: 40, y: 60 })
-    expect(r.snapped).toBe(true)
+    expect(r.pos).toEqual({ x: 37, y: 51 })
+    expect(r.snapped).toBe(false)
   })
 
-  it('吸附点压第三节点 → 返回原坐标 snapped:false（D-05）', () => {
-    // (37,51) 吸附到 (40,60)，第三节点占住 (40,60) 区域
-    const others: LNode[] = [{ id: 'b', x: 30, y: 40 }]
-    const r = snapWithAntiOverlap({ x: 37, y: 51 }, 'a', others)
-    expect(r.pos).toEqual({ x: 37, y: 51 })
+  it('参考线候选落点压第三节点 → 放弃对齐返回原坐标 snapped:false（D-05）', () => {
+    // 节点 a 候选 (46,100)，b 左边 x=50 差 4 < 6 对齐候选 (50,100)；
+    // 第三节点 c 占住 (50,100) 区域 → 放弃对齐
+    const others: LNode[] = [
+      { id: 'b', x: 50, y: 200 },
+      { id: 'c', x: 46, y: 76 },
+    ]
+    const r = snapWithAntiOverlap({ x: 46, y: 100 }, 'a', others)
+    expect(r.pos).toEqual({ x: 46, y: 100 })
     expect(r.snapped).toBe(false)
   })
 

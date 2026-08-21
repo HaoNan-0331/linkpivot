@@ -327,16 +327,15 @@ export function resolvePushAside(
 /**
  * 吸附 + 防重叠次序判定（D-05 + D-11 参考线，26-04 再工 spec ⑤）：
  * 1) 先找 GUIDE_THRESHOLD 内的邻边/邻中心对齐候选（参考线对齐，优先级最高）；
- * 2) 否则按 grid 吸附（round 到 grid 倍数）；grid 为 null 时跳过网格吸附
- *    （网格对齐由 React Flow 内置 snapToGrid 承担，自定义路径禁用防双重 snap）；
- * 3) 候选落点若与第三节点重叠 → 放弃吸附，返回原 candidatePos + snapped:false
+ * 2) 候选落点若与第三节点重叠 → 放弃吸附，返回原 candidatePos + snapped:false
  *    （弹开让位优先于吸附，由调用方在松手时走 resolvePushAside）。
+ * 注：D-11 原网格吸附（grid 参数 + RF snapToGrid）已移除（26-04 checkpoint round 3
+ * 用户裁决「没有太大意义」），仅保留参考线对齐。
  */
 export function snapWithAntiOverlap(
   candidatePos: Point,
   draggedId: string,
   others: LayoutNode[],
-  grid: number | null = SNAP_GRID,
 ): { pos: Point; snapped: boolean } {
   const nodes = others.map(resolveNode).filter((n) => n.id !== draggedId)
 
@@ -377,14 +376,6 @@ export function snapWithAntiOverlap(
     }
   }
   if (guide) return { pos: guide, snapped: true }
-
-  // 网格吸附（grid 为 null 时跳过：网格由 RF 内置 snapToGrid 承担）
-  if (grid === null) return { pos: { ...candidatePos }, snapped: false }
-  const snappedPos: Point = {
-    x: Math.round(candidatePos.x / grid) * grid,
-    y: Math.round(candidatePos.y / grid) * grid,
-  }
-  if (free(snappedPos)) return { pos: snappedPos, snapped: true }
   return { pos: { ...candidatePos }, snapped: false }
 }
 
