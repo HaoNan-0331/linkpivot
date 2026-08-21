@@ -237,8 +237,8 @@ app.whenReady().then(() => {
   // Device IPC（secure = 登录鉴权 + 异常脱敏）
   // H-1：IPC 返回值经 maskDeviceSecrets 脱敏投影——renderer 只收 ****尾4位，永不收明文凭证
   ipcMain.handle('device:list', secure(() => listDevices().map(maskDeviceSecrets)))
-  ipcMain.handle('device:create', secure((_e, data) => createDevice(data)))
-  ipcMain.handle('device:update', secure((_e, id, data) => updateDevice(id, data)))
+  ipcMain.handle('device:create', secure((_e, data) => maskDeviceSecrets(createDevice(data))))
+  ipcMain.handle('device:update', secure((_e, id, data) => maskDeviceSecrets(updateDevice(id, data))))
   ipcMain.handle('device:delete', secure((_e, id) => deleteDevice(id)))
   ipcMain.handle('device:getById', secure((_e, id) => {
     const d = getDeviceById(id)
