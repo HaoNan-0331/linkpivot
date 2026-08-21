@@ -44,7 +44,7 @@ vi.mock('../../electron/database/connection', () => ({
     },
 }))
 
-import { listDevices, createDevice, updateDevice, checkDeviceName, setDeviceMasterKey, createBatchDevices, listDuplicateGroups, backfillNameHash, ensureNameUniqueIndex } from '../../electron/services/device'
+import { listDevices, createDevice, updateDevice, checkDeviceName, setDeviceMasterKey, listDuplicateGroups, backfillNameHash, ensureNameUniqueIndex } from '../../electron/services/device'
 import { hashDeviceName } from '../../electron/services/deviceName'
 import { encField } from '../../electron/utils/crypto'
 
@@ -187,13 +187,9 @@ describe('name_hash 唯一拦截与查重（25-02）', () => {
   })
 })
 
-/** Phase 25（25-03，ASSET-02/ASSET-04）：批量单事务 / 回填幂等 / 重名分组 / 清零建索引（D-06/D-09/D-10）。 */
-describe('批量创建/回填/重名分组/清零建索引（25-03）', () => {
+/** Phase 25（25-03，ASSET-04；25-05 移除批量创建用例）：回填幂等 / 重名分组 / 清零建索引（D-09/D-10）。 */
+describe('回填/重名分组/清零建索引（25-03/25-05）', () => {
   const TEST_MK = 'test-mk-25-03'
-
-  const batchItem = (name: string, ip: string) => ({
-    name, ipAddress: ip, connectionType: 'ssh', username: 'admin', password: 'pw',
-  })
 
   /** 带凭证直插 SQL（绕过 service 校验），构造 name_hash 为 NULL 的存量行供回填用例。 */
   function insertRawDevice(db: Database.Database, name: string, ip: string, withHash: boolean, mk: string): string {
@@ -219,40 +215,6 @@ describe('批量创建/回填/重名分组/清零建索引（25-03）', () => {
   })
 
   const count = () => (H.delegate as Database.Database).prepare('SELECT COUNT(*) AS c FROM devices').get() as { c: number }
-
-  it('批量 3 行其中 1 行与库内重名 → throw 且库内设备数不变（全 ROLLBACK，D-06）', () => {
-    createDevice({ name: 'Core-SW', ipAddress: '192.168.1.1', connectionType: 'ssh', password: 'pw' })
-    const before = count().c
-    expect(() => createBatchDevices([
-      batchItem('New-FW', '10.0.0.1'),
-      batchItem(' core-sw ', '10.0.0.2'), // 归一化后与库内 Core-SW 冲突
-      batchItem('New-RTR', '10.0.0.3'),
-    ])).toThrow(/第 2 行设备名称已存在：Core-SW \(192\.168\.1\.1\)/)
-    expect(count().c).toBe(before) // 一台不落库
-  })
-
-  it('批内两行同名 → throw（含行序号），且凭证缺失行同样 throw', () => {
-    expect(() => createBatchDevices([
-      batchItem('Dup-SW', '10.1.0.1'),
-      batchItem('New-FW', '10.1.0.2'),
-      batchItem('DUP‑SW', '10.1.0.3'), // U+2011 归一化后与第 1 行相同 → 批内互重
-    ])).toThrow(/批内第 1 行与第 3 行设备名重复/)
-    expect(() => createBatchDevices([
-      { name: 'No-Cred', ipAddress: '10.1.0.4', connectionType: 'ssh', username: 'admin' }, // 密码/密钥均空
-    ])).toThrow(/凭证缺失/)
-    expect(count().c).toBe(0)
-  })
-
-  it('批量 3 行全部合法 → 库内新增 3 台且 name_hash 全非空', () => {
-    createBatchDevices([
-      batchItem('B-FW', '10.2.0.1'),
-      batchItem('B-SW', '10.2.0.2'),
-      batchItem('B-RTR', '10.2.0.3'),
-    ])
-    expect(count().c).toBe(3)
-    const nulls = (H.delegate as Database.Database).prepare('SELECT COUNT(*) AS c FROM devices WHERE name_hash IS NULL').get() as { c: number }
-    expect(nulls.c).toBe(0)
-  })
 
   it('backfillNameHash 回填 NULL 行；再次调用 backfilled=0（幂等）并检测重名组', () => {
     const db = H.delegate as Database.Database

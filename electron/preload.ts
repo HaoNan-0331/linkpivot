@@ -13,9 +13,8 @@ const api = {
     update: (id: string, data: unknown) => ipcRenderer.invoke('device:update', id, data),
     delete: (id: string) => ipcRenderer.invoke('device:delete', id),
     getById: (id: string) => ipcRenderer.invoke('device:getById', id),
-    // Phase 25（25-03）：查重预检 / 批量创建 / 存量重名分组（消费方 25-04/05）
+    // Phase 25（25-03；25-05 用户决策移除批量创建）：查重预检 / 存量重名分组
     checkName: (name: string, excludeId?: string) => ipcRenderer.invoke('device:checkName', name, excludeId),
-    createBatch: (items: unknown[]) => ipcRenderer.invoke('device:createBatch', items),
     listDuplicates: () => ipcRenderer.invoke('device:listDuplicates'),
   },
   topology: {

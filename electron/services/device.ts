@@ -216,59 +216,6 @@ export function updateDevice(id: string, data: any) {
 }
 
 /**
- * Phase 25（25-03，ASSET-02/D-06/D-07/D-12）：批量创建——整批单事务。
- *
- * 事务内先全量查重（任一失败整体 ROLLBACK，一台不落库）：
- * - 批内互重：归一化（normalizeDeviceName）后 hash 两两相同即 throw（含行序号）；
- * - 与库内重名：复用 name_hash 预检，throw message 指明冲突行序号与冲突设备名称+IP（D-12）；
- * - 凭证缺失：密码与密钥内容均空的行 throw（网关已校验数组形状与上限 50，此处校验行内容）。
- * INSERT 的 prepare 语句提循环外复用（TXN-02）；参数绑定防注入（T-25-10）。
- */
-export function createBatchDevices(items: any[]): void {
-  const db = getDatabase()
-
-  const tx = db.transaction(() => {
-    const seen = new Map<string, number>()
-    const stmtFindByNameHash = db.prepare('SELECT id, name_enc, ip_enc FROM devices WHERE name_hash = ?')
-
-    items.forEach((item, idx) => {
-      const name = String(item?.name ?? '')
-      if (!item?.password && !item?.sshKeyContent) {
-        throw new Error(`第 ${idx + 1} 行凭证缺失：密码与 SSH 密钥均未填写`)
-      }
-      const hash = hashDeviceName(name)
-      const dupInBatch = seen.get(hash)
-      if (dupInBatch !== undefined) {
-        throw new Error(`批内第 ${dupInBatch + 1} 行与第 ${idx + 1} 行设备名重复（${name}）`)
-      }
-      seen.set(hash, idx)
-      const conflict = stmtFindByNameHash.get(hash) as any
-      if (conflict) {
-        throw new Error(
-          `第 ${idx + 1} 行设备名称已存在：${dec(conflict.name_enc)} (${dec(conflict.ip_enc)})`
-        )
-      }
-    })
-
-    const now = new Date().toISOString()
-    const stmtInsert = db.prepare(`
-      INSERT INTO devices (id, name_enc, vendor_enc, model_enc, version_enc, ip_enc,
-        device_type, connection_type, port_enc, username_enc, password_enc,
-        ssh_key_path_enc, ssh_key_content_enc, web_url_enc, created_at, updated_at, name_hash)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `)
-    for (const item of items) {
-      stmtInsert.run(uuidv4(), enc(item.name), enc(item.vendor), enc(item.model), enc(item.version),
-        enc(item.ipAddress), item.deviceType || 'generic', item.connectionType,
-        enc(item.port?.toString()), enc(item.username), enc(item.password),
-        enc(item.sshKeyPath), enc(item.sshKeyContent), enc(item.webUrl), now, now,
-        hashDeviceName(String(item.name ?? '')))
-    }
-  })
-  tx()
-}
-
-/**
  * Phase 25（25-03，ASSET-04/D-09）：存量重名分组扫描——供 UI 重名处理页区分展示。
  * 只按已回填的 name_hash 分组（name_hash IS NULL 的未回填行不参与，等 post-MK 回填后自然纳入）。
  * 返回成员解密后的 name/ipAddress 明文 + model/vendor；不含凭证字段（T-25-12 accept：
@@ -403,7 +350,7 @@ export function getDeviceById(id: string) {
 
 /**
  * Phase 25（25-02，ASSET-03/D-11）：设备名查重——提示性预检（供 25-03 IPC onBlur /
- * 25-04 批量行内标红复用）。命中返回冲突设备 { name, ipAddress } 明文，未命中返回 null。
+ * 25-04 复制表单失焦查重复用）。命中返回冲突设备 { name, ipAddress } 明文，未命中返回 null。
  *
  * 非硬防线：预检与保存间隙的 TOCTOU 由保存路径事务内校验兜底（T-25-06 accept）；
  * excludeId 传入时排除该设备自身（编辑场景改名不改名自查）。

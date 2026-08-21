@@ -7,7 +7,7 @@ import { setDecryptFailureHandler } from './utils/crypto'
 import { hardenWindow, openExternalSafe } from './utils/webSecurity'
 import { secure, safe, setAuthenticated } from './utils/authGuard'
 import { generateCaptcha, login, isFirstRun, initAdmin } from './services/auth'
-import { setDeviceMasterKey, listDevices, createDevice, updateDevice, deleteDevice, getDeviceById, maskDeviceSecrets, checkDeviceName, createBatchDevices, listDuplicateGroups, backfillNameHash, ensureNameUniqueIndex } from './services/device'
+import { setDeviceMasterKey, listDevices, createDevice, updateDevice, deleteDevice, getDeviceById, maskDeviceSecrets, checkDeviceName, listDuplicateGroups, backfillNameHash, ensureNameUniqueIndex } from './services/device'
 import { setTopologyMasterKey, listTopologies, getTopologyById, createTopology, updateTopology, deleteTopology, exportTopology, importTopology } from './services/topology'
 import { setConnectionMasterKey, openTerminal, openWebSafe, writeToSession, writeByWebContentsId, disconnectSession, testDeviceConnection } from './services/connection'
 import { setAiMasterKey, chat, getAiConfigMasked, saveAiConfig, getCommandWhitelist, saveCommandWhitelist, getExecMode, setExecMode, getMcpMaxRounds, setMcpMaxRounds, confirmCommand, getAiLogs, getChatHistory, saveChatMessage as aiSaveChatMessage, createSession, listSessions, getSessionMessages, deleteSession, updateSessionTitle } from './services/ai'
@@ -244,16 +244,8 @@ app.whenReady().then(() => {
     const d = getDeviceById(id)
     return d ? maskDeviceSecrets(d) : null
   }))
-  // Phase 25（25-03，ASSET-02/ASSET-04）：设备名查重 / 批量创建 / 存量重名分组三通道（secure 红线，T-25-09）。
+  // Phase 25（25-03，ASSET-04；25-05 用户决策移除批量创建）：设备名查重 / 存量重名分组通道（secure 红线，T-25-09）。
   ipcMain.handle('device:checkName', secure((_e, name: string, excludeId?: string) => checkDeviceName(name, excludeId)))
-  ipcMain.handle('device:createBatch', secure((_e, items: unknown[]) => {
-    // D-07 网关校验（照 ouiIpc MAX_BATCH 模式，T-25-08）：数组形状 + 上限 50，超限拒绝进 service。
-    const MAX_BATCH_DEVICES = 50
-    if (!Array.isArray(items) || items.length < 1 || items.length > MAX_BATCH_DEVICES) {
-      throw new Error(`批量创建失败：需提供 1-${MAX_BATCH_DEVICES} 台设备`)
-    }
-    createBatchDevices(items)
-  }))
   ipcMain.handle('device:listDuplicates', secure(() => listDuplicateGroups()))
 
   // Topology IPC
