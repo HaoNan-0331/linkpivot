@@ -83,6 +83,13 @@ export interface ElectronAPI {
     update: (id: string, data: UpdateDeviceDTO) => Promise<Device>
     delete: (id: string) => Promise<void>
     getById: (id: string) => Promise<Device | null>
+    // Phase 25（25-03，ASSET-02/ASSET-04）：查重预检 / 批量创建 / 存量重名分组
+    checkName: (name: string, excludeId?: string) => Promise<{ name: string; ipAddress: string } | null>
+    createBatch: (items: CreateDeviceDTO[]) => Promise<void>
+    listDuplicates: () => Promise<Array<{
+      nameHash: string
+      devices: Array<{ id: string; name: string; ipAddress: string; model: string; vendor: string }>
+    }>>
   }
   topology: {
     // Phase 19 WR-01：列表走摘要类型（P14 全字段 optional，兼容持久化历史 JSON 缺字段的行）
