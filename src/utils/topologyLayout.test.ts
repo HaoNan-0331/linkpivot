@@ -213,23 +213,27 @@ describe('resolvePushAside', () => {
     expect(r.size).toBe(0)
   })
 
-  it('连锁让位：B 让位压到 C 时 C 也让位', () => {
+  it('连锁让位：B 让位压到 C 时 C 也让位（WR-05 无条件断言）', () => {
+    // 手动推演（80x60，pad=1）：dragged(100,100) 与 b(100,100) 完全重合，
+    // 中心重合 dx=dy=0 → overlapX=80 > overlapY=60 → 沿 y 正向推出 60+1 → b=(100,161)；
+    // b 新包围盒 y161-221 压到 c(100,200)（y200-260）：dx=0，overlapX=80 > overlapY=21
+    // → c 沿 y 正向推出 21+1 → c=(100,222)；c 新位置与 b/dragged 均不相交，链终止。
     const others: LNode[] = [
       { id: 'b', x: 100, y: 100 },
-      { id: 'c', x: 200, y: 105 },
+      { id: 'c', x: 100, y: 200 },
     ]
     const dragged = { x: 100, y: 100, width: W, height: H }
     const r = resolvePushAside('a', dragged, others)
-    expect(r.has('b')).toBe(true)
-    const pb = r.get('b')!
-    const pc = r.get('c')
-    // B 被推向右侧压到 C，或直接与 C 重叠 → C 必须让位
-    const bRect = toRect(pb)
-    const cRect = pc ? toRect(pc) : toRect({ x: 200, y: 105 })
-    if (rectsOverlap(bRect, cRect) && pc) {
-      expect(rectsOverlap(toRect(pc), toRect({ x: 200, y: 105 }))).toBe(false)
-    }
     expect(r.has('a')).toBe(false)
+    expect(r.get('b')).toEqual({ x: 100, y: 161 })
+    expect(r.get('c')).toEqual({ x: 100, y: 222 })
+    // 终态两两不重叠（含拖动节点）
+    const rects = [toRect({ x: 100, y: 100 }), toRect({ x: 100, y: 161 }), toRect({ x: 100, y: 222 })]
+    for (let i = 0; i < rects.length; i++) {
+      for (let j = i + 1; j < rects.length; j++) {
+        expect(rectsOverlap(rects[i], rects[j])).toBe(false)
+      }
+    }
   })
 
   it('不修改输入（不可变性）', () => {
