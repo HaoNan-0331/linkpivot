@@ -46,8 +46,11 @@ export default function EditNodeModal({
         deviceName: values.deviceName,
         ipAddress: values.ipAddress,
         deviceType: values.deviceType,
-        vendor: values.vendor || undefined,
-        model: values.model || undefined,
+        // CR-01（25.1）：保留空串——空串=清空（service 层 `!== undefined` 守卫会真实落库），
+        // undefined=不修改。禁止折叠为 undefined，否则清空 vendor/model 时 devices 表保留旧值，
+        // 而本地 setNodes 与拓扑 debounce 落空值，拓扑与设备页分叉。name/ipAddress 必填不受影响。
+        vendor: values.vendor,
+        model: values.model,
       })
     } catch {
       // validation failed

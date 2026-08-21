@@ -152,7 +152,23 @@ describe('updateDevice 拓扑级联同步（25.1-01 防回归护栏）', () => {
     expect(decField(row.ip_enc, TEST_MK)).toBe('10.0.0.1')
   })
 
-  it('Test 5: 级联容错——data_enc 非法 JSON 的拓扑被跳过，其余拓扑正常级联且不 throw', () => {
+  it('Test 5: 清空 vendor/model 落库（CR-01 25.1）——传空串时 devices 表真实清空且拓扑级联一致', () => {
+    const db = H.delegate as Database.Database
+    const dev = createDevice({ name: '设备X', ipAddress: '10.0.0.1', connectionType: 'ssh', vendor: '华为', model: 'S5735' })
+    insertTopology(db, 'topo-1', [
+      { id: 'n-1', data: { deviceId: dev.id, deviceName: '设备X', ipAddress: '10.0.0.1', vendor: '华为', model: 'S5735' } },
+    ], TEST_MK)
+    // 模拟 EditNodeModal 修复后的提交语义：空串=清空（修复前是 undefined，`!== undefined` 守卫旁路）
+    updateDevice(dev.id, { vendor: '', model: '' })
+    const row = db.prepare('SELECT vendor_enc, model_enc FROM devices WHERE id = ?').get(dev.id) as any
+    expect(decField(row.vendor_enc, TEST_MK)).toBe('')
+    expect(decField(row.model_enc, TEST_MK)).toBe('')
+    const nodes = readTopologyNodes(db, 'topo-1', TEST_MK)
+    expect(nodes[0].data.vendor).toBe('')
+    expect(nodes[0].data.model).toBe('')
+  })
+
+  it('Test 6: 级联容错——data_enc 非法 JSON 的拓扑被跳过，其余拓扑正常级联且不 throw', () => {
     const db = H.delegate as Database.Database
     const dev = createDevice({ name: '旧名', ipAddress: '10.0.0.1', connectionType: 'ssh' })
     // topo-bad: 非法 JSON（解密后不是合法 JSON）
