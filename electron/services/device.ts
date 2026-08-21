@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../database/connection'
 import { encField, decField } from '../utils/crypto'
 import { hashDeviceName } from './deviceName'
+import { v24 } from '../database/migrations'
 
 let MK = ''
 
@@ -198,7 +199,144 @@ export function updateDevice(id: string, data: any) {
   })
   tx()
 
+  // Phase 25（25-03，ASSET-04/D-10）：重命名清零后即时建索引——事务提交成功后，
+  // 仅重命名路径（data.name !== undefined）调 listDuplicateGroups 检测，重名组清零
+  // 即调 ensureNameUniqueIndex 补建 UNIQUE 索引（防护当场生效，无需前端触发时序配合）。
+  // 开销：设备量级几百 + name_hash 明文列 GROUP BY 毫秒级，可接受。
+  // try/catch 包裹：失败仅 warn，不让已成功的重命名抛错（第二道兜底可下次启动/下次重命名补建）。
+  if (data.name !== undefined) {
+    try {
+      if (listDuplicateGroups().length === 0) ensureNameUniqueIndex()
+    } catch (e) {
+      console.warn('[device] 重命名后补建 name_hash 唯一索引失败（non-blocking）:', e)
+    }
+  }
+
   return rowToDevice(db.prepare('SELECT * FROM devices WHERE id = ?').get(id))
+}
+
+/**
+ * Phase 25（25-03，ASSET-02/D-06/D-07/D-12）：批量创建——整批单事务。
+ *
+ * 事务内先全量查重（任一失败整体 ROLLBACK，一台不落库）：
+ * - 批内互重：归一化（normalizeDeviceName）后 hash 两两相同即 throw（含行序号）；
+ * - 与库内重名：复用 name_hash 预检，throw message 指明冲突行序号与冲突设备名称+IP（D-12）；
+ * - 凭证缺失：密码与密钥内容均空的行 throw（网关已校验数组形状与上限 50，此处校验行内容）。
+ * INSERT 的 prepare 语句提循环外复用（TXN-02）；参数绑定防注入（T-25-10）。
+ */
+export function createBatchDevices(items: any[]): void {
+  const db = getDatabase()
+
+  const tx = db.transaction(() => {
+    const seen = new Map<string, number>()
+    const stmtFindByNameHash = db.prepare('SELECT id, name_enc, ip_enc FROM devices WHERE name_hash = ?')
+
+    items.forEach((item, idx) => {
+      const name = String(item?.name ?? '')
+      if (!item?.password && !item?.sshKeyContent) {
+        throw new Error(`第 ${idx + 1} 行凭证缺失：密码与 SSH 密钥均未填写`)
+      }
+      const hash = hashDeviceName(name)
+      const dupInBatch = seen.get(hash)
+      if (dupInBatch !== undefined) {
+        throw new Error(`批内第 ${dupInBatch + 1} 行与第 ${idx + 1} 行设备名重复（${name}）`)
+      }
+      seen.set(hash, idx)
+      const conflict = stmtFindByNameHash.get(hash) as any
+      if (conflict) {
+        throw new Error(
+          `第 ${idx + 1} 行设备名称已存在：${dec(conflict.name_enc)} (${dec(conflict.ip_enc)})`
+        )
+      }
+    })
+
+    const now = new Date().toISOString()
+    const stmtInsert = db.prepare(`
+      INSERT INTO devices (id, name_enc, vendor_enc, model_enc, version_enc, ip_enc,
+        device_type, connection_type, port_enc, username_enc, password_enc,
+        ssh_key_path_enc, ssh_key_content_enc, web_url_enc, created_at, updated_at, name_hash)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    for (const item of items) {
+      stmtInsert.run(uuidv4(), enc(item.name), enc(item.vendor), enc(item.model), enc(item.version),
+        enc(item.ipAddress), item.deviceType || 'generic', item.connectionType,
+        enc(item.port?.toString()), enc(item.username), enc(item.password),
+        enc(item.sshKeyPath), enc(item.sshKeyContent), enc(item.webUrl), now, now,
+        hashDeviceName(String(item.name ?? '')))
+    }
+  })
+  tx()
+}
+
+/**
+ * Phase 25（25-03，ASSET-04/D-09）：存量重名分组扫描——供 UI 重名处理页区分展示。
+ * 只按已回填的 name_hash 分组（name_hash IS NULL 的未回填行不参与，等 post-MK 回填后自然纳入）。
+ * 返回成员解密后的 name/ipAddress 明文 + model/vendor；不含凭证字段（T-25-12 accept：
+ * 登录用户本可在设备列表看到这些字段）。
+ */
+export function listDuplicateGroups(): Array<{
+  nameHash: string
+  devices: Array<{ id: string; name: string; ipAddress: string; model: string; vendor: string }>
+}> {
+  const db = getDatabase()
+  const stmtMembers = db.prepare(
+    'SELECT id, name_enc, ip_enc, model_enc, vendor_enc FROM devices WHERE name_hash = ? ORDER BY created_at'
+  )
+  return (
+    db.prepare(
+      'SELECT name_hash FROM devices WHERE name_hash IS NOT NULL GROUP BY name_hash HAVING COUNT(*) > 1'
+    ).all() as any[]
+  ).map((row) => ({
+    nameHash: row.name_hash,
+    devices: (stmtMembers.all(row.name_hash) as any[]).map((m) => ({
+      id: m.id,
+      name: dec(m.name_enc),
+      ipAddress: dec(m.ip_enc),
+      model: dec(m.model_enc),
+      vendor: dec(m.vendor_enc),
+    })),
+  }))
+}
+
+/**
+ * Phase 25（25-03，ASSET-04/v23）：post-MK 幂等回填——启动时（MK 注入后）把
+ * name_hash IS NULL 的存量行解密 name_enc → hashDeviceName → 回填。
+ * 逐点镜像 backfillSeverityFromHistory 幂等范式：WHERE 守卫 + prepare 提循环外 +
+ * 单行 catch 跳过不 throw + 返回计数（含重名组数供启动日志/后续清零流程）。
+ * 失败仅 warn 不阻塞启动（调用方 main.ts try/catch，T-25-11）。
+ */
+export function backfillNameHash(): { backfilled: number; duplicateGroups: number } {
+  const db = getDatabase()
+  const rows = db.prepare('SELECT id, name_enc FROM devices WHERE name_hash IS NULL').all() as any[]
+  const stmtUpdate = db.prepare('UPDATE devices SET name_hash = ? WHERE id = ?')
+  let backfilled = 0
+  for (const row of rows) {
+    try {
+      const hash = hashDeviceName(dec(row.name_enc))
+      stmtUpdate.run(hash, row.id)
+      backfilled++
+    } catch (e) {
+      console.warn('[device] 回填 name_hash 单行失败，跳过:', row.id, e)
+    }
+  }
+  const dup = db.prepare(
+    'SELECT COUNT(*) AS c FROM (SELECT name_hash FROM devices WHERE name_hash IS NOT NULL GROUP BY name_hash HAVING COUNT(*) > 1)'
+  ).get() as { c: number }
+  return { backfilled, duplicateGroups: dup.c }
+}
+
+/**
+ * Phase 25（25-03，ASSET-04/D-10）：运行时复用 v24 清零门控建 UNIQUE 索引。
+ * 入口幂等守卫：sqlite_master 已存在 idx_devices_name_hash 直接返回 true（no-op，多次调用安全）；
+ * 有存量重名时 v24 返回 false（跳过不 throw），待重名清零后再次调用补建。
+ */
+export function ensureNameUniqueIndex(): boolean {
+  const db = getDatabase()
+  const existing = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_devices_name_hash'"
+  ).get()
+  if (existing) return true
+  return v24(db)
 }
 
 export function deleteDevice(id: string) {
