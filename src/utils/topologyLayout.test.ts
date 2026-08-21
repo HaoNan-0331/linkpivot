@@ -274,6 +274,22 @@ describe('snapWithAntiOverlap', () => {
     expect(GUIDE_THRESHOLD).toBe(6)
     expect(LAYOUT_SPACING).toBe(260)
   })
+
+  it('WR-03：placedSize 非默认尺寸——大节点参考线落点压第三节点时放弃对齐', () => {
+    // 被拖节点 200x60，候选 (100,150)：b 左边 x=106 与候选左边 100 差 6 ≤ 阈值 → 对齐候选 (106,150)；
+    // 默认尺寸(80x60)落点不压 c(190,160)，但实际尺寸 x106-306 压到 c → 放弃对齐
+    const others: LNode[] = [
+      { id: 'b', x: 106, y: 300 },
+      { id: 'c', x: 190, y: 160 },
+    ]
+    const big = { width: 200, height: 60 }
+    const rDefault = snapWithAntiOverlap({ x: 100, y: 150 }, 'a', others)
+    expect(rDefault.snapped).toBe(true)
+    expect(rDefault.pos).toEqual({ x: 106, y: 150 })
+    const rBig = snapWithAntiOverlap({ x: 100, y: 150 }, 'a', others, big)
+    expect(rBig.snapped).toBe(false)
+    expect(rBig.pos).toEqual({ x: 100, y: 150 })
+  })
 })
 
 describe('alignNodes', () => {
@@ -331,6 +347,19 @@ describe('nearestFreePosition', () => {
     }
     const dist = Math.hypot(p.x, p.y)
     expect(dist).toBeLessThan(500) // 明显近于远处节点
+  })
+
+  it('WR-03：placedSize 非默认尺寸——大节点包围盒压到默认盒不压的节点', () => {
+    // b 在 (100,0)：默认 80x60 盒放原点不相交（80<100）；200x60 盒 x0-200 相交 → 必须让位
+    const others: LNode[] = [{ id: 'b', x: 100, y: 0 }]
+    expect(nearestFreePosition({ x: 0, y: 0 }, others)).toEqual({ x: 0, y: 0 })
+    const p = nearestFreePosition({ x: 0, y: 0 }, others, { width: 200, height: 60 })
+    expect(p).not.toEqual({ x: 0, y: 0 })
+    for (const n of others) {
+      expect(
+        rectsOverlap({ x: p.x, y: p.y, width: 200, height: 60 }, toRect(n))
+      ).toBe(false)
+    }
   })
 
   it('不修改输入（不可变性）', () => {

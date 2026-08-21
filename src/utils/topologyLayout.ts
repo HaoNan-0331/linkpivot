@@ -336,11 +336,16 @@ export function snapWithAntiOverlap(
   candidatePos: Point,
   draggedId: string,
   others: LayoutNode[],
+  // WR-03（26 review）：被拖节点实际尺寸——存在非默认尺寸节点时按其包围盒判定，
+  // 缺省沿用 NODE_WIDTH/HEIGHT（向后兼容）
+  placedSize?: { width: number; height: number },
 ): { pos: Point; snapped: boolean } {
   const nodes = others.map(resolveNode).filter((n) => n.id !== draggedId)
+  const pw = placedSize?.width ?? NODE_WIDTH
+  const ph = placedSize?.height ?? NODE_HEIGHT
 
   const free = (p: Point): boolean => {
-    const rect: Rect = { x: p.x, y: p.y, width: NODE_WIDTH, height: NODE_HEIGHT }
+    const rect: Rect = { x: p.x, y: p.y, width: pw, height: ph }
     return nodes.every((n) => !rectsOverlap(rect, rectOf(n)))
   }
 
@@ -351,7 +356,7 @@ export function snapWithAntiOverlap(
     const xTargets = [n.x, n.x + n.width / 2, n.x + n.width]
     const yTargets = [n.y, n.y + n.height / 2, n.y + n.height]
     for (const t of xTargets) {
-      for (const s of [candidatePos.x, candidatePos.x + NODE_WIDTH / 2, candidatePos.x + NODE_WIDTH]) {
+      for (const s of [candidatePos.x, candidatePos.x + pw / 2, candidatePos.x + pw]) {
         const d = Math.abs(t - s)
         if (d <= GUIDE_THRESHOLD && d < guideDist) {
           const p = { x: candidatePos.x + (t - s), y: candidatePos.y }
@@ -363,7 +368,7 @@ export function snapWithAntiOverlap(
       }
     }
     for (const t of yTargets) {
-      for (const s of [candidatePos.y, candidatePos.y + NODE_HEIGHT / 2, candidatePos.y + NODE_HEIGHT]) {
+      for (const s of [candidatePos.y, candidatePos.y + ph / 2, candidatePos.y + ph]) {
         const d = Math.abs(t - s)
         if (d <= GUIDE_THRESHOLD && d < guideDist) {
           const p = { x: candidatePos.x, y: candidatePos.y + (t - s) }
@@ -422,10 +427,17 @@ export function alignNodes(
  * 视野中心最近空位（D-13）：从 center 起环状搜索首个与所有现有节点包围盒
  * 不相交的落点。
  */
-export function nearestFreePosition(center: Point, others: LayoutNode[]): Point {
+export function nearestFreePosition(
+  center: Point,
+  others: LayoutNode[],
+  // WR-03（26 review）：被放置节点实际尺寸（缺省 NODE_WIDTH/HEIGHT，向后兼容）
+  placedSize?: { width: number; height: number },
+): Point {
   const nodes = others.map(resolveNode)
+  const pw = placedSize?.width ?? NODE_WIDTH
+  const ph = placedSize?.height ?? NODE_HEIGHT
   const isFree = (p: Point): boolean => {
-    const rect: Rect = { x: p.x, y: p.y, width: NODE_WIDTH, height: NODE_HEIGHT }
+    const rect: Rect = { x: p.x, y: p.y, width: pw, height: ph }
     return nodes.every((n) => !rectsOverlap(rect, rectOf(n)))
   }
   if (isFree(center)) return { ...center }

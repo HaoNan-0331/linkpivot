@@ -213,7 +213,10 @@ export default function TopologyCanvas({
       const others = all.filter((n) => n.id !== node.id).map(toLayoutNode)
       if (others.length === 0) return
       const candidate = { x: node.position.x, y: node.position.y }
-      const res = snapWithAntiOverlap(candidate, node.id, others)
+      const res = snapWithAntiOverlap(candidate, node.id, others, {
+        width: node.width ?? NODE_WIDTH,
+        height: node.height ?? NODE_HEIGHT,
+      })
       if (res.snapped && (res.pos.x !== candidate.x || res.pos.y !== candidate.y)) {
         onGuideSnap(node.id, res.pos)
         setGuidesIfChanged(

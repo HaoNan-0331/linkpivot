@@ -76,8 +76,9 @@ function AddDeviceModal({
       id: n.id,
       x: n.position.x,
       y: n.position.y,
-      width: NODE_WIDTH,
-      height: NODE_HEIGHT,
+      // WR-03（26 review）：占位集用节点实际尺寸（历史数据未 normalize 时不漏判重叠）
+      width: n.width ?? NODE_WIDTH,
+      height: n.height ?? NODE_HEIGHT,
     }))
     const newNodes: TopologyNode[] = selectedRowKeys.map((deviceId) => {
       const device = devices.find((d) => d.id === deviceId)!
