@@ -293,11 +293,16 @@ export function resolvePushAside(
 ): Map<string, Point> {
   const nodes = others.map(resolveNode).filter((n) => n.id !== draggedId)
   const displaced = new Map<string, Point>()
+  // WR-04（26 review）：已让位节点也参与复检——B 让位把 C 推到与已让位的 D 重叠时 D 需二次让位，
+  // 否则连锁后残留重叠。每节点让位次数以 MAX_PUSH_CHAIN_DEPTH 为硬顶（防两节点互推乒乓死循环）。
+  const pressCount = new Map<string, number>()
 
-  const press = (presser: Rect, depth: number): void => {
+  const press = (presserId: string | null, presser: Rect, depth: number): void => {
     if (depth > MAX_PUSH_CHAIN_DEPTH) return
     for (const n of nodes) {
-      if (displaced.has(n.id)) continue
+      if (n.id === presserId) continue
+      const count = pressCount.get(n.id) ?? 0
+      if (count >= MAX_PUSH_CHAIN_DEPTH) continue
       const rect = rectOf(n)
       if (!rectsOverlap(presser, rect)) continue
       // 最小位移方向：取穿透量较小的轴推出
@@ -315,12 +320,13 @@ export function resolvePushAside(
         const dir = dy === 0 ? 1 : Math.sign(dy)
         n.y += dir * (overlapY + pad)
       }
+      pressCount.set(n.id, count + 1)
       displaced.set(n.id, { x: n.x, y: n.y })
-      press(rectOf(n), depth + 1)
+      press(n.id, rectOf(n), depth + 1)
     }
   }
 
-  press(draggedRect, 0)
+  press(null, draggedRect, 0)
   return displaced
 }
 
