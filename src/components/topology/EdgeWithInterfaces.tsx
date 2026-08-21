@@ -1,7 +1,7 @@
-// Phase 19 REN-03 分诊结论：本组件不加 React.memo——依赖 useStore((s) => s.nodeInternals)（:45）实时读
-// 源/目标节点 position，拖拽时 nodeInternals 变但 edge props（source/target/data/style）不变。
-// 若 comparator 只比 props 相等则边不重算 → 接口标签位置滞留（:60-70 每渲染重算 nearest handles 是
-// 现状实时跟随行为，不可吃掉——P13 过严坑）；memo 化收益为零且过严风险实质化，故不 memo。
+// Phase 26 / 26-01（D-14 拖拽卡顿根因修复）：原实现 `useStore((s) => s.nodeInternals)` 订阅整个
+// nodeInternals Map——拖拽每帧 nodeInternals 引用全量更换，所有边的订阅全部击穿 → 每帧 O(E) 全量
+// 边重渲染（大拓扑拖拽卡顿根因）。改为按源/目标节点逐字段原始值订阅（number 原语，Object.is 比较）：
+// 仅与被拖节点相连的边重渲染，其余边零重渲染。接口标签实时跟随行为（nearest handles 每渲染重算）不变。
 import { EdgeLabelRenderer, useStore, type EdgeProps } from 'reactflow'
 import type { TopologyEdgeData } from '@/types/topology'
 
@@ -46,20 +46,15 @@ export default function EdgeWithInterfaces({
   data,
   style,
 }: EdgeProps<TopologyEdgeData>) {
-  const nodeInternals = useStore((s) => s.nodeInternals)
-
-  const sourceNode = nodeInternals.get(source)
-  const targetNode = nodeInternals.get(target)
-
-  // Fallback: use node centers if dimensions not measured yet
-  const srcW = sourceNode?.width || 60
-  const srcH = sourceNode?.height || 80
-  const tgtW = targetNode?.width || 60
-  const tgtH = targetNode?.height || 80
-  const srcX = sourceNode?.position?.x ?? 0
-  const srcY = sourceNode?.position?.y ?? 0
-  const tgtX = targetNode?.position?.x ?? 0
-  const tgtY = targetNode?.position?.y ?? 0
+  // D-14：逐字段原始值订阅（width/height/position.x/y），仅相连节点的坐标变化才触发本边重渲染
+  const srcW = useStore((s) => s.nodeInternals.get(source)?.width) || 60
+  const srcH = useStore((s) => s.nodeInternals.get(source)?.height) || 80
+  const tgtW = useStore((s) => s.nodeInternals.get(target)?.width) || 60
+  const tgtH = useStore((s) => s.nodeInternals.get(target)?.height) || 80
+  const srcX = useStore((s) => s.nodeInternals.get(source)?.position?.x) ?? 0
+  const srcY = useStore((s) => s.nodeInternals.get(source)?.position?.y) ?? 0
+  const tgtX = useStore((s) => s.nodeInternals.get(target)?.position?.x) ?? 0
+  const tgtY = useStore((s) => s.nodeInternals.get(target)?.position?.y) ?? 0
 
   const srcHandles = getHandlePositions(srcX, srcY, srcW, srcH)
   const tgtHandles = getHandlePositions(tgtX, tgtY, tgtW, tgtH)
