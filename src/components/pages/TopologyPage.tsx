@@ -282,6 +282,9 @@ export default function TopologyPage() {
   // 同一事务内同步 devices 表（updated_at/name_hash/重名拦截）并级联刷新所有 topologies.data_enc，
   // 消除原「只 setNodes + debounce 写 data_enc」的旁路写库（设备管理页不同步根因）。
   // 失败不 setNodes（本地不落脏值），错误明文透出（重名冲突含冲突设备名+IP，D-12）。
+  // 约束（plan-checker，WR-01 25.1）：EditNodeModal 可编辑字段必须 ⊆ updateDevice topoFields
+  // 级联集（name/deviceType/connectionType/ipAddress/vendor/model，见 device.ts topoFields）。
+  // 新增可编辑字段（如 version/webUrl）须先确认已在级联集内，否则拓扑 JSON 不级联、本地镜像分叉。
   const handleEditConfirm = useCallback(
     async (updatedData: TopologyNodeData) => {
       try {
