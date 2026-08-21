@@ -803,7 +803,7 @@ const v24MigrationStep = (db: Database.Database): void => {
   step()
 }
 
-const MIGRATIONS: MigrationStep[] = [
+export const MIGRATIONS: MigrationStep[] = [
   { version: 1, name: 'chat_history.session_id', run: v1 },
   { version: 2, name: 'ai_exec_logs.prompt_text+ai_response', run: v2 },
   { version: 3, name: 'devices.status+last_checked', run: v3 },

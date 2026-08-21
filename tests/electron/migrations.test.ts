@@ -20,7 +20,7 @@ import Database from 'better-sqlite3'
  * 安全域：内存库（`:memory:`）无落盘；只跑 v16 本体不碰 runMigrations/system log。
  */
 
-import { v16, v17, v19, v20, v21 } from '../../electron/database/migrations'
+import { v16, v17, v19, v20, v21, v22, v23, v24, MIGRATION_HEAD, MIGRATIONS } from '../../electron/database/migrations'
 import { encField } from '../../electron/utils/crypto'
 import {
   appendLogAiResponse,
@@ -453,5 +453,115 @@ describe('v21 ai_config.mcp_max_rounds', () => {
     const m = initSrc.match(/CREATE TABLE IF NOT EXISTS ai_config \(([\s\S]*?)\);/)
     expect(m).toBeTruthy()
     expect(m![1]).toContain('mcp_max_rounds INTEGER NOT NULL DEFAULT 5')
+  })
+})
+
+/**
+ * Phase 25 Plan 25-01 Task 3 —— v22/v23/v24 name_hash 三段式迁移验证。
+ *
+ * 用例（plan 验收）：
+ *   a) v22 幂等：已有 name_hash 列的库重跑不 throw 且 user_version 不回退
+ *   b) v22 后 devices 有 name_hash 列且无 idx_devices_name_hash 索引（三段式第一段红线）
+ *   c) v24 门控：两行相同 name_hash → 不 throw 不建索引；清零后复用 v24 → 建索引且 UNIQUE
+ *   d) MIGRATION_HEAD=24 且注册表含 v22/v23/v24；init.ts fresh DDL 含 name_hash 列
+ *   e) 全量迁移双跑幂等（user_version=0 内存库，v22-v24 连续执行两遍无异常）
+ */
+describe('v22/v23/v24 devices.name_hash 三段式', () => {
+  /** v21 形态 devices 基线（无 name_hash 列） */
+  function createV21Devices(db: Database.Database): void {
+    db.exec(`
+      CREATE TABLE devices (
+        id TEXT PRIMARY KEY,
+        topology_id TEXT,
+        name_enc TEXT NOT NULL,
+        ip_enc TEXT,
+        created_at TEXT DEFAULT (datetime('now','localtime'))
+      );
+    `)
+    db.pragma('user_version = 21')
+  }
+
+  function columnsOf(db: Database.Database, table: string): string[] {
+    return (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((r) => r.name)
+  }
+
+  function indexExists(db: Database.Database, name: string): boolean {
+    const row = db
+      .prepare("SELECT name, sql FROM sqlite_master WHERE type='index' AND name=?")
+      .get(name) as { name: string; sql: string } | undefined
+    return Boolean(row)
+  }
+
+  it('a) v22 幂等重跑：不 throw 且 user_version 不回退', () => {
+    const db = new Database(':memory:')
+    createV21Devices(db)
+    v22(db)
+    db.pragma('user_version = 99') // 模拟后续版本推进
+    expect(() => v22(db)).not.toThrow()
+    expect(db.pragma('user_version', { simple: true })).toBe(22) // 重跑把版本拉回 22 不越界（注册表按序执行语义）
+    expect(columnsOf(db, 'devices')).toContain('name_hash')
+    db.close()
+  })
+
+  it('b) v22 后有 name_hash 列且无 idx_devices_name_hash 索引', () => {
+    const db = new Database(':memory:')
+    createV21Devices(db)
+    v22(db)
+    v23(db)
+    expect(columnsOf(db, 'devices')).toContain('name_hash')
+    expect(indexExists(db, 'idx_devices_name_hash')).toBe(false)
+    expect(db.pragma('user_version', { simple: true })).toBe(23)
+    db.close()
+  })
+
+  it('c) v24 门控：有重名跳过不 throw；清零后建索引且 UNIQUE', () => {
+    const db = new Database(':memory:')
+    createV21Devices(db)
+    v22(db)
+    const insert = db.prepare('INSERT INTO devices (id, name_enc, name_hash) VALUES (?, ?, ?)')
+    insert.run('d1', 'enc1', 'hash-same')
+    insert.run('d2', 'enc2', 'hash-same') // 存量重名
+
+    expect(v24(db)).toBe(false) // 门控：跳过建索引，不 throw
+    expect(indexExists(db, 'idx_devices_name_hash')).toBe(false)
+
+    db.prepare("UPDATE devices SET name_hash = 'hash-unique' WHERE id = 'd2'").run() // 清零
+    expect(v24(db)).toBe(true)
+    expect(indexExists(db, 'idx_devices_name_hash')).toBe(true)
+
+    // UNIQUE 语义：同 name_hash 二次写入抛约束（NULL 不参与 UNIQUE）
+    expect(() => insert.run('d3', 'enc3', 'hash-same')).toThrow(/UNIQUE/i)
+    insert.run('d4', 'enc4', null)
+    insert.run('d5', 'enc5', null) // 多行 NULL 合法
+    expect(() => v24(db)).not.toThrow() // 二次调用幂等
+    db.close()
+  })
+
+  it('d) MIGRATION_HEAD=24、注册表含 v22/v23/v24、init.ts fresh DDL 含 name_hash', () => {
+    expect(MIGRATION_HEAD).toBe(24)
+    const versions = MIGRATIONS.map((m) => m.version)
+    expect(versions).toContain(22)
+    expect(versions).toContain(23)
+    expect(versions).toContain(24)
+
+    const root = path.resolve(__dirname, '../..')
+    const initSrc = fs.readFileSync(path.join(root, 'electron/database/init.ts'), 'utf-8')
+    const m = initSrc.match(/CREATE TABLE IF NOT EXISTS devices \(([\s\S]*?)\);/)
+    expect(m).toBeTruthy()
+    expect(m![1]).toContain('name_hash TEXT')
+    // init.ts fresh-install 不预建 UNIQUE 索引（v24 统一负责）
+    expect(initSrc).not.toContain('CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_name_hash')
+  })
+
+  it('e) 全量迁移双跑幂等（内存库 user_version=0 → v22-v24 连续两遍无异常）', () => {
+    const db = new Database(':memory:')
+    createV21Devices(db)
+    db.pragma('user_version = 21')
+    const runTail = () => { v22(db); v23(db); v24(db) }
+    expect(() => runTail()).not.toThrow()
+    expect(() => runTail()).not.toThrow() // 第二遍幂等
+    expect(db.pragma('user_version', { simple: true })).toBe(23)
+    expect(indexExists(db, 'idx_devices_name_hash')).toBe(true)
+    db.close()
   })
 })
