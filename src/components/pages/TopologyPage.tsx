@@ -8,7 +8,7 @@ import DiscoveryPanel from '@/components/topology/DiscoveryPanel'
 import EditNodeModal from '@/components/topology/EditNodeModal'
 import { useTopologyToolbarStore } from '@/stores/topologyToolbarStore'
 import type { TopologyNode, TopologyNodeData, TopologyEdgeData, TopologyEdge, TopologySummary } from '@/types/topology'
-import type { ConnectionType } from '@/types/device'
+import type { ConnectionType, UpdateDeviceDTO } from '@/types/device'
 
 // D-08（Phase 19 / REN-02）：topology 记录已知字段覆盖集（Topology 类型字段），供未识别字段 warn 判定
 const KNOWN_TOPOLOGY_KEYS = new Set(['id', 'name', 'nodes', 'edges', 'status', 'createdAt', 'updatedAt'])
@@ -278,15 +278,31 @@ export default function TopologyPage() {
     setSelectedEdgeIds(new Set(edgeIds))
   }, [])
 
+  // Phase 25.1（25.1-01）：设备属性编辑收敛 device:update 单一写路径——service 层 updateDevice
+  // 同一事务内同步 devices 表（updated_at/name_hash/重名拦截）并级联刷新所有 topologies.data_enc，
+  // 消除原「只 setNodes + debounce 写 data_enc」的旁路写库（设备管理页不同步根因）。
+  // 失败不 setNodes（本地不落脏值），错误明文透出（重名冲突含冲突设备名+IP，D-12）。
   const handleEditConfirm = useCallback(
-    (updatedData: TopologyNodeData) => {
-      setNodes((nds) =>
-        nds.map((n) =>
-          n.data.deviceId === updatedData.deviceId ? { ...n, data: updatedData } : n
+    async (updatedData: TopologyNodeData) => {
+      try {
+        await window.api.device.update(updatedData.deviceId, {
+          name: updatedData.deviceName,
+          ipAddress: updatedData.ipAddress,
+          deviceType: updatedData.deviceType,
+          vendor: updatedData.vendor,
+          model: updatedData.model,
+        } as unknown as UpdateDeviceDTO)
+        // 成功后再镜像本地节点（值与 service 落库一致，debounce 回写不产生冲突数据）
+        setNodes((nds) =>
+          nds.map((n) =>
+            n.data.deviceId === updatedData.deviceId ? { ...n, data: updatedData } : n
+          )
         )
-      )
-      setEditModalOpen(false)
-      setEditingNodeData(null)
+        setEditModalOpen(false)
+        setEditingNodeData(null)
+      } catch (e: unknown) {
+        message.error('保存失败：' + (e instanceof Error ? e.message : String(e)))
+      }
     },
     [setNodes]
   )
