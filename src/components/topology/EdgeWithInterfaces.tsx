@@ -3,6 +3,7 @@
 // 边重渲染（大拓扑拖拽卡顿根因）。改为按源/目标节点逐字段原始值订阅（number 原语，Object.is 比较）：
 // 仅与被拖节点相连的边重渲染，其余边零重渲染。接口标签实时跟随行为（nearest handles 每渲染重算）不变。
 import { EdgeLabelRenderer, useStore, type EdgeProps } from 'reactflow'
+import { NODE_WIDTH, NODE_HEIGHT } from '@/utils/topologyLayout'
 import type { TopologyEdgeData } from '@/types/topology'
 
 interface HandlePos {
@@ -47,10 +48,12 @@ export default function EdgeWithInterfaces({
   style,
 }: EdgeProps<TopologyEdgeData>) {
   // D-14：逐字段原始值订阅（width/height/position.x/y），仅相连节点的坐标变化才触发本边重渲染
-  const srcW = useStore((s) => s.nodeInternals.get(source)?.width) || 60
-  const srcH = useStore((s) => s.nodeInternals.get(source)?.height) || 80
-  const tgtW = useStore((s) => s.nodeInternals.get(target)?.width) || 60
-  const tgtH = useStore((s) => s.nodeInternals.get(target)?.height) || 80
+  // CR-01（26 review）：兜底常量对齐 topologyLayout 模块约定（80/60），原 60/80 互换导致
+  // 首帧未测量时 handle 端点按转置包围盒计算
+  const srcW = useStore((s) => s.nodeInternals.get(source)?.width) || NODE_WIDTH
+  const srcH = useStore((s) => s.nodeInternals.get(source)?.height) || NODE_HEIGHT
+  const tgtW = useStore((s) => s.nodeInternals.get(target)?.width) || NODE_WIDTH
+  const tgtH = useStore((s) => s.nodeInternals.get(target)?.height) || NODE_HEIGHT
   const srcX = useStore((s) => s.nodeInternals.get(source)?.position?.x) ?? 0
   const srcY = useStore((s) => s.nodeInternals.get(source)?.position?.y) ?? 0
   const tgtX = useStore((s) => s.nodeInternals.get(target)?.position?.x) ?? 0
