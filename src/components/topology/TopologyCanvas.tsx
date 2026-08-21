@@ -13,7 +13,6 @@ import type { TopologyNode, TopologyEdge, TopologyNodeData } from '@/types/topol
 import {
   snapWithAntiOverlap,
   resolvePushAside,
-  SNAP_GRID,
   NODE_WIDTH,
   NODE_HEIGHT,
   type AlignMode,
@@ -146,6 +145,25 @@ export default function TopologyCanvas({
   const [guides, setGuides] = useState<GuideSegment[]>([])
   const pendingConnection = useRef<Connection | null>(null)
 
+  // Phase 26 / 26-04 再工 spec ①：guides setState 仅在段内容变化时触发
+  // （浅比较段数 + axis/at/from/to，防每帧 set 新数组触发无谓重渲染）
+  const guidesRef = useRef<GuideSegment[]>([])
+  const setGuidesIfChanged = useCallback((next: GuideSegment[]) => {
+    const prev = guidesRef.current
+    const same =
+      prev.length === next.length &&
+      prev.every(
+        (s, i) =>
+          s.axis === next[i].axis &&
+          s.at === next[i].at &&
+          s.from === next[i].from &&
+          s.to === next[i].to
+      )
+    if (same) return
+    guidesRef.current = next
+    setGuides(next)
+  }, [])
+
   const handleConnect = useCallback((connection: Connection) => {
     pendingConnection.current = connection
     setModalOpen(true)
@@ -176,68 +194,60 @@ export default function TopologyCanvas({
     [onSelectionChange]
   )
 
-  // Phase 26 / D-04 + D-05（拖拽中，高频路径）：
-  // ① 先经 snapWithAntiOverlap 判参考线对齐候选（GUIDE_THRESHOLD 6px 分支，内部已做防重叠校验）；
-  // ② snapped:false（候选压第三节点/无候选）时走 resolvePushAside 推挤让位（可连锁，拖动节点永不被弹回）。
+  // Phase 26 / 26-04 再工 spec ①⑤（拖拽中，高频路径——只做轻量事）：
+  // 每帧仅「节点跟鼠标走（RF 内置）+ 参考线吸附判定」，不做推挤/不移动其它节点。
+  // 次序规则：参考线吸附命中 > 网格对齐（RF 内置 snapToGrid={snapEnabled} 承担，
+  // 自定义路径 grid 传 null 防双重 snap/互相掩盖）> 自由落点。
+  // guides setState 仅在段内容变化时触发（浅比较段数/坐标，非每帧 set 新数组）。
   // 全程读 nodesRef.current（ref-mirror 红线），无闭包 state 读取。
   const handleNodeDrag = useCallback(
     (_event: MouseEvent, node: TopologyNode) => {
-      if (!onGuideSnap && !onPushAside) return
+      if (!onGuideSnap) return
       const all = nodesRef?.current ?? []
       if (all.length === 0) return
       const others = all.filter((n) => n.id !== node.id).map(toLayoutNode)
       if (others.length === 0) return
       const candidate = { x: node.position.x, y: node.position.y }
-      const res = snapWithAntiOverlap(candidate, node.id, others, SNAP_GRID)
-      if (res.snapped) {
-        if (res.pos.x !== candidate.x || res.pos.y !== candidate.y) {
-          onGuideSnap?.(node.id, res.pos)
-          setGuides(
-            computeGuideSegments(
-              res.pos,
-              candidate,
-              { width: node.width ?? NODE_WIDTH, height: node.height ?? NODE_HEIGHT },
-              others
-            )
+      const res = snapWithAntiOverlap(candidate, node.id, others, null)
+      if (res.snapped && (res.pos.x !== candidate.x || res.pos.y !== candidate.y)) {
+        onGuideSnap(node.id, res.pos)
+        setGuidesIfChanged(
+          computeGuideSegments(
+            res.pos,
+            candidate,
+            { width: node.width ?? NODE_WIDTH, height: node.height ?? NODE_HEIGHT },
+            others
           )
-        } else {
-          setGuides([])
-        }
+        )
       } else {
-        setGuides([])
-        const draggedRect = {
-          x: candidate.x,
-          y: candidate.y,
-          width: node.width ?? NODE_WIDTH,
-          height: node.height ?? NODE_HEIGHT,
-        }
-        const moves = resolvePushAside(node.id, draggedRect, others)
-        if (moves.size > 0) onPushAside?.(moves)
+        setGuidesIfChanged([])
       }
     },
-    [nodesRef, onGuideSnap, onPushAside]
+    [nodesRef, onGuideSnap]
   )
 
-  // Phase 26 / D-11：松手落点——snapToGrid 开启时经防重叠次序处理（重叠则放弃网格吸附，保留拖拽/推挤结果）
+  // Phase 26 / 26-04 再工 spec ②（松手结算）：拖拽中被压设备原地不动（允许视觉重叠）；
+  // 鼠标松开时若拖动节点落点与其它设备重叠 → 被 overlapping 的设备弹开到最近空位
+  // （resolvePushAside 红线：拖动节点永不在 moves 内，落点不动）。150ms 平滑滑开
+  // 动画由 DeviceNode CSS transition 承担（dragging=false 时生效）。
+  // 网格对齐已由 RF 内置 snapToGrid 在拖拽过程完成，松手不再二次 snap。
   const handleNodeDragStop = useCallback(
     (_event: MouseEvent, node: TopologyNode) => {
-      setGuides([])
-      if (!snapEnabled || !onGuideSnap) return
+      setGuidesIfChanged([])
+      if (!onPushAside) return
       const all = nodesRef?.current ?? []
-      if (all.length === 0) return
       const others = all.filter((n) => n.id !== node.id).map(toLayoutNode)
       if (others.length === 0) return
-      const res = snapWithAntiOverlap(
-        { x: node.position.x, y: node.position.y },
-        node.id,
-        others,
-        SNAP_GRID
-      )
-      if (res.snapped && (res.pos.x !== node.position.x || res.pos.y !== node.position.y)) {
-        onGuideSnap(node.id, res.pos)
+      const draggedRect = {
+        x: node.position.x,
+        y: node.position.y,
+        width: node.width ?? NODE_WIDTH,
+        height: node.height ?? NODE_HEIGHT,
       }
+      const moves = resolvePushAside(node.id, draggedRect, others)
+      if (moves.size > 0) onPushAside(moves)
     },
-    [snapEnabled, nodesRef, onGuideSnap]
+    [nodesRef, onPushAside, setGuidesIfChanged]
   )
 
   const sourceDeviceName = nodes.find((n) => n.id === pendingConnection.current?.source)?.data?.deviceName
