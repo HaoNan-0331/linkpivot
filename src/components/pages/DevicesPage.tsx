@@ -56,7 +56,7 @@ export default function DevicesPage() {
     try {
       await window.api.device.update(editing.id, payload as unknown as CreateDeviceDTO)
       message.success('设备更新成功')
-      setEditing(null); setFormOpen(false); load()
+      setEditing(null); setFormOpen(false); load(); loadDupGroups()
     } catch (e: unknown) {
       // D-09：updateDevice 18-02 已事务化，失败即整体回滚
       message.error('操作失败，数据已回滚无变化：' + (e instanceof Error ? e.message : String(e)))
@@ -67,7 +67,7 @@ export default function DevicesPage() {
     try {
       await window.api.device.delete(id)
       message.success('设备删除成功')
-      load()
+      load(); loadDupGroups()
     } catch (e: unknown) {
       // D-09：deleteDevice 18-02 已事务化，失败即整体回滚
       message.error('操作失败，数据已回滚无变化：' + (e instanceof Error ? e.message : String(e)))
