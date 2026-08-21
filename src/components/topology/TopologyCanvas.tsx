@@ -16,6 +16,7 @@ import {
   SNAP_GRID,
   NODE_WIDTH,
   NODE_HEIGHT,
+  type AlignMode,
   type LayoutNode,
   type Point,
 } from '@/utils/topologyLayout'
@@ -23,6 +24,7 @@ import DeviceNode from './DeviceNode'
 import EdgeWithInterfaces from './EdgeWithInterfaces'
 import ConnectionModal from './ConnectionModal'
 import SelectionToolbar from './SelectionToolbar'
+import AlignmentGuides, { type GuideSegment } from './AlignmentGuides'
 
 const nodeTypes = { deviceNode: DeviceNode }
 const edgeTypes = { edgeWithInterfaces: EdgeWithInterfaces }
@@ -46,6 +48,8 @@ interface TopologyCanvasProps {
   onGuideSnap?: (nodeId: string, pos: Point) => void
   // Phase 26 / D-04：推挤让位映射（被压节点 → 新位置，拖动节点永不在内）
   onPushAside?: (moves: Map<string, Point>) => void
+  // Phase 26 / D-12：选区对齐（经 props 回调链上抛 Page，Page 调 alignNodes 后 setNodes）
+  onAlignSelected?: (mode: AlignMode) => void
 }
 
 // Phase 26 / D-04/D-05：TopologyNode → LayoutNode 最小映射（width/height null → undefined 收敛类型分叉）
@@ -57,6 +61,48 @@ function toLayoutNode(n: TopologyNode): LayoutNode {
     width: n.width ?? undefined,
     height: n.height ?? undefined,
   }
+}
+
+// Phase 26 / TOPO-03：参考线段计算——吸附命中后反查对齐伙伴节点，
+// 线段覆盖拖动节点与伙伴节点包围盒并集（画布坐标，AlignmentGuides 内换算屏幕坐标）
+function computeGuideSegments(
+  snapped: Point,
+  candidate: Point,
+  dragged: { width: number; height: number },
+  others: LayoutNode[]
+): GuideSegment[] {
+  const segments: GuideSegment[] = []
+  for (const o of others) {
+    const ow = o.width ?? NODE_WIDTH
+    const oh = o.height ?? NODE_HEIGHT
+    if (snapped.x !== candidate.x) {
+      const targets = [o.x, o.x + ow / 2, o.x + ow]
+      const sources = [snapped.x, snapped.x + dragged.width / 2, snapped.x + dragged.width]
+      const matched = targets.find((t) => sources.some((s) => Math.abs(t - s) < 0.5))
+      if (matched !== undefined) {
+        segments.push({
+          axis: 'x',
+          at: matched,
+          from: Math.min(snapped.y, o.y),
+          to: Math.max(snapped.y + dragged.height, o.y + oh),
+        })
+      }
+    }
+    if (snapped.y !== candidate.y) {
+      const targets = [o.y, o.y + oh / 2, o.y + oh]
+      const sources = [snapped.y, snapped.y + dragged.height / 2, snapped.y + dragged.height]
+      const matched = targets.find((t) => sources.some((s) => Math.abs(t - s) < 0.5))
+      if (matched !== undefined) {
+        segments.push({
+          axis: 'y',
+          at: matched,
+          from: Math.min(snapped.x, o.x),
+          to: Math.max(snapped.x + dragged.width, o.x + ow),
+        })
+      }
+    }
+  }
+  return segments
 }
 
 export default function TopologyCanvas({
@@ -74,10 +120,13 @@ export default function TopologyCanvas({
   nodesRef,
   onGuideSnap,
   onPushAside,
+  onAlignSelected,
 }: TopologyCanvasProps) {
   const [modalOpen, setModalOpen] = useState(false)
   const [selectedNodes, setSelectedNodes] = useState<TopologyNode[]>([])
   const [selectedEdges, setSelectedEdges] = useState<TopologyEdge[]>([])
+  // Phase 26 / TOPO-03：参考线段（画布坐标）——仅拖拽按压期间非空，松手清空
+  const [guides, setGuides] = useState<GuideSegment[]>([])
   const pendingConnection = useRef<Connection | null>(null)
 
   // Phase 26 / D-13：持续换算视野中心的画布坐标（屏幕→画布逆变换），写入父组件 ref 不触发重渲染
@@ -138,8 +187,19 @@ export default function TopologyCanvas({
       if (res.snapped) {
         if (res.pos.x !== candidate.x || res.pos.y !== candidate.y) {
           onGuideSnap?.(node.id, res.pos)
+          setGuides(
+            computeGuideSegments(
+              res.pos,
+              candidate,
+              { width: node.width ?? NODE_WIDTH, height: node.height ?? NODE_HEIGHT },
+              others
+            )
+          )
+        } else {
+          setGuides([])
         }
       } else {
+        setGuides([])
         const draggedRect = {
           x: candidate.x,
           y: candidate.y,
@@ -156,6 +216,7 @@ export default function TopologyCanvas({
   // Phase 26 / D-11：松手落点——snapToGrid 开启时经防重叠次序处理（重叠则放弃网格吸附，保留拖拽/推挤结果）
   const handleNodeDragStop = useCallback(
     (_event: MouseEvent, node: TopologyNode) => {
+      setGuides([])
       if (!snapEnabled || !onGuideSnap) return
       const all = nodesRef?.current ?? []
       if (all.length === 0) return
@@ -207,12 +268,14 @@ export default function TopologyCanvas({
           nodeBorderRadius={8}
         />
         <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
+        <AlignmentGuides guides={guides} />
         <SelectionToolbar
           selectedNodes={selectedNodes}
           selectedEdges={selectedEdges}
           allNodes={nodes}
           onDelete={onDeleteSelected || (() => {})}
           onEdit={onEditSelectedNode || (() => {})}
+          onAlign={onAlignSelected}
         />
       </ReactFlow>
       <ConnectionModal

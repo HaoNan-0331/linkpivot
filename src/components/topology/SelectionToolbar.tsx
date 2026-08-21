@@ -1,8 +1,18 @@
 import { useMemo } from 'react'
-import { Button, Space } from 'antd'
-import { DeleteOutlined, EditOutlined } from '@ant-design/icons'
+import { Button, Divider, Space, Tooltip } from 'antd'
+import {
+  DeleteOutlined,
+  EditOutlined,
+  AlignLeftOutlined,
+  AlignRightOutlined,
+  VerticalAlignTopOutlined,
+  VerticalAlignBottomOutlined,
+  ColumnWidthOutlined,
+  ColumnHeightOutlined,
+} from '@ant-design/icons'
 import { useStore } from 'reactflow'
 import type { TopologyNode, TopologyEdge } from '@/types/topology'
+import type { AlignMode } from '@/utils/topologyLayout'
 
 interface SelectionToolbarProps {
   selectedNodes: TopologyNode[]
@@ -10,6 +20,8 @@ interface SelectionToolbarProps {
   allNodes: TopologyNode[]
   onDelete: () => void
   onEdit: () => void
+  /** Phase 26 / D-12：对齐回调链（经 props 上抛到 Page，Page 调 alignNodes 后 setNodes） */
+  onAlign?: (mode: AlignMode) => void
 }
 
 export default function SelectionToolbar({
@@ -18,6 +30,7 @@ export default function SelectionToolbar({
   allNodes,
   onDelete,
   onEdit,
+  onAlign,
 }: SelectionToolbarProps) {
   const transform = useStore((s) => s.transform)
 
@@ -59,6 +72,9 @@ export default function SelectionToolbar({
   if (!position) return null
 
   const isNodeSelected = selectedNodes.length > 0
+  // Phase 26 / D-12（UI-SPEC Interaction 7）：框选 ≥2 节点对齐按钮组可用；均分需 ≥3
+  const canAlign = selectedNodes.length >= 2
+  const canDistribute = selectedNodes.length >= 3
 
   return (
     <Space
@@ -78,6 +94,39 @@ export default function SelectionToolbar({
         <Button size="small" icon={<EditOutlined />} onClick={onEdit}>
           编辑属性
         </Button>
+      )}
+      {canAlign && (
+        <>
+          <Tooltip title="左对齐">
+            <Button size="small" icon={<AlignLeftOutlined />} onClick={() => onAlign?.('left')} />
+          </Tooltip>
+          <Tooltip title="右对齐">
+            <Button size="small" icon={<AlignRightOutlined />} onClick={() => onAlign?.('right')} />
+          </Tooltip>
+          <Tooltip title="顶部对齐">
+            <Button size="small" icon={<VerticalAlignTopOutlined />} onClick={() => onAlign?.('top')} />
+          </Tooltip>
+          <Tooltip title="底部对齐">
+            <Button size="small" icon={<VerticalAlignBottomOutlined />} onClick={() => onAlign?.('bottom')} />
+          </Tooltip>
+          <Tooltip title={canDistribute ? '水平均分' : '需要至少 3 个节点'}>
+            <Button
+              size="small"
+              icon={<ColumnWidthOutlined />}
+              disabled={!canDistribute}
+              onClick={() => onAlign?.('hDistribute')}
+            />
+          </Tooltip>
+          <Tooltip title={canDistribute ? '垂直均分' : '需要至少 3 个节点'}>
+            <Button
+              size="small"
+              icon={<ColumnHeightOutlined />}
+              disabled={!canDistribute}
+              onClick={() => onAlign?.('vDistribute')}
+            />
+          </Tooltip>
+          <Divider type="vertical" />
+        </>
       )}
       <Button size="small" danger icon={<DeleteOutlined />} onClick={onDelete}>
         删除

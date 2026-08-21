@@ -5,7 +5,7 @@ import { PlusOutlined, SearchOutlined } from '@ant-design/icons'
 import TopologyCanvas from '@/components/topology/TopologyCanvas'
 import AddDeviceModal from '@/components/topology/AddDeviceModal'
 import LayoutPreviewBanner from '@/components/topology/LayoutPreviewBanner'
-import { spreadLayout, type Point } from '@/utils/topologyLayout'
+import { spreadLayout, alignNodes, type AlignMode, type Point } from '@/utils/topologyLayout'
 import DiscoveryPanel from '@/components/topology/DiscoveryPanel'
 import EditNodeModal from '@/components/topology/EditNodeModal'
 import { useTopologyToolbarStore } from '@/stores/topologyToolbarStore'
@@ -84,6 +84,27 @@ export default function TopologyPage() {
   const handlePushAside = useCallback((moves: Map<string, Point>) => {
     applyPositionMoves(moves)
   }, [applyPositionMoves])
+
+  // Phase 26 / D-12（TOPO-04）：选区对齐——alignNodes 纯函数算映射后仅对变更节点换引用；
+  // 均分 <3 节点返回空 Map（按钮侧已禁用，双保险）
+  const handleAlignSelected = useCallback(
+    (mode: AlignMode) => {
+      if (selectedNodeIds.size < 2) return
+      const moves = alignNodes(
+        [...selectedNodeIds],
+        nodesRef.current.map((n) => ({
+          id: n.id,
+          x: n.position.x,
+          y: n.position.y,
+          width: n.width ?? undefined,
+          height: n.height ?? undefined,
+        })),
+        mode
+      )
+      applyPositionMoves(moves)
+    },
+    [selectedNodeIds, applyPositionMoves]
+  )
 
   const loadTopology = useCallback(async (id: string) => {
     isLoadingRef.current = true
@@ -467,6 +488,7 @@ export default function TopologyPage() {
         nodesRef={nodesRef}
         onGuideSnap={handleGuideSnap}
         onPushAside={handlePushAside}
+        onAlignSelected={handleAlignSelected}
       />
       <LayoutPreviewBanner
         visible={isLayoutPreviewing}
