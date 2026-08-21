@@ -315,4 +315,53 @@ describe('批量创建/回填/重名分组/清零建索引（25-03）', () => {
     expect(ensureNameUniqueIndex()).toBe(true) // sqlite_master no-op 守卫，多次调用安全
     expect(count().c).toBe(1)
   })
+
+  /** Phase 25（25-05，缺陷修复回归）：中招库场景——v24 在全 NULL 时误建索引 → 回填死锁。 */
+  it('回填-索引死锁自愈：索引已建 + 存量重名行 NULL → 回填 DROP 无效索引并回填成功（25-05）', () => {
+    const db = H.delegate as Database.Database
+    // 构造中招库：索引已存在（makeDb(true)）+ 全表 name_hash NULL 的存量重名设备
+    H.delegate = makeDb(true)
+    setDeviceMasterKey(TEST_MK)
+    const d1 = insertRawDevice(H.delegate as Database.Database, 'Core-SW', '192.168.1.1', false, TEST_MK)
+    const d2 = insertRawDevice(H.delegate as Database.Database, ' CORE-SW ', '192.168.1.2', false, TEST_MK)
+    insertRawDevice(H.delegate as Database.Database, 'Solo-FW', '10.5.0.1', false, TEST_MK)
+    expect(db).toBeTruthy()
+
+    // 回填入口检测无效索引并 DROP → 重名行回填成功（旧实现此处逐行 UNIQUE 冲突静默跳过）
+    const r = backfillNameHash()
+    expect(r.backfilled).toBe(3)
+    expect(r.duplicateGroups).toBe(1)
+    const deadDb = H.delegate as Database.Database
+    expect(deadDb.prepare("SELECT 1 FROM sqlite_master WHERE name = 'idx_devices_name_hash'").get())
+      .toBeUndefined() // 无效索引被撤
+    const nulls = deadDb.prepare('SELECT COUNT(*) AS c FROM devices WHERE name_hash IS NULL').get() as { c: number }
+    expect(nulls.c).toBe(0) // 重名行也回填成功（死锁解除）
+    expect(listDuplicateGroups()).toHaveLength(1)
+
+    // 仍有重名组 → 不建索引
+    expect(ensureNameUniqueIndex()).toBe(false)
+    expect(deadDb.prepare("SELECT 1 FROM sqlite_master WHERE name = 'idx_devices_name_hash'").get())
+      .toBeUndefined()
+
+    // 用户将重名设备改名为唯一 → 真正清零 → 索引重建
+    updateDevice(d2, { name: 'Edge-SW' })
+    expect(deadDb.prepare("SELECT 1 FROM sqlite_master WHERE name = 'idx_devices_name_hash'").get())
+      .toBeTruthy()
+    const hash1 = deadDb.prepare('SELECT name_hash FROM devices WHERE id = ?').get(d1) as any
+    expect(hash1.name_hash).toBe(hashDeviceName('Core-SW'))
+  })
+
+  it('ensureNameUniqueIndex 索引存在但 NULL 行 > 0 → DROP 后因未清零返回 false（无效索引自愈）', () => {
+    const deadDb = makeDb(true)
+    H.delegate = deadDb
+    setDeviceMasterKey(TEST_MK)
+    insertRawDevice(deadDb, 'Only-FW', '10.6.0.1', false, TEST_MK) // NULL 行
+    expect(ensureNameUniqueIndex()).toBe(false) // DROP 无效索引 + 未真正清零不重建
+    expect(deadDb.prepare("SELECT 1 FROM sqlite_master WHERE name = 'idx_devices_name_hash'").get())
+      .toBeUndefined()
+    backfillNameHash() // 回填后 NULL=0 且无重名 → 真正清零
+    expect(ensureNameUniqueIndex()).toBe(true)
+    expect(deadDb.prepare("SELECT 1 FROM sqlite_master WHERE name = 'idx_devices_name_hash'").get())
+      .toBeTruthy()
+  })
 })

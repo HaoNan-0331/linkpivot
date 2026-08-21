@@ -308,12 +308,30 @@ export function listDuplicateGroups(): Array<{
 export function backfillNameHash(): { backfilled: number; duplicateGroups: number } {
   const db = getDatabase()
   const rows = db.prepare('SELECT id, name_enc FROM devices WHERE name_hash IS NULL').all() as any[]
+
+  // Phase 25（25-05，缺陷修复）：回填-索引死锁自愈——v24 迁移先于回填跑，全表 NULL 时
+  // 其清零门控误判成立（无重名组）→ UNIQUE 索引先建。此状态下回填存量重名行会违反
+  // UNIQUE 被逐行 catch 静默跳过 → name_hash 永久 NULL（Alert 不现、查重失效）。
+  // 语义：存量 NULL 行存在时，索引的「清零承诺」是假的，属无效索引——先 DROP 再回填。
+  if (rows.length > 0) {
+    const staleIndex = db.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_devices_name_hash'"
+    ).get()
+    if (staleIndex) db.exec('DROP INDEX idx_devices_name_hash')
+  }
+
   const stmtUpdate = db.prepare('UPDATE devices SET name_hash = ? WHERE id = ?')
   let backfilled = 0
   for (const row of rows) {
     try {
-      const hash = hashDeviceName(dec(row.name_enc))
-      stmtUpdate.run(hash, row.id)
+      const name = dec(row.name_enc)
+      if (!name) {
+        // 空名守卫：dec 降级返回空串的行无法归一化，回填空名 hash 会把多行解密失败
+        // 设备聚成假重名组——跳过留 NULL，待数据修复后下次启动自愈。
+        console.warn('[device] 回填 name_hash 跳过空名/解密失败行:', row.id)
+        continue
+      }
+      stmtUpdate.run(hashDeviceName(name), row.id)
       backfilled++
     } catch (e) {
       console.warn('[device] 回填 name_hash 单行失败，跳过:', row.id, e)
@@ -326,16 +344,24 @@ export function backfillNameHash(): { backfilled: number; duplicateGroups: numbe
 }
 
 /**
- * Phase 25（25-03，ASSET-04/D-10）：运行时复用 v24 清零门控建 UNIQUE 索引。
- * 入口幂等守卫：sqlite_master 已存在 idx_devices_name_hash 直接返回 true（no-op，多次调用安全）；
- * 有存量重名时 v24 返回 false（跳过不 throw），待重名清零后再次调用补建。
+ * Phase 25（25-03，ASSET-04/D-10；25-05 修正清零判定）：运行时复用 v24 清零门控建 UNIQUE 索引。
+ * 真正清零 = NULL 行计数为 0 且无重名组（旧判定只看无重名组，v24 在全 NULL 时误建索引后
+ * 幂等守卫 `if (existing) return true` 使中招库永无自愈路径）。
+ * 索引已存在但仍有 NULL 行 → 索引清零前提从未成立，属无效索引：先 DROP 再按新判定评估。
+ * 多次调用安全（真正清零后 no-op 返回 true）。
  */
 export function ensureNameUniqueIndex(): boolean {
   const db = getDatabase()
+  const nulls = db.prepare('SELECT COUNT(*) AS c FROM devices WHERE name_hash IS NULL')
+    .get() as { c: number }
   const existing = db.prepare(
     "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_devices_name_hash'"
   ).get()
-  if (existing) return true
+  if (existing) {
+    if (nulls.c === 0) return true // 真正清零：索引有效，no-op
+    db.exec('DROP INDEX idx_devices_name_hash') // 无效索引（清零前提从未成立），撤后重评估
+  }
+  if (nulls.c > 0) return false // 尚有未回填行：未真正清零，不建
   return v24(db)
 }
 

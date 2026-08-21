@@ -7,7 +7,7 @@ import { setDecryptFailureHandler } from './utils/crypto'
 import { hardenWindow, openExternalSafe } from './utils/webSecurity'
 import { secure, safe, setAuthenticated } from './utils/authGuard'
 import { generateCaptcha, login, isFirstRun, initAdmin } from './services/auth'
-import { setDeviceMasterKey, listDevices, createDevice, updateDevice, deleteDevice, getDeviceById, maskDeviceSecrets, checkDeviceName, createBatchDevices, listDuplicateGroups, backfillNameHash } from './services/device'
+import { setDeviceMasterKey, listDevices, createDevice, updateDevice, deleteDevice, getDeviceById, maskDeviceSecrets, checkDeviceName, createBatchDevices, listDuplicateGroups, backfillNameHash, ensureNameUniqueIndex } from './services/device'
 import { setTopologyMasterKey, listTopologies, getTopologyById, createTopology, updateTopology, deleteTopology, exportTopology, importTopology } from './services/topology'
 import { setConnectionMasterKey, openTerminal, openWebSafe, writeToSession, writeByWebContentsId, disconnectSession, testDeviceConnection } from './services/connection'
 import { setAiMasterKey, chat, getAiConfigMasked, saveAiConfig, getCommandWhitelist, saveCommandWhitelist, getExecMode, setExecMode, getMcpMaxRounds, setMcpMaxRounds, confirmCommand, getAiLogs, getChatHistory, saveChatMessage as aiSaveChatMessage, createSession, listSessions, getSessionMessages, deleteSession, updateSessionTitle } from './services/ai'
@@ -134,6 +134,14 @@ app.whenReady().then(() => {
     if (r.duplicateGroups > 0) console.log('[startup] 存量设备重名组:', r.duplicateGroups)
   } catch (e) {
     console.warn('[startup] backfill name_hash failed (non-blocking):', (e as Error).message)
+  }
+  // Phase 25（25-05）：回填后立即按新清零判定（NULL=0 且无重名组）补评估唯一索引——
+  // 回填路径已自愈 DROP 无效索引；此处对回填后真正清零的库当场重建，对仍有重名的库
+  // 保持跳过（等重命名清零路径补建）。失败仅 warn 不阻塞启动。
+  try {
+    if (ensureNameUniqueIndex()) console.log('[startup] devices.name_hash 唯一索引已启用')
+  } catch (e) {
+    console.warn('[startup] ensureNameUniqueIndex failed (non-blocking):', (e as Error).message)
   }
   // Phase 17 SEC-06（D-01）：日志加密列启动即同步回填——明文存量行加密落 _enc + 旧列置 NULL（净化备份）。
   // 双钩子独立 try/catch 隔离故障（一个失败不挡另一个）；幂等可重试（中断后下次启动续跑），失败仅 warn 不阻塞启动。
