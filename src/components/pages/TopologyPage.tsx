@@ -10,7 +10,7 @@ import DiscoveryPanel from '@/components/topology/DiscoveryPanel'
 import EditNodeModal from '@/components/topology/EditNodeModal'
 import { useTopologyToolbarStore } from '@/stores/topologyToolbarStore'
 import type { TopologyNode, TopologyNodeData, TopologyEdgeData, TopologyEdge, TopologySummary } from '@/types/topology'
-import type { ConnectionType, UpdateDeviceDTO } from '@/types/device'
+import type { ConnectionType } from '@/types/device'
 
 // D-08（Phase 19 / REN-02）：topology 记录已知字段覆盖集（Topology 类型字段），供未识别字段 warn 判定
 const KNOWN_TOPOLOGY_KEYS = new Set(['id', 'name', 'nodes', 'edges', 'status', 'createdAt', 'updatedAt'])
@@ -489,13 +489,15 @@ export default function TopologyPage() {
   const handleEditConfirm = useCallback(
     async (updatedData: TopologyNodeData) => {
       try {
+        // WR-06（26 review）：UpdateDeviceDTO = Partial<CreateDeviceDTO>，字段全 optional，
+        // 直接构造可赋值对象——删双断言，新增字段缺漏即刻产生编译错误（防 25.1-01 级联集分叉）
         await window.api.device.update(updatedData.deviceId, {
           name: updatedData.deviceName,
           ipAddress: updatedData.ipAddress,
           deviceType: updatedData.deviceType,
           vendor: updatedData.vendor,
           model: updatedData.model,
-        } as unknown as UpdateDeviceDTO)
+        })
         // 成功后再镜像本地节点（值与 service 落库一致，debounce 回写不产生冲突数据）
         setNodes((nds) =>
           nds.map((n) =>
