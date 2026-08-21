@@ -27,6 +27,9 @@ import AlignmentGuides, { type GuideSegment } from './AlignmentGuides'
 
 const nodeTypes = { deviceNode: DeviceNode }
 const edgeTypes = { edgeWithInterfaces: EdgeWithInterfaces }
+// Phase 26 / 26-04 round 3 P-A：defaultEdgeOptions 必须模块级常量——JSX 内联对象每帧
+// 新引用会触发 RF 内部 store updater 每帧 diff（官方 perf 指南点名）
+const DEFAULT_EDGE_OPTIONS = { type: 'edgeWithInterfaces' } as const
 
 // Phase 26 / D-13：ViewportCenterReporter——store 消费必须在 <ReactFlow> children 内
 // （StoreContext 仅向 children 提供，组件 body 层 useStore 会 throw error#001）。
@@ -267,9 +270,8 @@ export default function TopologyCanvas({
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         fitView
-        defaultEdgeOptions={{
-          type: 'edgeWithInterfaces',
-        }}
+        defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
+        nodeDragThreshold={1}
       >
         <Controls />
         <MiniMap

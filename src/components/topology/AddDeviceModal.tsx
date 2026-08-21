@@ -86,6 +86,9 @@ export default function AddDeviceModal({
         id: nodeId,
         type: 'deviceNode' as const,
         position: { x: pos.x, y: pos.y },
+        // Phase 26 / 26-04 round 3 P-B：显式尺寸固化（防 RF 每帧测量循环，reactflow #3925）
+        width: NODE_WIDTH,
+        height: NODE_HEIGHT,
         data: {
           deviceId: device.id,
           deviceName: device.name,
