@@ -10,6 +10,7 @@ interface TopologyToolbarState {
   onDelete: () => void
   onImport: (jsonStr: string) => void
   onExport: () => void
+  onOrganizeLayout: () => void
 }
 
 interface ToolbarStore {
