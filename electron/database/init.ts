@@ -35,10 +35,13 @@ export function createTables() {
       ssh_key_path_enc TEXT,
       ssh_key_content_enc TEXT,
       web_url_enc TEXT,
+      name_hash TEXT,
       created_at TEXT DEFAULT (datetime('now','localtime')),
       updated_at TEXT DEFAULT (datetime('now','localtime')),
       FOREIGN KEY (topology_id) REFERENCES topologies(id) ON DELETE SET NULL
     );
+    -- name_hash：ASSET-03（Phase 25）。列定义与 migrations.ts v22 ALTER 逐字一致（双路径一致红线）。
+    -- fresh-install 不建 idx_devices_name_hash（v24 清零门控统一负责，避免 fresh/migrate 两路径索引时序漂移）。
 
     CREATE TABLE IF NOT EXISTS ai_config (
       id TEXT PRIMARY KEY,

@@ -13,7 +13,7 @@ import { createSystemLog } from '../services/systemLog'
  *      在 createTables() 建好基线表之后、premigration 备份之后执行（D-06）。
  *      init.ts 不直接调用 runMigrations（单一调用点原则）。
  */
-export const MIGRATION_HEAD = 21
+export const MIGRATION_HEAD = 24
 
 interface MigrationStep {
   version: number
@@ -733,6 +733,76 @@ export const v21 = (db: Database.Database): void => {
   step()
 }
 
+/**
+ * v22：Phase 25（25-01，ASSET-03）三段式迁移第一段——devices 加 name_hash TEXT 列。
+ *
+ * devices.name_enc 是 AES-256-GCM 密文，UNIQUE 不能直接建；name_hash 存归一化名
+ * SHA-256（deviceName.ts 单一来源，25-02 service 写入维护 / 25-03 post-MK 回填）。
+ * 本段只加列：nullable、无索引、无 UNIQUE（存量未回填，建索引必炸存量重名，T-25-01）。
+ *
+ * 幂等守卫 D-14 第一形式：hasColumn（与 v1/v3/v9/v10/v12/v20/v21 同构，纯 ALTER ADD COLUMN，
+ * 不靠 user_version 判定）。执行体包 db.transaction（throw 即 ROLLBACK）。
+ * 列定义与 init.ts fresh-install devices DDL 逐字一致（双路径一致红线，v7-v21 注释同款要求）。
+ */
+export const v22 = (db: Database.Database): void => {
+  const step = db.transaction(() => {
+    if (!hasColumn(db, 'devices', 'name_hash')) {
+      db.exec('ALTER TABLE devices ADD COLUMN name_hash TEXT')
+    }
+    db.pragma('user_version = 22')
+  })
+  step()
+}
+
+/**
+ * v23：Phase 25（25-01）三段式迁移第二段——版本占位（回填发生在 post-MK 钩子）。
+ *
+ * name_hash 存量回填需解密 name_enc，而迁移在 MK 注入前跑（migrateAndSecure 早于
+ * setDeviceMasterKey，v10/v13 caveat 同款）——回填由 25-03 的 backfillNameHash
+ * post-MK 钩子执行（幂等守卫 WHERE name_hash IS NULL，失败 warn 不阻塞启动）。
+ * 本步骤仅推进 user_version=23 作为三段式版本锚点，无 DDL、无数据搬动。
+ */
+export const v23 = (db: Database.Database): void => {
+  db.pragma('user_version = 23')
+}
+
+/**
+ * v24：Phase 25（25-01）三段式迁移第三段——清零门控建 UNIQUE 索引（D-10 运行时可复用）。
+ *
+ * idx_devices_name_hash UNIQUE 索引是 DB 层唯一兜底（service 层校验之上的第二拦）。
+ * 存量重名库直接建索引会 SQLITE_CONSTRAINT——步骤内先 GROUP BY name_hash HAVING
+ * COUNT(*)>1 检测：有重名则跳过不 throw（清零门控，T-25-01 mitigate），
+ * 待 25-03 重名清零后运行时复用本导出函数补建。
+ *
+ * 独立于 user_version 判定（签名纯 (db)，可被迁移注册与运行时清零路径双调用）。
+ * CREATE UNIQUE INDEX IF NOT EXISTS 天然幂等（v14 索引先例）。DDL 与 init.ts
+ * fresh-install DDL 逐字一致（双路径一致红线）。
+ *
+ * @returns true=已建索引；false=存量重名跳过（门控未过）
+ */
+export const v24 = (db: Database.Database): boolean => {
+  const dup = db.prepare(
+    'SELECT COUNT(*) AS c FROM (SELECT name_hash FROM devices WHERE name_hash IS NOT NULL GROUP BY name_hash HAVING COUNT(*) > 1)'
+  ).get() as { c: number }
+  if (dup.c > 0) {
+    return false // 存量重名：不建索引不 throw（清零门控，25-03 运行时复用补建）
+  }
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_name_hash ON devices(name_hash)')
+  return true
+}
+
+/**
+ * v24 迁移注册包装：索引建立（或门控跳过）后推进 user_version=24。
+ * 意外错误（非重名）throw 即中止启动，符合迁移红线。
+ */
+const v24MigrationStep = (db: Database.Database): void => {
+  const step = db.transaction(() => {
+    v24(db)
+    db.pragma('user_version = 24')
+  })
+  step()
+}
+
 const MIGRATIONS: MigrationStep[] = [
   { version: 1, name: 'chat_history.session_id', run: v1 },
   { version: 2, name: 'ai_exec_logs.prompt_text+ai_response', run: v2 },
@@ -755,6 +825,9 @@ const MIGRATIONS: MigrationStep[] = [
   { version: 19, name: 'ai_exec_logs.mode CHECK widen (confirm/smart/auto)', run: v19 },
   { version: 20, name: 'ai_exec_logs 补回 v19 误丢的 prompt_text/ai_response 明文列', run: v20 },
   { version: 21, name: 'ai_config.mcp_max_rounds（MCP 轮次上限系统设置可调）', run: v21 },
+  { version: 22, name: 'devices.name_hash（ASSET-03 三段式第一段：加列无索引）', run: v22 },
+  { version: 23, name: 'devices.name_hash 回填版本锚点（三段式第二段：post-MK 回填归 25-03）', run: v23 },
+  { version: 24, name: 'idx_devices_name_hash UNIQUE 清零门控（三段式第三段，D-10 运行时可复用）', run: v24MigrationStep },
 ]
 
 /**
