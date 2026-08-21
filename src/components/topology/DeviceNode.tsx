@@ -22,11 +22,21 @@ const iconMap: Record<DeviceType, string> = {
 // - selected 必含：:47-48 选中态边框/底色随选即变，漏掉 = 选中视觉恒失效（恒失效坑）
 // - data 引用相等：TopologyPage handleEditConfirm 对被编辑节点 { ...n, data: updatedData }
 //   产新 data 引用 → memo 放行编辑更新（D-09 ①「编辑节点立即刷新」回归前提）
-function DeviceNodeInner({ data, selected }: NodeProps<TopologyNodeData>) {
+// - dragging 必含：Phase 26 / D-04 弹开动画——非拖动节点 150ms ease-out 过渡、拖动节点零 transition
+function DeviceNodeInner({ data, selected, dragging }: NodeProps<TopologyNodeData>) {
   const iconSrc = iconMap[data.deviceType] || equipmentIcon
 
   return (
-    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+    <div
+      style={{
+        position: 'relative',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        // Phase 26 / D-04（UI-SPEC 弹开动画约定）：被推挤让位节点平滑位移，拖动节点零延迟跟指针
+        transition: dragging ? 'none' : 'transform 150ms ease-out, left 150ms ease-out, top 150ms ease-out',
+      }}
+    >
       <Handle type="target" position={Position.Top} id="top" style={{ background: '#1890ff', width: 8, height: 8 }} />
       <Handle type="target" position={Position.Bottom} id="bottom" style={{ background: '#1890ff', width: 8, height: 8 }} />
       <Handle type="target" position={Position.Left} id="left" style={{ background: '#1890ff', width: 8, height: 8 }} />
@@ -76,6 +86,10 @@ function DeviceNodeInner({ data, selected }: NodeProps<TopologyNodeData>) {
   )
 }
 
-const DeviceNode = memo(DeviceNodeInner, (prev, next) => prev.selected === next.selected && prev.data === next.data)
+const DeviceNode = memo(
+  DeviceNodeInner,
+  (prev, next) =>
+    prev.selected === next.selected && prev.data === next.data && prev.dragging === next.dragging
+)
 
 export default DeviceNode

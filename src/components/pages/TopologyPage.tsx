@@ -5,7 +5,7 @@ import { PlusOutlined, SearchOutlined } from '@ant-design/icons'
 import TopologyCanvas from '@/components/topology/TopologyCanvas'
 import AddDeviceModal from '@/components/topology/AddDeviceModal'
 import LayoutPreviewBanner from '@/components/topology/LayoutPreviewBanner'
-import { spreadLayout } from '@/utils/topologyLayout'
+import { spreadLayout, type Point } from '@/utils/topologyLayout'
 import DiscoveryPanel from '@/components/topology/DiscoveryPanel'
 import EditNodeModal from '@/components/topology/EditNodeModal'
 import { useTopologyToolbarStore } from '@/stores/topologyToolbarStore'
@@ -54,6 +54,36 @@ export default function TopologyPage() {
   useEffect(() => {
     edgesRef.current = edges
   }, [edges])
+
+  // Phase 26 / D-04 + D-05：位置映射应用——仅对 moves 涉及节点换引用（保持 26-01 细粒度修复，
+  // 不 map 全量 {...n}），未涉及节点原引用透传（memo comparator 直接命中，无重渲染）
+  const applyPositionMoves = useCallback(
+    (moves: Map<string, Point>) => {
+      if (moves.size === 0) return
+      setNodes((nds) =>
+        nds.map((n) => {
+          const p = moves.get(n.id)
+          return p ? { ...n, position: { x: p.x, y: p.y } } : n
+        })
+      )
+    },
+    [setNodes]
+  )
+
+  // Phase 26 / D-05：参考线/网格吸附命中——拖动节点落点回写（单节点换引用）
+  const handleGuideSnap = useCallback(
+    (nodeId: string, pos: Point) => {
+      setNodes((nds) =>
+        nds.map((n) => (n.id === nodeId ? { ...n, position: { x: pos.x, y: pos.y } } : n))
+      )
+    },
+    [setNodes]
+  )
+
+  // Phase 26 / D-04：推挤让位映射（被压节点，拖动节点永不在 moves 内——resolvePushAside 红线）
+  const handlePushAside = useCallback((moves: Map<string, Point>) => {
+    applyPositionMoves(moves)
+  }, [applyPositionMoves])
 
   const loadTopology = useCallback(async (id: string) => {
     isLoadingRef.current = true
@@ -434,6 +464,9 @@ export default function TopologyPage() {
         onSelectionChange={handleCanvasSelectionChange}
         snapEnabled={snapEnabled}
         viewportCenterRef={viewportCenterRef}
+        nodesRef={nodesRef}
+        onGuideSnap={handleGuideSnap}
+        onPushAside={handlePushAside}
       />
       <LayoutPreviewBanner
         visible={isLayoutPreviewing}

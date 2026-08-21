@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react'
 import ReactFlow, {
   Controls,
   MiniMap,
@@ -10,6 +10,15 @@ import ReactFlow, {
   BackgroundVariant,
 } from 'reactflow'
 import type { TopologyNode, TopologyEdge, TopologyNodeData } from '@/types/topology'
+import {
+  snapWithAntiOverlap,
+  resolvePushAside,
+  SNAP_GRID,
+  NODE_WIDTH,
+  NODE_HEIGHT,
+  type LayoutNode,
+  type Point,
+} from '@/utils/topologyLayout'
 import DeviceNode from './DeviceNode'
 import EdgeWithInterfaces from './EdgeWithInterfaces'
 import ConnectionModal from './ConnectionModal'
@@ -31,6 +40,23 @@ interface TopologyCanvasProps {
   snapEnabled?: boolean
   // Phase 26 / D-13：视野中心（画布坐标）ref 注出口——供新增设备最近空位落点计算
   viewportCenterRef?: { current: { x: number; y: number } }
+  // Phase 26 / D-14 高频拖拽路径：读 nodesRef.current（ref-mirror 红线，无闭包 stale）
+  nodesRef?: { current: TopologyNode[] }
+  // Phase 26 / D-05：参考线/网格吸附命中——拖动节点落点回写（仅变更节点换引用）
+  onGuideSnap?: (nodeId: string, pos: Point) => void
+  // Phase 26 / D-04：推挤让位映射（被压节点 → 新位置，拖动节点永不在内）
+  onPushAside?: (moves: Map<string, Point>) => void
+}
+
+// Phase 26 / D-04/D-05：TopologyNode → LayoutNode 最小映射（width/height null → undefined 收敛类型分叉）
+function toLayoutNode(n: TopologyNode): LayoutNode {
+  return {
+    id: n.id,
+    x: n.position.x,
+    y: n.position.y,
+    width: n.width ?? undefined,
+    height: n.height ?? undefined,
+  }
 }
 
 export default function TopologyCanvas({
@@ -45,6 +71,9 @@ export default function TopologyCanvas({
   onSelectionChange,
   snapEnabled = false,
   viewportCenterRef,
+  nodesRef,
+  onGuideSnap,
+  onPushAside,
 }: TopologyCanvasProps) {
   const [modalOpen, setModalOpen] = useState(false)
   const [selectedNodes, setSelectedNodes] = useState<TopologyNode[]>([])
@@ -93,6 +122,58 @@ export default function TopologyCanvas({
     [onSelectionChange]
   )
 
+  // Phase 26 / D-04 + D-05（拖拽中，高频路径）：
+  // ① 先经 snapWithAntiOverlap 判参考线对齐候选（GUIDE_THRESHOLD 6px 分支，内部已做防重叠校验）；
+  // ② snapped:false（候选压第三节点/无候选）时走 resolvePushAside 推挤让位（可连锁，拖动节点永不被弹回）。
+  // 全程读 nodesRef.current（ref-mirror 红线），无闭包 state 读取。
+  const handleNodeDrag = useCallback(
+    (_event: MouseEvent, node: TopologyNode) => {
+      if (!onGuideSnap && !onPushAside) return
+      const all = nodesRef?.current ?? []
+      if (all.length === 0) return
+      const others = all.filter((n) => n.id !== node.id).map(toLayoutNode)
+      if (others.length === 0) return
+      const candidate = { x: node.position.x, y: node.position.y }
+      const res = snapWithAntiOverlap(candidate, node.id, others, SNAP_GRID)
+      if (res.snapped) {
+        if (res.pos.x !== candidate.x || res.pos.y !== candidate.y) {
+          onGuideSnap?.(node.id, res.pos)
+        }
+      } else {
+        const draggedRect = {
+          x: candidate.x,
+          y: candidate.y,
+          width: node.width ?? NODE_WIDTH,
+          height: node.height ?? NODE_HEIGHT,
+        }
+        const moves = resolvePushAside(node.id, draggedRect, others)
+        if (moves.size > 0) onPushAside?.(moves)
+      }
+    },
+    [nodesRef, onGuideSnap, onPushAside]
+  )
+
+  // Phase 26 / D-11：松手落点——snapToGrid 开启时经防重叠次序处理（重叠则放弃网格吸附，保留拖拽/推挤结果）
+  const handleNodeDragStop = useCallback(
+    (_event: MouseEvent, node: TopologyNode) => {
+      if (!snapEnabled || !onGuideSnap) return
+      const all = nodesRef?.current ?? []
+      if (all.length === 0) return
+      const others = all.filter((n) => n.id !== node.id).map(toLayoutNode)
+      if (others.length === 0) return
+      const res = snapWithAntiOverlap(
+        { x: node.position.x, y: node.position.y },
+        node.id,
+        others,
+        SNAP_GRID
+      )
+      if (res.snapped && (res.pos.x !== node.position.x || res.pos.y !== node.position.y)) {
+        onGuideSnap(node.id, res.pos)
+      }
+    },
+    [snapEnabled, nodesRef, onGuideSnap]
+  )
+
   const sourceDeviceName = nodes.find((n) => n.id === pendingConnection.current?.source)?.data?.deviceName
   const targetDeviceName = nodes.find((n) => n.id === pendingConnection.current?.target)?.data?.deviceName
 
@@ -108,6 +189,8 @@ export default function TopologyCanvas({
           onNodeDoubleClick?.(node.id, node.data)
         }}
         onSelectionChange={handleSelectionChange}
+        onNodeDrag={handleNodeDrag}
+        onNodeDragStop={handleNodeDragStop}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         snapToGrid={snapEnabled}

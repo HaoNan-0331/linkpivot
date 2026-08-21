@@ -9,3 +9,9 @@ html, body, #root {
   height: 100%;
   overflow: hidden;
 }
+
+/* Phase 26 / D-04（UI-SPEC 弹开动画约定）：被推挤节点位移 150ms ease-out 平滑让位（非瞬移），
+   拖动节点（react-flow 加 .dragging class）零 transition 零延迟跟指针（D-14 流畅度）。 */
+.react-flow__node:not(.dragging) {
+  transition: transform 150ms ease-out;
+}
