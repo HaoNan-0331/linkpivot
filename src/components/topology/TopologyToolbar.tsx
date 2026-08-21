@@ -27,6 +27,8 @@ interface TopologyToolbarProps {
   onImport: (jsonStr: string) => void
   onExport: () => void
   onOrganizeLayout: () => void
+  // Phase 26 / 26-04 再工 spec ④：画布选中设备数——tooltip 动态文案
+  selectedCount: number
   snapEnabled: boolean
   onToggleSnap: () => void
   isLayoutPreviewing: boolean
@@ -42,6 +44,7 @@ export default function TopologyToolbar({
   onImport,
   onExport,
   onOrganizeLayout,
+  selectedCount,
   snapEnabled,
   onToggleSnap,
   isLayoutPreviewing,
@@ -159,8 +162,15 @@ export default function TopologyToolbar({
       <Button block size="small" icon={<ImportOutlined />} onClick={handleImport}>
         导入
       </Button>
+      {/* Phase 26 / 26-04 再工 spec ④：整理布局 tooltip 按选中态动态文案 */}
       <Tooltip
-        title="按当前大致方位散开排列，重叠节点拉至均匀间距。未选中时整理全图，框选后仅整理选中节点"
+        title={
+          selectedCount === 0
+            ? '未选中：按连接层级星型排列全图'
+            : selectedCount === 1
+              ? '已选 1 台：以该设备为中心排列全图'
+              : '已选多台：仅整理选中设备'
+        }
       >
         <Button
           block
@@ -172,7 +182,7 @@ export default function TopologyToolbar({
           整理布局
         </Button>
       </Tooltip>
-      <Tooltip title="开启后拖拽节点对齐 20px 网格">
+      <Tooltip title="开启后拖放设备自动对齐 20px 网格，便于横平竖直手动排版；关闭则自由落点">
         <Button
           block
           size="small"

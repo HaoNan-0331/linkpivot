@@ -351,12 +351,13 @@ export default function TopologyPage() {
       onImport: handleImport,
       onExport: handleExport,
       onOrganizeLayout: handleOrganizeLayout,
+      selectedCount: selectedNodeIds.size,
       snapEnabled,
       onToggleSnap: () => setSnapEnabled((v) => !v),
       isLayoutPreviewing,
     })
     return () => setToolbarState(null)
-  }, [topologies, currentTopologyId, handleTopologyChange, handleNew, saveTopology, handleDelete, handleImport, handleExport, handleOrganizeLayout, snapEnabled, isLayoutPreviewing, setToolbarState])
+  }, [topologies, currentTopologyId, handleTopologyChange, handleNew, saveTopology, handleDelete, handleImport, handleExport, handleOrganizeLayout, selectedNodeIds, snapEnabled, isLayoutPreviewing, setToolbarState])
 
   const handleConnect = useCallback(
     (connection: Connection, sourceInterface: string, targetInterface: string) => {
