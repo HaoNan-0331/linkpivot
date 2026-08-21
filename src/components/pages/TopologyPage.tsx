@@ -122,7 +122,12 @@ export default function TopologyPage() {
       setNodes(normalizeNodeSizes(topo.nodes || []))
       setEdges(topo.edges || [])
     }
-    isLoadingRef.current = false
+    // WR-01（26 review）：React 18 批处理下自动保存 effect 在同步代码结束后才 flush，
+    // 同步置 false 会使 guard 失效（每次切换拓扑多一次原样写回库）。仿 handleUndoLayout
+    // 用 setTimeout(0) 保持 guard 到 effect 跳过本帧。
+    setTimeout(() => {
+      isLoadingRef.current = false
+    }, 0)
   }, [setNodes, setEdges])
 
   const fetchTopologies = useCallback(async () => {
