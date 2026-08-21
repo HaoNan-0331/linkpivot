@@ -186,13 +186,16 @@ export default function TopologyPage() {
 
   const saveTopology = useCallback(async () => {
     if (!currentTopologyId) return
+    // WR-02（26 review）：预览态下手动保存必须退出预览态（横幅残留/撤销回滚已存布局/
+    // 自动保存持续挂起三害同源）
+    resetPreviewState()
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     await window.api.topology.update(currentTopologyId, {
       nodes: nodesRef.current.map((n) => ({ ...n })),
       edges: edgesRef.current.map((e) => ({ ...e })),
     })
     message.success('保存成功')
-  }, [currentTopologyId])
+  }, [currentTopologyId, resetPreviewState])
 
   const debouncedSave = useCallback(() => {
     if (!currentTopologyId) return
