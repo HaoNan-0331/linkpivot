@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
-import { Table, Button, Space, Popconfirm, message, Typography } from 'antd'
+import { Table, Button, Space, Popconfirm, message, Typography, Alert } from 'antd'
 import { PlusOutlined, EditOutlined, DeleteOutlined, ApiOutlined, CopyOutlined } from '@ant-design/icons'
 import DeviceForm from '../DeviceForm'
 import DeviceBatchForm from '../DeviceBatchForm'
+import DuplicateNamesModal from '../DuplicateNamesModal'
 import type { Device, CreateDeviceDTO } from '../../types/device'
 
 const { Title } = Typography
@@ -21,6 +22,9 @@ export default function DevicesPage() {
   const [batchSource, setBatchSource] = useState<Device | null>(null)
   const [batchOpen, setBatchOpen] = useState(false)
   const [testingId, setTestingId] = useState<string | null>(null)
+  // Phase 25（ASSET-04/D-08）：存量重名分组——非空时顶部黄色 Alert 引导，清零后自动消失
+  const [dupGroups, setDupGroups] = useState<Array<{ nameHash: string; devices: unknown[] }>>([])
+  const [dupModalOpen, setDupModalOpen] = useState(false)
 
   const load = async () => {
     setLoading(true)
@@ -28,7 +32,12 @@ export default function DevicesPage() {
     setLoading(false)
   }
 
-  useEffect(() => { load() }, [])
+  // 只读通道：失败静默降级为不显示 Alert（非阻断引导，不让重名查询故障影响设备页）
+  const loadDupGroups = async () => {
+    try { setDupGroups(await window.api.device.listDuplicates()) } catch (e) { console.warn('listDuplicates failed', e) }
+  }
+
+  useEffect(() => { load(); loadDupGroups() }, [])
 
   const handleCreate = async (values: CreateDeviceDTO) => {
     try {
@@ -89,6 +98,16 @@ export default function DevicesPage() {
         <Title level={4} style={{ margin: 0 }}>设备管理</Title>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true) }}>添加设备</Button>
       </div>
+      {dupGroups.length > 0 && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={`存在 ${dupGroups.length} 组重名设备（共 ${dupGroups.reduce((n, g) => n + g.devices.length, 0)} 台），处理后自动启用名称唯一防护`}
+          action={<Button size="small" danger onClick={() => setDupModalOpen(true)}>查看清单</Button>}
+          closable={false}
+        />
+      )}
       <Table columns={[
         { title: '设备名称', dataIndex: 'name', key: 'name' },
         { title: '类型', dataIndex: 'deviceType', key: 'deviceType', render: (v: string) => deviceTypeLabels[v] || v },
@@ -112,6 +131,11 @@ export default function DevicesPage() {
         onOk={editing ? handleUpdate : handleCreate}
         onCancel={() => { setFormOpen(false); setEditing(null); setCopySource(null) }} />
       <DeviceBatchForm open={batchOpen} source={batchSource} onClose={() => setBatchOpen(false)} onCreated={load} />
+      <DuplicateNamesModal
+        open={dupModalOpen}
+        onClose={() => setDupModalOpen(false)}
+        onChanged={() => { load(); loadDupGroups() }}
+      />
     </div>
   )
 }
