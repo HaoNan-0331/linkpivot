@@ -1,8 +1,9 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import ReactFlow, {
   Controls,
   MiniMap,
   Background,
+  useStore,
   type Connection,
   type OnNodesChange,
   type OnEdgesChange,
@@ -28,6 +29,8 @@ interface TopologyCanvasProps {
   onEditSelectedNode?: () => void
   onSelectionChange?: (nodeIds: string[], edgeIds: string[]) => void
   snapEnabled?: boolean
+  // Phase 26 / D-13：视野中心（画布坐标）ref 注出口——供新增设备最近空位落点计算
+  viewportCenterRef?: { current: { x: number; y: number } }
 }
 
 export default function TopologyCanvas({
@@ -41,11 +44,24 @@ export default function TopologyCanvas({
   onEditSelectedNode,
   onSelectionChange,
   snapEnabled = false,
+  viewportCenterRef,
 }: TopologyCanvasProps) {
   const [modalOpen, setModalOpen] = useState(false)
   const [selectedNodes, setSelectedNodes] = useState<TopologyNode[]>([])
   const [selectedEdges, setSelectedEdges] = useState<TopologyEdge[]>([])
   const pendingConnection = useRef<Connection | null>(null)
+
+  // Phase 26 / D-13：持续换算视野中心的画布坐标（屏幕→画布逆变换），写入父组件 ref 不触发重渲染
+  const transform = useStore((s) => s.transform)
+  const rfWidth = useStore((s) => s.width)
+  const rfHeight = useStore((s) => s.height)
+  useEffect(() => {
+    if (!viewportCenterRef || !rfWidth || !rfHeight || !transform[2]) return
+    viewportCenterRef.current = {
+      x: (rfWidth / 2 - transform[0]) / transform[2],
+      y: (rfHeight / 2 - transform[1]) / transform[2],
+    }
+  }, [transform, rfWidth, rfHeight, viewportCenterRef])
 
   const handleConnect = useCallback((connection: Connection) => {
     pendingConnection.current = connection

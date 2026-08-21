@@ -2,12 +2,15 @@ import { useEffect, useState } from 'react'
 import { Modal, Table, message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { v4 as uuidv4 } from 'uuid'
+import { nearestFreePosition, NODE_WIDTH, NODE_HEIGHT, type LayoutNode } from '@/utils/topologyLayout'
 import type { Device, DeviceType } from '@/types/device'
 import type { TopologyNode } from '@/types/topology'
 
 interface AddDeviceModalProps {
   open: boolean
   existingNodes: TopologyNode[]
+  // Phase 26 / D-13：视野中心（画布坐标）取值器——Modal 不在 ReactFlow Provider 内，由父组件经 ref 注入
+  getViewportCenter?: () => { x: number; y: number }
   onConfirm: (nodes: TopologyNode[]) => void
   onCancel: () => void
 }
@@ -23,6 +26,7 @@ const DEVICE_TYPE_LABELS: Record<DeviceType, string> = {
 export default function AddDeviceModal({
   open,
   existingNodes,
+  getViewportCenter,
   onConfirm,
   onCancel,
 }: AddDeviceModalProps) {
@@ -63,12 +67,25 @@ export default function AddDeviceModal({
       return
     }
 
+    // Phase 26 / D-13：新增设备落当前视野中心最近不重叠空位（替换原 Math.random 随机落点）；
+    // 批量添加时已生成的新节点也计入占位集，多台设备依次散开不互相叠压
+    const center = getViewportCenter?.() ?? { x: 300, y: 200 }
+    const occupied: LayoutNode[] = existingNodes.map((n) => ({
+      id: n.id,
+      x: n.position.x,
+      y: n.position.y,
+      width: NODE_WIDTH,
+      height: NODE_HEIGHT,
+    }))
     const newNodes: TopologyNode[] = selectedRowKeys.map((deviceId) => {
       const device = devices.find((d) => d.id === deviceId)!
+      const pos = nearestFreePosition(center, occupied)
+      const nodeId = uuidv4()
+      occupied.push({ id: nodeId, x: pos.x, y: pos.y, width: NODE_WIDTH, height: NODE_HEIGHT })
       return {
-        id: uuidv4(),
+        id: nodeId,
         type: 'deviceNode' as const,
-        position: { x: Math.random() * 600 + 100, y: Math.random() * 400 + 100 },
+        position: { x: pos.x, y: pos.y },
         data: {
           deviceId: device.id,
           deviceName: device.name,

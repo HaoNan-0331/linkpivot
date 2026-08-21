@@ -39,6 +39,8 @@ export default function TopologyPage() {
   const [isLayoutPreviewing, setIsLayoutPreviewing] = useState(false)
   // Phase 26 / D-11：网格吸附 toggle，默认关闭
   const [snapEnabled, setSnapEnabled] = useState(false)
+  // Phase 26 / D-13：视野中心（画布坐标）——由 TopologyCanvas 经 useStore 换算写入，供新增设备落点
+  const viewportCenterRef = useRef({ x: 0, y: 0 })
   // FE-03 (D-5-4): ref-mirror 同步最新 nodes/edges，供注册一次但需读最新拓扑的回调读取，消除 stale closure。
   // 不迁 useNodesState/useEdgesState 到 store（红线）——仅回调读取路径从闭包变量改为 ref.current。
   const nodesRef = useRef<TopologyNode[]>([])
@@ -431,6 +433,7 @@ export default function TopologyPage() {
         onEditSelectedNode={handleEditSelectedNode}
         onSelectionChange={handleCanvasSelectionChange}
         snapEnabled={snapEnabled}
+        viewportCenterRef={viewportCenterRef}
       />
       <LayoutPreviewBanner
         visible={isLayoutPreviewing}
@@ -460,6 +463,7 @@ export default function TopologyPage() {
       <AddDeviceModal
         open={addDeviceOpen}
         existingNodes={nodes}
+        getViewportCenter={() => ({ ...viewportCenterRef.current })}
         onConfirm={handleAddDevices}
         onCancel={() => setAddDeviceOpen(false)}
       />
