@@ -1,11 +1,13 @@
-import { useState } from 'react'
-import { Button, Select, Modal, Input, Popconfirm, message } from 'antd'
+import { useRef, useState } from 'react'
+import { Button, Select, Modal, Input, Popconfirm, Tooltip, message } from 'antd'
 import {
   PlusOutlined,
   SaveOutlined,
   DeleteOutlined,
   ImportOutlined,
   ExportOutlined,
+  ApartmentOutlined,
+  BorderOutlined,
 } from '@ant-design/icons'
 
 // Phase 19 / REN-02（P14）：字段 optional 化——与 TopologySummary 对齐，兼容持久化历史 JSON
@@ -24,6 +26,10 @@ interface TopologyToolbarProps {
   onDelete: () => void
   onImport: (jsonStr: string) => void
   onExport: () => void
+  onOrganizeLayout: () => void
+  snapEnabled: boolean
+  onToggleSnap: () => void
+  isLayoutPreviewing: boolean
 }
 
 export default function TopologyToolbar({
@@ -35,9 +41,37 @@ export default function TopologyToolbar({
   onDelete,
   onImport,
   onExport,
+  onOrganizeLayout,
+  snapEnabled,
+  onToggleSnap,
+  isLayoutPreviewing,
 }: TopologyToolbarProps) {
   const [newModalOpen, setNewModalOpen] = useState(false)
   const [newName, setNewName] = useState('')
+  // Phase 26 / T-26-03-03：预览态防误离开——Select onChange 拦截，确认放弃才切换
+  const [leaveModalOpen, setLeaveModalOpen] = useState(false)
+  const pendingTopologyIdRef = useRef<string | null>(null)
+
+  const handleTopologySelect = (id: string | null) => {
+    if (isLayoutPreviewing) {
+      pendingTopologyIdRef.current = id
+      setLeaveModalOpen(true)
+      return
+    }
+    onTopologyChange(id)
+  }
+
+  const handleLeaveConfirm = () => {
+    const id = pendingTopologyIdRef.current
+    pendingTopologyIdRef.current = null
+    setLeaveModalOpen(false)
+    onTopologyChange(id)
+  }
+
+  const handleLeaveCancel = () => {
+    pendingTopologyIdRef.current = null
+    setLeaveModalOpen(false)
+  }
 
   const handleNew = () => {
     if (!newName.trim()) {
@@ -85,7 +119,7 @@ export default function TopologyToolbar({
         placeholder="选择拓扑"
         allowClear
         value={currentTopologyId}
-        onChange={onTopologyChange}
+        onChange={handleTopologySelect}
         options={topologies.map((t) => ({ label: t.name, value: t.id }))}
         size="small"
       />
@@ -125,6 +159,30 @@ export default function TopologyToolbar({
       <Button block size="small" icon={<ImportOutlined />} onClick={handleImport}>
         导入
       </Button>
+      <Tooltip
+        title="按当前大致方位散开排列，重叠节点拉至均匀间距。未选中时整理全图，框选后仅整理选中节点"
+      >
+        <Button
+          block
+          size="small"
+          icon={<ApartmentOutlined />}
+          disabled={!currentTopologyId}
+          onClick={onOrganizeLayout}
+        >
+          整理布局
+        </Button>
+      </Tooltip>
+      <Tooltip title="开启后拖拽节点对齐 20px 网格">
+        <Button
+          block
+          size="small"
+          icon={<BorderOutlined />}
+          type={snapEnabled ? 'primary' : 'default'}
+          onClick={onToggleSnap}
+        >
+          网格吸附
+        </Button>
+      </Tooltip>
       <Button
         block
         size="small"
@@ -150,6 +208,17 @@ export default function TopologyToolbar({
           onPressEnter={handleNew}
           autoFocus
         />
+      </Modal>
+      <Modal
+        title="布局预览尚未保存"
+        open={leaveModalOpen}
+        onOk={handleLeaveConfirm}
+        onCancel={handleLeaveCancel}
+        okText="放弃修改"
+        okButtonProps={{ danger: true }}
+        cancelText="继续编辑"
+      >
+        切换拓扑将丢弃未保存的布局调整，是否放弃修改？
       </Modal>
     </div>
   )

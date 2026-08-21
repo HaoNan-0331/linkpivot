@@ -27,6 +27,7 @@ interface TopologyCanvasProps {
   onDeleteSelected?: () => void
   onEditSelectedNode?: () => void
   onSelectionChange?: (nodeIds: string[], edgeIds: string[]) => void
+  snapEnabled?: boolean
 }
 
 export default function TopologyCanvas({
@@ -39,6 +40,7 @@ export default function TopologyCanvas({
   onDeleteSelected,
   onEditSelectedNode,
   onSelectionChange,
+  snapEnabled = false,
 }: TopologyCanvasProps) {
   const [modalOpen, setModalOpen] = useState(false)
   const [selectedNodes, setSelectedNodes] = useState<TopologyNode[]>([])
@@ -92,6 +94,8 @@ export default function TopologyCanvas({
         onSelectionChange={handleSelectionChange}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
+        snapToGrid={snapEnabled}
+        snapGrid={[20, 20]}
         fitView
         defaultEdgeOptions={{
           type: 'edgeWithInterfaces',

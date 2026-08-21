@@ -11,6 +11,10 @@ interface TopologyToolbarState {
   onImport: (jsonStr: string) => void
   onExport: () => void
   onOrganizeLayout: () => void
+  // Phase 26 / D-11：网格吸附 toggle（默认关闭）+ 预览态标记（防误离开拦截，T-26-03-03）
+  snapEnabled: boolean
+  onToggleSnap: () => void
+  isLayoutPreviewing: boolean
 }
 
 interface ToolbarStore {
