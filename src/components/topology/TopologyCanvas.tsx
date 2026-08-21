@@ -29,6 +29,23 @@ import AlignmentGuides, { type GuideSegment } from './AlignmentGuides'
 const nodeTypes = { deviceNode: DeviceNode }
 const edgeTypes = { edgeWithInterfaces: EdgeWithInterfaces }
 
+// Phase 26 / D-13：ViewportCenterReporter——store 消费必须在 <ReactFlow> children 内
+// （StoreContext 仅向 children 提供，组件 body 层 useStore 会 throw error#001）。
+// 写入父组件 ref 不触发重渲染；订阅 3 个原始值，重渲染成本可忽略。
+function ViewportCenterReporter({ viewportCenterRef }: { viewportCenterRef?: { current: { x: number; y: number } } }) {
+  const transform = useStore((s) => s.transform)
+  const rfWidth = useStore((s) => s.width)
+  const rfHeight = useStore((s) => s.height)
+  useEffect(() => {
+    if (!viewportCenterRef || !rfWidth || !rfHeight || !transform[2]) return
+    viewportCenterRef.current = {
+      x: (rfWidth / 2 - transform[0]) / transform[2],
+      y: (rfHeight / 2 - transform[1]) / transform[2],
+    }
+  }, [transform, rfWidth, rfHeight, viewportCenterRef])
+  return null
+}
+
 interface TopologyCanvasProps {
   nodes: TopologyNode[]
   edges: TopologyEdge[]
@@ -128,18 +145,6 @@ export default function TopologyCanvas({
   // Phase 26 / TOPO-03：参考线段（画布坐标）——仅拖拽按压期间非空，松手清空
   const [guides, setGuides] = useState<GuideSegment[]>([])
   const pendingConnection = useRef<Connection | null>(null)
-
-  // Phase 26 / D-13：持续换算视野中心的画布坐标（屏幕→画布逆变换），写入父组件 ref 不触发重渲染
-  const transform = useStore((s) => s.transform)
-  const rfWidth = useStore((s) => s.width)
-  const rfHeight = useStore((s) => s.height)
-  useEffect(() => {
-    if (!viewportCenterRef || !rfWidth || !rfHeight || !transform[2]) return
-    viewportCenterRef.current = {
-      x: (rfWidth / 2 - transform[0]) / transform[2],
-      y: (rfHeight / 2 - transform[1]) / transform[2],
-    }
-  }, [transform, rfWidth, rfHeight, viewportCenterRef])
 
   const handleConnect = useCallback((connection: Connection) => {
     pendingConnection.current = connection
@@ -268,6 +273,7 @@ export default function TopologyCanvas({
           nodeBorderRadius={8}
         />
         <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
+        <ViewportCenterReporter viewportCenterRef={viewportCenterRef} />
         <AlignmentGuides guides={guides} />
         <SelectionToolbar
           selectedNodes={selectedNodes}
