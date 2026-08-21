@@ -236,3 +236,25 @@ export function getDeviceById(id: string) {
   const row = getDatabase().prepare('SELECT * FROM devices WHERE id = ?').get(id) as any
   return row ? rowToDevice(row) : null
 }
+
+/**
+ * Phase 25（25-02，ASSET-03/D-11）：设备名查重——提示性预检（供 25-03 IPC onBlur /
+ * 25-04 批量行内标红复用）。命中返回冲突设备 { name, ipAddress } 明文，未命中返回 null。
+ *
+ * 非硬防线：预检与保存间隙的 TOCTOU 由保存路径事务内校验兜底（T-25-06 accept）；
+ * excludeId 传入时排除该设备自身（编辑场景改名不改名自查）。
+ */
+export function checkDeviceName(
+  name: string,
+  excludeId?: string
+): { name: string; ipAddress: string } | null {
+  const db = getDatabase()
+  const hash = hashDeviceName(name)
+  const row = (
+    excludeId !== undefined
+      ? db.prepare('SELECT name_enc, ip_enc FROM devices WHERE name_hash = ? AND id != ?').get(hash, excludeId)
+      : db.prepare('SELECT name_enc, ip_enc FROM devices WHERE name_hash = ?').get(hash)
+  ) as any
+  if (!row) return null
+  return { name: dec(row.name_enc), ipAddress: dec(row.ip_enc) }
+}
