@@ -130,7 +130,9 @@ export default function TopologyPage() {
     }, 0)
   }, [setNodes, setEdges])
 
-  const fetchTopologies = useCallback(async () => {
+  // WR-07（26 review）：selectId 指定强制选中的拓扑 id——handleNew/handleImport 场景下
+  // 跳过「自动选 list[0]」，避免与后续 setCurrentTopologyId(topo.id) 双重加载竞态错位
+  const fetchTopologies = useCallback(async (selectId?: string) => {
     // WR-01：过滤无 id 的历史脏数据行，防 undefined 传播为 currentTopologyId / getById(undefined)
     const list = (await window.api.topology.list()).filter((t): t is TopologySummary & { id: string } => !!t.id)
     // D-08（Phase 19 / REN-02）：旧版本拓扑 JSON 含未识别字段时静默忽略 + console.warn 可观测——
@@ -147,10 +149,11 @@ export default function TopologyPage() {
       }
     }
     setTopologies(list)
-    // Auto-select most recent topology if none selected
-    if (list.length > 0) {
-      setCurrentTopologyId(list[0].id)
-      loadTopology(list[0].id)
+    // 选中优先级：显式 selectId > 最近一条（list[0]）；selectId 不在列表（已删/竞态）则退回 list[0]
+    const target = selectId && list.some((t) => t.id === selectId) ? selectId : list[0]?.id
+    if (target) {
+      setCurrentTopologyId(target)
+      loadTopology(target)
     }
   }, [loadTopology])
 
@@ -310,12 +313,10 @@ export default function TopologyPage() {
   const handleNew = useCallback(async (name: string) => {
     resetPreviewState()
     const topo = await window.api.topology.create({ name, nodes: [], edges: [] })
-    await fetchTopologies()
-    setCurrentTopologyId(topo.id)
-    setNodes([])
-    setEdges([])
+    // WR-07：经 fetchTopologies(topo.id) 单一选中/加载路径（新拓扑必在 list，空节点由 loadTopology 置空）
+    await fetchTopologies(topo.id)
     message.success('创建成功')
-  }, [resetPreviewState, fetchTopologies, setNodes, setEdges])
+  }, [resetPreviewState, fetchTopologies])
 
   const handleDelete = useCallback(async () => {
     if (!currentTopologyId) return
@@ -337,7 +338,8 @@ export default function TopologyPage() {
     try {
       resetPreviewState()
       const topo = await window.api.topology.importJson(jsonStr)
-      await fetchTopologies()
+      // WR-07：同 handleNew，经 selectId 单一选中路径防双重加载
+      await fetchTopologies(topo.id)
       setCurrentTopologyId(topo.id)
       if (topo.nodes) setNodes(normalizeNodeSizes(topo.nodes))
       if (topo.edges) setEdges(topo.edges)
