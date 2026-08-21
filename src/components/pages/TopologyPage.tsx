@@ -153,17 +153,23 @@ export default function TopologyPage() {
     fetchTopologies()
   }, [fetchTopologies])
 
+  // CR-02（26 review）：预览态复位抽公共函数——handleNew/handleDelete/handleImport 经
+  // fetchTopologies 自动选中新拓扑时绕过 handleTopologyChange，若不复位将导致预览横幅残留、
+  // layoutSnapshotRef 指向旧拓扑快照、自动保存 effect 对新拓扑永久挂起（编辑静默丢失）。
+  const resetPreviewState = useCallback(() => {
+    if (!previewRef.current) return
+    previewRef.current = false
+    setIsLayoutPreviewing(false)
+    layoutSnapshotRef.current = null
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
+    }
+  }, [])
+
   const handleTopologyChange = useCallback((id: string | null) => {
     // D-06 复位：切换拓扑即丢弃未保存预览（防误离开拦截在 TopologyToolbar，T-26-03-03）
-    if (previewRef.current) {
-      previewRef.current = false
-      setIsLayoutPreviewing(false)
-      layoutSnapshotRef.current = null
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current)
-        saveTimerRef.current = null
-      }
-    }
+    resetPreviewState()
     setCurrentTopologyId(id)
     if (id) {
       loadTopology(id)
@@ -171,7 +177,7 @@ export default function TopologyPage() {
       setNodes([])
       setEdges([])
     }
-  }, [loadTopology, setNodes, setEdges])
+  }, [resetPreviewState, loadTopology, setNodes, setEdges])
 
   const saveTopology = useCallback(async () => {
     if (!currentTopologyId) return
@@ -294,16 +300,18 @@ export default function TopologyPage() {
   }, [nodes, edges, currentTopologyId, debouncedSave])
 
   const handleNew = useCallback(async (name: string) => {
+    resetPreviewState()
     const topo = await window.api.topology.create({ name, nodes: [], edges: [] })
     await fetchTopologies()
     setCurrentTopologyId(topo.id)
     setNodes([])
     setEdges([])
     message.success('创建成功')
-  }, [fetchTopologies, setNodes, setEdges])
+  }, [resetPreviewState, fetchTopologies, setNodes, setEdges])
 
   const handleDelete = useCallback(async () => {
     if (!currentTopologyId) return
+    resetPreviewState()
     try {
       await window.api.topology.delete(currentTopologyId)
       setCurrentTopologyId(null)
@@ -315,10 +323,11 @@ export default function TopologyPage() {
       // D-09：deleteTopology 18-02 已事务化，失败即整体回滚（对照同文件 handleImport catch 结构）
       message.error('操作失败，数据已回滚无变化：' + (e instanceof Error ? e.message : String(e)))
     }
-  }, [currentTopologyId, fetchTopologies, setNodes, setEdges])
+  }, [currentTopologyId, resetPreviewState, fetchTopologies, setNodes, setEdges])
 
   const handleImport = useCallback(async (jsonStr: string) => {
     try {
+      resetPreviewState()
       const topo = await window.api.topology.importJson(jsonStr)
       await fetchTopologies()
       setCurrentTopologyId(topo.id)
@@ -328,7 +337,7 @@ export default function TopologyPage() {
     } catch {
       message.error('导入失败')
     }
-  }, [fetchTopologies, setNodes, setEdges])
+  }, [resetPreviewState, fetchTopologies, setNodes, setEdges])
 
   const handleExport = useCallback(async () => {
     if (!currentTopologyId) return
