@@ -381,6 +381,16 @@ export default function TopologyPage() {
     setAddDeviceOpen(false)
   }, [setNodes])
 
+  // Phase 26 / 26-04 round 3 P-C：稳定回调/取值器——内联箭头函数每帧新引用会击穿子组件 memo
+  const handleAddDeviceCancel = useCallback(() => setAddDeviceOpen(false), [])
+  const handleDiscoveryCancel = useCallback(() => setDiscoveryOpen(false), [])
+  const handleEditCancel = useCallback(() => {
+    setEditModalOpen(false)
+    setEditingNodeData(null)
+  }, [])
+  const getViewportCenter = useCallback(() => ({ ...viewportCenterRef.current }), [])
+  const getExistingNodes = useCallback(() => nodesRef.current, [])
+
   const handleDiscoveryConfirm = useCallback(
     (discoveredNodes: TopologyNode[], discoveredEdges: TopologyEdge[]) => {
       // FE-03: 读 ref.current 取最新拓扑（消除 stale closure），合并去重语义不变
@@ -529,21 +539,21 @@ export default function TopologyPage() {
       )}
       <AddDeviceModal
         open={addDeviceOpen}
-        existingNodes={nodes}
-        getViewportCenter={() => ({ ...viewportCenterRef.current })}
+        getExistingNodes={getExistingNodes}
+        getViewportCenter={getViewportCenter}
         onConfirm={handleAddDevices}
-        onCancel={() => setAddDeviceOpen(false)}
+        onCancel={handleAddDeviceCancel}
       />
       <DiscoveryPanel
         open={discoveryOpen}
-        onCancel={() => setDiscoveryOpen(false)}
+        onCancel={handleDiscoveryCancel}
         onConfirm={handleDiscoveryConfirm}
       />
       <EditNodeModal
         open={editModalOpen}
         data={editingNodeData}
         onConfirm={handleEditConfirm}
-        onCancel={() => { setEditModalOpen(false); setEditingNodeData(null) }}
+        onCancel={handleEditCancel}
       />
     </div>
   )

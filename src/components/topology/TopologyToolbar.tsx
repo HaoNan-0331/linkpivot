@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { memo, useRef, useState } from 'react'
 import { Button, Select, Modal, Input, Popconfirm, Tooltip, message } from 'antd'
 import {
   PlusOutlined,
@@ -31,7 +31,7 @@ interface TopologyToolbarProps {
   isLayoutPreviewing: boolean
 }
 
-export default function TopologyToolbar({
+function TopologyToolbar({
   topologies,
   currentTopologyId,
   onTopologyChange,
@@ -218,3 +218,7 @@ export default function TopologyToolbar({
     </div>
   )
 }
+
+// Phase 26 / 26-04 round 3 P-C：memo 隔离——props 全稳定（回调经 useCallback / 模块级 noop），
+// 父组件拖拽每帧重渲染时本组件直接跳过
+export default memo(TopologyToolbar)

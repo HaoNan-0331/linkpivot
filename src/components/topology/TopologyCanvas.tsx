@@ -31,6 +31,10 @@ const edgeTypes = { edgeWithInterfaces: EdgeWithInterfaces }
 // 新引用会触发 RF 内部 store updater 每帧 diff（官方 perf 指南点名）
 const DEFAULT_EDGE_OPTIONS = { type: 'edgeWithInterfaces' } as const
 
+// Phase 26 / 26-04 round 3 P-C：模块级 noop——`|| (() => {})` 每帧新函数会击穿
+// SelectionToolbar 的 memo 比较
+const noop = () => {}
+
 // Phase 26 / D-13：ViewportCenterReporter——store 消费必须在 <ReactFlow> children 内
 // （StoreContext 仅向 children 提供，组件 body 层 useStore 会 throw error#001）。
 // 写入父组件 ref 不触发重渲染；订阅 3 个原始值，重渲染成本可忽略。
@@ -250,8 +254,14 @@ export default function TopologyCanvas({
     [nodesRef, onPushAside, setGuidesIfChanged]
   )
 
-  const sourceDeviceName = nodes.find((n) => n.id === pendingConnection.current?.source)?.data?.deviceName
-  const targetDeviceName = nodes.find((n) => n.id === pendingConnection.current?.target)?.data?.deviceName
+  // Phase 26 / 26-04 round 3 P-C：连线弹窗设备名仅在 modalOpen 时计算——
+  // 否则拖拽每帧两次 O(N) nodes.find 白扫（modal 关闭时值无消费方）
+  const sourceDeviceName = modalOpen
+    ? nodes.find((n) => n.id === pendingConnection.current?.source)?.data?.deviceName
+    : undefined
+  const targetDeviceName = modalOpen
+    ? nodes.find((n) => n.id === pendingConnection.current?.target)?.data?.deviceName
+    : undefined
 
   return (
     <div style={{ width: '100%', height: '100%' }}>
@@ -285,9 +295,8 @@ export default function TopologyCanvas({
         <SelectionToolbar
           selectedNodes={selectedNodes}
           selectedEdges={selectedEdges}
-          allNodes={nodes}
-          onDelete={onDeleteSelected || (() => {})}
-          onEdit={onEditSelectedNode || (() => {})}
+          onDelete={onDeleteSelected ?? noop}
+          onEdit={onEditSelectedNode ?? noop}
           onAlign={onAlignSelected}
         />
       </ReactFlow>

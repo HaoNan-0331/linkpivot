@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import { Modal, Table, message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { v4 as uuidv4 } from 'uuid'
@@ -8,7 +8,8 @@ import type { TopologyNode } from '@/types/topology'
 
 interface AddDeviceModalProps {
   open: boolean
-  existingNodes: TopologyNode[]
+  // Phase 26 / 26-04 round 3 P-C：取值器替代数组 prop——nodes 拖拽每帧换引用会击穿 memo
+  getExistingNodes: () => TopologyNode[]
   // Phase 26 / D-13：视野中心（画布坐标）取值器——Modal 不在 ReactFlow Provider 内，由父组件经 ref 注入
   getViewportCenter?: () => { x: number; y: number }
   onConfirm: (nodes: TopologyNode[]) => void
@@ -23,9 +24,9 @@ const DEVICE_TYPE_LABELS: Record<DeviceType, string> = {
   generic: '通用设备',
 }
 
-export default function AddDeviceModal({
+function AddDeviceModal({
   open,
-  existingNodes,
+  getExistingNodes,
   getViewportCenter,
   onConfirm,
   onCancel,
@@ -45,6 +46,7 @@ export default function AddDeviceModal({
     }
   }, [open])
 
+  const existingNodes = getExistingNodes()
   const existingDeviceIds = new Set(existingNodes.map((n) => n.data.deviceId))
 
   const availableDevices = devices.filter((d) => !existingDeviceIds.has(d.id))
@@ -130,3 +132,7 @@ export default function AddDeviceModal({
     </Modal>
   )
 }
+
+// Phase 26 / 26-04 round 3 P-C：memo 隔离——props 全稳定（回调经 useCallback / 模块级 noop），
+// 父组件拖拽每帧重渲染时本组件直接跳过
+export default memo(AddDeviceModal)

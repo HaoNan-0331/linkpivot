@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { memo, useCallback, useEffect, useState } from 'react'
 import {
   Modal,
   Select,
@@ -35,7 +35,7 @@ interface DiscoveryPanelProps {
   onConfirm: (nodes: TopologyNode[], edges: TopologyEdge[]) => void
 }
 
-export default function DiscoveryPanel({
+function DiscoveryPanel({
   open,
   onCancel,
   onConfirm,
@@ -281,3 +281,7 @@ export default function DiscoveryPanel({
     </Modal>
   )
 }
+
+// Phase 26 / 26-04 round 3 P-C：memo 隔离——props 全稳定（回调经 useCallback / 模块级 noop），
+// 父组件拖拽每帧重渲染时本组件直接跳过
+export default memo(DiscoveryPanel)

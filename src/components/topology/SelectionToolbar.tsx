@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { memo, useMemo } from 'react'
 import { Button, Divider, Space, Tooltip } from 'antd'
 import {
   DeleteOutlined,
@@ -17,59 +17,63 @@ import type { AlignMode } from '@/utils/topologyLayout'
 interface SelectionToolbarProps {
   selectedNodes: TopologyNode[]
   selectedEdges: TopologyEdge[]
-  allNodes: TopologyNode[]
   onDelete: () => void
   onEdit: () => void
   /** Phase 26 / D-12：对齐回调链（经 props 上抛到 Page，Page 调 alignNodes 后 setNodes） */
   onAlign?: (mode: AlignMode) => void
 }
 
-export default function SelectionToolbar({
+// Phase 26 / 26-04 round 3 P-C：切断 nodes props 下传链（官方 perf 指南「most common
+// pitfall is directly accessing the nodes array in components」）——不再收 allNodes prop，
+// 位置改为 RF store 细粒度订阅（与 AlignmentGuides 同模式）：selector 每帧跑但用
+// 坐标级 equality 比较，位置不变则零重渲染；拖拽时工具条仍实时跟随选中节点。
+// selectedNodes/selectedEdges 仅选区变化时换引用（拖拽帧稳定），memo 后跳过无关帧渲染。
+function SelectionToolbarBase({
   selectedNodes,
   selectedEdges,
-  allNodes,
   onDelete,
   onEdit,
   onAlign,
 }: SelectionToolbarProps) {
   const transform = useStore((s) => s.transform)
 
-  const position = useMemo(() => {
-    const hasSelection = selectedNodes.length > 0 || selectedEdges.length > 0
-    if (!hasSelection) return null
-
-    let x = 0
-    let y = 0
-    let count = 0
-
-    // Collect positions from selected nodes
-    for (const node of selectedNodes) {
-      x += node.position.x
-      y += node.position.y
-      count++
+  // 相关节点 id 集：选中节点 + 选中连线两端（连线选区工具条同样居中跟随）
+  const relevantIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const n of selectedNodes) ids.add(n.id)
+    for (const e of selectedEdges) {
+      ids.add(e.source)
+      ids.add(e.target)
     }
+    return ids
+  }, [selectedNodes, selectedEdges])
 
-    // Collect positions from nodes connected by selected edges
-    const nodeMap = new Map(allNodes.map((n) => [n.id, n]))
-    for (const edge of selectedEdges) {
-      const src = nodeMap.get(edge.source)
-      const tgt = nodeMap.get(edge.target)
-      if (src) { x += src.position.x; y += src.position.y; count++ }
-      if (tgt) { x += tgt.position.x; y += tgt.position.y; count++ }
-    }
+  // 位置快照订阅：坐标级 equality（数组内逐点 x/y 比较），静止零渲染、拖拽跟随
+  const positions = useStore(
+    (s) => {
+      const pts: { x: number; y: number }[] = []
+      for (const n of s.nodeInternals.values()) {
+        if (relevantIds.has(n.id)) pts.push(n.position)
+      }
+      return pts
+    },
+    (a, b) =>
+      a.length === b.length && a.every((p, i) => p.x === b[i].x && p.y === b[i].y)
+  )
 
-    if (count === 0) return null
+  const hasSelection = selectedNodes.length > 0 || selectedEdges.length > 0
+  if (!hasSelection || positions.length === 0) return null
 
-    const avgX = x / count
-    const avgY = y / count - 60
-
-    const screenX = avgX * transform[2] + transform[0]
-    const screenY = avgY * transform[2] + transform[1]
-
-    return { x: screenX, y: screenY }
-  }, [selectedNodes, selectedEdges, allNodes, transform])
-
-  if (!position) return null
+  let x = 0
+  let y = 0
+  for (const p of positions) {
+    x += p.x
+    y += p.y
+  }
+  const avgX = x / positions.length
+  const avgY = y / positions.length - 60
+  const screenX = avgX * transform[2] + transform[0]
+  const screenY = avgY * transform[2] + transform[1]
 
   const isNodeSelected = selectedNodes.length > 0
   // Phase 26 / D-12（UI-SPEC Interaction 7）：框选 ≥2 节点对齐按钮组可用；均分需 ≥3
@@ -80,8 +84,8 @@ export default function SelectionToolbar({
     <Space
       style={{
         position: 'absolute',
-        left: position.x,
-        top: position.y,
+        left: screenX,
+        top: screenY,
         transform: 'translate(-50%, -100%)',
         zIndex: 10,
         background: '#fff',
@@ -134,3 +138,8 @@ export default function SelectionToolbar({
     </Space>
   )
 }
+
+// P-C：memo 隔离——props 全稳定（selectedNodes/selectedEdges 仅选区变化换引用、
+// 回调经 useCallback / 模块级 noop），Canvas 每帧重渲染时本组件直接跳过
+const SelectionToolbar = memo(SelectionToolbarBase)
+export default SelectionToolbar

@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { Button, Space } from 'antd'
 
 interface LayoutPreviewBannerProps {
@@ -7,7 +8,7 @@ interface LayoutPreviewBannerProps {
 }
 
 // Phase 26 / D-06~D-08：布局预览态提示条——画布顶部居中浮层，不弹确认（UI-SPEC Copywriting Contract 逐字）
-export default function LayoutPreviewBanner({ visible, onSave, onUndo }: LayoutPreviewBannerProps) {
+function LayoutPreviewBanner({ visible, onSave, onUndo }: LayoutPreviewBannerProps) {
   if (!visible) return null
   return (
     <div
@@ -35,3 +36,7 @@ export default function LayoutPreviewBanner({ visible, onSave, onUndo }: LayoutP
     </div>
   )
 }
+
+// Phase 26 / 26-04 round 3 P-C：memo 隔离——props 全稳定（回调经 useCallback / 模块级 noop），
+// 父组件拖拽每帧重渲染时本组件直接跳过
+export default memo(LayoutPreviewBanner)
