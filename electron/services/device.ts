@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../database/connection'
 import { encField, decField } from '../utils/crypto'
+import { hashDeviceName } from './deviceName'
 
 let MK = ''
 
@@ -83,20 +84,38 @@ export function listDevices() {
   ).map(rowToDevice)
 }
 
+/**
+ * Phase 25（25-02，ASSET-03/D-12）：name_hash 冲突行 → 可读错误。
+ * 冲突设备名称/IP 经 dec 解密后拼入 message（不输出密文）；设备名/IP 对已登录用户
+ * 本就可见，无新增泄露面（T-25-07 accept），不返回凭证类字段。
+ */
+function deviceNameConflictError(conflictRow: any): Error {
+  return new Error(`设备名称已存在：${dec(conflictRow.name_enc)} (${dec(conflictRow.ip_enc)})`)
+}
+
 export function createDevice(data: any) {
   const db = getDatabase()
   const id = uuidv4()
   const now = new Date().toISOString()
+  const nameHash = hashDeviceName(String(data.name ?? ''))
 
-  db.prepare(`
-    INSERT INTO devices (id, name_enc, vendor_enc, model_enc, version_enc, ip_enc,
-      device_type, connection_type, port_enc, username_enc, password_enc,
-      ssh_key_path_enc, ssh_key_content_enc, web_url_enc, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, enc(data.name), enc(data.vendor), enc(data.model), enc(data.version),
-    enc(data.ipAddress), data.deviceType || 'generic', data.connectionType,
-    enc(data.port?.toString()), enc(data.username), enc(data.password),
-    enc(data.sshKeyPath), enc(data.sshKeyContent), enc(data.webUrl), now, now)
+  // Phase 25（25-02，ASSET-03）：唯一预检 + INSERT 同事务（防 TOCTOU，DB UNIQUE 是第二道兜底）。
+  const tx = db.transaction(() => {
+    const stmtFindByNameHash = db.prepare('SELECT id, name_enc, ip_enc FROM devices WHERE name_hash = ?')
+    const conflict = stmtFindByNameHash.get(nameHash) as any
+    if (conflict) throw deviceNameConflictError(conflict)
+
+    db.prepare(`
+      INSERT INTO devices (id, name_enc, vendor_enc, model_enc, version_enc, ip_enc,
+        device_type, connection_type, port_enc, username_enc, password_enc,
+        ssh_key_path_enc, ssh_key_content_enc, web_url_enc, created_at, updated_at, name_hash)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, enc(data.name), enc(data.vendor), enc(data.model), enc(data.version),
+      enc(data.ipAddress), data.deviceType || 'generic', data.connectionType,
+      enc(data.port?.toString()), enc(data.username), enc(data.password),
+      enc(data.sshKeyPath), enc(data.sshKeyContent), enc(data.webUrl), now, now, nameHash)
+  })
+  tx()
 
   return rowToDevice(db.prepare('SELECT * FROM devices WHERE id = ?').get(id))
 }
@@ -119,6 +138,15 @@ export function updateDevice(id: string, data: any) {
   if (data.connectionType !== undefined) { sets.push('connection_type = ?'); vals.push(data.connectionType) }
   if (data.deviceType !== undefined) { sets.push('device_type = ?'); vals.push(data.deviceType) }
 
+  // Phase 25（25-02，ASSET-03）：重命名时维护 name_hash 并在事务内查重（排除自身 id，D-11）。
+  // name 未传（undefined）不触发查重也不改 hash，避免编辑其他字段被误拦。
+  let newNameHash: string | null = null
+  if (data.name !== undefined) {
+    newNameHash = hashDeviceName(String(data.name))
+    sets.push('name_hash = ?')
+    vals.push(newNameHash)
+  }
+
   vals.push(id)
 
   // Sync: update embedded device info in all topologies that reference this device
@@ -132,6 +160,13 @@ export function updateDevice(id: string, data: any) {
   // 循环内 JSON.parse catch+continue 行级容错原样保留进事务体（P8 禁顺手删 catch）；
   // UPDATE topologies 的 prepare 提循环外复用（TXN-02 精神）；encField/decField 加密调用不动。
   const tx = db.transaction(() => {
+    // 唯一预检与 UPDATE 同事务（TOCTOU 防护）；排除自身 id，改回自身原名不误拦（D-11）。
+    if (newNameHash !== null) {
+      const conflict = db.prepare(
+        'SELECT id, name_enc, ip_enc FROM devices WHERE name_hash = ? AND id != ?'
+      ).get(newNameHash, id) as any
+      if (conflict) throw deviceNameConflictError(conflict)
+    }
     db.prepare(`UPDATE devices SET ${sets.join(', ')} WHERE id = ?`).run(...vals)
     if (changedFields.length > 0) {
       const topologies = db.prepare('SELECT id, data_enc FROM topologies').all() as any[]

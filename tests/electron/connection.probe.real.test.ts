@@ -177,6 +177,7 @@ describe('connection 真路径 — 凭证 + 探活 + D-08 加密底线', () => {
         web_url_enc TEXT,
         created_at TEXT DEFAULT (datetime('now','localtime')),
         updated_at TEXT DEFAULT (datetime('now','localtime')),
+        name_hash TEXT,
         FOREIGN KEY (topology_id) REFERENCES topologies(id) ON DELETE SET NULL
       );
     `)
