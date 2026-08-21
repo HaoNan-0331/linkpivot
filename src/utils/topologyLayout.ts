@@ -43,6 +43,23 @@ export const NODE_HEIGHT = 60
 export const MAX_SPREAD_ITERATIONS = 60
 /** 推挤连锁深度上限 */
 export const MAX_PUSH_CHAIN_DEPTH = 6
+/** 星型分层放射：层间半径步长（量级沿用 LAYOUT_SPACING，26-04 再工 spec ③） */
+export const RING_GAP = LAYOUT_SPACING
+/** 叶子扇区半角（±30°） */
+const SECTOR_HALF = (30 * Math.PI) / 180
+const TAU = Math.PI * 2
+
+/** 布局计算用最小边形态（TopologyEdge 取 source/target 即可映射） */
+export interface LayoutEdge {
+  source: string
+  target: string
+}
+
+/** spreadLayout 模式选项：centerId（选 1 台定根）/ subset（选多台仅整理选中集） */
+export interface SpreadLayoutOptions {
+  centerId?: string
+  subset?: string[]
+}
 
 interface ResolvedNode {
   id: string
@@ -75,63 +92,192 @@ function centerOf(n: { x: number; y: number; width: number; height: number }): P
 }
 
 /**
- * 原位散开（D-01/D-02/D-03）：以各节点当前位置为锚，迭代松弛分离重叠/过近节点
- * 至中心间距 ≥ LAYOUT_SPACING。opts.subset 存在时只移动 subset 内节点（D-10：
- * 未选中节点位置严格不变，subset 节点承担全部让位位移）。
+ * 星型分层放射（26-04 再工 spec ③，替换 D-01/D-02/D-03 原位散开）：
+ * - auto（无 centerId/subset）：剔除度=1 叶子后取度数最大者为根（核心胜出，
+ *   接入交换机剔除终端后只剩上行线抢不过核心——用户痛点），从根 BFS 按最短跳数分层；
+ * - center（centerId）：以该设备为根，全图同规则分层排布，根落点 = 其原位置；
+ * - selection（subset）：仅整理选中集——选中诱导子图同规则分层，质心为圆心；
+ * 根居中，第 i 层均匀分布在半径 ≥ i × RING_GAP 的圆环（弧长不足扩半径）；
+ * 叶子（度=1）放最外环且挂在其唯一上游邻居的角度扇区（±30° 均分）。
+ * 防重叠红线：最终落点两两包围盒不相交（放置序贪心径向外推兜底）；
+ * 输出确定性（同输入同输出）；纯函数，不依赖 DOM/React。
  */
 export function spreadLayout(
   nodes: LayoutNode[],
-  opts?: { subset?: string[] },
+  edges: LayoutEdge[],
+  opts?: SpreadLayoutOptions,
 ): Map<string, Point> {
+  const result = new Map<string, Point>()
   const resolved = nodes.map(resolveNode)
-  const movable = opts?.subset ? new Set(opts.subset) : null
-  const canMove = (id: string) => movable === null || movable.has(id)
-
-  for (let iter = 0; iter < MAX_SPREAD_ITERATIONS; iter++) {
-    let anyPushed = false
-    for (let i = 0; i < resolved.length; i++) {
-      for (let j = i + 1; j < resolved.length; j++) {
-        const a = resolved[i]
-        const b = resolved[j]
-        const ca = centerOf(a)
-        const cb = centerOf(b)
-        let dx = cb.x - ca.x
-        let dy = cb.y - ca.y
-        let dist = Math.hypot(dx, dy)
-        if (dist >= LAYOUT_SPACING) continue
-        if (dist === 0) {
-          // 中心重合：按 id 序确定方向，保证确定性
-          dx = a.id < b.id ? -1 : 1
-          dy = 0
-          dist = 1
-        }
-        const gap = LAYOUT_SPACING - dist
-        const ux = dx / dist
-        const uy = dy / dist
-        const aMoves = canMove(a.id)
-        const bMoves = canMove(b.id)
-        if (aMoves && bMoves) {
-          a.x -= (ux * gap) / 2
-          a.y -= (uy * gap) / 2
-          b.x += (ux * gap) / 2
-          b.y += (uy * gap) / 2
-        } else if (aMoves) {
-          a.x -= ux * gap
-          a.y -= uy * gap
-        } else if (bMoves) {
-          b.x += ux * gap
-          b.y += uy * gap
-        } else {
-          continue // 双方均锁定（subset 外）则跳过
-        }
-        anyPushed = true
-      }
-    }
-    if (!anyPushed) break
+  if (resolved.length === 0) return result
+  if (resolved.length === 1) {
+    result.set(resolved[0].id, { x: resolved[0].x, y: resolved[0].y })
+    return result
   }
 
-  const result = new Map<string, Point>()
-  for (const n of resolved) result.set(n.id, { x: n.x, y: n.y })
+  const subset = opts?.subset ? new Set(opts.subset) : null
+  const active = subset ? resolved.filter((n) => subset.has(n.id)) : resolved
+  if (active.length === 1) {
+    result.set(active[0].id, { x: active[0].x, y: active[0].y })
+    return result
+  }
+  const activeIds = new Set(active.map((n) => n.id))
+
+  // 邻接表（仅活跃集内边；自环忽略）
+  const adj = new Map<string, Set<string>>()
+  for (const n of active) adj.set(n.id, new Set())
+  for (const e of edges) {
+    if (!activeIds.has(e.source) || !activeIds.has(e.target) || e.source === e.target) continue
+    adj.get(e.source)!.add(e.target)
+    adj.get(e.target)!.add(e.source)
+  }
+  const deg = (id: string): number => adj.get(id)!.size
+
+  // 根选择：centerId 优先；否则剔除度=1 叶子后在剩余子图内取度数最大者
+  // （度数按剥离后子图计算：接入交换机剔除终端后只剩上行线，抢不过核心——用户痛点；
+  //   平票取 id 序小者，确定性）
+  const centerMode = !!(opts?.centerId && activeIds.has(opts.centerId))
+  let rootId: string
+  if (centerMode) {
+    rootId = opts!.centerId!
+  } else {
+    const coreIds = new Set(active.filter((n) => deg(n.id) > 1).map((n) => n.id))
+    const coreDeg = (id: string): number =>
+      coreIds.has(id) ? [...adj.get(id)!].filter((nb) => coreIds.has(nb)).length : -1
+    const candidates = coreIds.size > 0 ? [...coreIds] : active.map((n) => n.id)
+    candidates.sort()
+    rootId = candidates.reduce((best, id) => (coreDeg(id) > coreDeg(best) ? id : best))
+  }
+
+  // 全图 BFS 分层（按最短跳数）
+  const layerOf = new Map<string, number>([[rootId, 0]])
+  const queue = [rootId]
+  while (queue.length > 0) {
+    const cur = queue.shift()!
+    for (const nb of adj.get(cur)!) {
+      if (!layerOf.has(nb)) {
+        layerOf.set(nb, layerOf.get(cur)! + 1)
+        queue.push(nb)
+      }
+    }
+  }
+
+  // 叶子（度=1 且非根）走外环扇区；其余走分层环
+  const leaves = active.filter((n) => n.id !== rootId && deg(n.id) === 1)
+  const leafIds = new Set(leaves.map((n) => n.id))
+  const ringNodes = active.filter((n) => !leafIds.has(n.id) && layerOf.has(n.id))
+  const unreached = active.filter((n) => !leafIds.has(n.id) && !layerOf.has(n.id))
+
+  // 圆心：center 模式 = 根原位置中心；auto/selection = 活跃集质心
+  let cx: number
+  let cy: number
+  if (centerMode) {
+    const root = resolved.find((n) => n.id === rootId)!
+    cx = root.x + root.width / 2
+    cy = root.y + root.height / 2
+  } else {
+    cx = active.reduce((s, n) => s + n.x + n.width / 2, 0) / active.length
+    cy = active.reduce((s, n) => s + n.y + n.height / 2, 0) / active.length
+  }
+
+  // 确定性放置容器（angle/r 供最终防重叠径向外推）
+  const placed: { id: string; cx: number; cy: number; w: number; h: number; angle?: number; r?: number }[] = []
+  const place = (n: ResolvedNode, angle: number | undefined, r: number) => {
+    placed.push({
+      id: n.id,
+      cx: cx + (r * (angle === undefined ? 0 : Math.cos(angle))),
+      cy: cy + (r * (angle === undefined ? 0 : Math.sin(angle))),
+      w: n.width,
+      h: n.height,
+      angle,
+      r,
+    })
+  }
+
+  place(resolved.find((n) => n.id === rootId)!, undefined, 0)
+
+  // 分层环：半径 = max(i × RING_GAP, 弧长需求, 前环半径 + RING_GAP)，角度均匀 + 奇偶层错位
+  let prevR = 0
+  const maxLayer = ringNodes.reduce((m, n) => Math.max(m, layerOf.get(n.id)!), 0)
+  for (let i = 1; i <= maxLayer; i++) {
+    const members = ringNodes
+      .filter((n) => layerOf.get(n.id) === i)
+      .sort((a, b) => (a.id < b.id ? -1 : 1))
+    if (members.length === 0) continue
+    const k = members.length
+    const r = Math.max(i * RING_GAP, (k * LAYOUT_SPACING) / TAU, prevR + RING_GAP)
+    prevR = r
+    members.forEach((n, j) => {
+      place(n, (TAU * j) / k + (i % 2) * (Math.PI / k), r)
+    })
+  }
+
+  // 叶子最外环：按上游分组；上游角度已知则扇区 ±SECTOR_HALF 均分（弧长不足放宽步距），否则全环均分
+  const byUpstream = new Map<string, ResolvedNode[]>()
+  for (const leaf of leaves) {
+    const up = [...adj.get(leaf.id)!][0]
+    if (!byUpstream.has(up)) byUpstream.set(up, [])
+    byUpstream.get(up)!.push(leaf)
+  }
+  const angleOfPlaced = new Map(placed.map((p) => [p.id, p.angle]))
+  const leafR = Math.max(
+    prevR + RING_GAP,
+    (leaves.length * LAYOUT_SPACING) / TAU
+  )
+  const rootLeafSlots: { n: ResolvedNode; idx: number }[] = []
+  let rootLeafCount = 0
+  for (const [up, group] of [...byUpstream.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    group.sort((a, b) => (a.id < b.id ? -1 : 1))
+    const upAngle = angleOfPlaced.get(up)
+    if (upAngle === undefined) {
+      // 上游是根（圆心，无角度）：收集后全环均分
+      for (const n of group) rootLeafSlots.push({ n, idx: rootLeafCount++ })
+      continue
+    }
+    const k = group.length
+    const step = Math.max((2 * SECTOR_HALF) / Math.max(k - 1, 1), LAYOUT_SPACING / leafR)
+    group.forEach((n, j) => place(n, upAngle + (j - (k - 1) / 2) * step, leafR))
+  }
+  rootLeafSlots.forEach(({ n, idx }) =>
+    place(n, (TAU * idx) / Math.max(rootLeafCount, 1), leafR)
+  )
+  const lastR = Math.max(
+    leafR,
+    rootLeafCount > 0 || leaves.length > 0 ? leafR : prevR,
+    prevR
+  )
+
+  // 未连通节点：最外再增一环，按 id 序均匀
+  if (unreached.length > 0) {
+    const r = lastR + RING_GAP
+    ;[...unreached]
+      .sort((a, b) => (a.id < b.id ? -1 : 1))
+      .forEach((n, j) => place(n, (TAU * j) / unreached.length, r))
+  }
+
+  // 防重叠兜底：按放置序贪心——与更早落点重叠则沿自身角度径向外推（有界退出）
+  const rectAtP = (p: (typeof placed)[number]): Rect => ({
+    x: p.cx - p.w / 2,
+    y: p.cy - p.h / 2,
+    width: p.w,
+    height: p.h,
+  })
+  const MAX_RADIAL_PUSH = 5000 / SNAP_GRID
+  for (let i = 1; i < placed.length; i++) {
+    const p = placed[i]
+    if (p.angle === undefined) continue
+    let guard = 0
+    while (
+      guard++ < MAX_RADIAL_PUSH &&
+      placed.slice(0, i).some((q) => rectsOverlap(rectAtP(p), rectAtP(q)))
+    ) {
+      p.r! += SNAP_GRID
+      p.cx = cx + p.r! * Math.cos(p.angle)
+      p.cy = cy + p.r! * Math.sin(p.angle)
+    }
+  }
+
+  for (const p of placed) result.set(p.id, { x: p.cx - p.w / 2, y: p.cy - p.h / 2 })
   return result
 }
 

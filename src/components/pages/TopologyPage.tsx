@@ -185,13 +185,14 @@ export default function TopologyPage() {
     }, 1000)
   }, [currentTopologyId])
 
-  // Phase 26 / D-09：整理布局——原位散开（无选中=全图，框选=仅选中节点，未选中坐标严格不变）
+  // Phase 26 / D-09（26-04 再工 spec ③）：整理布局——星型分层放射三模式
+  // 无选中 = 全图（剔除叶子后核心定根）；选 1 台 = 以该设备为根排全图；选多台 = 仅整理选中集
   // 成功进入预览态（挂起自动保存）；异常零副作用（preview 态不进入，画布未改动）
   const handleOrganizeLayout = useCallback(() => {
     const current = nodesRef.current
     if (current.length === 0) return
     try {
-      const subset = selectedNodeIds.size > 0 ? [...selectedNodeIds] : undefined
+      const selected = [...selectedNodeIds]
       const positions = spreadLayout(
         current.map((n) => ({
           id: n.id,
@@ -200,7 +201,11 @@ export default function TopologyPage() {
           width: n.width ?? undefined,
           height: n.height ?? undefined,
         })),
-        { subset }
+        edgesRef.current.map((e) => ({ source: e.source, target: e.target })),
+        {
+          centerId: selected.length === 1 ? selected[0] : undefined,
+          subset: selected.length > 1 ? selected : undefined,
+        }
       )
       if (positions.size === 0) return
       // 先快照后应用（语句顺序红线：快照必须捕获布局前位置）
