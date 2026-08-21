@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { Table, Button, Space, Popconfirm, message, Typography } from 'antd'
-import { PlusOutlined, EditOutlined, DeleteOutlined, ApiOutlined } from '@ant-design/icons'
+import { PlusOutlined, EditOutlined, DeleteOutlined, ApiOutlined, CopyOutlined } from '@ant-design/icons'
 import DeviceForm from '../DeviceForm'
+import DeviceBatchForm from '../DeviceBatchForm'
 import type { Device, CreateDeviceDTO } from '../../types/device'
 
 const { Title } = Typography
@@ -15,6 +16,10 @@ export default function DevicesPage() {
   const [loading, setLoading] = useState(false)
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState<Device | null>(null)
+  // Phase 25（ASSET-01/02）：复制/批量复制入口——独立 state，不改既有 editing 语义
+  const [copySource, setCopySource] = useState<Device | null>(null)
+  const [batchSource, setBatchSource] = useState<Device | null>(null)
+  const [batchOpen, setBatchOpen] = useState(false)
   const [testingId, setTestingId] = useState<string | null>(null)
 
   const load = async () => {
@@ -29,7 +34,7 @@ export default function DevicesPage() {
     try {
       await window.api.device.create(values)
       message.success('设备添加成功')
-      setFormOpen(false); load()
+      setFormOpen(false); setCopySource(null); load()
     } catch (e: unknown) {
       message.error(`添加失败: ${e instanceof Error ? e.message : String(e)}`)
     }
@@ -95,14 +100,18 @@ export default function DevicesPage() {
           <Space>
             <Button icon={<ApiOutlined />} type="text" loading={testingId === r.id} onClick={() => handleTest(r)} title="测试连接" />
             <Button icon={<EditOutlined />} type="text" onClick={() => { setEditing(r); setFormOpen(true) }} title="编辑" />
+            <Button icon={<CopyOutlined />} type="text" onClick={() => { setCopySource(r); setEditing(null); setFormOpen(true) }} title="复制" />
+            <Button icon={<CopyOutlined />} type="text" onClick={() => { setBatchSource(r); setBatchOpen(true) }} title="批量复制（一次创建多份）">批量</Button>
             <Popconfirm title="删除设备将同时从拓扑中移除，确定删除？" onConfirm={() => handleDelete(r.id)}>
               <Button icon={<DeleteOutlined />} type="text" danger title="删除" />
             </Popconfirm>
           </Space>
         )},
       ]} dataSource={devices} rowKey="id" loading={loading} pagination={false} />
-      <DeviceForm open={formOpen} device={editing} onOk={editing ? handleUpdate : handleCreate}
-        onCancel={() => { setFormOpen(false); setEditing(null) }} />
+      <DeviceForm open={formOpen} device={editing} copySource={copySource} existingDevices={devices}
+        onOk={editing ? handleUpdate : handleCreate}
+        onCancel={() => { setFormOpen(false); setEditing(null); setCopySource(null) }} />
+      <DeviceBatchForm open={batchOpen} source={batchSource} onClose={() => setBatchOpen(false)} onCreated={load} />
     </div>
   )
 }
