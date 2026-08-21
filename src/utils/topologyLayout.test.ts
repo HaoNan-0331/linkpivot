@@ -37,26 +37,95 @@ function toRect(n: { x: number; y: number; width?: number; height?: number }) {
   return { x: n.x, y: n.y, width: n.width ?? W, height: n.height ?? H }
 }
 
-describe('spreadLayout', () => {
-  it('两节点初始重叠 → 结果包围盒不相交且原左侧节点仍偏左', () => {
-    const nodes: LNode[] = [
-      { id: 'a', x: 100, y: 100 },
-      { id: 'b', x: 120, y: 110 },
-    ]
-    const result = spreadLayout(nodes)
-    const pa = result.get('a')!
-    const pb = result.get('b')!
-    expect(rectsOverlap(toRect(pa), toRect(pb))).toBe(false)
-    expect(pa.x).toBeLessThan(pb.x)
+describe('spreadLayout 星型分层放射（26-04 再工）', () => {
+  const RING_GAP = LAYOUT_SPACING
+  const TAU = Math.PI * 2
+
+  function centerPt(p: { x: number; y: number }) {
+    return { x: p.x + W / 2, y: p.y + H / 2 }
+  }
+  function centroidOf(nodes: LNode[]) {
+    return {
+      x: nodes.reduce((s, n) => s + n.x + (n.width ?? W) / 2, 0) / nodes.length,
+      y: nodes.reduce((s, n) => s + n.y + (n.height ?? H) / 2, 0) / nodes.length,
+    }
+  }
+  function angleAt(p: { x: number; y: number }, c: { x: number; y: number }) {
+    const q = centerPt(p)
+    return Math.atan2(q.y - c.y, q.x - c.x)
+  }
+  function angleDiff(a: number, b: number) {
+    let d = a - b
+    while (d > Math.PI) d -= TAU
+    while (d < -Math.PI) d += TAU
+    return d
+  }
+
+  // 核心双层拓扑：core（核心）— sw1/sw2（接入交换机）— t1..t4（终端，度=1 叶子）
+  const twoTierNodes: LNode[] = [
+    { id: 'core', x: 300, y: 200 },
+    { id: 'sw1', x: 320, y: 210 },
+    { id: 'sw2', x: 280, y: 190 },
+    { id: 't1', x: 330, y: 215 },
+    { id: 't2', x: 325, y: 205 },
+    { id: 't3', x: 275, y: 195 },
+    { id: 't4', x: 285, y: 185 },
+  ]
+  const twoTierEdges = [
+    { source: 'core', target: 'sw1' },
+    { source: 'core', target: 'sw2' },
+    { source: 'sw1', target: 't1' },
+    { source: 'sw1', target: 't2' },
+    { source: 'sw2', target: 't3' },
+    { source: 'sw2', target: 't4' },
+  ]
+
+  it('auto：剔除叶子后核心胜出为根并居中（接入交换机不抢中心，用户痛点）', () => {
+    const r = spreadLayout(twoTierNodes, twoTierEdges)
+    expect(r.size).toBe(7)
+    const c = centroidOf(twoTierNodes)
+    const pc = centerPt(r.get('core')!)
+    expect(Math.hypot(pc.x - c.x, pc.y - c.y)).toBeLessThan(1)
+    // 接入交换机在第 1 层环上（半径 ≈ RING_GAP）
+    for (const sw of ['sw1', 'sw2']) {
+      const q = centerPt(r.get(sw)!)
+      expect(Math.abs(Math.hypot(q.x - c.x, q.y - c.y) - RING_GAP)).toBeLessThan(1)
+    }
+    // 终端挂在上游接入交换机的角度扇区（±40° 容差）
+    for (const [leaf, up] of [
+      ['t1', 'sw1'],
+      ['t2', 'sw1'],
+      ['t3', 'sw2'],
+      ['t4', 'sw2'],
+    ] as const) {
+      const d = Math.abs(angleDiff(angleAt(r.get(leaf)!, c), angleAt(r.get(up)!, c)))
+      expect(d).toBeLessThan((40 * Math.PI) / 180 + 1e-9)
+    }
   })
 
-  it('三节点团 → 两两包围盒不相交', () => {
+  it('auto：同层节点均匀分布且两两不重叠（防重叠红线）', () => {
     const nodes: LNode[] = [
-      { id: 'a', x: 0, y: 0 },
-      { id: 'b', x: 10, y: 5 },
-      { id: 'c', x: 5, y: 10 },
+      { id: 'core', x: 0, y: 0 },
+      { id: 'sw1', x: 10, y: 10 },
+      { id: 'sw2', x: 20, y: 5 },
+      { id: 'sw3', x: 5, y: 20 },
+      ...Array.from({ length: 9 }, (_, i) => ({ id: `t${i + 1}`, x: 15 + i * 3, y: 25 + i * 2 })),
     ]
-    const r = spreadLayout(nodes)
+    const edges = [
+      { source: 'core', target: 'sw1' },
+      { source: 'core', target: 'sw2' },
+      { source: 'core', target: 'sw3' },
+      ...Array.from({ length: 9 }, (_, i) => ({ source: `sw${(i % 3) + 1}`, target: `t${i + 1}` })),
+    ]
+    const r = spreadLayout(nodes, edges)
+    const c = centroidOf(nodes)
+    // 第 1 层 3 台交换机均匀角度（相邻角差 ≈ 2π/3）
+    const angles = ['sw1', 'sw2', 'sw3']
+      .map((id) => angleAt(r.get(id)!, c))
+      .sort((a, b) => a - b)
+    const gaps = [angles[1] - angles[0], angles[2] - angles[1], angles[0] + TAU - angles[2]]
+    for (const g of gaps) expect(Math.abs(g - TAU / 3)).toBeLessThan(1e-6)
+    // 全图两两包围盒不相交
     const list = nodes.map((n) => toRect(r.get(n.id)!))
     for (let i = 0; i < list.length; i++) {
       for (let j = i + 1; j < list.length; j++) {
@@ -65,34 +134,66 @@ describe('spreadLayout', () => {
     }
   })
 
-  it('subset 只移动选中节点，未选中坐标严格不变（D-10）', () => {
+  it('center（选 1 台）：以该设备为根，根落点 = 原位置', () => {
     const nodes: LNode[] = [
-      { id: 'a', x: 0, y: 0 },
-      { id: 'b', x: 500, y: 500 },
-      { id: 'c', x: 20, y: 20 },
+      { id: 'x', x: 0, y: 0 },
+      { id: 'y', x: 500, y: 50 },
+      { id: 'z', x: 900, y: 100 },
     ]
-    const r = spreadLayout(nodes, { subset: ['c'] })
-    expect(r.get('a')).toEqual({ x: 0, y: 0 })
-    expect(r.get('b')).toEqual({ x: 500, y: 500 })
-    expect(r.get('c')).toBeDefined()
-    // c 被推开但 a 不动 → 仍可能重叠 a？subset 模式下 c 必须让开 a
-    expect(rectsOverlap(toRect(r.get('c')!), toRect({ x: 0, y: 0 }))).toBe(false)
+    const edges = [
+      { source: 'x', target: 'y' },
+      { source: 'y', target: 'z' },
+    ]
+    const r = spreadLayout(nodes, edges, { centerId: 'z' })
+    expect(r.get('z')).toEqual({ x: 900, y: 100 })
+    const rc = centerPt(r.get('z')!)
+    const yc = centerPt(r.get('y')!)
+    expect(Math.abs(Math.hypot(yc.x - rc.x, yc.y - rc.y) - RING_GAP)).toBeLessThan(1)
   })
 
-  it('空数组与单节点不崩', () => {
-    expect(spreadLayout([]).size).toBe(0)
-    const one = spreadLayout([{ id: 'a', x: 1, y: 2 }])
-    expect(one.get('a')).toEqual({ x: 1, y: 2 })
+  it('selection（选多台）：仅整理选中集，结果只含选中 id 且选中集两两不重叠', () => {
+    const nodes: LNode[] = [
+      { id: 'a', x: 0, y: 0 },
+      { id: 'b', x: 30, y: 10 },
+      { id: 'c', x: 60, y: 20 },
+      { id: 'd', x: 1000, y: 1000 },
+    ]
+    const edges = [
+      { source: 'a', target: 'b' },
+      { source: 'b', target: 'c' },
+      { source: 'c', target: 'd' },
+    ]
+    const r = spreadLayout(nodes, edges, { subset: ['a', 'b', 'c'] })
+    expect([...r.keys()].sort()).toEqual(['a', 'b', 'c'])
+    const list = ['a', 'b', 'c'].map((id) => toRect(r.get(id)!))
+    for (let i = 0; i < list.length; i++) {
+      for (let j = i + 1; j < list.length; j++) {
+        expect(rectsOverlap(list[i], list[j])).toBe(false)
+      }
+    }
+  })
+
+  it('确定性：同输入两次调用结果全等', () => {
+    const r1 = [...spreadLayout(twoTierNodes, twoTierEdges).entries()]
+    const r2 = [...spreadLayout(twoTierNodes, twoTierEdges).entries()]
+    expect(r1).toEqual(r2)
+  })
+
+  it('边界：空数组 / 单节点 / 全叶子（单连线）不崩且不重叠', () => {
+    expect(spreadLayout([], []).size).toBe(0)
+    expect(spreadLayout([{ id: 'a', x: 1, y: 2 }], []).get('a')).toEqual({ x: 1, y: 2 })
+    const pair = [
+      { id: 'a', x: 0, y: 0 },
+      { id: 'b', x: 5, y: 5 },
+    ]
+    const r = spreadLayout(pair, [{ source: 'a', target: 'b' }])
+    expect(rectsOverlap(toRect(r.get('a')!), toRect(r.get('b')!))).toBe(false)
   })
 
   it('不修改输入数组（不可变性）', () => {
-    const nodes: LNode[] = [
-      { id: 'a', x: 0, y: 0 },
-      { id: 'b', x: 10, y: 10 },
-    ]
-    const snapshot = JSON.parse(JSON.stringify(nodes))
-    spreadLayout(nodes)
-    expect(nodes).toEqual(snapshot)
+    const snapshot = JSON.parse(JSON.stringify({ n: twoTierNodes, e: twoTierEdges }))
+    spreadLayout(twoTierNodes, twoTierEdges)
+    expect({ n: twoTierNodes, e: twoTierEdges }).toEqual(snapshot)
   })
 })
 
