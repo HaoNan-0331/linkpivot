@@ -70,7 +70,11 @@ function AIExecLogTab() {
         <div style={{ display: 'flex', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
           <Segmented
             value={view}
-            onChange={(v) => setView(v as '全部' | '越权记录')}
+            onChange={(v) => {
+              setView(v as '全部' | '越权记录')
+              // checkpoint 反馈：切视图自动刷新——测试后切回看不到新记录，需手动点刷新才可见
+              if (v === '越权记录') load()
+            }}
             options={['全部', '越权记录']}
           />
           {isGuardView && (
@@ -85,10 +89,14 @@ function AIExecLogTab() {
           <Empty
             description={
               <span>
-                暂无越权记录——AI 命令未触发任何越权规则
+                {outcomeFilter === '全部'
+                  ? '暂无越权记录——AI 命令未触发任何越权规则'
+                  : `「${outcomeFilter}」筛选档暂无匹配记录（越权记录共 ${guardLogs.length} 条）`}
                 <br />
                 <span style={{ color: '#999', fontSize: 12 }}>
-                  当 AI 命令目标超出对话设备集或发生跳转时，会在此留下确认记录
+                  {outcomeFilter === '全部'
+                    ? '当 AI 命令目标超出对话设备集或发生跳转时，会在此留下确认记录'
+                    : '「挂起未决」= 弹窗弹出后未点任何按钮即中断的残留（应用关闭等），正常应为空'}
                 </span>
               </span>
             }
