@@ -13,7 +13,7 @@ import { createSystemLog } from '../services/systemLog'
  *      在 createTables() 建好基线表之后、premigration 备份之后执行（D-06）。
  *      init.ts 不直接调用 runMigrations（单一调用点原则）。
  */
-export const MIGRATION_HEAD = 24
+export const MIGRATION_HEAD = 25
 
 interface MigrationStep {
   version: number
@@ -803,6 +803,26 @@ const v24MigrationStep = (db: Database.Database): void => {
   step()
 }
 
+/**
+ * v25：Phase 27（27-02，GUARD-05/D-07）—— ai_exec_logs 越权审计两列。
+ *
+ * guard_hits TEXT 存 GuardHit[] JSON（NULL=未命中；明文 JSON 不含凭证，A5，无需 _enc）；
+ * guard_outcome TEXT 存 'user_confirmed' | 'user_cancelled'（NULL=未走用户确认路径）。
+ * 不并入独立表（D-07），status 列枚举与 CHECK 约束零改动（v19 教训，Pitfall 6）。
+ *
+ * 幂等守卫 D-14 第一形式：hasColumn（与 v1/v2/v20/v21/v22 同构，纯 ALTER ADD COLUMN，
+ * 不靠 user_version 判定）。init.ts fresh-install DDL 已含两列（双路径一致红线）。
+ */
+export const v25 = (db: Database.Database): void => {
+  if (!hasColumn(db, 'ai_exec_logs', 'guard_hits')) {
+    db.exec('ALTER TABLE ai_exec_logs ADD COLUMN guard_hits TEXT')
+  }
+  if (!hasColumn(db, 'ai_exec_logs', 'guard_outcome')) {
+    db.exec('ALTER TABLE ai_exec_logs ADD COLUMN guard_outcome TEXT')
+  }
+  db.pragma('user_version = 25')
+}
+
 export const MIGRATIONS: MigrationStep[] = [
   { version: 1, name: 'chat_history.session_id', run: v1 },
   { version: 2, name: 'ai_exec_logs.prompt_text+ai_response', run: v2 },
@@ -828,6 +848,7 @@ export const MIGRATIONS: MigrationStep[] = [
   { version: 22, name: 'devices.name_hash（ASSET-03 三段式第一段：加列无索引）', run: v22 },
   { version: 23, name: 'devices.name_hash 回填版本锚点（三段式第二段：post-MK 回填归 25-03）', run: v23 },
   { version: 24, name: 'idx_devices_name_hash UNIQUE 清零门控（三段式第三段，D-10 运行时可复用）', run: v24MigrationStep },
+  { version: 25, name: 'ai_exec_logs.guard_hits+guard_outcome 越权审计列（GUARD-05/D-07）', run: v25 },
 ]
 
 /**

@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid'
 import type Database from 'better-sqlite3'
 import { getDatabase } from '../database/connection'
 import { encField, decField, projectEncField } from '../utils/crypto'
+import type { GuardHit } from './privilegeGuard'
 
 /**
  * aiExecLogger —— Phase 17 SEC-06 起 prompt_text/ai_response 落 _enc 加密列。
@@ -35,11 +36,12 @@ export function createLog(entry: {
   aiReason: string
   promptText?: string
   aiResponse?: string
+  guardHits?: GuardHit[]
 }): string {
   const id = uuidv4()
   db().prepare(`
-    INSERT INTO ai_exec_logs (id, device_id, device_name_enc, command, status, mode, ai_reason, prompt_text_enc, ai_response_enc)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO ai_exec_logs (id, device_id, device_name_enc, command, status, mode, ai_reason, prompt_text_enc, ai_response_enc, guard_hits)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     entry.deviceId,
@@ -49,9 +51,17 @@ export function createLog(entry: {
     entry.mode,
     entry.aiReason,
     encField(entry.promptText, MK),
-    encField(entry.aiResponse, MK)
+    encField(entry.aiResponse, MK),
+    entry.guardHits ? JSON.stringify(entry.guardHits) : null
   )
   return id
+}
+
+// Phase 27（GUARD-05/D-07）：越权命中批次用户确认/取消时落 guard_outcome（审计闭环）。
+export function updateLogGuardOutcome(id: string, outcome: 'user_confirmed' | 'user_cancelled'): void {
+  db()
+    .prepare('UPDATE ai_exec_logs SET guard_outcome = ? WHERE id = ?')
+    .run(outcome, id)
 }
 
 export function updateLogStatus(id: string, status: string): void {
@@ -104,6 +114,8 @@ export function getLogs(limit = 100): Array<{
   aiReason: string
   promptText: string
   aiResponse: string
+  guardHits: GuardHit[] | null
+  guardOutcome: string | null
   createdAt: string
 }> {
   const rows = db()
@@ -119,8 +131,21 @@ export function getLogs(limit = 100): Array<{
     aiReason: row.ai_reason,
     promptText: projectEncField(row.prompt_text_enc, row.prompt_text, MK),
     aiResponse: projectEncField(row.ai_response_enc, row.ai_response, MK),
+    // 坏 JSON 降级 null（mcpToolPolicy tool_meta 同款，读路径永不因脏数据 throw，T-27-05）
+    guardHits: parseGuardHits(row.guard_hits),
+    guardOutcome: (row.guard_outcome ?? null) as string | null,
     createdAt: row.created_at,
   }))
+}
+
+function parseGuardHits(raw: unknown): GuardHit[] | null {
+  if (raw == null) return null
+  try {
+    const parsed = JSON.parse(raw as string)
+    return Array.isArray(parsed) ? (parsed as GuardHit[]) : null
+  } catch {
+    return null
+  }
 }
 
 // D-01（Phase 17 SEC-06）：启动即同步回填——明文存量行加密落 _enc + 旧列置 NULL（净化备份）。

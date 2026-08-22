@@ -123,6 +123,14 @@ function applyV13(db: Database.Database): void {
     if (!hasColumn(db, 'scheduler_config', 'retention_days')) {
       db.exec('ALTER TABLE scheduler_config ADD COLUMN retention_days INTEGER DEFAULT 90')
     }
+    // 27-02 v25（guard_hits/guard_outcome）同款守卫 ALTER——createLog 现 INSERT 含 guard_hits 列，
+    // 本组手搭 v13 形态库须补列（生产库由 v25 迁移负责，此处不 import 生产 migrations.ts，OQ#1 边界）
+    if (!hasColumn(db, 'ai_exec_logs', 'guard_hits')) {
+      db.exec('ALTER TABLE ai_exec_logs ADD COLUMN guard_hits TEXT')
+    }
+    if (!hasColumn(db, 'ai_exec_logs', 'guard_outcome')) {
+      db.exec('ALTER TABLE ai_exec_logs ADD COLUMN guard_outcome TEXT')
+    }
     db.pragma('user_version = 13')
   })
   step()

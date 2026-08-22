@@ -71,6 +71,8 @@ export function createTables() {
       ai_response TEXT,
       prompt_text_enc TEXT,
       ai_response_enc TEXT,
+      guard_hits TEXT,
+      guard_outcome TEXT,
       created_at TEXT DEFAULT (datetime('now','localtime'))
     );
 
