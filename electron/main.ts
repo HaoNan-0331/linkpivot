@@ -10,7 +10,7 @@ import { generateCaptcha, login, isFirstRun, initAdmin } from './services/auth'
 import { setDeviceMasterKey, listDevices, createDevice, updateDevice, deleteDevice, getDeviceById, maskDeviceSecrets, checkDeviceName, listDuplicateGroups, backfillNameHash, ensureNameUniqueIndex } from './services/device'
 import { setTopologyMasterKey, listTopologies, getTopologyById, createTopology, updateTopology, deleteTopology, exportTopology, importTopology } from './services/topology'
 import { setConnectionMasterKey, openTerminal, openWebSafe, writeToSession, writeByWebContentsId, disconnectSession, testDeviceConnection } from './services/connection'
-import { setAiMasterKey, chat, getAiConfigMasked, saveAiConfig, getCommandWhitelist, saveCommandWhitelist, getExecMode, setExecMode, getMcpMaxRounds, setMcpMaxRounds, confirmCommand, getAiLogs, getChatHistory, saveChatMessage as aiSaveChatMessage, createSession, listSessions, getSessionMessages, deleteSession, updateSessionTitle, reconcileGuardLogs } from './services/ai'
+import { setAiMasterKey, chat, getAiConfigMasked, saveAiConfig, getCommandWhitelist, saveCommandWhitelist, getExecMode, setExecMode, getMcpMaxRounds, setMcpMaxRounds, confirmCommand, getAgentMaxRounds, setAgentMaxRounds, getAgentBurnoutCount, setAgentBurnoutCount, getAgentCooldownSecs, setAgentCooldownSecs, getAiLogs, getChatHistory, saveChatMessage as aiSaveChatMessage, createSession, listSessions, getSessionMessages, deleteSession, updateSessionTitle, reconcileGuardLogs } from './services/ai'
 import { discoverTopology } from './services/discovery'
 import { getSystemLogs, createSystemLog, setSystemLogMasterKey, backfillSystemLogEnc } from './services/systemLog'
 import { backfillAiExecLogEnc } from './services/aiExecLogger'
@@ -295,6 +295,14 @@ app.whenReady().then(() => {
   // 22-05 checkpoint：MCP 连续调用轮次上限系统设置可调（读侧 fail-safe，写侧 1-20 校验）
   ipcMain.handle('ai:getMcpMaxRounds', secure(() => getMcpMaxRounds()))
   ipcMain.handle('ai:setMcpMaxRounds', secure((_e, rounds) => setMcpMaxRounds(rounds)))
+  // Phase 28（AGENT-04，D-04）：agent 循环硬顶三参数系统设置可调
+  //（读侧 fail-safe 回退默认 12/2/60，写侧 1-30/1-5/10-600 校验拒绝落库）
+  ipcMain.handle('ai:getAgentMaxRounds', secure(() => getAgentMaxRounds()))
+  ipcMain.handle('ai:setAgentMaxRounds', secure((_e, rounds) => setAgentMaxRounds(rounds)))
+  ipcMain.handle('ai:getAgentBurnoutCount', secure(() => getAgentBurnoutCount()))
+  ipcMain.handle('ai:setAgentBurnoutCount', secure((_e, count) => setAgentBurnoutCount(count)))
+  ipcMain.handle('ai:getAgentCooldownSecs', secure(() => getAgentCooldownSecs()))
+  ipcMain.handle('ai:setAgentCooldownSecs', secure((_e, secs) => setAgentCooldownSecs(secs)))
   ipcMain.handle('ai:confirmCommand', secure((_e, execId, approved) => confirmCommand(execId, approved)))
   // Phase 27 checkpoint：getLogs 前对账孤儿批次（TTL 过期/renderer 刷新丢失的弹窗批次），
   // 未点「确认执行」的越权记录订正取消——审计视图永不出现「未决」终态。

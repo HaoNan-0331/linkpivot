@@ -538,7 +538,7 @@ describe('v22/v23/v24 devices.name_hash 三段式', () => {
   })
 
   it('d) MIGRATION_HEAD=24、注册表含 v22/v23/v24、init.ts fresh DDL 含 name_hash', () => {
-    expect(MIGRATION_HEAD).toBe(25) // 27-02 v25（guard_hits/guard_outcome 审计列）推进
+    expect(MIGRATION_HEAD).toBe(26) // 28-01 v26（agent 硬顶三列 + chat_history.meta_enc）推进
     const versions = MIGRATIONS.map((m) => m.version)
     expect(versions).toContain(22)
     expect(versions).toContain(23)

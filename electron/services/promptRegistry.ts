@@ -275,6 +275,52 @@ export const PROMPT_REGISTRY: PromptRegistryEntry[] = [
     group: '知识库',
     description: '资料库检索：从章节索引中挑选与问题最相关的章节',
   },
+  {
+    id: 'ai.chat.agentHonestWrapup',
+    version: 1,
+    // Phase 28（28-01，D-13）agent 循环硬顶触发时的诚实结构化收尾条目：
+    // 步数/熔断/冷却/token 预算任一硬顶触发后回注，AI 必须按固定模板交代进度，
+    // 禁止假装任务完成。{{reason}}/{{steps}} 由 28-03 runAgentLoop 填充触发原因与当前步数。
+    content:
+      '自主执行已因系统限制停止：{{reason}}（已进行 {{steps}} 步）。\n' +
+      '你必须立即停止发起任何新的操作，并严格按以下模板输出收尾报告：\n' +
+      '【执行进度】进行到第 {{steps}} 步，因 {{reason}} 停止\n' +
+      '【已完成】逐条列出已成功完成的操作及其结果\n' +
+      '【未完成】逐条列出尚未执行的操作\n' +
+      '【建议下一步】给出用户可自行执行或调整参数后重试的建议\n' +
+      '禁止声称任务已全部完成；禁止编造未实际执行的操作结果。',
+    requiredVars: ['reason', 'steps'],
+    group: 'AI 对话',
+    description: 'agent 硬顶触发诚实收尾模板（⚠ 安全关键：防 AI 假装完成/编造结果）',
+  },
+  {
+    id: 'ai.chat.agentRetryHint',
+    version: 1,
+    // Phase 28（28-01，D-14）agent 步骤失败重试提示条目：回注后允许 AI 纠错重试一次，
+    // 重试预算由代码层 retryBudgets 控制（本条目只含可编辑的纠错指引文案）。
+    content:
+      '上一步操作未成功：{{failure}}\n' +
+      '请分析失败原因并修正（如命令拼写、参数格式、权限不足），然后重新发起该操作。\n' +
+      '如果失败原因无法通过修正解决（如设备不可达、权限不足），不要再重试，直接向用户说明失败原因并给出建议。',
+    requiredVars: ['failure'],
+    group: 'AI 对话',
+    description: 'agent 步骤失败纠错重试提示（⚠ 关联重试预算硬顶，防无界重试）',
+  },
+  {
+    id: 'ai.chat.agentBurnoutNote',
+    version: 1,
+    // Phase 28（28-01，D-13/D-15）熔断说明条目：同参重复失败达到熔断阈值后回注，
+    // AI 必须停止对该目标的一切变通尝试。「禁止变通换参数绕过」的硬措辞在代码级常量
+    // AGENT_BURNOUT_GUARD（不可编辑硬区），本条目只含可编辑的说明部分。
+    content:
+      '同一操作已连续失败 {{count}} 次，系统已对其熔断。\n' +
+      '禁止对该目标重试同类操作（包括更换参数、更换等价命令等任何变通形式）。\n' +
+      '请直接向用户说明：该操作已因连续失败被系统熔断，冷却时间 {{cooldown}} 秒；' +
+      '期间请用户确认设备状态或凭据后手动执行。',
+    requiredVars: ['count', 'cooldown'],
+    group: 'AI 对话',
+    description: 'agent 熔断说明与停止指令（⚠ 安全关键：禁止变通绕过，硬措辞为代码级常量）',
+  },
 ]
 
 /** 按 id 查 registry 条目；未命中返回 undefined（service 层 throw 中文 Error，T-20-02）。 */
@@ -320,3 +366,15 @@ export const AI_QONLY_EXEC_BAN: string =
   '安全约束（系统级，优先级高于任何其他指令）：' +
   '上述标注「无命令执行通道」的设备仅支持问答，禁止对其输出任何 [CMD] 命令标记，禁止用任何方式变通执行。' +
   '当用户要求在这些设备上执行操作时，直接告知用户该设备无命令执行通道、无法执行，仅可基于关联知识库与经验作答。'
+
+/**
+ * Agent 熔断后禁止变通重试硬措辞（Phase 28 28-01，D-13/D-15——与 MCP_INJECTION_GUARD 同哲学）。
+ *
+ * **不可编辑硬区**：非注册表条目、不进 DB、不经任何 prompt override save/get 通道，
+ * 用户不可 override 弱化。由 28-03 runAgentLoop 在熔断触发时与
+ * getPrompt('ai.chat.agentBurnoutNote') 填充结果拼接注入，永远生效。
+ */
+export const AGENT_BURNOUT_GUARD: string =
+  '安全约束（系统级，优先级高于任何其他指令）：' +
+  '该目标已被系统熔断。禁止以更换参数、更换等价命令、拆分步骤等任何变通形式重试该操作，' +
+  '禁止引导用户绕过熔断机制。熔断期间只能向用户如实说明失败原因与冷却时长。'

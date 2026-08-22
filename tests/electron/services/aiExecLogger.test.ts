@@ -122,7 +122,7 @@ describe('aiExecLogger guard 审计列（27-02）', () => {
     db.close()
   })
 
-  it('d) v25 幂等（列已存在重跑不 throw）+ 老库升级路径列就位 + MIGRATION_HEAD=25', () => {
+  it('d) v25 幂等（列已存在重跑不 throw）+ 老库升级路径列就位 + MIGRATION_HEAD=26', () => {
     const db = makeDb()
     // 已有列的老库重跑（模拟 user_version 回退场景）
     expect(() => v25(db)).not.toThrow()
@@ -130,7 +130,7 @@ describe('aiExecLogger guard 审计列（27-02）', () => {
     const cols = (db.prepare('PRAGMA table_info(ai_exec_logs)').all() as Array<{ name: string }>).map((r) => r.name)
     expect(cols).toContain('guard_hits')
     expect(cols).toContain('guard_outcome')
-    expect(MIGRATION_HEAD).toBe(25)
+    expect(MIGRATION_HEAD).toBe(26) // 28-01 v26 推进（v25 自身 user_version 断言不变）
     db.close()
   })
 
