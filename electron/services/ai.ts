@@ -1130,10 +1130,19 @@ setInterval(() => {
   const now = Date.now()
   for (const [id, batch] of pendingBatches) {
     if (now - batch.createdAt > PENDING_TTL_MS) {
+      // WR-03：整个批次收尾（与 confirmCommand 取消分支完全同构）——非 guard 挂起行
+      // （commands[].logId / mcp.logIds）同样落 rejected 终态，不得永留 pending
       const guardLogIds = [...(batch.guardLogIds ?? []), ...(batch.mcp?.guardLogIds ?? [])]
+      const guardSet = new Set(guardLogIds)
       for (const logId of guardLogIds) {
         updateLogStatus(logId, 'rejected')
         updateLogGuardOutcome(logId, 'user_cancelled')
+      }
+      for (const cmd of batch.commands) {
+        if (!guardSet.has(cmd.logId)) updateLogStatus(cmd.logId, 'rejected')
+      }
+      for (const logId of batch.mcp?.logIds ?? []) {
+        if (!guardSet.has(logId)) updateLogStatus(logId, 'rejected')
       }
       pendingBatches.delete(id)
     }
