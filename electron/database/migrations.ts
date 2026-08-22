@@ -814,13 +814,17 @@ const v24MigrationStep = (db: Database.Database): void => {
  * 不靠 user_version 判定）。init.ts fresh-install DDL 已含两列（双路径一致红线）。
  */
 export const v25 = (db: Database.Database): void => {
-  if (!hasColumn(db, 'ai_exec_logs', 'guard_hits')) {
-    db.exec('ALTER TABLE ai_exec_logs ADD COLUMN guard_hits TEXT')
-  }
-  if (!hasColumn(db, 'ai_exec_logs', 'guard_outcome')) {
-    db.exec('ALTER TABLE ai_exec_logs ADD COLUMN guard_outcome TEXT')
-  }
-  db.pragma('user_version = 25')
+  // WR-04：与 v1-v24 一致，步骤执行体包 db.transaction（throw 即 ROLLBACK，原子迁移红线）
+  const step = db.transaction(() => {
+    if (!hasColumn(db, 'ai_exec_logs', 'guard_hits')) {
+      db.exec('ALTER TABLE ai_exec_logs ADD COLUMN guard_hits TEXT')
+    }
+    if (!hasColumn(db, 'ai_exec_logs', 'guard_outcome')) {
+      db.exec('ALTER TABLE ai_exec_logs ADD COLUMN guard_outcome TEXT')
+    }
+    db.pragma('user_version = 25')
+  })
+  step()
 }
 
 export const MIGRATIONS: MigrationStep[] = [
