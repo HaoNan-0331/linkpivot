@@ -152,12 +152,16 @@ function AIExecLogTab() {
             {
               title: '模式',
               dataIndex: 'mode',
-              width: 80,
-              render: (v: string) => (
-                <Tag color={v === 'auto' ? 'purple' : 'default'}>
-                  {v === 'auto' ? '自动' : '确认'}
-                </Tag>
-              ),
+              width: 90,
+              render: (v: string) => {
+                // checkpoint 反馈：越权视图下 auto 命中记录 = 全自动模式仍被防线强制打断（D-06），
+                // 需明确标识「自动拦截」区分于普通 auto 直执行记录；三档模式各得其所（smart 此前误标「确认」）
+                if (v === 'auto') {
+                  return <Tag color="purple">{isGuardView ? '自动拦截' : '自动'}</Tag>
+                }
+                if (v === 'smart') return <Tag>智能</Tag>
+                return <Tag>确认</Tag>
+              },
             },
             {
               title: 'AI 原因',
@@ -206,8 +210,11 @@ function AIExecLogTab() {
             <div style={{ marginBottom: 12 }}>
               <strong>模式:</strong>{' '}
               <Tag color={detailLog.mode === 'auto' ? 'purple' : 'default'}>
-                {detailLog.mode === 'auto' ? '自动' : '确认'}
+                {detailLog.mode === 'auto' ? '自动（越权命令仍强制打断确认）' : detailLog.mode === 'smart' ? '智能' : '确认'}
               </Tag>
+              {detailLog.mode === 'auto' && detailLog.guardHits && detailLog.guardHits.length > 0 && (
+                <span style={{ color: '#999', fontSize: 12, marginLeft: 4 }}>auto 模式拦截记录</span>
+              )}
             </div>
             <div style={{ marginBottom: 8 }}>
               <strong>发送给 AI 的 Prompt:</strong>
