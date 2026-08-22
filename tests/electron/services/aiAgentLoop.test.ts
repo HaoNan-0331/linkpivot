@@ -131,6 +131,7 @@ function makeDb(execMode: string): Database.Database {
     CREATE TABLE devices (id TEXT PRIMARY KEY, name_enc TEXT, ip_enc TEXT, vendor_enc TEXT, model_enc TEXT,
       version_enc TEXT, device_type TEXT, connection_type TEXT, port_enc TEXT, username_enc TEXT,
       password_enc TEXT, ssh_key_path_enc TEXT, ssh_key_content_enc TEXT, status TEXT, last_checked TEXT);
+    CREATE TABLE mcp_device_rel (id TEXT PRIMARY KEY, mcp_config_id INTEGER NOT NULL, device_id TEXT NOT NULL UNIQUE, created_at TEXT DEFAULT (datetime('now','localtime')));
   `)
   d.prepare('INSERT INTO ai_config (id, api_key_enc, exec_mode) VALUES (?, ?, ?)').run(
     'cfg1', encField('test-key', MK), execMode
@@ -198,5 +199,267 @@ describe('Task 1: callAIWithUsage 计量（data.usage 消费 + 估算 fallback�
     expect(r.usage).toBeTruthy()
     expect(r.usage!.completion_tokens).toBe(10) // 40 字符 / 4
     expect(r.usage!.prompt_tokens).toBeGreaterThan(0)
+  })
+})
+
+// ---------- Task 2 (TDD): runAgentLoop 四标记统一循环 + 四重硬顶 + 重试降级 ----------
+
+import { AGENT_BURNOUT_GUARD } from '../../../electron/services/promptRegistry'
+
+function insertDevice(id: string, name: string) {
+  db.prepare(
+    'INSERT INTO devices (id, name_enc, ip_enc, connection_type) VALUES (?, ?, ?, ?)'
+  ).run(id, encField(name, MK), encField('10.0.0.1', MK), 'ssh')
+}
+
+/** fetch 队列 mock：callAI 逐次消费 replies */
+function queueReplies(...replies: string[]) {
+  const queue = [...replies]
+  const fetchMock = vi.fn(async () => ({
+    ok: true,
+    json: async () => ({ choices: [{ message: { content: queue.shift() ?? '' } }] }),
+  }))
+  global.fetch = fetchMock as unknown as typeof fetch
+  return fetchMock
+}
+
+function allowCmd() {
+  vi.mocked(isCommandAllowed).mockReturnValue({ allowed: true, reason: '' } as any)
+}
+
+const KB_ROWS = {
+  rows: [
+    { content: 'VLAN 划分原理：按端口/按 MAC。', document: { title: '网络手册' }, title: 'VLAN 章节', document_id: 'doc1', images: [] },
+  ],
+}
+const EXP_HIT = {
+  demoMode: false,
+  injected: [
+    { exp_id: 'exp-1', title: 'ARP 排查', content: '先 display arp', source_session_id: 's1', unsupported: false },
+  ],
+  reranked: [],
+  finalAnswer: '',
+}
+
+/** 取第 n 次（0 基）callAI 请求体 messages */
+function reqMsgs(fetchMock: any, n: number) {
+  return JSON.parse((fetchMock.mock.calls[n][1] as any).body).messages
+}
+
+beforeEach(() => {
+  db = makeDb('auto')
+  insertDevice('dev1', 'dev1')
+  setAiMasterKey(MK)
+  FakeClient.count = 0
+  FakeClient.fail = false
+  vi.mocked(kbSearch).mockReset()
+  vi.mocked(kbSearch).mockResolvedValue({ rows: [] } as any)
+  retrieveForAnswerMock.mockReset()
+  vi.mocked(isCommandAllowed).mockReturnValue({ allowed: false, reason: 'mock 拒绝' } as any)
+  vi.mocked(createLogMock).mockClear()
+  vi.mocked(updateLogStatusMock).mockClear()
+})
+
+describe('Task 2: 四标记统一循环（混合动作 + KB/EXP 循环内直执）', () => {
+  it('混合标记同轮执行：[CMD]+[KB_SEARCH] 一轮内两类动作都执行且各占一步', async () => {
+    allowCmd()
+    vi.mocked(kbSearch).mockResolvedValue(KB_ROWS as any)
+    const fetchMock = queueReplies(
+      '[CMD:dev1]display version[/CMD]',
+      '[CMD:dev1]display clock[/CMD] 同时查资料 [KB_SEARCH]vlan 原理[/KB_SEARCH]',
+      '混合轮总结'
+    )
+    const out = await chat([{ role: 'user', content: '查状态和资料' }], ['dev1'], null)
+    expect(out).toBe('混合轮总结')
+    expect(vi.mocked(kbSearch)).toHaveBeenCalledWith('vlan 原理', ['dev1'], 5)
+    // 命令两轮各执行一次（inline 轮 + loop 轮），无重试（成功路径）
+    expect(FakeClient.count).toBe(2)
+    // 第 3 次 callAI：同一条回注 user 消息同时含命令结果与文档片段（同轮两类动作）
+    const userMsg = reqMsgs(fetchMock, 2).filter((m: any) => m.role === 'user').pop()
+    expect(userMsg.content).toContain('display clock')
+    expect(userMsg.content).toContain('文档片段')
+  })
+
+  it('EXP 循环内直执：检索命中回注经验片段，最终返 exp_answer 带来源', async () => {
+    allowCmd()
+    retrieveForAnswerMock.mockResolvedValue(EXP_HIT)
+    const fetchMock = queueReplies(
+      '[CMD:dev1]display version[/CMD]',
+      '再查经验 [EXP_SEARCH]ARP 异常[/EXP_SEARCH]',
+      '经验总结'
+    )
+    const out = await chat([{ role: 'user', content: '排查' }], ['dev1'], null)
+    expect(retrieveForAnswerMock).toHaveBeenCalledWith({ userMessage: 'ARP 异常', deviceIds: ['dev1'] })
+    const third = reqMsgs(fetchMock, 2)
+    expect(third.some((m: any) => m.role === 'user' && m.content.includes('经验库中检索到的相关经验'))).toBe(true)
+    const payload = JSON.parse(out)
+    expect(payload.type).toBe('exp_answer')
+    expect(payload.references).toHaveLength(1)
+    expect(payload.references[0]).toMatchObject({ kind: 'experience', expId: 'exp-1' })
+  })
+})
+
+describe('Task 2: 硬顶①步数 + 硬顶④token 预算 → D-13 诚实收尾', () => {
+  it('步数硬顶：agent_max_rounds=1，第 2 轮标记不执行，回注诚实收尾 prompt', async () => {
+    allowCmd()
+    db.prepare('UPDATE ai_config SET agent_max_rounds = 1').run()
+    const fetchMock = queueReplies(
+      '[CMD:dev1]display version[/CMD]',
+      '[CMD:dev1]display clock[/CMD]',
+      '【执行进度】收尾报告'
+    )
+    const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
+    expect(out).toBe('【执行进度】收尾报告')
+    // 第 2 轮命令未执行（仅 inline 轮 1 次）
+    expect(FakeClient.count).toBe(1)
+    // 第 3 次 callAI 回注诚实收尾模板（含步数上限原因 + 当前步数）
+    const wrapMsg = reqMsgs(fetchMock, 2).filter((m: any) => m.role === 'user').pop()
+    expect(wrapMsg.content).toContain('自主执行已因系统限制停止')
+    expect(wrapMsg.content).toContain('步数上限')
+    expect(wrapMsg.content).toContain('第 1 步')
+  })
+
+  it('token 预算硬顶：估算超 200000 → 收尾回注 token 原因，不抛错', async () => {
+    allowCmd()
+    const fetchMock = queueReplies(
+      '[CMD:dev1]display version[/CMD]',
+      'a'.repeat(850000) + '[CMD:dev1]display clock[/CMD]',
+      'token 收尾'
+    )
+    const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
+    expect(out).toBe('token 收尾')
+    expect(FakeClient.count).toBe(1)
+    const wrapMsg = reqMsgs(fetchMock, 2).filter((m: any) => m.role === 'user').pop()
+    expect(wrapMsg.content).toContain('token 预算')
+  })
+})
+
+describe('Task 2: 硬顶②熔断 + 硬顶③冷却 + 重试降级（Pitfall 10 / D-15）', () => {
+  it('重试降级：失败动作自动重试至预算耗尽（1+2 次），仍失败计一次连续失败', async () => {
+    allowCmd()
+    FakeClient.fail = true
+    queueReplies(
+      '[CMD:dev1]display version[/CMD]',
+      '[CMD:dev1]display version[/CMD]',
+      '重试轮总结'
+    )
+    await chat([{ role: 'user', content: '查' }], ['dev1'], null)
+    // inline 轮 1 次 + loop 轮 1+2 重试 = 4 次 ssh 连接
+    expect(FakeClient.count).toBe(4)
+  })
+
+  it('熔断：连续第 burnout_count 轮失败后，同命令不再执行并回注 AGENT_BURNOUT_GUARD', async () => {
+    allowCmd()
+    FakeClient.fail = true
+    db.prepare('UPDATE ai_config SET agent_burnout_count = 2').run()
+    const fetchMock = queueReplies(
+      '[CMD:dev1]display version[/CMD]',
+      '[CMD:dev1]display version[/CMD]',
+      '[CMD:dev1]display version[/CMD]',
+      '[CMD:dev1]display version[/CMD]',
+      '熔断收尾'
+    )
+    const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
+    expect(out).toBe('熔断收尾')
+    // inline 1 + r2（fc0→执行 3 次）+ r3（fc1→执行 1 次，重试预算耗尽）+ r4 熔断 0 次 = 5
+    expect(FakeClient.count).toBe(5)
+    const r4Msg = reqMsgs(fetchMock, 4).filter((m: any) => m.role === 'user').pop()
+    expect(r4Msg.content).toContain('熔断')
+    expect(r4Msg.content).toContain(AGENT_BURNOUT_GUARD)
+  })
+
+  it('冷却：同 deviceId:command 失败后冷却期内跳过；不同命令不受影响（D-15 同循环内）', async () => {
+    allowCmd()
+    FakeClient.fail = true
+    db.prepare('UPDATE ai_config SET agent_cooldown_secs = 600').run()
+    const fetchMock = queueReplies(
+      '[CMD:dev1]display version[/CMD]',
+      '[CMD:dev1]display version[/CMD]',
+      '[CMD:dev1]display version[/CMD]',
+      '[CMD:dev1]display clock[/CMD]',
+      '冷却收尾'
+    )
+    await chat([{ role: 'user', content: '查' }], ['dev1'], null)
+    // r3 命中冷却跳过：inline 1 + r2 3次(重试) + r3 0 + r4 3次(新 key 自有预算) = 7
+    expect(FakeClient.count).toBe(7)
+    const r4Req = reqMsgs(fetchMock, 3).filter((m: any) => m.role === 'user').pop()
+    expect(r4Req.content).toContain('冷却中')
+  })
+
+  it('D-15：新循环（新 agentState）不受旧冷却影响', async () => {
+    allowCmd()
+    FakeClient.fail = true
+    db.prepare('UPDATE ai_config SET agent_cooldown_secs = 600').run()
+    queueReplies(
+      '[CMD:dev1]display version[/CMD]',
+      '[CMD:dev1]display version[/CMD]',
+      '第一轮结束'
+    )
+    await chat([{ role: 'user', content: '查' }], ['dev1'], null)
+    const countAfterFirst = FakeClient.count
+    // 第二次 chat：全新 agentState，同命令再次进入执行（不受旧冷却影响）
+    queueReplies('[CMD:dev1]display version[/CMD]', '第二轮结束')
+    await chat([{ role: 'user', content: '再查' }], ['dev1'], null)
+    expect(FakeClient.count).toBeGreaterThan(countAfterFirst)
+  })
+
+  it('安全拒绝不计失败冷却（Pitfall 10）：白名单拒绝后下轮同命令不落入「冷却中」', async () => {
+    allowCmd()
+    const fetchMock = queueReplies(
+      '[CMD:dev1]display version[/CMD]',
+      '[CMD:dev1]display version[/CMD]',
+      '[CMD:dev1]display version[/CMD]',
+      '安全拒绝收尾'
+    )
+    // 第 1 轮（inline）放行成功，第 2/3 轮（loop）改为安全拒绝
+    vi.mocked(isCommandAllowed).mockReturnValue({ allowed: false, reason: '不在白名单' } as any)
+    const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
+    expect(out).toBe('安全拒绝收尾')
+    // loop 两轮均为安全拒绝：零执行、零冷却（若误计冷却，第 3 轮会显示冷却中）
+    expect(FakeClient.count).toBe(1)
+    const r3Req = reqMsgs(fetchMock, 3).filter((m: any) => m.role === 'user').pop()
+    expect(r3Req.content).toContain('不在白名单')
+    expect(r3Req.content).not.toContain('冷却中')
+  })
+})
+
+describe('Task 2: CMD confirm 续跑不断头（Pitfall 2 主路径修复）', () => {
+  it('confirm 档：确认执行后续跑 runAgentLoop——后续 [KB_SEARCH] 轮直执到最终回答', async () => {
+    db.prepare("UPDATE ai_config SET exec_mode = 'confirm'").run()
+    allowCmd()
+    vi.mocked(kbSearch).mockResolvedValue(KB_ROWS as any)
+    const fetchMock = queueReplies(
+      '[CMD:dev1]display version[/CMD]',
+      '命令完成，再查资料 [KB_SEARCH]vlan 原理[/KB_SEARCH]',
+      '续跑收尾'
+    )
+    const out1 = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
+    expect(JSON.parse(out1).type).toBe('confirm_required')
+    const final = await confirmCommand(JSON.parse(out1).execId, true)
+    expect(final).toBe('续跑收尾')
+    // 确认后命令执行 + KB 检索在续跑循环内发生
+    expect(FakeClient.count).toBe(1)
+    expect(vi.mocked(kbSearch)).toHaveBeenCalledWith('vlan 原理', ['dev1'], 5)
+    expect(fetchMock.mock.calls.length).toBe(3)
+  })
+
+  it('confirm 档：确认后下轮再出 [CMD] → 再次 confirm_required（循环内 CMD 确认门）', async () => {
+    db.prepare("UPDATE ai_config SET exec_mode = 'confirm'").run()
+    allowCmd()
+    queueReplies(
+      '[CMD:dev1]display version[/CMD]',
+      '[CMD:dev1]display clock[/CMD]',
+      '二轮确认后收尾'
+    )
+    const out1 = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
+    const out2 = await confirmCommand(JSON.parse(out1).execId, true)
+    const payload2 = JSON.parse(out2)
+    expect(payload2.type).toBe('confirm_required')
+    expect(payload2.commands[0].command).toContain('display clock')
+    // 第 1 条已执行，第 2 条挂起未执行
+    expect(FakeClient.count).toBe(1)
+    const final = await confirmCommand(payload2.execId, true)
+    expect(final).toBe('二轮确认后收尾')
+    expect(FakeClient.count).toBe(2)
   })
 })
