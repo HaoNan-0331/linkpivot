@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { Table, Button, Tag, Tabs, Card, Modal, Tooltip } from 'antd'
+import { useState, useEffect, useMemo } from 'react'
+import { Table, Button, Tag, Tabs, Card, Modal, Tooltip, Segmented, Empty } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import type { AIExecLog, AISystemLog } from '@/types/electron'
 
@@ -13,10 +13,28 @@ const statusConfig: Record<string, { color: string; label: string }> = {
   failed: { color: 'red', label: '执行失败' },
 }
 
+// Phase 27（27-04，GUARD-05 D-07/D-08）：越权记录视图三态 Tag。
+// auto 拦截 = guardHits 非空且 status=pending（挂起未处理）。
+function guardOutcomeOf(log: AIExecLog): 'user_confirmed' | 'user_cancelled' | 'auto_blocked' | null {
+  if (log.guardOutcome === 'user_confirmed') return 'user_confirmed'
+  if (log.guardOutcome === 'user_cancelled') return 'user_cancelled'
+  if (!log.guardOutcome && log.status === 'pending') return 'auto_blocked'
+  return null
+}
+
+const guardOutcomeConfig: Record<string, { color: string; label: string }> = {
+  user_confirmed: { color: 'green', label: '用户确认放行' },
+  user_cancelled: { color: 'red', label: '用户取消' },
+  auto_blocked: { color: 'orange', label: 'auto 拦截' },
+}
+
 function AIExecLogTab() {
   const [logs, setLogs] = useState<AIExecLog[]>([])
   const [loading, setLoading] = useState(false)
   const [detailLog, setDetailLog] = useState<AIExecLog | null>(null)
+  // Phase 27（D-07）：全部 | 越权记录 二档；越权档内三态筛选（D-08：不做场景/设备/时间筛选）
+  const [view, setView] = useState<'全部' | '越权记录'>('全部')
+  const [outcomeFilter, setOutcomeFilter] = useState<string>('全部')
 
   const load = async () => {
     setLoading(true)
@@ -29,6 +47,18 @@ function AIExecLogTab() {
 
   useEffect(() => { load() }, [])
 
+  const guardLogs = useMemo(() => logs.filter((l) => (l.guardHits?.length ?? 0) > 0), [logs])
+  const filteredGuardLogs = useMemo(() => {
+    if (outcomeFilter === '全部') return guardLogs
+    const key = Object.keys(guardOutcomeConfig).find(
+      (k) => guardOutcomeConfig[k].label === outcomeFilter
+    )
+    return guardLogs.filter((l) => key ? guardOutcomeOf(l) === key : true)
+  }, [guardLogs, outcomeFilter])
+
+  const isGuardView = view === '越权记录'
+  const dataSource = isGuardView ? filteredGuardLogs : logs
+
   return (
     <>
       <Card
@@ -36,8 +66,35 @@ function AIExecLogTab() {
         size="small"
         extra={<Button icon={<ReloadOutlined />} onClick={load} loading={loading}>刷新</Button>}
       >
+        <div style={{ display: 'flex', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
+          <Segmented
+            value={view}
+            onChange={(v) => setView(v as '全部' | '越权记录')}
+            options={['全部', '越权记录']}
+          />
+          {isGuardView && (
+            <Segmented
+              value={outcomeFilter}
+              onChange={(v) => setOutcomeFilter(v as string)}
+              options={['全部', '用户确认放行', '用户取消', 'auto 拦截']}
+            />
+          )}
+        </div>
+        {isGuardView && dataSource.length === 0 && !loading ? (
+          <Empty
+            description={
+              <span>
+                暂无越权记录——AI 命令未触发任何越权规则
+                <br />
+                <span style={{ color: '#999', fontSize: 12 }}>
+                  当 AI 命令目标超出对话设备集或发生跳转时，会在此留下确认记录
+                </span>
+              </span>
+            }
+          />
+        ) : (
         <Table<AIExecLog>
-          dataSource={logs}
+          dataSource={dataSource}
           rowKey="id"
           loading={loading}
           size="small"
@@ -70,6 +127,28 @@ function AIExecLogTab() {
                 return cfg ? <Tag color={cfg.color}>{cfg.label}</Tag> : v
               },
             },
+            ...(isGuardView ? [{
+              title: '处理结果',
+              width: 120,
+              render: (_: unknown, record: AIExecLog) => {
+                const outcome = guardOutcomeOf(record)
+                if (!outcome) return '-'
+                const cfg = guardOutcomeConfig[outcome]
+                return <Tag color={cfg.color}>{cfg.label}</Tag>
+              },
+            }, {
+              title: '命中规则',
+              width: 140,
+              render: (_: unknown, record: AIExecLog) => (
+                <span>
+                  {(record.guardHits ?? []).map((h, i) => (
+                    <Tooltip key={i} title={h.explanation}>
+                      <Tag color={h.level === 'red' ? 'red' : 'gold'} style={{ fontSize: 13 }}>{h.ruleId}</Tag>
+                    </Tooltip>
+                  ))}
+                </span>
+              ),
+            }] : []),
             {
               title: '模式',
               dataIndex: 'mode',
@@ -99,6 +178,7 @@ function AIExecLogTab() {
             },
           ]}
         />
+        )}
       </Card>
 
       <Modal

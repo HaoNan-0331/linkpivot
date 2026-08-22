@@ -34,6 +34,9 @@ export interface AIExecLog {
   aiReason: string
   promptText: string
   aiResponse: string
+  // Phase 27（27-02 getLogs 投影 / 27-04 消费）：越权命中与人机处理结果
+  guardHits: Array<{ ruleId: string; level: 'red' | 'yellow'; target: string; explanation: string }> | null
+  guardOutcome: string | null
   createdAt: string
 }
 

@@ -61,9 +61,27 @@ export interface ToolResultMessage {
   errorText?: string
 }
 
+/**
+ * 越权命中（Phase 27 / 27-04，GUARD-04 D-05）。
+ * 契约固定于 main 侧 privilegeGuard.GuardHit（27-03 经 confirm_required payload
+ * guardInfo 下发），字段逐字对齐；explanation 由 main 生成人话解释，renderer 透传不硬编码。
+ */
+export interface GuardHitInfo {
+  ruleId: string
+  level: 'red' | 'yellow'
+  target: string
+  explanation: string
+}
+
 export interface ConfirmData {
   type: 'confirm_required'
   execId: string
+  // Phase 27（27-04，D-05）：越权命中批次可选携带 guardInfo——存在时
+  // CommandConfirmModal 切「越权确认」形态；历史/普通 confirm 无此字段渲染路径零变化
+  guardInfo?: {
+    expectedTarget: string
+    hits: GuardHitInfo[]
+  }
   // Phase 22（22-05）：MCP 工具确认复用本协议，commands 元素可携带可选
   // server/tool/argsJson 字段（22-03 下发，renderer 按字段存在性区分命令/工具行）
   commands: Array<{
