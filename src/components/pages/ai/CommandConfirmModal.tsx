@@ -53,7 +53,8 @@ function GuardBody({ guardInfo, commands, aiExplanation, rejectedCommands }: {
             {hasMap && idxArr![i] != null && commands[idxArr![i]] && (
               <div style={{
                 background: '#fff1f0', padding: 8, borderRadius: 4, marginTop: 4,
-                fontFamily: 'monospace', fontSize: 13, wordBreak: 'break-all',
+                fontFamily: 'monospace', fontSize: 13,
+                whiteSpace: 'pre', overflowX: 'auto',
               }}>
                 [{commands[idxArr![i]].deviceName}] {commands[idxArr![i]].command}
               </div>
@@ -70,7 +71,7 @@ function GuardBody({ guardInfo, commands, aiExplanation, rejectedCommands }: {
               常规命令（无越权风险）
             </div>
             {normalCommands.map((cmd, i) => (
-              <div key={i} style={{ marginBottom: 6 }}>
+              <div key={i} style={{ marginBottom: 6, overflowX: 'auto' }}>
                 <Tag color="blue" style={{ fontSize: 13 }}>
                   [{cmd.deviceName}] {cmd.command}
                 </Tag>
@@ -84,7 +85,8 @@ function GuardBody({ guardInfo, commands, aiExplanation, rejectedCommands }: {
           {commands.map((cmd, i) => (
             <div key={i} style={{
               background: '#f5f5f5', padding: 12, borderRadius: 4, marginBottom: 6,
-              fontFamily: 'monospace', fontSize: 13, wordBreak: 'break-all',
+              fontFamily: 'monospace', fontSize: 13,
+              whiteSpace: 'pre', overflowX: 'auto',
             }}>
               [{cmd.deviceName}] {cmd.command}
             </div>
@@ -98,8 +100,10 @@ function GuardBody({ guardInfo, commands, aiExplanation, rejectedCommands }: {
           </div>
           {rejectedCommands.map((r, i) => (
             <div key={i} style={{ marginBottom: 4 }}>
-              <Tag color="red" style={{ fontSize: 13 }}>{r.command}</Tag>
-              <span style={{ color: '#999', fontSize: 12 }}> {r.reason}</span>
+              <div style={{ overflowX: 'auto' }}>
+                <Tag color="red" style={{ fontSize: 13 }}>{r.command}</Tag>
+              </div>
+              <span style={{ color: '#999', fontSize: 12 }}>{r.reason}</span>
             </div>
           ))}
         </div>
@@ -155,7 +159,7 @@ export default function CommandConfirmModal({ pendingConfirm, onConfirm, confirm
         <div>
           <p><strong>待执行命令:</strong></p>
           {pendingConfirm.commands.map((cmd, i) => (
-            <div key={i} style={{ marginBottom: 6 }}>
+            <div key={i} style={{ marginBottom: 6, overflowX: 'auto' }}>
               <Tag color="blue" style={{ fontSize: 13 }}>
                 [{cmd.deviceName}] {cmd.command}
               </Tag>
@@ -166,8 +170,10 @@ export default function CommandConfirmModal({ pendingConfirm, onConfirm, confirm
               <p style={{ marginTop: 8 }}><strong>已拒绝命令:</strong></p>
               {pendingConfirm.rejectedCommands.map((r, i) => (
                 <div key={i} style={{ marginBottom: 4 }}>
-                  <Tag color="red" style={{ fontSize: 13 }}>{r.command}</Tag>
-                  <span style={{ color: '#999', fontSize: 12 }}> {r.reason}</span>
+                  <div style={{ overflowX: 'auto' }}>
+                    <Tag color="red" style={{ fontSize: 13 }}>{r.command}</Tag>
+                  </div>
+                  <span style={{ color: '#999', fontSize: 12 }}>{r.reason}</span>
                 </div>
               ))}
             </>
