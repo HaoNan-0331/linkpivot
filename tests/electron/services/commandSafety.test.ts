@@ -10,7 +10,7 @@ import { describe, it, expect, vi } from 'vitest'
  * - promptRegistry 命令风格指引条目存在（ai.chat.cmdStyle）
  */
 
-import { isCommandAllowed } from '../../../electron/services/commandSafety'
+import { isCommandAllowed, tokenizeCommand } from '../../../electron/services/commandSafety'
 
 // init 种子测试用 mock：模块级变量（vi.mock 工厂闭包不能引用局部 let）
 import Database from 'better-sqlite3'
@@ -108,5 +108,29 @@ describe('commandSafety 服务器只读命令扩域（Phase 23 23-03 复验反�
     expect(entry!.content).toMatch(/服务器/)
     expect(entry!.content).toMatch(/uname|hostnamectl/)
     expect(entry!.content).toMatch(/show|display/)
+  })
+})
+
+// ---------- Phase 27（27-01）：tokenizeCommand 提取回归（Pitfall 8 行为等价锁定） ----------
+
+describe('tokenizeCommand 单一来源提取（Phase 27 T-27-04）', () => {
+  it('trim + toLowerCase + 多空格折叠 + 空白过滤', () => {
+    expect(tokenizeCommand('  display   VERSION  ')).toEqual(['display', 'version'])
+    expect(tokenizeCommand('ping\t10.1.1.5')).toEqual(['ping', '10.1.1.5'])
+  })
+
+  it('空命令 / 纯空白 → 空数组', () => {
+    expect(tokenizeCommand('')).toEqual([])
+    expect(tokenizeCommand('    ')).toEqual([])
+  })
+
+  it('isCommandAllowed 提取后行为等价：空命令拒绝、多空格白名单匹配、黑名单首词不变', () => {
+    const wl = ['display', 'show', 'ping']
+    expect(isCommandAllowed('   ', wl)).toEqual({ allowed: false, reason: '空命令' })
+    expect(isCommandAllowed('', wl)).toEqual({ allowed: false, reason: '空命令' })
+    expect(isCommandAllowed('display    version', wl).allowed).toBe(true)
+    expect(isCommandAllowed('SHOW  ip  route', wl).allowed).toBe(true)
+    expect(isCommandAllowed('REBOOT  now', wl).allowed).toBe(false)
+    expect(isCommandAllowed('display ; reboot', wl).allowed).toBe(false)
   })
 })
