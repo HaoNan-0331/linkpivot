@@ -13,10 +13,13 @@ interface CommandConfirmModalProps {
 // 分色契约（27-UI-SPEC，禁改）：red=GUARD-02/03 越权级、gold=GUARD-01 白名单外；
 // explanation 全部 main 侧生成透传，renderer 不硬编码目标状态文案。
 // 红线（D-04/T-27-12）：本形态内不得提供任何绕过确认门或快捷扩权的入口。
-function GuardBody({ guardInfo, commands, aiExplanation }: {
+// checkpoint fix：补 rejectedCommands 展示（普通形态既有区块，越权形态此前遗漏——
+// 混批中白名单拒绝的命令对用户不可见，"共 N 条命令"计数不含被拒项易误读为 AI 只发了一条）。
+function GuardBody({ guardInfo, commands, aiExplanation, rejectedCommands }: {
   guardInfo: NonNullable<ConfirmData['guardInfo']>
   commands: ConfirmData['commands']
   aiExplanation: string
+  rejectedCommands?: ConfirmData['rejectedCommands']
 }) {
   // Phase 27 checkpoint（方案 A 分区展示）：命中命令下标集合 + 未命中常规命令分区。
   // hitCommandIndexes 缺失（旧 payload）→ normalCommands 置 null，回退现状全量命令列表（降级红线）
@@ -88,6 +91,19 @@ function GuardBody({ guardInfo, commands, aiExplanation }: {
           ))}
         </>
       )}
+      {rejectedCommands && rejectedCommands.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ color: '#999', fontSize: 12, borderBottom: '1px solid #f0f0f0', paddingBottom: 4, marginBottom: 8 }}>
+            已拒绝命令（{rejectedCommands.length} 条，不会执行）
+          </div>
+          {rejectedCommands.map((r, i) => (
+            <div key={i} style={{ marginBottom: 4 }}>
+              <Tag color="red" style={{ fontSize: 13 }}>{r.command}</Tag>
+              <span style={{ color: '#999', fontSize: 12 }}> {r.reason}</span>
+            </div>
+          ))}
+        </div>
+      )}
       <div style={{ background: '#f5f5f5', padding: 12, borderRadius: 4, marginTop: 12 }}>
         <strong>AI 说明:</strong>
         <div style={{ marginTop: 4, whiteSpace: 'pre-wrap', maxHeight: 200, overflowY: 'auto', fontSize: 13 }}>
@@ -133,6 +149,7 @@ export default function CommandConfirmModal({ pendingConfirm, onConfirm, confirm
           guardInfo={guardInfo}
           commands={pendingConfirm.commands}
           aiExplanation={pendingConfirm.aiExplanation}
+          rejectedCommands={pendingConfirm.rejectedCommands}
         />
       ) : pendingConfirm && (
         <div>
