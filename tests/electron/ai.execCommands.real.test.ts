@@ -25,10 +25,14 @@ import net from 'net'
  *   验证 ssh2.Server 在 ELECTRON_RUN_AS_NODE 下 listen + accept + authentication.accept + exec stream 回显可行。
  */
 
-// ---- Mock：commandSafety（放行全部，聚焦协议真路径） ----
-vi.mock('../../electron/services/commandSafety', () => ({
-  isCommandAllowed: (_cmd: string, _whitelist: string[]) => ({ allowed: true, reason: '' }),
-}))
+// ---- Mock：commandSafety（放行全部，聚焦协议真路径；tokenizeCommand 用真实现，Phase 27 privilegeGuard 单一 token 源） ----
+vi.mock('../../electron/services/commandSafety', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../electron/services/commandSafety')>()
+  return {
+    ...actual,
+    isCommandAllowed: (_cmd: string, _whitelist: string[]) => ({ allowed: true, reason: '' }),
+  }
+})
 
 // ---- Mock：knowledgeBaseService（防级联加载重依赖） ----
 vi.mock('../../electron/services/knowledgeBaseService', () => ({
@@ -39,6 +43,7 @@ vi.mock('../../electron/services/knowledgeBaseService', () => ({
 vi.mock('../../electron/services/aiExecLogger', () => ({
   createLog: vi.fn(),
   updateLogStatus: vi.fn(),
+  updateLogGuardOutcome: vi.fn(),
   appendLogAiResponse: vi.fn(),
   getLogs: vi.fn().mockReturnValue([]),
   setAiExecLoggerMasterKey: vi.fn(),

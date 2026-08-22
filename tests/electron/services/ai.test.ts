@@ -17,12 +17,18 @@ import Database from 'better-sqlite3'
  */
 
 vi.mock('ssh2', () => ({ Client: class {} }))
-vi.mock('../../../electron/services/commandSafety', () => ({
-  isCommandAllowed: vi.fn().mockReturnValue({ allowed: false, reason: 'mock 拒绝' }),
-}))
+vi.mock('../../../electron/services/commandSafety', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../electron/services/commandSafety')>()
+  return {
+    // tokenizeCommand 用真实现（Phase 27 privilegeGuard 单一 token 源）；isCommandAllowed 可控 mock
+    tokenizeCommand: actual.tokenizeCommand,
+    isCommandAllowed: vi.fn().mockReturnValue({ allowed: false, reason: 'mock 拒绝' }),
+  }
+})
 vi.mock('../../../electron/services/aiExecLogger', () => ({
   createLog: vi.fn().mockReturnValue('log-1'),
   updateLogStatus: vi.fn(),
+  updateLogGuardOutcome: vi.fn(),
   appendLogAiResponse: vi.fn(),
   getLogs: vi.fn().mockReturnValue([]),
   setAiExecLoggerMasterKey: vi.fn(),
@@ -471,5 +477,102 @@ describe('Phase 23 code-review 回归（WR-02 ~ WR-06）', () => {
     expect(stripExpKbSearchMarkers('未闭合 [EXP_SEARCH]kw 到行尾\n第二行')).toBe('未闭合 第二行')
     expect(stripExpKbSearchMarkers('孤立闭合 [/EXP_SEARCH] 残留')).toBe('孤立闭合  残留')
     expect(stripExpKbSearchMarkers('干净回复')).toBe('干净回复')
+  })
+})
+
+// ---------- Phase 27 Plan 27-03 —— privilegeGuard 四接入点接线 ----------
+
+import { createLog as createLogMock, updateLogGuardOutcome as updateLogGuardOutcomeMock } from '../../../electron/services/aiExecLogger'
+import { confirmCommand, executeCommandsOnDevice } from '../../../electron/services/ai'
+
+/** 插入带独立 IP 的设备（GUARD 检测需明文 IP 投影） */
+function insertGuardDevice(id: string, name: string, ip: string, connectionType: string) {
+  db.prepare(
+    'INSERT INTO devices (id, name_enc, ip_enc, connection_type) VALUES (?, ?, ?, ?)'
+  ).run(id, encField(name, MK), encField(ip, MK), connectionType)
+}
+
+describe('privilegeGuard 接入（Phase 27 27-03）', () => {
+  afterEach(() => {
+    vi.mocked(isCommandAllowed).mockReturnValue({ allowed: false, reason: 'mock 拒绝' } as any)
+    vi.mocked(createLogMock).mockClear()
+    vi.mocked(updateLogGuardOutcomeMock).mockClear()
+  })
+
+  it('R18 语义：auto 模式 GUARD-02 命中仍走挂起路径——confirm_required 带 guardInfo，createLog status=pending + guardHits（D-06）', async () => {
+    insertGuardDevice('ga', 'GuardA', '10.0.0.1', 'ssh')
+    insertGuardDevice('gb', 'GuardB', '10.0.0.2', 'ssh')
+    db.prepare("UPDATE ai_config SET exec_mode = 'auto'").run()
+    vi.mocked(isCommandAllowed).mockReturnValue({ allowed: true, reason: '' } as any)
+    queueReplies('执行 [CMD:GuardA] ssh 10.0.0.2[/CMD]')
+    const out = await chat([{ role: 'user', content: '跳到 GuardB' }], ['ga'], null)
+    const payload = JSON.parse(out)
+    expect(payload.type).toBe('confirm_required')
+    expect(payload.guardInfo).toBeTruthy()
+    expect(payload.guardInfo.expectedTarget).toBe('GuardA')
+    expect(payload.guardInfo.hits[0].ruleId).toBe('GUARD-02')
+    expect(payload.guardInfo.hits[0].level).toBe('red')
+    // 审计：guardHits 落库 + status 强制 pending（auto 不再直执）
+    expect(createLogMock).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'pending',
+      mode: 'auto',
+      guardHits: expect.arrayContaining([expect.objectContaining({ ruleId: 'GUARD-02' })]),
+    }))
+  })
+
+  it('auto 模式无命中：行为不变——不弹 confirm_required（guardHits 不落库）', async () => {
+    insertGuardDevice('ga', 'GuardA', '10.0.0.1', 'ssh')
+    db.prepare("UPDATE ai_config SET exec_mode = 'auto'").run()
+    vi.mocked(isCommandAllowed).mockReturnValue({ allowed: true, reason: '' } as any)
+    // display version 非 JUMP/PROBE、无已知设备参数 → 无命中；执行走 mock ssh（连接失败填 failed 不弹窗），
+    // 需第二笔回复供结果回注追评（否则空回复在 saveChatMessage 抛错）
+    queueReplies('执行 [CMD:GuardA] display version[/CMD]', '执行结果已分析完毕')
+    const out = await chat([{ role: 'user', content: '查版本' }], ['ga'], null)
+    expect(out).not.toContain('confirm_required')
+    expect(createLogMock).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'approved',
+      mode: 'auto',
+      guardHits: undefined,
+    }))
+  })
+
+  it('confirmCommand 确认/取消：guard 命中 logId 落 user_confirmed/user_cancelled（T-27-11），未命中批次不写 outcome', async () => {
+    insertGuardDevice('ga', 'GuardA', '10.0.0.1', 'ssh')
+    insertGuardDevice('gb', 'GuardB', '10.0.0.2', 'ssh')
+    db.prepare("UPDATE ai_config SET exec_mode = 'confirm'").run()
+    vi.mocked(isCommandAllowed).mockReturnValue({ allowed: true, reason: '' } as any)
+    queueReplies('执行 [CMD:GuardA] ssh 10.0.0.2[/CMD]', '取消确认后的回复')
+    const out = await chat([{ role: 'user', content: '跳到 GuardB' }], ['ga'], null)
+    const batchId = JSON.parse(out).execId
+    // 取消：guard 命中行落 user_cancelled
+    await confirmCommand(batchId, false)
+    expect(updateLogGuardOutcomeMock).toHaveBeenCalledWith('log-1', 'user_cancelled')
+    vi.mocked(updateLogGuardOutcomeMock).mockClear()
+    // 再造一批走确认分支（追加一笔回复供结果回注追评）
+    queueReplies('执行 [CMD:GuardA] ssh 10.0.0.2[/CMD]', '执行结果已分析')
+    const out2 = await chat([{ role: 'user', content: '再跳一次' }], ['ga'], null)
+    const batchId2 = JSON.parse(out2).execId
+    // 确认：guard 命中行落 user_confirmed；执行层 guardApproved=true 放行（mock ssh 连接失败由 try/catch 填 failed）
+    await confirmCommand(batchId2, true)
+    expect(updateLogGuardOutcomeMock).toHaveBeenCalledWith('log-1', 'user_confirmed')
+  })
+
+  it('executeCommandsOnDevice 兜底重检：无 guardApproved 标记且命中 → 拒绝执行（T-27-08/Pitfall 4）', async () => {
+    insertGuardDevice('ga', 'GuardA', '10.0.0.1', 'ssh')
+    insertGuardDevice('gb', 'GuardB', '10.0.0.2', 'ssh')
+    vi.mocked(isCommandAllowed).mockReturnValue({ allowed: true, reason: '' } as any)
+    const results = await executeCommandsOnDevice(
+      { id: 'ga', name: 'GuardA', ipAddress: '10.0.0.1', connectionType: 'ssh' },
+      ['ssh 10.0.0.2'],
+    )
+    expect(results[0].success).toBe(false)
+    expect(results[0].output).toContain('越权防线拦截')
+    // guardApproved=true（用户已确认批次）→ 放行重检（防无限弹窗），执行进入 ssh 连接阶段：
+    // mock ssh2 Client（空 class）在 client.on 处同步抛错 → 首条 reject 整批（证明已越过 guard 拦截层）
+    await expect(executeCommandsOnDevice(
+      { id: 'ga', name: 'GuardA', ipAddress: '10.0.0.1', connectionType: 'ssh' },
+      ['ssh 10.0.0.2'],
+      { guardApproved: true },
+    )).rejects.toThrow()
   })
 })

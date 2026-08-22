@@ -26,10 +26,14 @@ import net from 'net'
  *   （即被测 cleanup 路径无泄漏），若误报触发 dump，据输出定位是哪条 cleanup 漏。
  */
 
-// ---- Mock：commandSafety（放行全部，聚焦协议真路径 + 异常 cleanup） ----
-vi.mock('../../electron/services/commandSafety', () => ({
-  isCommandAllowed: (_cmd: string, _whitelist: string[]) => ({ allowed: true, reason: '' }),
-}))
+// ---- Mock：commandSafety（放行全部，聚焦协议真路径 + 异常 cleanup；tokenizeCommand 用真实现，Phase 27） ----
+vi.mock('../../electron/services/commandSafety', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../electron/services/commandSafety')>()
+  return {
+    ...actual,
+    isCommandAllowed: (_cmd: string, _whitelist: string[]) => ({ allowed: true, reason: '' }),
+  }
+})
 
 // ---- Mock：knowledgeBaseService（防级联加载重依赖） ----
 vi.mock('../../electron/services/knowledgeBaseService', () => ({
@@ -40,6 +44,7 @@ vi.mock('../../electron/services/knowledgeBaseService', () => ({
 vi.mock('../../electron/services/aiExecLogger', () => ({
   createLog: vi.fn(),
   updateLogStatus: vi.fn(),
+  updateLogGuardOutcome: vi.fn(),
   appendLogAiResponse: vi.fn(),
   getLogs: vi.fn().mockReturnValue([]),
   setAiExecLoggerMasterKey: vi.fn(),

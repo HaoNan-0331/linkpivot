@@ -15,12 +15,17 @@ import Database from 'better-sqlite3'
  */
 
 vi.mock('ssh2', () => ({ Client: class {} }))
-vi.mock('../../../electron/services/commandSafety', () => ({
-  isCommandAllowed: vi.fn().mockReturnValue({ allowed: false, reason: 'mock 拒绝' }),
-}))
+vi.mock('../../../electron/services/commandSafety', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../electron/services/commandSafety')>()
+  return {
+    ...actual,
+    isCommandAllowed: vi.fn().mockReturnValue({ allowed: false, reason: 'mock 拒绝' }),
+  }
+})
 vi.mock('../../../electron/services/aiExecLogger', () => ({
   createLog: vi.fn().mockReturnValue('log-1'),
   updateLogStatus: vi.fn(),
+  updateLogGuardOutcome: vi.fn(),
   appendLogAiResponse: vi.fn(),
   getLogs: vi.fn().mockReturnValue([]),
   setAiExecLoggerMasterKey: vi.fn(),

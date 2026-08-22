@@ -6,8 +6,9 @@ import { encField, decField } from '../utils/crypto'
 import { verifyPasswordSync } from '../utils/crypto'
 import { SSH_READY_TIMEOUT_MS, buildSSHConnectConfig } from '../utils/sshConfig'
 import { executeTelnetCommand, pickDisablePaginationCmd, pickShellPrompt } from '../utils/telnetExec'
-import { isCommandAllowed } from './commandSafety'
-import { createLog, updateLogStatus, appendLogAiResponse, getLogs, setAiExecLoggerMasterKey } from './aiExecLogger'
+import { isCommandAllowed, tokenizeCommand } from './commandSafety'
+import { checkCommand, checkMcpArgs, type GuardHit, type GuardDeviceRef } from './privilegeGuard'
+import { createLog, updateLogStatus, updateLogGuardOutcome, appendLogAiResponse, getLogs, setAiExecLoggerMasterKey } from './aiExecLogger'
 import { search as kbSearch } from './knowledgeBaseService'
 import { retrieveForAnswer } from './experienceRetrieval'
 import { PromptService } from './promptService'
@@ -338,16 +339,35 @@ function stripAnsi(str: string): string {
 
 export function executeCommandsOnDevice(
   device: any,
-  commands: string[]
+  commands: string[],
+  opts?: { guardApproved?: boolean; conversationSet?: GuardDeviceRef[] }
 ): Promise<Array<{ command: string; output: string; success: boolean }>> {
   if (commands.length === 0) return Promise.resolve([])
 
   // 执行层强制安全校验（最后一道防线）：不依赖调用方（chat/confirmCommand/auto）是否已校验，
   // 任何未经 isCommandAllowed 通过的命令在此直接拒绝，杜绝新增入口漏检。
   const whitelist = getCommandWhitelist()
+  // Phase 27（T-27-08/Pitfall 4）：privilegeGuard 兜底重检——新增执行入口漏检防线。
+  // guardApproved=true 仅由 confirmCommand 用户确认后置位传递（防无限弹窗）；无标记且命中 → 拒绝执行。
+  const guardApproved = opts?.guardApproved === true
+  const guardConversationSet: GuardDeviceRef[] = opts?.conversationSet ?? [toGuardRef(device)]
+  const allGuardDevices = guardApproved ? [] : loadAllGuardDevices()
   const checked = commands.map((cmd) => {
     const safety = isCommandAllowed(cmd, whitelist)
-    return { cmd, allowed: safety.allowed, reason: safety.reason }
+    if (!safety.allowed) return { cmd, allowed: false, reason: safety.reason }
+    if (guardApproved) return { cmd, allowed: true, reason: '' }
+    const tokens = tokenizeCommand(cmd)
+    const hits = checkCommand({
+      firstWord: tokens[0] ?? '',
+      tokens,
+      currentDevice: toGuardRef(device),
+      conversationSet: guardConversationSet,
+      allDevices: allGuardDevices,
+    })
+    if (hits.length > 0) {
+      return { cmd, allowed: false, reason: `越权防线拦截: ${hits.map((h) => h.explanation).join('；')}` }
+    }
+    return { cmd, allowed: true, reason: '' }
   })
 
   // connectionType 分流：ssh（含默认）走 buildSSHConfig + client.exec + execOne（密钥/密码、stream silence/retry/H3C 粘连全保留）；
@@ -569,6 +589,40 @@ export function getDeviceByIdInternal(id: string): any {
     // D-04 白名单判定依赖；缺失按不可执行 fail-closed）
     capabilities: deriveCapabilities(row),
   }
+}
+
+// ---------- Phase 27（GUARD-01~03）：越权检测接线辅助 ----------
+// privilegeGuard 纯函数不读 DB（Pitfall 7），设备投影（含明文 IP）由本层注入。
+
+/** 设备投影 → GuardDeviceRef（id/name/ipAddress 三字段，privilegeGuard 契约） */
+function toGuardRef(dev: any): GuardDeviceRef {
+  return { id: String(dev.id ?? ''), name: String(dev.name ?? ''), ipAddress: String(dev.ipAddress ?? '') }
+}
+
+/** 全库设备投影（Pitfall 7：文案区分「库内未选」vs「库外陌生」；单查一次，量级可接受） */
+function loadAllGuardDevices(): GuardDeviceRef[] {
+  try {
+    const rows = getDatabase().prepare('SELECT id, name_enc, ip_enc FROM devices').all() as any[]
+    return rows.map((r) => ({
+      id: String(r.id),
+      name: decField(r.name_enc, MK),
+      ipAddress: decField(r.ip_enc, MK),
+    }))
+  } catch {
+    return [] // 降级：缺列/异常时按无全库上下文判定（检测层自身仍 fail-closed）
+  }
+}
+
+/** 命令文本越权检测（chat 主插入点 / executeCommandsOnDevice 兜底共用） */
+function guardCheckCommand(cmd: string, currentDevice: any, conversationSet: GuardDeviceRef[]): GuardHit[] {
+  const tokens = tokenizeCommand(cmd)
+  return checkCommand({
+    firstWord: tokens[0] ?? '',
+    tokens,
+    currentDevice: toGuardRef(currentDevice),
+    conversationSet,
+    allDevices: loadAllGuardDevices(),
+  })
 }
 
 // ---------- Phase 22（22-03）MCP 工具链（MCS-01~05） ----------
@@ -924,7 +978,7 @@ async function runMcpToolLoop(
       continue
     }
     // 逐工具分类聚合（classifyTool 单源；任一 confirm → 整批 confirm_each，D-04）
-    const allExecute = mcpCalls.every((c) =>
+    const classifiedExecute = mcpCalls.every((c) =>
       McpToolPolicy.classifyTool(
         ctx.execMode,
         c.tool.name,
@@ -932,7 +986,18 @@ async function runMcpToolLoop(
         { name: c.tool.name, annotations: c.tool.annotations }
       ) === 'execute'
     )
-    const logIds = mcpCalls.map((c) =>
+    // Phase 27（GUARD-03 + D-06）：每轮 checkMcpArgs——任一调用命中 → 即使分类全 execute
+    // 也视为 false 落入 confirm_each 分支（auto 模式打断，T-27-09）。
+    const guardConversationSet = ctx.mcpContexts.filter((c) => c.device).map((c) => toGuardRef(c.device))
+    const allGuardDevices = loadAllGuardDevices()
+    const mcpGuardHits = mcpCalls.map((c) =>
+      c.context.device
+        ? checkMcpArgs(c.args, toGuardRef(c.context.device), guardConversationSet, allGuardDevices)
+        : []
+    )
+    const guardHitTotal = mcpGuardHits.reduce((n, h) => n + h.length, 0)
+    const allExecute = classifiedExecute && guardHitTotal === 0
+    const logIds = mcpCalls.map((c, i) =>
       createLog({
         deviceId: c.context.device?.id ?? '',
         deviceName: String(c.context.device?.name ?? ''),
@@ -942,6 +1007,7 @@ async function runMcpToolLoop(
         aiReason: reply.substring(0, 500),
         promptText: sanitizeUntrusted(mcpCalls.map((x) => x.argsJson).join('\n'), MCP_LOG_PARAM_MAX),
         aiResponse: reply,
+        guardHits: mcpGuardHits[i].length > 0 ? mcpGuardHits[i] : undefined,
       })
     )
     if (allExecute) {
@@ -966,7 +1032,21 @@ async function runMcpToolLoop(
       sessionId: ctx.sessionId,
       createdAt: Date.now(),
       expReferences: ctx.expReferences,
-      mcp: { calls: mcpCalls, logIds, emitToolResult: ctx.emitToolResult, loopCtx: ctx, loopState: state },
+      mcp: {
+        calls: mcpCalls,
+        logIds,
+        emitToolResult: ctx.emitToolResult,
+        loopCtx: ctx,
+        loopState: state,
+        // Phase 27：guard 命中的 logId 清单（确认/取消分支写 guard_outcome 用，T-27-11）
+        guardLogIds: logIds.filter((_, i) => mcpGuardHits[i].length > 0),
+      },
+      guardInfo: guardHitTotal > 0
+        ? {
+            expectedTarget: ctx.deviceNames.join('、'),
+            hits: mcpGuardHits.flat(),
+          }
+        : undefined,
     })
     return {
       kind: 'confirm_required',
@@ -980,6 +1060,10 @@ async function runMcpToolLoop(
         })),
         rejectedCommands: [],
         aiExplanation: reply,
+        // Phase 27（Pitfall 5）：同一批次同一弹窗附 guardInfo，绝不另起弹窗/IPC
+        guardInfo: guardHitTotal > 0
+          ? { expectedTarget: ctx.deviceNames.join('、'), hits: mcpGuardHits.flat() }
+          : undefined,
       }),
     }
   }
@@ -1010,6 +1094,13 @@ const pendingBatches = new Map<
     // C-M3（v0.3.0 audit）：chat() 写入（pendingBatches.set 传 expReferences）/ confirmCommand
     // 读取（batch.expReferences）此前类型声明缺失，属真实类型漂移——与 :750 局部变量同构。
     expReferences?: Array<{ exp_id: string; title: string; source_session_id: string | null; unsupported: boolean }>
+    // Phase 27（GUARD-01~03）：越权命中批次的弹窗附加信息（并入既有 confirm_required 单弹窗，Pitfall 5）
+    guardInfo?: { expectedTarget: string; hits: GuardHit[] }
+    // Phase 27（Pitfall 4）：用户确认放行标记——confirmCommand 确认执行时置 true，
+    // 随续跑传递给 executeCommandsOnDevice 兜底重检放行（防无限弹窗/漏检两难）
+    guardApproved?: true
+    // Phase 27（T-27-11）：guard 命中的 logId 清单（确认/取消分支写 guard_outcome，未命中批次不写保持 NULL）
+    guardLogIds?: string[]
     // Phase 22（22-03）：MCP 工具确认批次（复用 confirm_required 协议 + ai:confirmCommand 通道，
     // 零新 IPC）。非空时 confirmCommand 走 MCP 执行分支（callToolWithTimeout 而非 shell 命令）。
     mcp?: {
@@ -1019,6 +1110,8 @@ const pendingBatches = new Map<
       // 22-05 有界循环：确认后带循环状态（轮次 + 累积回注）续跑 runMcpToolLoop
       loopCtx: McpLoopCtx
       loopState: McpLoopState
+      // Phase 27（T-27-11）：guard 命中的 logId 清单（MCP 批次专用，commands 恒空）
+      guardLogIds?: string[]
     }
   }
 >()
@@ -1045,6 +1138,8 @@ export async function confirmCommand(
   // 且返回错误文案，MCP 专用拒绝分支成死代码。
   if (!approved && batch.mcp) {
     for (const logId of batch.mcp.logIds) updateLogStatus(logId, 'rejected')
+    // Phase 27（T-27-11）：guard 命中行落取消终态；未命中行保持 NULL
+    for (const logId of batch.mcp.guardLogIds ?? []) updateLogGuardOutcome(logId, 'user_cancelled')
     const msg = '用户拒绝了所有 MCP 工具调用的执行。'
     saveChatMessage('assistant', msg, null, batch.sessionId)
     return msg
@@ -1054,6 +1149,8 @@ export async function confirmCommand(
     for (const cmd of batch.commands) {
       updateLogStatus(cmd.logId, 'rejected')
     }
+    // Phase 27（T-27-11）：guard 命中行落取消终态；未命中行保持 NULL
+    for (const logId of batch.guardLogIds ?? []) updateLogGuardOutcome(logId, 'user_cancelled')
     const msg = '用户拒绝了所有命令的执行。'
     saveChatMessage('assistant', msg, null, batch.sessionId)
     return msg
@@ -1065,6 +1162,7 @@ export async function confirmCommand(
   // 再含标记则再次弹窗（返回 confirm_required），无标记则收尾返回最终回答。
   if (batch.mcp) {
     const results: string[] = []
+    for (const logId of batch.mcp.guardLogIds ?? []) updateLogGuardOutcome(logId, 'user_confirmed')
     for (let i = 0; i < batch.mcp.calls.length; i++) {
       updateLogStatus(batch.mcp.logIds[i], 'approved')
       const r = await runMcpCall(batch.mcp.calls[i], batch.mcp.logIds[i], batch.mcp.emitToolResult)
@@ -1099,6 +1197,11 @@ export async function confirmCommand(
   // Execute all approved commands — group by device for batch execution
   const cmdResults: Array<{ deviceName: string; cmd: string; output: string; status: string }> = []
 
+  // Phase 27（T-27-11/Pitfall 4）：用户确认即放行凭据——guard 命中行落确认终态，
+  // 批次置 guardApproved 传递给 executeCommandsOnDevice 兜底重检放行（防无限弹窗）。
+  for (const logId of batch.guardLogIds ?? []) updateLogGuardOutcome(logId, 'user_confirmed')
+  batch.guardApproved = true
+
   for (const cmd of batch.commands) {
     updateLogStatus(cmd.logId, 'approved')
   }
@@ -1119,7 +1222,9 @@ export async function confirmCommand(
       continue
     }
     try {
-      const execResults = await executeCommandsOnDevice(device, cmds.map(c => c.command))
+      const execResults = await executeCommandsOnDevice(device, cmds.map(c => c.command), {
+        guardApproved: batch.guardApproved === true,
+      })
       for (let i = 0; i < cmds.length; i++) {
         const r = execResults[i]
         if (r && r.success) {
@@ -1659,8 +1764,11 @@ export async function chat(
     deviceId: string
     deviceName: string
     command: string
+    guardHits?: GuardHit[]
   }> = []
   const rejectedCommands: Array<{ deviceName: string; cmd: string; reason: string }> = []
+  // Phase 27：对话设备集投影（GUARD-01 基准，含明文 IP 由本层注入，Pitfall 7）
+  const guardConversationSet = targetDevices.map((d) => toGuardRef(d))
 
   for (const { deviceName, cmd } of commands) {
     // 指定设备名必须精确匹配（忽略大小写/trim），未匹配则拒绝而非回退默认设备；未指定时用默认设备
@@ -1677,17 +1785,21 @@ export async function chat(
     }
 
     const safety = isCommandAllowed(cmd, whitelist)
+    // Phase 27（GUARD-01/02，主插入点）：isCommandAllowed 通过后 privilegeGuard.checkCommand。
+    // 命中 → 无论 confirm/auto 均挂起（D-06 单点收敛），status 强制 pending、guardHits 落审计。
+    const guardHits = safety.allowed ? guardCheckCommand(cmd, targetDevice, guardConversationSet) : []
     const logId = createLog({
       deviceId: targetDevice.id,
       deviceName: targetDevice.name,
       command: cmd,
-      status: safety.allowed ? (execMode === 'auto' ? 'approved' : 'pending') : 'rejected',
+      status: safety.allowed ? (guardHits.length > 0 || execMode !== 'auto' ? 'pending' : 'approved') : 'rejected',
       mode: execMode,
       // WR-06 fix：审计留痕用最终改写后回复（命令解析基于 finalAiReply，二者同源），
       // 不用带 [EXP_SEARCH]/[KB_SEARCH] 原文的第一次中间态。
       aiReason: finalAiReply.substring(0, 500),
       promptText: JSON.stringify(fullMessages, null, 2),
       aiResponse: finalAiReply,
+      guardHits: guardHits.length > 0 ? guardHits : undefined,
     })
 
     if (!safety.allowed) {
@@ -1700,6 +1812,7 @@ export async function chat(
       deviceId: targetDevice.id,
       deviceName: targetDevice.name,
       command: cmd,
+      guardHits: guardHits.length > 0 ? guardHits : undefined,
     })
   }
 
@@ -1731,9 +1844,13 @@ export async function chat(
     return fullReply
   }
 
-  // Confirm mode: store batch and wait for approval
-  if (execMode === 'confirm') {
+  // Confirm mode（或 guard 命中，D-06：auto 模式命中也打断）: store batch and wait for approval
+  const allGuardHits = allowedCommands.flatMap((c) => c.guardHits ?? [])
+  if (execMode === 'confirm' || allGuardHits.length > 0) {
     const batchId = uuidv4()
+    const guardInfo = allGuardHits.length > 0
+      ? { expectedTarget: targetDevices.map((d) => d.name).join('、'), hits: allGuardHits }
+      : undefined
     pendingBatches.set(batchId, {
       commands: allowedCommands,
       rejectedCommands,
@@ -1746,6 +1863,11 @@ export async function chat(
       sessionId: sessionId || null,
       createdAt: Date.now(),
       expReferences,
+      // Phase 27：guard 命中信息挂批次（单弹窗聚合，Pitfall 5）+ 命中 logId 清单（T-27-11）
+      guardInfo,
+      guardLogIds: allGuardHits.length > 0
+        ? allowedCommands.filter((c) => (c.guardHits ?? []).length > 0).map((c) => c.logId)
+        : undefined,
     })
 
     const confirmResponse = JSON.stringify({
@@ -1754,6 +1876,8 @@ export async function chat(
       commands: allowedCommands.map((c) => ({ deviceName: c.deviceName, command: c.command })),
       rejectedCommands: rejectedCommands.map((r) => ({ command: r.cmd, reason: r.reason })),
       aiExplanation: finalAiReply,
+      // Phase 27（Pitfall 5）：越权命中信息并入既有 payload，同一批次同一弹窗
+      guardInfo,
     })
     saveChatMessage('user', messages[messages.length - 1]?.content || '', null, sessionId)
     saveChatMessage('assistant', `等待确认 ${allowedCommands.length} 条命令...`, null, sessionId)
@@ -1773,7 +1897,9 @@ export async function chat(
     const device = getDeviceByIdInternal(deviceId)
     if (!device) continue
     try {
-      const execResults = await executeCommandsOnDevice(device, cmds.map(c => c.command))
+      const execResults = await executeCommandsOnDevice(device, cmds.map(c => c.command), {
+        conversationSet: guardConversationSet,
+      })
       for (let i = 0; i < cmds.length; i++) {
         const r = execResults[i]
         if (r && r.success) {
