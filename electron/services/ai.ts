@@ -8,7 +8,7 @@ import { SSH_READY_TIMEOUT_MS, buildSSHConnectConfig } from '../utils/sshConfig'
 import { executeTelnetCommand, pickDisablePaginationCmd, pickShellPrompt } from '../utils/telnetExec'
 import { isCommandAllowed, tokenizeCommand } from './commandSafety'
 import { checkCommand, checkMcpArgs, type GuardHit, type GuardDeviceRef } from './privilegeGuard'
-import { createLog, updateLogStatus, updateLogGuardOutcome, appendLogAiResponse, getLogs, setAiExecLoggerMasterKey } from './aiExecLogger'
+import { createLog, updateLogStatus, updateLogGuardOutcome, appendLogAiResponse, getLogs, setAiExecLoggerMasterKey, reconcilePendingGuardOutcomes } from './aiExecLogger'
 import { search as kbSearch } from './knowledgeBaseService'
 import { retrieveForAnswer } from './experienceRetrieval'
 import { PromptService } from './promptService'
@@ -1122,14 +1122,34 @@ const pendingBatches = new Map<
   }
 >()
 
-// 定期清理过期待确认批次（默认 10 分钟），避免 pendingBatches 无限累积
+// 定期清理过期待确认批次（默认 10 分钟），避免 pendingBatches 无限累积。
+// Phase 27 checkpoint（用户语义定案）：批次过期 = 弹窗不可再被响应 → guard 命中行
+// 落取消终态（未点「确认执行」的一切中断均判取消，与 confirmCommand 取消分支同构）。
 const PENDING_TTL_MS = 10 * 60 * 1000
 setInterval(() => {
   const now = Date.now()
   for (const [id, batch] of pendingBatches) {
-    if (now - batch.createdAt > PENDING_TTL_MS) pendingBatches.delete(id)
+    if (now - batch.createdAt > PENDING_TTL_MS) {
+      const guardLogIds = [...(batch.guardLogIds ?? []), ...(batch.mcp?.guardLogIds ?? [])]
+      for (const logId of guardLogIds) {
+        updateLogStatus(logId, 'rejected')
+        updateLogGuardOutcome(logId, 'user_cancelled')
+      }
+      pendingBatches.delete(id)
+    }
   }
 }, 60000)
+
+// Phase 27 checkpoint：越权未决记录对账——孤儿（批次已不在内存 = 弹窗不可再被响应）订正取消。
+// main.ts 启动时（批次必然空，全量订正关应用残留）与 ai:getLogs 前（只订正孤儿）调用。
+export function reconcileGuardLogs(): number {
+  const liveLogIds = new Set<string>()
+  for (const b of pendingBatches.values()) {
+    for (const id of b.guardLogIds ?? []) liveLogIds.add(id)
+    for (const id of b.mcp?.guardLogIds ?? []) liveLogIds.add(id)
+  }
+  return reconcilePendingGuardOutcomes(liveLogIds)
+}
 
 export async function confirmCommand(
   batchId: string,

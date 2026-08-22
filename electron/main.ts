@@ -10,7 +10,7 @@ import { generateCaptcha, login, isFirstRun, initAdmin } from './services/auth'
 import { setDeviceMasterKey, listDevices, createDevice, updateDevice, deleteDevice, getDeviceById, maskDeviceSecrets, checkDeviceName, listDuplicateGroups, backfillNameHash, ensureNameUniqueIndex } from './services/device'
 import { setTopologyMasterKey, listTopologies, getTopologyById, createTopology, updateTopology, deleteTopology, exportTopology, importTopology } from './services/topology'
 import { setConnectionMasterKey, openTerminal, openWebSafe, writeToSession, writeByWebContentsId, disconnectSession, testDeviceConnection } from './services/connection'
-import { setAiMasterKey, chat, getAiConfigMasked, saveAiConfig, getCommandWhitelist, saveCommandWhitelist, getExecMode, setExecMode, getMcpMaxRounds, setMcpMaxRounds, confirmCommand, getAiLogs, getChatHistory, saveChatMessage as aiSaveChatMessage, createSession, listSessions, getSessionMessages, deleteSession, updateSessionTitle } from './services/ai'
+import { setAiMasterKey, chat, getAiConfigMasked, saveAiConfig, getCommandWhitelist, saveCommandWhitelist, getExecMode, setExecMode, getMcpMaxRounds, setMcpMaxRounds, confirmCommand, getAiLogs, getChatHistory, saveChatMessage as aiSaveChatMessage, createSession, listSessions, getSessionMessages, deleteSession, updateSessionTitle, reconcileGuardLogs } from './services/ai'
 import { discoverTopology } from './services/discovery'
 import { getSystemLogs, createSystemLog, setSystemLogMasterKey, backfillSystemLogEnc } from './services/systemLog'
 import { backfillAiExecLogEnc } from './services/aiExecLogger'
@@ -157,6 +157,14 @@ app.whenReady().then(() => {
       createSystemLog({ type: 'security', status: 'warning', errorMessage: '日志加密列回填失败（下次启动重试）：' + msg })
     } catch { /* 日志失败非致命 */ }
   }
+  // Phase 27 checkpoint（用户语义定案）：启动时越权未决残留全量订正为取消——
+  // 关应用/崩溃导致的弹窗未决（批次内存必然空），未点「确认执行」= 取消（fail-closed）。
+  try {
+    const n = reconcileGuardLogs()
+    if (n > 0) console.log('[startup] guard 未决残留订正为取消:', n)
+  } catch (e) {
+    console.warn('[startup] reconcile guard logs failed (non-blocking):', (e as Error).message)
+  }
   try {
     const r = backfillSystemLogEnc()
     if (r.backfilled > 0) console.log('[startup] backfill log enc (ai_system_logs):', r.backfilled)
@@ -288,7 +296,9 @@ app.whenReady().then(() => {
   ipcMain.handle('ai:getMcpMaxRounds', secure(() => getMcpMaxRounds()))
   ipcMain.handle('ai:setMcpMaxRounds', secure((_e, rounds) => setMcpMaxRounds(rounds)))
   ipcMain.handle('ai:confirmCommand', secure((_e, execId, approved) => confirmCommand(execId, approved)))
-  ipcMain.handle('ai:getLogs', secure((_e, limit) => getAiLogs(limit)))
+  // Phase 27 checkpoint：getLogs 前对账孤儿批次（TTL 过期/renderer 刷新丢失的弹窗批次），
+  // 未点「确认执行」的越权记录订正取消——审计视图永不出现「未决」终态。
+  ipcMain.handle('ai:getLogs', secure((_e, limit) => { reconcileGuardLogs(); return getAiLogs(limit) }))
   ipcMain.handle('ai:getChatHistory', secure(() => getChatHistory()))
   ipcMain.handle('ai:saveMessage', secure((_e, role, content, deviceId, sessionId) => aiSaveChatMessage(role, content, deviceId, sessionId)))
   ipcMain.handle('ai:createSession', secure((_e, title, deviceId) => createSession(title, deviceId)))

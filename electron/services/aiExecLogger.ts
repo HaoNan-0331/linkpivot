@@ -64,6 +64,25 @@ export function updateLogGuardOutcome(id: string, outcome: 'user_confirmed' | 'u
     .run(outcome, id)
 }
 
+// Phase 27 checkpoint（用户语义定案）：唯一放行路径是用户点「确认执行」；弹窗未决的一切中断
+// （关应用/刷新丢批次/TTL 过期/切界面）统一订正 user_cancelled + status=rejected
+// （fail-closed：未明确授权=取消；与 confirmCommand 取消分支终态同构）。
+// liveLogIds = 仍在内存 pendingBatches 中的 guard logId 集合（批次存活=弹窗仍可被响应，不订正）；
+// 启动时传空集全量订正（批次内存必然空），getLogs 前传当前集只订正孤儿。
+export function reconcilePendingGuardOutcomes(liveLogIds: ReadonlySet<string>): number {
+  const rows = db()
+    .prepare("SELECT id FROM ai_exec_logs WHERE status = 'pending' AND guard_hits IS NOT NULL AND guard_outcome IS NULL")
+    .all() as Array<{ id: string }>
+  const orphans = rows.map((r) => r.id).filter((id) => !liveLogIds.has(id))
+  if (orphans.length === 0) return 0
+  const update = db()
+    .prepare("UPDATE ai_exec_logs SET guard_outcome = 'user_cancelled', status = 'rejected' WHERE id = ?")
+  db().transaction(() => {
+    for (const id of orphans) update.run(id)
+  })()
+  return orphans.length
+}
+
 export function updateLogStatus(id: string, status: string): void {
   db()
     .prepare('UPDATE ai_exec_logs SET status = ? WHERE id = ?')

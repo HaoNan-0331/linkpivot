@@ -19,6 +19,7 @@ import {
   createLog,
   getLogs,
   updateLogGuardOutcome,
+  reconcilePendingGuardOutcomes,
   _setAiExecLoggerDbGetter,
 } from '../../../electron/services/aiExecLogger'
 import { v25, MIGRATION_HEAD } from '../../../electron/database/migrations'
@@ -148,5 +149,41 @@ describe('aiExecLogger guard 审计列（27-02）', () => {
     const v25Idx = migrationsSrc.indexOf('export const v25')
     const v25Src = migrationsSrc.slice(v25Idx, migrationsSrc.indexOf('export const MIGRATIONS'))
     expect(v25Src).not.toContain('CHECK')
+  })
+})
+
+describe('aiExecLogger reconcile 未决订正（Phase 27 checkpoint：未点确认=取消）', () => {
+  it('a) 孤儿未决记录（批次不在存活集）订正 user_cancelled + rejected；存活批次记录不动', () => {
+    const db = makeDb()
+    _setAiExecLoggerDbGetter(() => db)
+    const orphanId = createLog({
+      deviceId: 'd1', deviceName: 'A', command: 'ssh 10.0.0.2', status: 'pending', mode: 'confirm',
+      guardHits: [{ ruleId: 'GUARD-02', level: 'red', target: '10.0.0.2', explanation: '跳转目标非当前设备' }],
+    })
+    const liveId = createLog({
+      deviceId: 'd1', deviceName: 'A', command: 'ping 8.8.8.8', status: 'pending', mode: 'confirm',
+      guardHits: [{ ruleId: 'GUARD-01', level: 'yellow', target: '8.8.8.8', explanation: '目标不在对话设备集' }],
+    })
+    const plainId = createLog({ deviceId: 'd1', deviceName: 'A', command: 'uptime', status: 'pending', mode: 'confirm' })
+    const n = reconcilePendingGuardOutcomes(new Set([liveId]))
+    expect(n).toBe(1)
+    const row = (id: string) => db.prepare('SELECT status, guard_outcome FROM ai_exec_logs WHERE id = ?').get(id) as { status: string, guard_outcome: string | null }
+    expect(row(orphanId)).toEqual({ status: 'rejected', guard_outcome: 'user_cancelled' })
+    expect(row(liveId)).toEqual({ status: 'pending', guard_outcome: null })
+    // 非 guard 记录不在订正范围（保持既有行为）
+    expect(row(plainId)).toEqual({ status: 'pending', guard_outcome: null })
+  })
+
+  it('b) 空存活集（启动全量订正）+ 幂等（已订正行不再命中）', () => {
+    const db = makeDb()
+    _setAiExecLoggerDbGetter(() => db)
+    const id = createLog({
+      deviceId: 'd1', deviceName: 'A', command: 'ssh 10.0.0.3', status: 'pending', mode: 'auto',
+      guardHits: [{ ruleId: 'GUARD-02', level: 'red', target: '10.0.0.3', explanation: '跳转目标非当前设备' }],
+    })
+    expect(reconcilePendingGuardOutcomes(new Set())).toBe(1)
+    expect(reconcilePendingGuardOutcomes(new Set())).toBe(0) // 幂等
+    const row = db.prepare('SELECT status, guard_outcome FROM ai_exec_logs WHERE id = ?').get(id) as { status: string, guard_outcome: string }
+    expect(row).toEqual({ status: 'rejected', guard_outcome: 'user_cancelled' })
   })
 })

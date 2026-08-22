@@ -13,20 +13,16 @@ const statusConfig: Record<string, { color: string; label: string }> = {
   failed: { color: 'red', label: '执行失败' },
 }
 
-// Phase 27（27-04，GUARD-05 D-07/D-08）：越权记录视图三态 Tag。
-// 挂起未决（历史命名 auto_blocked）= 越权命中挂起后未落定处理结果（弹窗未决：应用关闭/批次流程中断），
-// checkpoint 改名——旧名「auto 拦截」与 mode=auto 的执行模式维度撞名，误导用户以为筛"auto 模式拦截"。
-function guardOutcomeOf(log: AIExecLog): 'user_confirmed' | 'user_cancelled' | 'auto_blocked' | null {
-  if (log.guardOutcome === 'user_confirmed') return 'user_confirmed'
-  if (log.guardOutcome === 'user_cancelled') return 'user_cancelled'
-  if (!log.guardOutcome && log.status === 'pending') return 'auto_blocked'
-  return null
+// Phase 27 checkpoint（用户语义定案）：越权处理结果二态——唯一放行路径是点「确认执行」；
+// 其余一切（点取消/关弹窗/切界面/关应用/TTL 过期）统一「用户取消」（main 侧 reconcile 订正，
+// 此处兜底：reconcile 前的极短暂 pending 窗口也按取消显示）。
+function guardOutcomeOf(log: AIExecLog): 'user_confirmed' | 'user_cancelled' {
+  return log.guardOutcome === 'user_confirmed' ? 'user_confirmed' : 'user_cancelled'
 }
 
 const guardOutcomeConfig: Record<string, { color: string; label: string }> = {
   user_confirmed: { color: 'green', label: '用户确认放行' },
   user_cancelled: { color: 'red', label: '用户取消' },
-  auto_blocked: { color: 'orange', label: '挂起未决' },
 }
 
 function AIExecLogTab() {
@@ -81,7 +77,7 @@ function AIExecLogTab() {
             <Segmented
               value={outcomeFilter}
               onChange={(v) => setOutcomeFilter(v as string)}
-              options={['全部', '用户确认放行', '用户取消', '挂起未决']}
+              options={['全部', '用户确认放行', '用户取消']}
             />
           )}
         </div>
@@ -94,9 +90,7 @@ function AIExecLogTab() {
                   : `「${outcomeFilter}」筛选档暂无匹配记录（越权记录共 ${guardLogs.length} 条）`}
                 <br />
                 <span style={{ color: '#999', fontSize: 12 }}>
-                  {outcomeFilter === '全部'
-                    ? '当 AI 命令目标超出对话设备集或发生跳转时，会在此留下确认记录'
-                    : '「挂起未决」= 弹窗弹出后未点任何按钮即中断的残留（应用关闭等），正常应为空'}
+                  当 AI 命令目标超出对话设备集或发生跳转时，会在此留下确认记录；未点「确认执行」的一切中断均记为用户取消
                 </span>
               </span>
             }

@@ -55,6 +55,18 @@ export function useAIChat(): UseAIChatReturn {
     return unsubscribe
   }, [])
 
+  // Phase 27 checkpoint（用户语义定案）：弹窗组件卸载（切界面/路由离开）时若仍有未决确认，
+  // 自动发取消——唯一放行路径是点「确认执行」，其余一切中断（含本卸载）统一判取消。
+  // handleConfirm 决策后 setPendingConfirm(null) → ref 同步为 null → 卸载不双发。
+  const pendingConfirmRef = useRef<ConfirmData | null>(null)
+  useEffect(() => { pendingConfirmRef.current = pendingConfirm }, [pendingConfirm])
+  useEffect(() => () => {
+    const p = pendingConfirmRef.current
+    if (p?.execId) {
+      void window.api.ai.confirmCommand(p.execId, false).catch(() => { /* main 侧批次可能已 TTL 清理 */ })
+    }
+  }, [])
+
   const loadSessions = useCallback(async () => {    const list = await window.api.ai.listSessions()
     setSessions(list)
     if (!currentSessionId) {
