@@ -25,6 +25,18 @@ export const JUMP_FIRST_WORDS = new Set([
 /** 探测类豁免清单（目标在对话设备集内 → 豁免直执；集外 → 黄级确认即执行）。arp/nslookup 冗余无害。 */
 export const PROBE_EXEMPT = new Set(['ping', 'tracert', 'traceroute', 'arp', 'nslookup'])
 
+/**
+ * 带值选项集合（D-02 硬编码）：选项后跟一个值参数，目标定位时需连值一起跳过。
+ * 覆盖 ping/tracert（-c/-n/-w/-W/-s/-i/-t/-I/-a/-S/-m/-q/-f/-r）、Windows ping（-n/-l/-w/-i/-s/-a）、
+ * ssh/telnet/scp/sftp（-l/-p/-P/-o/-b/-e/-F/-J/-g/-N/-Q/-R/-V）。
+ * 无值选项（-v/-4/-6/-h 等）刻意不入集合——入集合会误跳真目标；
+ * 清单不可能穷举（如华为 ping -a <源IP>），由 rest 全量保守扫描兜底（fail-closed）。
+ */
+export const OPTIONS_WITH_VALUE = new Set([
+  '-c', '-n', '-w', '-W', '-s', '-i', '-t', '-I', '-a', '-S', '-m', '-q', '-f', '-r',
+  '-l', '-p', '-P', '-o', '-b', '-e', '-F', '-J', '-g', '-N', '-Q', '-R', '-V',
+])
+
 // 十进制整数还原 IP 下限 = 1.0.0.0（防 `ping 100` / TTL 数字假阳性，Pitfall 3）
 const DECIMAL_IP_MIN = 16777216
 const VARIABLE_RE = /^\$|^%[^%]*%$/ // $x / ${x} / %x% —— 近似解析不可靠，fail-closed
@@ -199,32 +211,35 @@ function checkProbeTarget(
 }
 
 /**
- * 命令越权检测（GUARD-01/02）。返回空数组 = 放行；命中 → 调用方挂 confirm_required
- * + guardInfo（无论 confirm/auto 模式均打断，D-06）。
+ * 目标 token 定位（JUMP/PROBE 共用）：跳过选项 token；带值选项（OPTIONS_WITH_VALUE）
+ * 连同其值一起跳过——`ping -c 5 <ip>` 中 5 是 count 值，不是目标。
  */
-export function checkCommand(input: GuardCheckInput): GuardHit[] {
-  const { firstWord, tokens, currentDevice } = input
-  const conversationSet = input.conversationSet
-  const allDevices = input.allDevices ?? []
-  const first = (firstWord || '').toLowerCase()
-  const rest = tokens.slice(1).map((t) => t.toLowerCase())
-
-  // 跳转目标 = 第一非选项参数（-l/-p/-v 等短清单跳过）；URI 形态（ssh://x@y）首词本身即目标
-  const schemeJump = Array.from(JUMP_FIRST_WORDS).some((w) => first.startsWith(w + '://'))
-  if (JUMP_FIRST_WORDS.has(first) || schemeJump) {
-    const target = JUMP_FIRST_WORDS.has(first) ? rest.find((t) => !t.startsWith('-')) : first
-    if (!target) return []
-    return checkJumpTarget(target, currentDevice, conversationSet, allDevices)
+export function findTargetToken(rest: string[]): string | undefined {
+  for (let i = 0; i < rest.length; i++) {
+    const tok = rest[i]
+    if (tok.startsWith('-')) {
+      if (OPTIONS_WITH_VALUE.has(tok) && i + 1 < rest.length && !rest[i + 1].startsWith('-')) {
+        i++ // 跳过选项值
+      }
+      continue
+    }
+    return tok
   }
-  if (PROBE_EXEMPT.has(first)) {
-    const target = rest.find((t) => !t.startsWith('-'))
-    if (!target) return []
-    return checkProbeTarget(target, currentDevice, conversationSet, allDevices)
-  }
+  return undefined
+}
 
-  // 其它白名单命令：保守扫描——仅 unresolvable 或精确命中已知设备（非当前设备，整 token 匹配）
+/**
+ * rest 全量保守扫描（GUARD-01 黄，fail-closed 兜底）：仅 unresolvable 或精确命中
+ * 已知设备（非当前设备，整 token 匹配）。JUMP/PROBE 定位失败与默认路径三处共用。
+ */
+function scanRestTokens(
+  rest: string[],
+  currentDevice: GuardDeviceRef,
+  conversationSet: GuardDeviceRef[],
+  allDevices: GuardDeviceRef[],
+  seen: Set<string>
+): GuardHit[] {
   const hits: GuardHit[] = []
-  const seen = new Set<string>()
   for (const tok of rest) {
     if (seen.has(tok)) continue
     const id = resolveIdentifier(tok, false)
@@ -250,6 +265,42 @@ export function checkCommand(input: GuardCheckInput): GuardHit[] {
     }
   }
   return hits
+}
+
+/**
+ * 命令越权检测（GUARD-01/02）。返回空数组 = 放行；命中 → 调用方挂 confirm_required
+ * + guardInfo（无论 confirm/auto 模式均打断，D-06）。
+ */
+export function checkCommand(input: GuardCheckInput): GuardHit[] {
+  const { firstWord, tokens, currentDevice } = input
+  const conversationSet = input.conversationSet
+  const allDevices = input.allDevices ?? []
+  const first = (firstWord || '').toLowerCase()
+  const rest = tokens.slice(1).map((t) => t.toLowerCase())
+
+  // URI 形态（ssh://x@y）首词本身即目标
+  const schemeJump = Array.from(JUMP_FIRST_WORDS).some((w) => first.startsWith(w + '://'))
+  if (JUMP_FIRST_WORDS.has(first) || schemeJump) {
+    if (schemeJump && !JUMP_FIRST_WORDS.has(first)) return checkJumpTarget(first, currentDevice, conversationSet, allDevices)
+    const target = findTargetToken(rest)
+    if (!target) return scanRestTokens(rest, currentDevice, conversationSet, allDevices, new Set())
+    const hits = checkJumpTarget(target, currentDevice, conversationSet, allDevices)
+    if (hits.length > 0) return hits
+    // 主目标放行（non-identifier/自身）≠ 整条命令安全：rest 全量保守扫描兜底（fail-closed）
+    const seen = new Set([target])
+    return scanRestTokens(rest, currentDevice, conversationSet, allDevices, seen)
+  }
+  if (PROBE_EXEMPT.has(first)) {
+    const target = findTargetToken(rest)
+    if (!target) return scanRestTokens(rest, currentDevice, conversationSet, allDevices, new Set())
+    const hits = checkProbeTarget(target, currentDevice, conversationSet, allDevices)
+    if (hits.length > 0) return hits
+    const seen = new Set([target])
+    return scanRestTokens(rest, currentDevice, conversationSet, allDevices, seen)
+  }
+
+  // 其它白名单命令：保守扫描
+  return scanRestTokens(rest, currentDevice, conversationSet, allDevices, new Set())
 }
 
 function collectStrings(value: unknown, out: string[]): void {

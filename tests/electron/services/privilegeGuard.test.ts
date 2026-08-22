@@ -189,6 +189,55 @@ describe('RED 攻击矩阵 R3~R17/R19', () => {
   })
 })
 
+describe('带值选项目标定位（真机验收 WR：ping -c 5 <ip> 未弹窗直接执行）', () => {
+  it('ping -c 5 <集外IP> → GUARD-01 黄，target=真目标（修复主验证）', () => {
+    const h = guard('ping -c 5 192.168.10.29')
+    expect(h).toHaveLength(1)
+    expect(h[0].ruleId).toBe('GUARD-01')
+    expect(h[0].level).toBe('yellow')
+    expect(h[0].target).toBe('192.168.10.29')
+  })
+
+  it('ping -c 5 <集内设备B的IP> → 空数组（集内豁免不回归，R14 变体）', () => {
+    expect(guard('ping -c 5 10.1.1.5')).toEqual([])
+  })
+
+  it('ssh -o BatchMode=yes -o StrictHostKeyChecking=no root@<集外IP> hostname → GUARD-02 红（-o 值跳过 + user@host 拆解）', () => {
+    const h = guard('ssh -o BatchMode=yes -o StrictHostKeyChecking=no root@192.168.10.29 hostname')
+    expect(h).toHaveLength(1)
+    expect(h[0].ruleId).toBe('GUARD-02')
+    expect(h[0].level).toBe('red')
+    expect(h[0].target).toContain('192.168.10.29')
+  })
+
+  it('ping -c 100（无真目标）→ 空数组（纯 count 值不误报）', () => {
+    expect(guard('ping -c 100')).toEqual([])
+  })
+
+  it('ping -W 2 -c 3 <集外IP> → 黄 hit（多带值选项连用）', () => {
+    const h = guard('ping -W 2 -c 3 8.8.8.8')
+    expect(h).toHaveLength(1)
+    expect(h[0].ruleId).toBe('GUARD-01')
+    expect(h[0].level).toBe('yellow')
+    expect(h[0].target).toBe('8.8.8.8')
+  })
+
+  it('清单内带值选项：华为 ping -a <源IP> <集外目标IP> → -a 连值跳过，target=真目标黄 hit', () => {
+    const h = guard('ping -a 10.1.1.1 192.168.10.29')
+    expect(h).toHaveLength(1)
+    expect(h[0].ruleId).toBe('GUARD-01')
+    expect(h[0].target).toBe('192.168.10.29')
+  })
+
+  it('主定位自身放行后兜底扫描：ssh <当前设备IP> <集内设备B IP> → GUARD-01 黄（fail-closed）', () => {
+    const h = guard('ssh 10.1.1.1 10.1.1.5')
+    expect(h).toHaveLength(1)
+    expect(h[0].ruleId).toBe('GUARD-01')
+    expect(h[0].level).toBe('yellow')
+    expect(h[0].target).toBe('10.1.1.5')
+  })
+})
+
 describe('白例矩阵（零弹窗，防确认疲劳——同等强制）', () => {
   it('常见只读运维命令零命中', () => {
     for (const c of [
