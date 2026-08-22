@@ -298,6 +298,18 @@ export async function callAI(
   config: Record<string, string>,
   messages: Array<{ role: string; content: string }>
 ): Promise<string> {
+  return (await callAIWithUsage(config, messages)).content
+}
+
+/**
+ * Phase 28（AGENT-04，Pitfall 6）：callAI 计量扩展——消费网关 data.usage（原实现直接丢弃），
+ * 缺失时按字符数/4 估算 fallback，供 runAgentLoop token 预算硬顶累计。既有调用方经 callAI
+ * 包装保持旧行为（返回 content 字符串）不变。
+ */
+export async function callAIWithUsage(
+  config: Record<string, string>,
+  messages: Array<{ role: string; content: string }>
+): Promise<{ content: string; usage?: { prompt_tokens: number; completion_tokens: number } }> {
   const response = await fetch(`${config.baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -314,7 +326,32 @@ export async function callAI(
     throw new Error(`AI API 错误 (${response.status}): ${text}`)
   }
   const data = await response.json()
-  return data.choices?.[0]?.message?.content || ''
+  const content: string = data.choices?.[0]?.message?.content || ''
+  const usage = normalizeUsage(data.usage, messages, content)
+  return { content, usage }
+}
+
+/** usage 归一：网关缺失/字段非法 → 估算 fallback（请求消息 + 回复按字符数/4） */
+function normalizeUsage(
+  raw: unknown,
+  messages: Array<{ role: string; content: string }>,
+  content: string
+): { prompt_tokens: number; completion_tokens: number } {
+  const promptTokens = Number((raw as any)?.prompt_tokens)
+  const completionTokens = Number((raw as any)?.completion_tokens)
+  return {
+    prompt_tokens: Number.isFinite(promptTokens) && promptTokens > 0
+      ? promptTokens
+      : estimateTokens(messages.map((m) => `${m.role}:${m.content}`).join('\n')),
+    completion_tokens: Number.isFinite(completionTokens) && completionTokens > 0
+      ? completionTokens
+      : estimateTokens(content),
+  }
+}
+
+/** 粗估 token 数（字符数/4，向上取整）——RESEARCH Pitfall 6 估算口径 */
+export function estimateTokens(text: string): number {
+  return Math.ceil((text ?? '').length / 4)
 }
 
 // ---------- SSH execution (shell mode) ----------
@@ -923,6 +960,88 @@ export function setAgentCooldownSecs(secs: number): { success: boolean; error?: 
   }
   agentDbGetter().prepare('UPDATE ai_config SET agent_cooldown_secs = ?').run(secs)
   return { success: true }
+}
+
+// ---------- Phase 28（AGENT-04/06，28-03）：AgentLoopState 循环状态对象 ----------
+
+/** agent 循环内部 token 预算硬顶（估算口径，不暴露设置页——D-04 裁决） */
+export const AGENT_TOKEN_BUDGET = 200000
+
+/** 每 key 默认重试预算（D-14：失败限次静默重试，超限转「需人工处理」） */
+export const DEFAULT_AGENT_RETRY_BUDGET = 2
+
+/** 循环步骤轨迹（只存 deviceName/command/输出摘要，绝不缓存明文凭证——Pitfall 5） */
+export interface AgentStep {
+  stepIndex: number
+  actionType: 'cmd' | 'kb' | 'exp' | 'mcp'
+  status: 'running' | 'done' | 'failed' | 'retrying' | 'burned' | 'cooldown' | 'interrupted'
+  deviceName?: string
+  command?: string
+  outputSummary?: string
+}
+
+/** 来源轨迹（D-09：由代码层按执行轨迹生成，prompt 文本不参与来源判定） */
+export interface SourceRecord {
+  kind: 'kb' | 'exp' | 'device' | 'mcp'
+  title: string
+  summary?: string
+  refId?: string
+}
+
+/**
+ * Phase 28（28-03，Pitfall 1 结构性修复）：agent 循环可变状态对象化——steps/sources/
+ * failureCounts/cooldowns/tokenUsed/retryBudgets 并入状态对象，随确认批次（pendingBatches）
+ * 按引用携带续跑，confirm 模式（默认 exec_mode）每步确认后不再丢轨迹。wrapupPrompted
+ * 为 D-13 诚实收尾一次性标志（挂起续跑不复位防死循环）。
+ */
+export interface AgentLoopState extends McpLoopState {
+  steps: AgentStep[]
+  sources: SourceRecord[]
+  /** key = 归一化串（normalizeAgentKey 产出），值 = 连续失败次数（成功清零） */
+  failureCounts: Map<string, number>
+  /** key = `deviceId:command`，值 = 冷却到期时间戳（D-15：仅本循环内生效） */
+  cooldowns: Map<string, number>
+  /** 累计 token（网关 usage 优先，估算 fallback）——超 AGENT_TOKEN_BUDGET 触发 D-13 收尾 */
+  tokenUsed: number
+  /** key = 归一化串，值 = 剩余重试次数（默认 DEFAULT_AGENT_RETRY_BUDGET） */
+  retryBudgets: Map<string, number>
+  wrapupPrompted?: boolean
+}
+
+export function createAgentLoopState(): AgentLoopState {
+  return {
+    rounds: 0,
+    extra: [],
+    steps: [],
+    sources: [],
+    failureCounts: new Map(),
+    cooldowns: new Map(),
+    tokenUsed: 0,
+    retryBudgets: new Map(),
+  }
+}
+
+/**
+ * 参数归一化（熔断/重试 key）：JSON 对象按 key 排序后 stringify + trim（{b:2,a:1} 与
+ * {a:1,b:2} 同 key）；解析失败/非对象退原串 trim。
+ */
+export function normalizeAgentKey(raw: string): string {
+  const text = String(raw ?? '').trim()
+  try {
+    const parsed = JSON.parse(text)
+    return JSON.stringify(deepSortKeys(parsed)).trim()
+  } catch { /* 非 JSON → 原串 trim */ }
+  return text
+}
+
+/** 递归按 key 排序（嵌套对象同 key 序；数组元素原序保留） */
+function deepSortKeys(value: unknown): unknown {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return value
+  const sorted: Record<string, unknown> = {}
+  for (const k of Object.keys(value as Record<string, unknown>).sort()) {
+    sorted[k] = deepSortKeys((value as Record<string, unknown>)[k])
+  }
+  return sorted
 }
 
 const MCP_PARSE_FAIL_TEXT =
