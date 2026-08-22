@@ -18,6 +18,14 @@ function GuardBody({ guardInfo, commands, aiExplanation }: {
   commands: ConfirmData['commands']
   aiExplanation: string
 }) {
+  // Phase 27 checkpoint（方案 A 分区展示）：命中命令下标集合 + 未命中常规命令分区。
+  // hitCommandIndexes 缺失（旧 payload）→ normalCommands 置 null，回退现状全量命令列表（降级红线）
+  const idxArr = guardInfo.hitCommandIndexes
+  const hasMap = Array.isArray(idxArr) && idxArr.length === guardInfo.hits.length
+  const hitIndexSet = hasMap ? new Set(idxArr) : null
+  const normalCommands = hitIndexSet
+    ? commands.filter((_, i) => !hitIndexSet.has(i))
+    : null
   return (
     <div>
       <p><WarningOutlined style={{ color: '#faad14', marginRight: 4 }} />AI 命令命中 {guardInfo.hits.length} 条安全规则，请核对目标后确认：</p>
@@ -38,18 +46,48 @@ function GuardBody({ guardInfo, commands, aiExplanation }: {
           <div key={i} style={{ marginBottom: 8 }}>
             <Tag color={h.level === 'red' ? 'red' : 'gold'} style={{ fontSize: 13 }}>{h.ruleId}</Tag>
             <span style={{ fontSize: 14 }}>{h.explanation}</span>
+            {/* Phase 27 checkpoint：每条 hit 下方附来源命令原文（索引缺失时跳过） */}
+            {hasMap && idxArr![i] != null && commands[idxArr![i]] && (
+              <div style={{
+                background: '#fff1f0', padding: 8, borderRadius: 4, marginTop: 4,
+                fontFamily: 'monospace', fontSize: 13, wordBreak: 'break-all',
+              }}>
+                [{commands[idxArr![i]].deviceName}] {commands[idxArr![i]].command}
+              </div>
+            )}
           </div>
         ))}
       </div>
-      <p style={{ marginTop: 12 }}><strong>命令原文:</strong></p>
-      {commands.map((cmd, i) => (
-        <div key={i} style={{
-          background: '#f5f5f5', padding: 12, borderRadius: 4, marginBottom: 6,
-          fontFamily: 'monospace', fontSize: 13, wordBreak: 'break-all',
-        }}>
-          [{cmd.deviceName}] {cmd.command}
-        </div>
-      ))}
+      {/* Phase 27 checkpoint（方案 A）：常规命令分区——未命中命令列「无越权风险」分节（蓝 Tag）。
+          hitCommandIndexes 缺失 → 回退现状全量命令列表（降级红线） */}
+      {normalCommands ? (
+        normalCommands.length > 0 && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ color: '#999', fontSize: 12, borderBottom: '1px solid #f0f0f0', paddingBottom: 4, marginBottom: 8 }}>
+              常规命令（无越权风险）
+            </div>
+            {normalCommands.map((cmd, i) => (
+              <div key={i} style={{ marginBottom: 6 }}>
+                <Tag color="blue" style={{ fontSize: 13 }}>
+                  [{cmd.deviceName}] {cmd.command}
+                </Tag>
+              </div>
+            ))}
+          </div>
+        )
+      ) : (
+        <>
+          <p style={{ marginTop: 12 }}><strong>命令原文:</strong></p>
+          {commands.map((cmd, i) => (
+            <div key={i} style={{
+              background: '#f5f5f5', padding: 12, borderRadius: 4, marginBottom: 6,
+              fontFamily: 'monospace', fontSize: 13, wordBreak: 'break-all',
+            }}>
+              [{cmd.deviceName}] {cmd.command}
+            </div>
+          ))}
+        </>
+      )}
       <div style={{ background: '#f5f5f5', padding: 12, borderRadius: 4, marginTop: 12 }}>
         <strong>AI 说明:</strong>
         <div style={{ marginTop: 4, whiteSpace: 'pre-wrap', maxHeight: 200, overflowY: 'auto', fontSize: 13 }}>
@@ -66,7 +104,12 @@ export default function CommandConfirmModal({ pendingConfirm, onConfirm, confirm
     <Modal
       open={!!pendingConfirm}
       title={guardInfo
-        ? <span><WarningOutlined style={{ color: '#faad14', marginRight: 8 }} />越权确认</span>
+        ? <span>
+            <WarningOutlined style={{ color: '#faad14', marginRight: 8 }} />
+            越权确认{guardInfo.hitCommandIndexes && guardInfo.hitCommandIndexes.length === guardInfo.hits.length
+              ? `（${new Set(guardInfo.hitCommandIndexes).size} 条命中 / 共 ${pendingConfirm?.commands?.length || 0} 条命令）`
+              : ''}
+          </span>
         : `命令执行确认（${pendingConfirm?.commands?.length || 0} 条命令）`}
       onCancel={() => onConfirm(false)}
       footer={guardInfo ? [

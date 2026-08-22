@@ -81,6 +81,9 @@ export interface ConfirmData {
   guardInfo?: {
     expectedTarget: string
     hits: GuardHitInfo[]
+    // Phase 27 checkpoint：hit ↔ commands 索引映射（长度 = hits.length，元素 = 来源命令下标）。
+    // 可选——历史/异常 payload 无此字段时 CommandConfirmModal 降级为现状全量命令列表
+    hitCommandIndexes?: number[]
   }
   // Phase 22（22-05）：MCP 工具确认复用本协议，commands 元素可携带可选
   // server/tool/argsJson 字段（22-03 下发，renderer 按字段存在性区分命令/工具行）

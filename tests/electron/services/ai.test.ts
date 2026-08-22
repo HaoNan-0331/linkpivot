@@ -520,6 +520,25 @@ describe('privilegeGuard 接入（Phase 27 27-03）', () => {
     }))
   })
 
+  it('混批分区：1 条命中 + 1 条普通 → hitCommandIndexes 与 hits 对齐且指向命中命令下标（checkpoint 方案 A）', async () => {
+    insertGuardDevice('ga', 'GuardA', '10.0.0.1', 'ssh')
+    insertGuardDevice('gb', 'GuardB', '10.0.0.2', 'ssh')
+    db.prepare("UPDATE ai_config SET exec_mode = 'auto'").run()
+    vi.mocked(isCommandAllowed).mockReturnValue({ allowed: true, reason: '' } as any)
+    // 第 1 条命中 GUARD-02，第 2 条普通
+    queueReplies('执行 [CMD:GuardA] ssh 10.0.0.2[/CMD] 和 [CMD:GuardA] display version[/CMD]')
+    const out = await chat([{ role: 'user', content: '跳到 GuardB 并查版本' }], ['ga'], null)
+    const payload = JSON.parse(out)
+    expect(payload.type).toBe('confirm_required')
+    expect(payload.commands).toHaveLength(2)
+    expect(payload.guardInfo).toBeTruthy()
+    expect(payload.guardInfo.hits).toHaveLength(1)
+    // hitCommandIndexes 与 hits 对齐，指向命中命令在 commands 中的索引（0）
+    expect(payload.guardInfo.hitCommandIndexes).toHaveLength(1)
+    expect(payload.guardInfo.hitCommandIndexes[0]).toBe(0)
+    expect(payload.commands[0].command).toContain('ssh 10.0.0.2')
+  })
+
   it('auto 模式无命中：行为不变——不弹 confirm_required（guardHits 不落库）', async () => {
     insertGuardDevice('ga', 'GuardA', '10.0.0.1', 'ssh')
     db.prepare("UPDATE ai_config SET exec_mode = 'auto'").run()

@@ -1045,6 +1045,8 @@ async function runMcpToolLoop(
         ? {
             expectedTarget: ctx.deviceNames.join('、'),
             hits: mcpGuardHits.flat(),
+            // Phase 27 checkpoint：hit ↔ payload.commands 索引映射（mcp 调用序即 commands 序）
+            hitCommandIndexes: mcpGuardHits.flatMap((hits, i) => hits.map(() => i)),
           }
         : undefined,
     })
@@ -1062,7 +1064,11 @@ async function runMcpToolLoop(
         aiExplanation: reply,
         // Phase 27（Pitfall 5）：同一批次同一弹窗附 guardInfo，绝不另起弹窗/IPC
         guardInfo: guardHitTotal > 0
-          ? { expectedTarget: ctx.deviceNames.join('、'), hits: mcpGuardHits.flat() }
+          ? {
+              expectedTarget: ctx.deviceNames.join('、'),
+              hits: mcpGuardHits.flat(),
+              hitCommandIndexes: mcpGuardHits.flatMap((hits, i) => hits.map(() => i)),
+            }
           : undefined,
       }),
     }
@@ -1095,7 +1101,7 @@ const pendingBatches = new Map<
     // 读取（batch.expReferences）此前类型声明缺失，属真实类型漂移——与 :750 局部变量同构。
     expReferences?: Array<{ exp_id: string; title: string; source_session_id: string | null; unsupported: boolean }>
     // Phase 27（GUARD-01~03）：越权命中批次的弹窗附加信息（并入既有 confirm_required 单弹窗，Pitfall 5）
-    guardInfo?: { expectedTarget: string; hits: GuardHit[] }
+    guardInfo?: { expectedTarget: string; hits: GuardHit[]; hitCommandIndexes?: number[] }
     // Phase 27（Pitfall 4）：用户确认放行标记——confirmCommand 确认执行时置 true，
     // 随续跑传递给 executeCommandsOnDevice 兜底重检放行（防无限弹窗/漏检两难）
     guardApproved?: true
@@ -1845,11 +1851,19 @@ export async function chat(
   }
 
   // Confirm mode（或 guard 命中，D-06：auto 模式命中也打断）: store batch and wait for approval
-  const allGuardHits = allowedCommands.flatMap((c) => c.guardHits ?? [])
+  // Phase 27 checkpoint：聚合 guard 命中时同步收集 hit ↔ allowedCommands（即 payload commands）索引映射
+  const allGuardHits: GuardHit[] = []
+  const hitCommandIndexes: number[] = []
+  allowedCommands.forEach((c, idx) => {
+    for (const h of c.guardHits ?? []) {
+      allGuardHits.push(h)
+      hitCommandIndexes.push(idx)
+    }
+  })
   if (execMode === 'confirm' || allGuardHits.length > 0) {
     const batchId = uuidv4()
     const guardInfo = allGuardHits.length > 0
-      ? { expectedTarget: targetDevices.map((d) => d.name).join('、'), hits: allGuardHits }
+      ? { expectedTarget: targetDevices.map((d) => d.name).join('、'), hits: allGuardHits, hitCommandIndexes }
       : undefined
     pendingBatches.set(batchId, {
       commands: allowedCommands,
