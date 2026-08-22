@@ -231,13 +231,18 @@ export function findTargetToken(rest: string[]): string | undefined {
 /**
  * rest 全量保守扫描（GUARD-01 黄，fail-closed 兜底）：仅 unresolvable 或精确命中
  * 已知设备（非当前设备，整 token 匹配）。JUMP/PROBE 定位失败与默认路径三处共用。
+ *
+ * probeFallback=true（WR-01，仅 PROBE 分支）：形似 IP 的 token（含被带值选项跳过的值，
+ * 如 `ping -w 8.8.8.8`）不在任何已知设备 → 集外黄级。PROBE 上下文中形似目标的值
+ * 不得静默丢弃（fail-closed）；纯数字 count/TTL 值是 non-identifier 天然不触发。
  */
 function scanRestTokens(
   rest: string[],
   currentDevice: GuardDeviceRef,
   conversationSet: GuardDeviceRef[],
   allDevices: GuardDeviceRef[],
-  seen: Set<string>
+  seen: Set<string>,
+  probeFallback = false
 ): GuardHit[] {
   const hits: GuardHit[] = []
   for (const tok of rest) {
@@ -260,6 +265,14 @@ function scanRestTokens(
           level: 'yellow',
           target: tok,
           explanation: `命令参数指向库内设备「${known.name}」（非当前执行设备「${currentDevice.name}」），确认后执行`,
+        })
+      } else if (probeFallback && id.kind === 'ip' && !known) {
+        seen.add(tok)
+        hits.push({
+          ruleId: 'GUARD-01',
+          level: 'yellow',
+          target: tok,
+          explanation: `探测类命令参数含设备集外目标（${ipDesc(id)}），不在对话设备集，确认后执行`,
         })
       }
     }
@@ -292,11 +305,13 @@ export function checkCommand(input: GuardCheckInput): GuardHit[] {
   }
   if (PROBE_EXEMPT.has(first)) {
     const target = findTargetToken(rest)
-    if (!target) return scanRestTokens(rest, currentDevice, conversationSet, allDevices, new Set())
+    // WR-01：兜底扫描开 probeFallback——目标定位失败（全部 token 被带值选项消费，如
+    // `ping -w 8.8.8.8`）时形似 IP 的选项值不得静默放行
+    if (!target) return scanRestTokens(rest, currentDevice, conversationSet, allDevices, new Set(), true)
     const hits = checkProbeTarget(target, currentDevice, conversationSet, allDevices)
     if (hits.length > 0) return hits
     const seen = new Set([target])
-    return scanRestTokens(rest, currentDevice, conversationSet, allDevices, seen)
+    return scanRestTokens(rest, currentDevice, conversationSet, allDevices, seen, true)
   }
 
   // 其它白名单命令：保守扫描

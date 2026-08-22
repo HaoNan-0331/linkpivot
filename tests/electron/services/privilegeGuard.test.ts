@@ -236,6 +236,20 @@ describe('带值选项目标定位（真机验收 WR：ping -c 5 <ip> 未弹窗�
     expect(h[0].level).toBe('yellow')
     expect(h[0].target).toBe('10.1.1.5')
   })
+
+  it('WR-01：ping -w 8.8.8.8（IP 被带值选项吞掉、无真目标）→ GUARD-01 黄（fail-closed 不静默丢弃）', () => {
+    const h = guard('ping -w 8.8.8.8')
+    expect(h).toHaveLength(1)
+    expect(h[0].ruleId).toBe('GUARD-01')
+    expect(h[0].level).toBe('yellow')
+    expect(h[0].target).toBe('8.8.8.8')
+    expect(h[0].explanation).toContain('8.8.8.8')
+  })
+
+  it('WR-01 回归：ping -c 5 <集内设备B IP> 仍豁免；ping -c 100 纯数字值零误报', () => {
+    expect(guard('ping -c 5 10.1.1.5')).toEqual([])
+    expect(guard('ping -c 100')).toEqual([])
+  })
 })
 
 describe('白例矩阵（零弹窗，防确认疲劳——同等强制）', () => {
