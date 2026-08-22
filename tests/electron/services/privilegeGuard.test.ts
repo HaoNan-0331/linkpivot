@@ -250,6 +250,14 @@ describe('带值选项目标定位（真机验收 WR：ping -c 5 <ip> 未弹窗�
     expect(guard('ping -c 5 10.1.1.5')).toEqual([])
     expect(guard('ping -c 100')).toEqual([])
   })
+
+  it('WR-02：ssh://<当前设备IP> <集内设备B IP> → 主目标放行后 rest 兜底 GUARD-01 黄（与无 scheme 分支同构）', () => {
+    const h = guard('ssh://admin@10.1.1.1 10.1.1.5')
+    expect(h).toHaveLength(1)
+    expect(h[0].ruleId).toBe('GUARD-01')
+    expect(h[0].level).toBe('yellow')
+    expect(h[0].target).toBe('10.1.1.5')
+  })
 })
 
 describe('白例矩阵（零弹窗，防确认疲劳——同等强制）', () => {

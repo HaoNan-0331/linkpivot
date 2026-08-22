@@ -294,7 +294,13 @@ export function checkCommand(input: GuardCheckInput): GuardHit[] {
   // URI 形态（ssh://x@y）首词本身即目标
   const schemeJump = Array.from(JUMP_FIRST_WORDS).some((w) => first.startsWith(w + '://'))
   if (JUMP_FIRST_WORDS.has(first) || schemeJump) {
-    if (schemeJump && !JUMP_FIRST_WORDS.has(first)) return checkJumpTarget(first, currentDevice, conversationSet, allDevices)
+    if (schemeJump && !JUMP_FIRST_WORDS.has(first)) {
+      // WR-02：与非 scheme 分支同构——主目标（URI 首词）放行 ≠ 整条命令安全，
+      // rest 仍走全量保守扫描兜底（seen 预置主目标）
+      const schemeHits = checkJumpTarget(first, currentDevice, conversationSet, allDevices)
+      if (schemeHits.length > 0) return schemeHits
+      return scanRestTokens(rest, currentDevice, conversationSet, allDevices, new Set([first]))
+    }
     const target = findTargetToken(rest)
     if (!target) return scanRestTokens(rest, currentDevice, conversationSet, allDevices, new Set())
     const hits = checkJumpTarget(target, currentDevice, conversationSet, allDevices)
