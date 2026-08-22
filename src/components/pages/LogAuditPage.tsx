@@ -14,7 +14,8 @@ const statusConfig: Record<string, { color: string; label: string }> = {
 }
 
 // Phase 27（27-04，GUARD-05 D-07/D-08）：越权记录视图三态 Tag。
-// auto 拦截 = guardHits 非空且 status=pending（挂起未处理）。
+// 挂起未决（历史命名 auto_blocked）= 越权命中挂起后未落定处理结果（弹窗未决：应用关闭/批次流程中断），
+// checkpoint 改名——旧名「auto 拦截」与 mode=auto 的执行模式维度撞名，误导用户以为筛"auto 模式拦截"。
 function guardOutcomeOf(log: AIExecLog): 'user_confirmed' | 'user_cancelled' | 'auto_blocked' | null {
   if (log.guardOutcome === 'user_confirmed') return 'user_confirmed'
   if (log.guardOutcome === 'user_cancelled') return 'user_cancelled'
@@ -25,7 +26,7 @@ function guardOutcomeOf(log: AIExecLog): 'user_confirmed' | 'user_cancelled' | '
 const guardOutcomeConfig: Record<string, { color: string; label: string }> = {
   user_confirmed: { color: 'green', label: '用户确认放行' },
   user_cancelled: { color: 'red', label: '用户取消' },
-  auto_blocked: { color: 'orange', label: 'auto 拦截' },
+  auto_blocked: { color: 'orange', label: '挂起未决' },
 }
 
 function AIExecLogTab() {
@@ -76,7 +77,7 @@ function AIExecLogTab() {
             <Segmented
               value={outcomeFilter}
               onChange={(v) => setOutcomeFilter(v as string)}
-              options={['全部', '用户确认放行', '用户取消', 'auto 拦截']}
+              options={['全部', '用户确认放行', '用户取消', '挂起未决']}
             />
           )}
         </div>
