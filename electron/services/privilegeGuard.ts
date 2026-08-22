@@ -181,7 +181,6 @@ function checkJumpTarget(
 
 function checkProbeTarget(
   target: string,
-  currentDevice: GuardDeviceRef,
   conversationSet: GuardDeviceRef[],
   allDevices: GuardDeviceRef[]
 ): GuardHit[] {
@@ -314,7 +313,7 @@ export function checkCommand(input: GuardCheckInput): GuardHit[] {
     // WR-01：兜底扫描开 probeFallback——目标定位失败（全部 token 被带值选项消费，如
     // `ping -w 8.8.8.8`）时形似 IP 的选项值不得静默放行
     if (!target) return scanRestTokens(rest, currentDevice, conversationSet, allDevices, new Set(), true)
-    const hits = checkProbeTarget(target, currentDevice, conversationSet, allDevices)
+    const hits = checkProbeTarget(target, conversationSet, allDevices)
     if (hits.length > 0) return hits
     const seen = new Set([target])
     return scanRestTokens(rest, currentDevice, conversationSet, allDevices, seen, true)
