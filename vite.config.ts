@@ -24,6 +24,9 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    // checkpoint 环境修复:强制 IPv4 监听——默认绑定退化为 [::1] only(IPv6)时,
+    // Electron(main 进程)与 curl 解析 localhost→127.0.0.1 均不可达,renderer 白屏。
+    host: '127.0.0.1',
     proxy: {
       '/proxy/ai': {
         target: process.env.VITE_AI_PROXY_TARGET || 'https://ark.cn-beijing.volces.com',
