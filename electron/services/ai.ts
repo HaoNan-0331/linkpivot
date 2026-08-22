@@ -829,6 +829,102 @@ export function setMcpMaxRounds(rounds: number): { success: boolean; error?: str
 const mcpRoundLimitPrompt = (maxRounds: number): string =>
   `工具调用轮次已达上限（${maxRounds}），请基于以上已获得的工具结果直接总结回答，不要再输出工具调用标记。`
 
+/**
+ * Phase 28（AGENT-04，D-04）：agent 循环硬顶三参数——步数上限/熔断次数/冷却时长。
+ * token 预算为内部硬顶（28-03）不暴露设置页。三参数照 mcp_max_rounds 同款
+ * get（fail-safe 回退默认）/set（非法拒绝落库显式回错）模式。
+ * DB getter 经 _setAiDbGetter 注入（测试解耦，aiExecLogger 先例），生产默认 getDatabase。
+ */
+export const DEFAULT_AGENT_MAX_ROUNDS = 12
+export const AGENT_MAX_ROUNDS_UPPER_BOUND = 30
+export const DEFAULT_AGENT_BURNOUT_COUNT = 2
+export const AGENT_BURNOUT_COUNT_UPPER_BOUND = 5
+export const DEFAULT_AGENT_COOLDOWN_SECS = 60
+export const AGENT_COOLDOWN_SECS_LOWER_BOUND = 10
+export const AGENT_COOLDOWN_SECS_UPPER_BOUND = 600
+
+let agentDbGetter: () => ReturnType<typeof getDatabase> = getDatabase
+
+/** 测试注入口：内存库替换生产单例（仅 agent 三参数 get/set 使用，不影响其余 ai.ts 读库路径） */
+export function _setAiDbGetter(getter: () => ReturnType<typeof getDatabase>): void {
+  agentDbGetter = getter
+}
+
+/** 读 ai_config.agent_max_rounds；NULL/非整数/<1/>30（含列缺失异常）一律回退 12（fail-safe） */
+export function getAgentMaxRounds(): number {
+  try {
+    const row = agentDbGetter()
+      .prepare('SELECT agent_max_rounds FROM ai_config LIMIT 1')
+      .get() as { agent_max_rounds?: number | null } | undefined
+    const v = Number(row?.agent_max_rounds)
+    if (!Number.isInteger(v) || v < 1 || v > AGENT_MAX_ROUNDS_UPPER_BOUND) {
+      return DEFAULT_AGENT_MAX_ROUNDS
+    }
+    return v
+  } catch {
+    return DEFAULT_AGENT_MAX_ROUNDS
+  }
+}
+
+/** 设置页写入口：仅收纳 1-30 整数，非法值拒绝落库（不静默钳制，错误显式回传 UI） */
+export function setAgentMaxRounds(rounds: number): { success: boolean; error?: string } {
+  if (!Number.isInteger(rounds) || rounds < 1 || rounds > AGENT_MAX_ROUNDS_UPPER_BOUND) {
+    return { success: false, error: `Agent 步数上限必须在 1-${AGENT_MAX_ROUNDS_UPPER_BOUND} 之间` }
+  }
+  agentDbGetter().prepare('UPDATE ai_config SET agent_max_rounds = ?').run(rounds)
+  return { success: true }
+}
+
+/** 读 ai_config.agent_burnout_count；NULL/非整数/<1/>5（含列缺失异常）一律回退 2（fail-safe） */
+export function getAgentBurnoutCount(): number {
+  try {
+    const row = agentDbGetter()
+      .prepare('SELECT agent_burnout_count FROM ai_config LIMIT 1')
+      .get() as { agent_burnout_count?: number | null } | undefined
+    const v = Number(row?.agent_burnout_count)
+    if (!Number.isInteger(v) || v < 1 || v > AGENT_BURNOUT_COUNT_UPPER_BOUND) {
+      return DEFAULT_AGENT_BURNOUT_COUNT
+    }
+    return v
+  } catch {
+    return DEFAULT_AGENT_BURNOUT_COUNT
+  }
+}
+
+/** 设置页写入口：仅收纳 1-5 整数，非法值拒绝落库 */
+export function setAgentBurnoutCount(count: number): { success: boolean; error?: string } {
+  if (!Number.isInteger(count) || count < 1 || count > AGENT_BURNOUT_COUNT_UPPER_BOUND) {
+    return { success: false, error: `Agent 熔断次数必须在 1-${AGENT_BURNOUT_COUNT_UPPER_BOUND} 之间` }
+  }
+  agentDbGetter().prepare('UPDATE ai_config SET agent_burnout_count = ?').run(count)
+  return { success: true }
+}
+
+/** 读 ai_config.agent_cooldown_secs；NULL/非整数/<10/>600（含列缺失异常）一律回退 60（fail-safe） */
+export function getAgentCooldownSecs(): number {
+  try {
+    const row = agentDbGetter()
+      .prepare('SELECT agent_cooldown_secs FROM ai_config LIMIT 1')
+      .get() as { agent_cooldown_secs?: number | null } | undefined
+    const v = Number(row?.agent_cooldown_secs)
+    if (!Number.isInteger(v) || v < AGENT_COOLDOWN_SECS_LOWER_BOUND || v > AGENT_COOLDOWN_SECS_UPPER_BOUND) {
+      return DEFAULT_AGENT_COOLDOWN_SECS
+    }
+    return v
+  } catch {
+    return DEFAULT_AGENT_COOLDOWN_SECS
+  }
+}
+
+/** 设置页写入口：仅收纳 10-600 整数，非法值拒绝落库 */
+export function setAgentCooldownSecs(secs: number): { success: boolean; error?: string } {
+  if (!Number.isInteger(secs) || secs < AGENT_COOLDOWN_SECS_LOWER_BOUND || secs > AGENT_COOLDOWN_SECS_UPPER_BOUND) {
+    return { success: false, error: `Agent 冷却时长必须在 ${AGENT_COOLDOWN_SECS_LOWER_BOUND}-${AGENT_COOLDOWN_SECS_UPPER_BOUND} 秒之间` }
+  }
+  agentDbGetter().prepare('UPDATE ai_config SET agent_cooldown_secs = ?').run(secs)
+  return { success: true }
+}
+
 const MCP_PARSE_FAIL_TEXT =
   '（AI 回复中的 MCP 工具调用标记解析失败，未执行任何工具调用；请检查提示词配置后重试）'
 

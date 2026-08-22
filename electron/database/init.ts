@@ -51,6 +51,10 @@ export function createTables() {
       model_name_enc TEXT,
       exec_mode TEXT DEFAULT 'confirm' CHECK(exec_mode IN ('confirm','smart','auto')),
       mcp_max_rounds INTEGER NOT NULL DEFAULT 5,
+      -- agent 循环硬顶三参数（Phase 28 AGENT-04，D-04）：NULL=用代码级默认；列定义与 migrations.ts v26 ALTER 逐字一致（双路径一致红线）
+      agent_max_rounds INTEGER,
+      agent_burnout_count INTEGER,
+      agent_cooldown_secs INTEGER,
       created_at TEXT DEFAULT (datetime('now','localtime'))
     );
 
@@ -82,6 +86,8 @@ export function createTables() {
       content_enc TEXT NOT NULL,
       device_id TEXT,
       session_id TEXT,
+      -- agent 来源/步骤元数据密文（Phase 28 方案 A，读写归 28-04 经 encField/decField；与 v26 ALTER 一致）
+      meta_enc TEXT,
       created_at TEXT DEFAULT (datetime('now','localtime'))
     );
 

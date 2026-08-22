@@ -41,6 +41,16 @@ function createV25FormAiConfig(db: Database.Database): void {
     );
   `)
   db.exec("INSERT INTO ai_config (id) VALUES ('cfg-1')")
+  db.exec(`
+    CREATE TABLE chat_history (
+      id TEXT PRIMARY KEY,
+      role TEXT NOT NULL,
+      content_enc TEXT NOT NULL,
+      device_id TEXT,
+      session_id TEXT,
+      created_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+  `)
   db.pragma('user_version = 25')
 }
 
@@ -135,6 +145,7 @@ describe('v26 迁移幂等（T-28-01-03）', () => {
 
   it('v26 后 chat_history 可建 meta_enc 列（升级路径）', () => {
     const db = new Database(':memory:')
+    db.exec('CREATE TABLE ai_config (id TEXT PRIMARY KEY, mcp_max_rounds INTEGER NOT NULL DEFAULT 5)')
     db.exec('CREATE TABLE chat_history (id TEXT PRIMARY KEY, role TEXT NOT NULL, content_enc TEXT NOT NULL, device_id TEXT, session_id TEXT, created_at TEXT)')
     db.pragma('user_version = 25')
     v26(db)

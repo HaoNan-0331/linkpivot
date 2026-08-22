@@ -13,7 +13,7 @@ import { createSystemLog } from '../services/systemLog'
  *      在 createTables() 建好基线表之后、premigration 备份之后执行（D-06）。
  *      init.ts 不直接调用 runMigrations（单一调用点原则）。
  */
-export const MIGRATION_HEAD = 25
+export const MIGRATION_HEAD = 26
 
 interface MigrationStep {
   version: number
@@ -827,6 +827,36 @@ export const v25 = (db: Database.Database): void => {
   step()
 }
 
+/**
+ * v26：Phase 28（28-01，AGENT-04 前置）—— agent 循环硬顶三参数 + 聊天元数据列。
+ *
+ * ai_config 加 agent_max_rounds / agent_burnout_count / agent_cooldown_secs 三列
+ * （均允许 NULL，NULL = 用代码级默认，fail-safe）；chat_history 加 meta_enc TEXT
+ * （agent 来源清单/步骤持久化，方案 A——28-04 经 encField/decField 读写，本迁移只建列）。
+ *
+ * 幂等守卫：hasColumn（与 v1/v2/v20/v21/v22/v25 同构，纯 ALTER ADD COLUMN）。
+ * init.ts fresh-install DDL 已同步含四列（双路径一致红线）。
+ */
+export const v26 = (db: Database.Database): void => {
+  // 与 v1-v25 一致，步骤执行体包 db.transaction（throw 即 ROLLBACK，原子迁移红线）
+  const step = db.transaction(() => {
+    if (!hasColumn(db, 'ai_config', 'agent_max_rounds')) {
+      db.exec('ALTER TABLE ai_config ADD COLUMN agent_max_rounds INTEGER')
+    }
+    if (!hasColumn(db, 'ai_config', 'agent_burnout_count')) {
+      db.exec('ALTER TABLE ai_config ADD COLUMN agent_burnout_count INTEGER')
+    }
+    if (!hasColumn(db, 'ai_config', 'agent_cooldown_secs')) {
+      db.exec('ALTER TABLE ai_config ADD COLUMN agent_cooldown_secs INTEGER')
+    }
+    if (!hasColumn(db, 'chat_history', 'meta_enc')) {
+      db.exec('ALTER TABLE chat_history ADD COLUMN meta_enc TEXT')
+    }
+    db.pragma('user_version = 26')
+  })
+  step()
+}
+
 export const MIGRATIONS: MigrationStep[] = [
   { version: 1, name: 'chat_history.session_id', run: v1 },
   { version: 2, name: 'ai_exec_logs.prompt_text+ai_response', run: v2 },
@@ -853,6 +883,7 @@ export const MIGRATIONS: MigrationStep[] = [
   { version: 23, name: 'devices.name_hash 回填版本锚点（三段式第二段：post-MK 回填归 25-03）', run: v23 },
   { version: 24, name: 'idx_devices_name_hash UNIQUE 清零门控（三段式第三段，D-10 运行时可复用）', run: v24MigrationStep },
   { version: 25, name: 'ai_exec_logs.guard_hits+guard_outcome 越权审计列（GUARD-05/D-07）', run: v25 },
+  { version: 26, name: 'agent loop limits + chat meta（ai_config 三列 + chat_history.meta_enc，AGENT-04）', run: v26 },
 ]
 
 /**
