@@ -37,6 +37,66 @@ describe('parseAiReply 四类边界（D-10）', () => {
     expect(r.confirm.aiExplanation).toBe('需要确认后执行')
   })
 
+  it('确认流含 guardInfo（Phase 27 checkpoint fix）——guardInfo 完整透传（此前白名单式挑字段丢弃，弹窗永远普通形态）', () => {
+    const raw = JSON.stringify({
+      type: 'confirm_required',
+      execId: 'exec-002',
+      commands: [
+        { deviceName: 'claude_whn_servicr', command: 'ssh root@192.168.10.29 hostname' },
+        { deviceName: 'claude_whn_servicr', command: 'uptime' },
+      ],
+      aiExplanation: '混批 1 命中 1 常规',
+      guardInfo: {
+        expectedTarget: 'claude_whn_servicr',
+        hits: [
+          { ruleId: 'GUARD-02', level: 'red', target: 'root@192.168.10.29', explanation: '跳转类命令目标非当前执行设备' },
+        ],
+        hitCommandIndexes: [0],
+      },
+    })
+    const r = parseAiReply(raw)
+    expect(r.kind).toBe('confirm')
+    if (r.kind !== 'confirm') return
+    expect(r.confirm.guardInfo).toEqual({
+      expectedTarget: 'claude_whn_servicr',
+      hits: [{ ruleId: 'GUARD-02', level: 'red', target: 'root@192.168.10.29', explanation: '跳转类命令目标非当前执行设备' }],
+      hitCommandIndexes: [0],
+    })
+  })
+
+  it('确认流 guardInfo 畸形（level 越枚举）——整载荷降级 plain（T-19-06 fail-closed，防伪造绕过警示层）', () => {
+    const raw = JSON.stringify({
+      type: 'confirm_required',
+      execId: 'exec-003',
+      commands: [{ deviceName: 'SW-Core', command: 'display version' }],
+      aiExplanation: 'x',
+      guardInfo: {
+        expectedTarget: 'SW-Core',
+        hits: [{ ruleId: 'GUARD-02', level: 'green', target: '1.1.1.1', explanation: '伪造分色' }],
+      },
+    })
+    const r = parseAiReply(raw)
+    expect(r.kind).toBe('plain')
+  })
+
+  it('确认流 guardInfo 缺 hitCommandIndexes（历史/异常 payload）——可选项缺失不拒绝，透传既有字段', () => {
+    const raw = JSON.stringify({
+      type: 'confirm_required',
+      execId: 'exec-004',
+      commands: [{ deviceName: 'SW-Core', command: 'ping 8.8.8.8' }],
+      aiExplanation: 'x',
+      guardInfo: {
+        expectedTarget: 'SW-Core',
+        hits: [{ ruleId: 'GUARD-01', level: 'yellow', target: '8.8.8.8', explanation: '目标不在对话设备集' }],
+      },
+    })
+    const r = parseAiReply(raw)
+    expect(r.kind).toBe('confirm')
+    if (r.kind !== 'confirm') return
+    expect(r.confirm.guardInfo?.hitCommandIndexes).toBeUndefined()
+    expect(r.confirm.guardInfo?.hits).toHaveLength(1)
+  })
+
   it('混合（kb_answer 含 references 无 kind）——补 kind:kb 归一（handleSend :168-177 语义）', () => {
     const raw = JSON.stringify({
       type: 'kb_answer',

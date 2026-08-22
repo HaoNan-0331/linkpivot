@@ -66,9 +66,12 @@ export function isValidToolResultPayload(v: unknown): v is ToolResultMessage {
 
 // ConfirmData 载荷校验：execId/aiExplanation string + commands 形状合法（缺任一降级 plain）。
 // WR-04：谓词签名产出 narrowing，confirm 分支消费免 as 断言（校验体逻辑不变）。
+// Phase 27 checkpoint fix：guardInfo 可选字段纳入校验——存在但畸形（伪造/篡改）整载荷降级 plain
+// （T-19-06 fail-closed：越权警示数据不可信时宁可不进确认流，防伪造 payload 绕过警示层）。
 function isValidConfirmPayload(p: Record<string, unknown>): p is {
   execId: string
   aiExplanation: string
+  guardInfo?: GuardInfoShape
   commands: Array<{
     deviceName: string
     command: string
@@ -79,6 +82,7 @@ function isValidConfirmPayload(p: Record<string, unknown>): p is {
   rejectedCommands?: unknown[]
 } {
   if (!isStr(p.execId) || !isStr(p.aiExplanation)) return false
+  if (p.guardInfo !== undefined && !isGuardInfo(p.guardInfo)) return false
   if (!Array.isArray(p.commands)) return false
   return p.commands.every(
     (c) =>
@@ -91,6 +95,33 @@ function isValidConfirmPayload(p: Record<string, unknown>): p is {
       ((c as Record<string, unknown>).tool === undefined || isStr((c as Record<string, unknown>).tool)) &&
       ((c as Record<string, unknown>).argsJson === undefined || isStr((c as Record<string, unknown>).argsJson))
   )
+}
+
+/** guardInfo 形状（契约固定于 main 侧 privilegeGuard.GuardHit + 27-04 分区映射，types.ts GuardHitInfo 逐字对齐） */
+type GuardInfoShape = {
+  expectedTarget: string
+  hits: Array<{ ruleId: string; level: 'red' | 'yellow'; target: string; explanation: string }>
+  hitCommandIndexes?: number[]
+}
+
+// guardInfo 逐字段校验（Phase 27 checkpoint）：expectedTarget/hits 必填，hit 元素四字段 string 且
+// level 限 red|yellow（分色契约，禁第三方值）；hitCommandIndexes 可选——存在即必须 number[]。
+function isGuardInfo(v: unknown): v is GuardInfoShape {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return false
+  const g = v as Record<string, unknown>
+  if (!isStr(g.expectedTarget) || !Array.isArray(g.hits)) return false
+  const hitsOk = g.hits.every(
+    (h) =>
+      h !== null &&
+      typeof h === 'object' &&
+      isStr((h as Record<string, unknown>).ruleId) &&
+      isStr((h as Record<string, unknown>).target) &&
+      isStr((h as Record<string, unknown>).explanation) &&
+      ((h as Record<string, unknown>).level === 'red' || (h as Record<string, unknown>).level === 'yellow')
+  )
+  if (!hitsOk) return false
+  if (g.hitCommandIndexes === undefined) return true
+  return Array.isArray(g.hitCommandIndexes) && g.hitCommandIndexes.every((n) => typeof n === 'number')
 }
 
 // rejectedCommands 单项守卫：command/reason 均 string 才透传（T-19-06，窄化免 as）
@@ -151,6 +182,10 @@ export function parseAiReply(raw: string): ParsedAiReply {
       type: 'confirm_required',
       execId: p.execId,
       aiExplanation: p.aiExplanation,
+      // Phase 27 checkpoint fix：越权命中信息透传——此前白名单式挑字段丢弃 guardInfo，
+      // 弹窗永远渲染普通「命令执行确认」形态（main 侧 hits 已落库但 renderer 不可见）。
+      // 谓词已校验形状与 level 枚举；hitCommandIndexes 缺失由 CommandConfirmModal 降级全量列表。
+      ...(p.guardInfo !== undefined ? { guardInfo: p.guardInfo } : {}),
       commands: p.commands.map((c) => ({
         deviceName: c.deviceName,
         command: c.command,
