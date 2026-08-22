@@ -25,19 +25,29 @@ const BLOCKED_FIRST_WORDS = new Set([
   'enable',
 ])
 
+/**
+ * token 化单一来源（Phase 27 T-27-04）：isCommandAllowed 首词判定与 privilegeGuard
+ * 标识符扫描共用，物理上禁两套解析器 drift。trim + toLowerCase + 空白折叠 + 空串过滤。
+ */
+export function tokenizeCommand(command: string): string[] {
+  return command.trim().toLowerCase().split(/\s+/).filter(Boolean)
+}
+
 export function isCommandAllowed(
   command: string,
   whitelist: string[]
 ): { allowed: boolean; reason: string } {
+  const tokens = tokenizeCommand(command)
+  if (tokens.length === 0) return { allowed: false, reason: '空命令' }
+  // 分隔符检测用原始命令文本（token 化会把 \n 等空白折叠掉，注入形态必须先于拆分拦截）
   const cmd = command.trim().toLowerCase()
-  if (!cmd) return { allowed: false, reason: '空命令' }
 
   // 1. 拒绝多命令注入
   if (SEPARATOR_RE.test(cmd)) {
     return { allowed: false, reason: '命令包含非法分隔符（禁止多命令/注入）' }
   }
 
-  const firstWord = cmd.split(/\s+/)[0]
+  const firstWord = tokens[0]
 
   // 2. 黑名单首词（变更 / 配置视图入口）
   if (BLOCKED_FIRST_WORDS.has(firstWord)) {

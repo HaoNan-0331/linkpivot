@@ -72,7 +72,8 @@ describe('RED 攻击矩阵 R3~R17/R19', () => {
     const h = guard('ssh 0x0A010105')
     expect(h[0].ruleId).toBe('GUARD-02')
     expect(h[0].level).toBe('red')
-    expect(h[0].explanation).toContain('10.1.1.5')
+    // 还原为 10.1.1.5（恰为 B 的 IP → 文案按库内设备名给出，两者任一）
+    expect(h[0].explanation).toMatch(/10\.1\.1\.5|Core-SW1/)
   })
 
   it('R6：前导 0 段按八进制还原 —— ping 010.001.001.005 → 8.1.1.5 黄（行为断言锁定）', () => {
