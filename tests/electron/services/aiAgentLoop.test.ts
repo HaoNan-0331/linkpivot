@@ -719,6 +719,65 @@ describe('28-04 Task 2: ai:cancelChat 中断通道', () => {
 
 // ---------- 28-06 第二轮真机复测缺陷修复 ----------
 
+describe('28-06 R2 缺陷⑤：confirm 续跑结果回注（命令输出必须送达 LLM）', () => {
+  it('confirm 档：确认执行后续跑 callAI 的回注 user 消息包含命令真实输出', async () => {
+    db.prepare("UPDATE ai_config SET exec_mode = 'confirm'").run()
+    allowCmd()
+    FakeClient.output = 'Huawei Versatile Routing Platform Software VRP (R) V500R005C10'
+    const fetchMock = queueReplies(
+      '[CMD:dev1]display version[/CMD]',
+      '已拿到版本信息的最终回答'
+    )
+    const out1 = await chat([{ role: 'user', content: '查版本' }], ['dev1'], null)
+    expect(JSON.parse(out1).type).toBe('confirm_required')
+    const final = await confirmCommand(JSON.parse(out1).execId, true)
+    expect(JSON.parse(final).content).toBe('已拿到版本信息的最终回答')
+    // 续跑 callAI（第 2 次）：最后一条 user 消息 = 命令结果回注，必须包含真实输出与命令名
+    const msgs = reqMsgs(fetchMock, 1)
+    const userMsg = msgs.filter((m: any) => m.role === 'user').pop()
+    expect(userMsg.content).toContain('display version')
+    expect(userMsg.content).toContain('VRP (R) V500R005C10')
+  })
+
+  it('confirm 档多步：两轮确认续跑的累积上下文保留第一轮命令输出', async () => {
+    db.prepare("UPDATE ai_config SET exec_mode = 'confirm'").run()
+    allowCmd()
+    FakeClient.output = 'Vlan ID: 100'
+    const fetchMock = queueReplies(
+      '[CMD:dev1]display version[/CMD]',
+      '第一轮完成，继续 [CMD:dev1]display vlan[/CMD]',
+      '两步都完成的最终回答'
+    )
+    const out1 = await chat([{ role: 'user', content: '查版本和 vlan' }], ['dev1'], null)
+    const out2 = await confirmCommand(JSON.parse(out1).execId, true)
+    expect(JSON.parse(out2).type).toBe('confirm_required')
+    FakeClient.output = 'VERSION 5.20'
+    const final = await confirmCommand(JSON.parse(out2).execId, true)
+    expect(JSON.parse(final).content).toBe('两步都完成的最终回答')
+    // 第 3 次 callAI：第一轮（display version）与第二轮（display vlan）输出都在累积上下文中
+    const msgs3 = reqMsgs(fetchMock, 2)
+    const userMsgs = msgs3.filter((m: any) => m.role === 'user')
+    expect(userMsgs.some((m: any) => m.content.includes('Vlan ID: 100'))).toBe(true)
+    expect(userMsgs.some((m: any) => m.content.includes('VERSION 5.20'))).toBe(true)
+  })
+
+  it('成功但零输出：回注落显式 ground 文本（LLM 不得脑补「未获得输出」放弃任务）', async () => {
+    db.prepare("UPDATE ai_config SET exec_mode = 'confirm'").run()
+    allowCmd()
+    FakeClient.output = '' // 执行成功但设备零输出（data 无内容）
+    const fetchMock = queueReplies(
+      '[CMD:dev1]display version[/CMD]',
+      '收到，继续任务'
+    )
+    const out1 = await chat([{ role: 'user', content: '查版本' }], ['dev1'], null)
+    await confirmCommand(JSON.parse(out1).execId, true)
+    const msgs = reqMsgs(fetchMock, 1)
+    const userMsg = msgs.filter((m: any) => m.role === 'user').pop()
+    expect(userMsg.content).toContain('状态: executed')
+    expect(userMsg.content).toContain('设备未返回任何输出文本')
+  })
+})
+
 describe('28-06 R2 缺陷③：confirm 续跑阶段停止有效（signal 贯穿续跑链）', () => {
   it('确认续跑中 cancelChat 能中断：续跑 callAI 被 abort → ChatInterruptedError → 中断收尾回文', async () => {
     db.prepare("UPDATE ai_config SET exec_mode = 'confirm'").run()

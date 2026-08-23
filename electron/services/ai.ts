@@ -1560,7 +1560,7 @@ async function runAgentCmdRound(
           const execResults = await executeCommandsOnDevice(device, [c.command], { conversationSet: guardConversationSet })
           const r = execResults[0]
           success = !!(r && r.success)
-          output = r?.output || (success ? '' : '执行失败')
+          output = r?.output || (success ? '（命令已执行成功，但设备未返回任何输出文本；如需该数据请重试或换命令）' : '执行失败')
         } catch (err: any) {
           success = false
           output = `执行失败: ${err?.message ?? String(err)}`
@@ -2066,7 +2066,11 @@ export async function confirmCommand(
           // 28-06 R2 缺陷⑤：成功但零输出必须落显式 ground 文本——空「输出:\n」会让 LLM
           // 自行脑补「未获得设备返回的实时输出」并放弃后续多步任务（服务级回注链复现
           // 测试已锁死非空输出必达；此为空输出分支的兜底加固）
-          cmdResults.push({ deviceName: cmds[i].deviceName, cmd: r.command, output: r.output, status: 'executed' })
+          cmdResults.push({
+            deviceName: cmds[i].deviceName, cmd: r.command,
+            output: (r.output || '').trim() ? r.output : '（命令已执行成功，但设备未返回任何输出文本；如需该数据请重试或换命令）',
+            status: 'executed',
+          })
         } else {
           updateLogStatus(cmds[i].logId, 'failed')
           if (step) settleAgentStep(step, 'failed', batch.agentLoop!.agentState)
@@ -2987,7 +2991,11 @@ export async function chat(
           step.outputSummary = sanitizeUntrusted(r.output || '', 200)
           settleAgentStep(step, 'done', agentState)
           agentState.sources.push({ kind: 'device', title: cmds[i].deviceName, refId: deviceId })
-          cmdResults.push({ deviceName: cmds[i].deviceName, cmd: r.command, output: r.output, status: 'executed' })
+          cmdResults.push({
+            deviceName: cmds[i].deviceName, cmd: r.command,
+            output: (r.output || '').trim() ? r.output : '（命令已执行成功，但设备未返回任何输出文本；如需该数据请重试或换命令）',
+            status: 'executed',
+          })
         } else {
           updateLogStatus(cmds[i].logId, 'failed')
           settleAgentStep(step, 'failed', agentState)
