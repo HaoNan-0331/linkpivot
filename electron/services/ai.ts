@@ -203,6 +203,9 @@ export function listSessions(): Array<{ id: string; title: string; deviceId: str
 
 export function getSessionMessages(sessionId: string): Array<{
   id: string; role: string; content: string; deviceId: string | null; createdAt: string
+  /** 28-06 R2 缺陷⑥：agent 轨迹 meta（历史/异常行降级 undefined）——renderer 历史恢复
+   * 步骤卡/来源徽章/分档标签的数据源，此前该通道整体缺失（落库了但读侧丢弃） */
+  meta?: Record<string, unknown>
 }> {
   const rows = getDatabase()
     .prepare('SELECT * FROM chat_history WHERE session_id = ? ORDER BY created_at ASC')
@@ -213,6 +216,7 @@ export function getSessionMessages(sessionId: string): Array<{
     content: decField(row.content_enc, MK),
     deviceId: row.device_id,
     createdAt: row.created_at,
+    meta: parseChatMeta(decField(row.meta_enc, MK)),
   }))
 }
 

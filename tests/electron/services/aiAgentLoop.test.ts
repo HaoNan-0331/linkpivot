@@ -155,7 +155,7 @@ import { encField, decField } from '../../../electron/utils/crypto'
 import {
   chat, confirmCommand, setAiMasterKey,
   normalizeAgentKey, callAIWithUsage,
-  getChatHistory, buildAgentMeta,
+  getChatHistory, buildAgentMeta, getSessionMessages,
 } from '../../../electron/services/ai'
 import { isCommandAllowed } from '../../../electron/services/commandSafety'
 import { search as kbSearch } from '../../../electron/services/knowledgeBaseService'
@@ -742,6 +742,38 @@ describe('28-06 R2 缺陷①：步骤卡内容非空（argsJson=resultJson 数�
     expect(kbP.argsJson).toBe('vlan 原理')
     expect(kbP.resultJson).toContain('命中 1 条')
     expect(kbP.resultJson).toContain('网络手册')
+  })
+})
+
+describe('28-06 R2 缺陷⑥：历史恢复 meta 通道（getSessionMessages 返回 meta）', () => {
+  it('agent 会话消息 meta_enc 解密回读——steps/query/outputSummary/tier 齐全（renderer 历史恢复数据源）', async () => {
+    allowCmd()
+    FakeClient.output = 'VRP V500'
+    vi.mocked(kbSearch).mockResolvedValue(KB_ROWS as any)
+    queueReplies(
+      '[CMD:dev1]display version[/CMD]',
+      '命令完成，再查资料 [KB_SEARCH]vlan 原理[/KB_SEARCH]',
+      '最终总结'
+    )
+    await chat([{ role: 'user', content: '查' }], ['dev1'], 'sess-r2-6')
+    const msgs = getSessionMessages('sess-r2-6')
+    // user 行无 meta；assistant 行 meta 含步骤轨迹与检索词/输出摘要（历史步骤卡重建依据）
+    const assistant = msgs.filter((m) => m.role === 'assistant' && m.meta).pop()
+    expect(assistant).toBeTruthy()
+    const meta = assistant!.meta as any
+    expect(meta.tier).toBe('knowledge')
+    const cmdStep = meta.steps.find((s: any) => s.actionType === 'cmd')
+    expect(cmdStep.command).toBe('display version')
+    expect(String(cmdStep.outputSummary)).toContain('VRP V500')
+    const kbStep = meta.steps.find((s: any) => s.actionType === 'kb')
+    expect(kbStep.query).toBe('vlan 原理')
+    expect(String(kbStep.outputSummary)).toContain('网络手册')
+    expect(meta.sources.some((s: any) => s.kind === 'device')).toBe(true)
+  })
+
+  it('无 meta 历史行读取不 throw（meta 降级 undefined，renderer 走纯文本路径）', () => {
+    const msgs = getSessionMessages('no-such-session')
+    expect(msgs).toEqual([])
   })
 })
 

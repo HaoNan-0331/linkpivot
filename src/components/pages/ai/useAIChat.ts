@@ -3,7 +3,7 @@ import { message } from 'antd'
 import type { ChatSession } from '@/types/ai'
 import type { ConfirmDraftsResult } from '@/types/experience'
 import type { UseAIChatReturn, DeviceOption, ChatMsg, ConfirmData } from './types'
-import { parseAiReply, parsedToMessages, isValidToolResultPayload } from './parseAiReply'
+import { parseAiReply, parsedToMessages, isValidToolResultPayload, historyMessageToChatMsgs } from './parseAiReply'
 
 /**
  * useAIChat —— AIPage page-local 会话态自定义 hook（FE-01 / D-5-1）。
@@ -114,9 +114,15 @@ export function useAIChat(): UseAIChatReturn {
     if (sessionId === currentSessionId) return
     setPendingConfirm(null)
     const msgs = await window.api.ai.getSessionMessages(sessionId)
-    setMessages(
-      msgs.map((m) => ({ id: m.id, role: m.role, content: m.content, createdAt: m.createdAt }))
-    )
+    // 28-06 R2 缺陷⑥：历史恢复消费 meta（此前整体丢弃）——meta.steps 重建步骤卡消息、
+    // meta.sources/tier/noRealtimeData/backfillNotes 复原 agentMeta 徽章行，与实时路径同构
+    setMessages(msgs.flatMap((m) => historyMessageToChatMsgs({
+      id: m.id,
+      role: m.role,
+      content: m.content,
+      createdAt: m.createdAt,
+      meta: m.meta,
+    })))
   }, [currentSessionId])
 
   const handleDeleteSession = useCallback(async (sessionId: string) => {

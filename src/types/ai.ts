@@ -15,6 +15,9 @@ export interface ChatMessage {
   content: string
   deviceId: string | null
   createdAt: string
+  /** 28-06 R2 缺陷⑥：agent 轨迹 meta（sources/steps/tier 等，main 侧 meta_enc 解密产物；
+   * 历史行/异常行降级 undefined——renderer 历史恢复步骤卡与徽章的数据源） */
+  meta?: Record<string, unknown>
 }
 
 export interface ChatSession {

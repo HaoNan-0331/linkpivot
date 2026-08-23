@@ -1,4 +1,4 @@
-import type { AgentMeta, AgentSourceItem, AgentTierName, ConfirmData, ReferenceItem, ToolResultMessage } from './types'
+import type { AgentMeta, AgentSourceItem, AgentStepStatus, AgentTierName, ChatMsg, ConfirmData, ReferenceItem, ToolResultMessage } from './types'
 
 /**
  * parseAiReply —— AI 应答解析纯函数（Phase 19 REN-02 / 审计 R-M5，D-10）。
@@ -193,6 +193,74 @@ function normalizeReference(r: unknown): ReferenceItem[] {
     return refs
   }
   return []
+}
+
+// 28-06 R2 缺陷⑥：历史消息 meta → 渲染层消息恢复（切换会话再切回，步骤卡/徽章/标签不丢）。
+// meta.steps → toolResult 步骤卡消息（stepStatus 用落库终态，重建 payload 与 main 侧
+// agentStepToToolResultPayload 同构）；meta.sources/tier/noRealtimeData/backfillNotes →
+// agentMeta（复用 parseAgentMeta fail-closed 校验）。畸形 steps 项逐条丢弃不降级整批。
+const AGENT_STEP_ACTION_TYPES = ['cmd', 'kb', 'exp', 'mcp'] as const
+const AGENT_STEP_STATUS_VALUES: readonly AgentStepStatus[] = [
+  'running', 'done', 'failed', 'retrying', 'burned', 'cooldown', 'interrupted',
+]
+
+function stepToToolResultMessage(s: unknown): ToolResultMessage | undefined {
+  if (s === null || typeof s !== 'object') return undefined
+  const o = s as Record<string, unknown>
+  const isStr = (v: unknown): v is string => typeof v === 'string'
+  if (!(AGENT_STEP_ACTION_TYPES as readonly string[]).includes(o.actionType as string)) return undefined
+  if (typeof o.stepIndex !== 'number') return undefined
+  if (!(AGENT_STEP_STATUS_VALUES as readonly string[]).includes(o.stepStatus as string)) return undefined
+  const actionType = o.actionType as ToolResultMessage['actionType']
+  const toolLabel =
+    actionType === 'cmd' ? '命令执行'
+    : actionType === 'kb' ? '知识库检索'
+    : actionType === 'exp' ? '经验库检索'
+    : 'MCP 工具'
+  const payload: ToolResultMessage = {
+    type: 'tool_result',
+    server: 'agent',
+    tool: toolLabel,
+    deviceName: isStr(o.deviceName) ? o.deviceName : '',
+    argsJson: actionType === 'kb' || actionType === 'exp'
+      ? (isStr(o.query) ? o.query : '')
+      : (isStr(o.command) ? o.command : ''),
+    resultJson: isStr(o.outputSummary) ? o.outputSummary : '',
+    status: o.stepStatus === 'failed' || o.stepStatus === 'burned' ? 'failed' : 'success',
+    stepIndex: o.stepIndex,
+    actionType,
+    stepStatus: o.stepStatus as AgentStepStatus,
+  }
+  return isValidToolResultPayload(payload) ? payload : undefined
+}
+
+/** 单条历史消息（含可选 meta）→ 渲染层消息数组（步骤卡消息在前 + 本体带 agentMeta） */
+export function historyMessageToChatMsgs(m: {
+  id?: string
+  role: 'user' | 'assistant'
+  content: string
+  createdAt?: string
+  meta?: Record<string, unknown>
+}): ChatMsg[] {
+  if (m.role !== 'assistant' || !m.meta || typeof m.meta !== 'object') {
+    return [{ id: m.id, role: m.role, content: m.content, createdAt: m.createdAt }]
+  }
+  const out: ChatMsg[] = []
+  if (Array.isArray(m.meta.steps)) {
+    for (const s of m.meta.steps) {
+      const tr = stepToToolResultMessage(s)
+      if (tr) out.push({ role: 'assistant', content: '', toolResult: tr })
+    }
+  }
+  const agentMeta = parseAgentMeta(m.meta)
+  out.push({
+    id: m.id,
+    role: 'assistant',
+    content: m.content,
+    createdAt: m.createdAt,
+    ...(agentMeta ? { agentMeta } : {}),
+  })
+  return out
 }
 
 export function parseAiReply(raw: string): ParsedAiReply {
