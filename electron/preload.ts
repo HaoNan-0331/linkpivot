@@ -58,6 +58,13 @@ const api = {
     // 22-05 checkpoint：MCP 轮次上限读写
     getMcpMaxRounds: () => ipcRenderer.invoke('ai:getMcpMaxRounds'),
     setMcpMaxRounds: (rounds: number) => ipcRenderer.invoke('ai:setMcpMaxRounds', rounds),
+    // Phase 28（28-05，D-04）：Agent 硬顶三参数读写（main 侧 set 层硬校验 + renderer InputNumber 钳制双重防线）
+    getAgentMaxRounds: () => ipcRenderer.invoke('ai:getAgentMaxRounds'),
+    setAgentMaxRounds: (rounds: number) => ipcRenderer.invoke('ai:setAgentMaxRounds', rounds),
+    getAgentBurnoutCount: () => ipcRenderer.invoke('ai:getAgentBurnoutCount'),
+    setAgentBurnoutCount: (count: number) => ipcRenderer.invoke('ai:setAgentBurnoutCount', count),
+    getAgentCooldownSecs: () => ipcRenderer.invoke('ai:getAgentCooldownSecs'),
+    setAgentCooldownSecs: (secs: number) => ipcRenderer.invoke('ai:setAgentCooldownSecs', secs),
     confirmCommand: (execId: string, approved: boolean) => ipcRenderer.invoke('ai:confirmCommand', execId, approved),
     getLogs: (limit?: number) => ipcRenderer.invoke('ai:getLogs', limit),
     getChatHistory: () => ipcRenderer.invoke('ai:getChatHistory'),

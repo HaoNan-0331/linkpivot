@@ -129,6 +129,13 @@ export interface ElectronAPI {
     // 22-05 checkpoint：MCP 连续调用轮次上限（合法 1-20，默认 5；非法库值 main 侧 fail-safe 回退 5）
     getMcpMaxRounds: () => Promise<number>
     setMcpMaxRounds: (rounds: number) => Promise<{ success: boolean; error?: string }>
+    // Phase 28（28-05，D-04）：Agent 硬顶三参数（步数 1-30 默认 12 / 熔断 1-5 默认 2 / 冷却 10-600s 默认 60）
+    getAgentMaxRounds: () => Promise<number>
+    setAgentMaxRounds: (rounds: number) => Promise<{ success: boolean; error?: string }>
+    getAgentBurnoutCount: () => Promise<number>
+    setAgentBurnoutCount: (count: number) => Promise<{ success: boolean; error?: string }>
+    getAgentCooldownSecs: () => Promise<number>
+    setAgentCooldownSecs: (secs: number) => Promise<{ success: boolean; error?: string }>
     confirmCommand: (execId: string, approved: boolean) => Promise<string>
     getLogs: (limit?: number) => Promise<AIExecLog[]>
     getChatHistory: () => Promise<ChatMessage[]>

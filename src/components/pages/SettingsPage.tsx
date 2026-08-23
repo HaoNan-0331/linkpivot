@@ -5,6 +5,7 @@ import { useAuthStore } from '../../stores/authStore'
 import CommandWhitelistEditor from '../settings/CommandWhitelistEditor'
 import ExecModeSwitch from '../settings/ExecModeSwitch'
 import McpRoundsInput from '../settings/McpRoundsInput'
+import AgentLimitsCard from '../settings/AgentLimitsCard'
 import PromptTab from '../settings/PromptTab'
 import McpTab from '../settings/McpTab'
 import type { AIConfig } from '../../types/electron'
@@ -188,6 +189,8 @@ export default function SettingsPage() {
       <div style={{ marginBottom: 16 }}><CommandWhitelistEditor /></div>
       <div style={{ marginBottom: 16 }}><ExecModeSwitch /></div>
       <div style={{ marginBottom: 16 }}><McpRoundsInput /></div>
+      {/* Phase 28（28-05，D-04）：Agent 硬顶三参数（与 mcp_max_rounds 同区同款） */}
+      <div style={{ marginBottom: 16 }}><AgentLimitsCard /></div>
       <Divider />
       <Space>
         <Button icon={<LogoutOutlined />} danger onClick={logout}>退出登录</Button>
