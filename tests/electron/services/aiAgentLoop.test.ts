@@ -719,6 +719,32 @@ describe('28-04 Task 2: ai:cancelChat 中断通道', () => {
 
 // ---------- 28-06 第二轮真机复测缺陷修复 ----------
 
+describe('28-06 R2 缺陷①：步骤卡内容非空（argsJson=resultJson 数据源修复）', () => {
+  it('kb 步骤卡 argsJson=检索词、resultJson=命中概要；cmd 步骤卡 resultJson=命令输出摘要', async () => {
+    allowCmd()
+    FakeClient.output = 'VRP (R) V500R005C10'
+    vi.mocked(kbSearch).mockResolvedValue(KB_ROWS as any)
+    queueReplies(
+      '[CMD:dev1]display version[/CMD]',
+      '命令完成，再查资料 [KB_SEARCH]vlan 原理[/KB_SEARCH]',
+      '混合任务总结'
+    )
+    const payloads: any[] = []
+    await chat([{ role: 'user', content: '查状态和资料' }], ['dev1'], null, (p) => payloads.push(p))
+    const cmdP = payloads.find((p) => p.actionType === 'cmd' && p.stepStatus === 'done')
+    expect(cmdP).toBeTruthy()
+    expect(cmdP.argsJson).toBe('display version')
+    expect(cmdP.resultJson).toContain('VRP (R) V500R005C10')
+    const kbP = payloads.find((p) => p.actionType === 'kb' && p.stepStatus === 'done')
+    expect(kbP).toBeTruthy()
+    // 缺陷①修复前：kb 步骤无 command → argsJson=''（renderer 显示「（无参数）」）、
+    // settle 不回填 outputSummary → resultJson=''（「（无返回内容）」）
+    expect(kbP.argsJson).toBe('vlan 原理')
+    expect(kbP.resultJson).toContain('命中 1 条')
+    expect(kbP.resultJson).toContain('网络手册')
+  })
+})
+
 describe('28-06 R2 缺陷⑤：confirm 续跑结果回注（命令输出必须送达 LLM）', () => {
   it('confirm 档：确认执行后续跑 callAI 的回注 user 消息包含命令真实输出', async () => {
     db.prepare("UPDATE ai_config SET exec_mode = 'confirm'").run()

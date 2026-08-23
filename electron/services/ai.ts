@@ -1008,6 +1008,8 @@ export interface AgentStep {
   status: 'running' | 'done' | 'failed' | 'retrying' | 'burned' | 'cooldown' | 'interrupted'
   deviceName?: string
   command?: string
+  /** 28-06 R2 缺陷①：kb/exp 步骤的检索词（步骤卡 argsJson 数据源） */
+  query?: string
   outputSummary?: string
 }
 
@@ -1234,7 +1236,7 @@ function cmdResultsUserMessage(deviceNamesStr: string, resultsText: string): str
 /** D-13 诚实收尾回注：中断原因 + 已完成/需人工处理清单（代码层按执行轨迹生成，非 AI 自述，T-28-03-05） */
 function buildHonestWrapupPrompt(reason: string, state: AgentLoopState): string {
   const line = (s: AgentStep): string =>
-    `[${s.actionType}]${s.deviceName ? ` ${s.deviceName}` : ''}${s.command ? ` ${s.command}` : ''}${s.outputSummary ? ` — ${s.outputSummary}` : ''}`.trim()
+    `[${s.actionType}]${s.deviceName ? ` ${s.deviceName}` : ''}${s.command ? ` ${s.command}` : ''}${s.query ? ` ${s.query}` : ''}${s.outputSummary ? ` — ${s.outputSummary}` : ''}`.trim()
   const done = state.steps.filter((s) => s.status === 'done').map(line)
   const manual = state.steps.filter((s) => s.status === 'failed' || s.status === 'burned').map(line)
   const base = PromptService.getPrompt('ai.chat.agentHonestWrapup')
@@ -1287,7 +1289,9 @@ function agentStepToToolResultPayload(s: AgentStep): ToolResultPayload {
     server: 'agent',
     tool: toolLabel,
     deviceName: s.deviceName ?? '',
-    argsJson: s.command ?? '',
+    // 28-06 R2 缺陷①：cmd/mcp 步骤取 command，kb/exp 步骤取检索词 query——
+    // 此前恒取 command（kb/exp 无此字段）导致步骤卡「（无参数）」
+    argsJson: s.actionType === 'kb' || s.actionType === 'exp' ? (s.query ?? '') : (s.command ?? ''),
     resultJson: s.outputSummary ?? '',
     status: s.status === 'failed' || s.status === 'burned' ? 'failed' : 'success',
     stepIndex: s.stepIndex,
@@ -1367,7 +1371,7 @@ function buildKbRoundContext(rows: any[]): {
  * KB 检索步（WR-05 解除：循环内 [KB_SEARCH] 直执——只读本地库，无确认，Pitfall 7 计入轮次）。
  * 检索命中时结果片段入 sources / kbReferences（代码层溯源，D-09）。
  */
-async function runKbSearchStep(query: string, ctx: McpLoopCtx, state: AgentLoopState): Promise<string> {
+async function runKbSearchStep(query: string, ctx: McpLoopCtx, state: AgentLoopState, step?: AgentStep): Promise<string> {
   // 28-04（RESEARCH Q4）：kb 检索步入 ai_exec_logs 审计（command 列 'kb:query'，只读检索无确认门）
   try {
     createLog({
@@ -1378,16 +1382,22 @@ async function runKbSearchStep(query: string, ctx: McpLoopCtx, state: AgentLoopS
   } catch { /* 审计失败不阻断检索（aiExecLogger 异常降级） */ }
   const searchResults = (await kbSearch(query, ctx.deviceIds, 5)).rows
   if (!searchResults || searchResults.length === 0) {
+    // 28-06 R2 缺陷①：settle 前回填 outputSummary（步骤卡 resultJson 数据源）
+    if (step) step.outputSummary = '资料库未命中'
     return `[资料库检索: ${query}]\n资料库中未找到与"${query}"相关的文档。`
   }
   const { contextText, references } = buildKbRoundContext(searchResults)
+  // 28-06 R2 缺陷①：命中数 + 标题清单回填 outputSummary（步骤卡展开可见检索结果概要）
+  if (step) {
+    step.outputSummary = sanitizeUntrusted(`命中 ${references.length} 条：${references.map((r) => `${r.docTitle} / ${r.chunkTitle}`).join('；')}`, 200)
+  }
   if (ctx.kbReferences) mergeKbRefs(ctx.kbReferences, references)
   state.sources.push(...references.map((r) => ({ kind: 'kb' as const, title: `${r.docTitle} / ${r.chunkTitle}`, refId: r.docId })))
   return `以下是资料库检索到的相关文档片段（关键词: "${query}"）：\n\n${contextText}`
 }
 
 /** EXP 检索步（WR-05 解除：循环内 [EXP_SEARCH] 直执——只读本地库，无确认） */
-async function runExpSearchStep(query: string, ctx: McpLoopCtx, state: AgentLoopState): Promise<string> {
+async function runExpSearchStep(query: string, ctx: McpLoopCtx, state: AgentLoopState, step?: AgentStep): Promise<string> {
   const expQuery = sanitizeUntrusted(query, 500)
   // 28-04（RESEARCH Q4）：exp 检索步入 ai_exec_logs 审计（command 列 'exp:query'，只读检索无确认门）
   try {
@@ -1399,6 +1409,8 @@ async function runExpSearchStep(query: string, ctx: McpLoopCtx, state: AgentLoop
   } catch { /* 审计失败不阻断检索（aiExecLogger 异常降级） */ }
   const retrieval = await retrieveForAnswer({ userMessage: expQuery, deviceIds: ctx.deviceIds })
   if (!retrieval.injected || retrieval.injected.length === 0) {
+    // 28-06 R2 缺陷①：settle 前回填 outputSummary（步骤卡 resultJson 数据源）
+    if (step) step.outputSummary = '经验库未命中'
     return `[经验库检索: ${expQuery}]\n经验库中未找到与"${expQuery}"相关的经验。`
   }
   const expContext = buildExpContextText(retrieval.injected, !!(ctx.deviceIds && ctx.deviceIds.length > 0))
@@ -1410,6 +1422,10 @@ async function runExpSearchStep(query: string, ctx: McpLoopCtx, state: AgentLoop
   }))
   // 28-04：exp 引用合并去重（与分档预取/补查同源命中只计一次）
   mergeExpRefs(ctx.expReferences, newRefs)
+  // 28-06 R2 缺陷①：命中数 + 标题清单回填 outputSummary（步骤卡展开可见检索结果概要）
+  if (step) {
+    step.outputSummary = sanitizeUntrusted(`命中 ${newRefs.length} 条：${newRefs.map((e) => e.title).join('；')}`, 200)
+  }
   state.sources.push(...newRefs.map((e) => ({ kind: 'exp' as const, title: e.title, refId: e.exp_id })))
   return `以下是经验库中检索到的相关经验（关键词: "${expQuery}"）：\n\n${expContext}`
 }
@@ -1691,22 +1707,26 @@ async function runAgentLoopInner(
     const results: string[] = []
     // ---- KB 检索动作（WR-05 解除：循环内直执，只读本地库无确认）----
     for (const q of kbQueries) {
-      const step = pushAgentStep(state, 'kb', {})
+      // 28-06 R2 缺陷①：kb 步骤携带检索词（步骤卡 argsJson 数据源）
+      const step = pushAgentStep(state, 'kb', { query: q })
       try {
-        results.push(await runKbSearchStep(q, ctx, state))
+        results.push(await runKbSearchStep(q, ctx, state, step))
         settleAgentStep(step, 'done', state)
       } catch {
+        step.outputSummary = '检索失败'
         settleAgentStep(step, 'failed', state)
         results.push(`[资料库检索: ${q}]\n检索失败，本次未获得文档内容。`)
       }
     }
     // ---- EXP 检索动作（WR-05 解除：循环内直执，只读本地库无确认）----
     for (const q of expQueries) {
-      const step = pushAgentStep(state, 'exp', {})
+      // 28-06 R2 缺陷①：exp 步骤携带检索词（步骤卡 argsJson 数据源）
+      const step = pushAgentStep(state, 'exp', { query: q })
       try {
-        results.push(await runExpSearchStep(q, ctx, state))
+        results.push(await runExpSearchStep(q, ctx, state, step))
         settleAgentStep(step, 'done', state)
       } catch {
+        step.outputSummary = '检索失败'
         settleAgentStep(step, 'failed', state)
         results.push(`[经验库检索: ${q}]\n检索失败，本次未获得经验内容。`)
       }
@@ -2073,7 +2093,10 @@ export async function confirmCommand(
           })
         } else {
           updateLogStatus(cmds[i].logId, 'failed')
-          if (step) settleAgentStep(step, 'failed', batch.agentLoop!.agentState)
+          if (step) {
+            step.outputSummary = sanitizeUntrusted(r?.output || '执行失败', 200)
+            settleAgentStep(step, 'failed', batch.agentLoop!.agentState)
+          }
           cmdResults.push({ deviceName: cmds[i].deviceName, cmd: cmds[i].command, output: r?.output || '执行失败', status: 'failed' })
         }
       }
@@ -2998,6 +3021,7 @@ export async function chat(
           })
         } else {
           updateLogStatus(cmds[i].logId, 'failed')
+          step.outputSummary = sanitizeUntrusted(r?.output || '执行失败', 200)
           settleAgentStep(step, 'failed', agentState)
           cmdResults.push({ deviceName: cmds[i].deviceName, cmd: cmds[i].command, output: r?.output || '执行失败', status: 'failed' })
         }
