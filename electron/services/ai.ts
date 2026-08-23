@@ -892,45 +892,12 @@ async function runMcpCall(
 }
 
 /**
- * 22-05 用户裁决（checkpoint）：MCP 工具链主循环由单轮改为**有界循环**——
- * AI 回注结果后的再回复若仍含标记则继续执行（连续多步工具调用场景），超过
- * 配置上限（ai_config.mcp_max_rounds）不再执行，回注上限提示后取一次收尾回答。
- * 22-05 checkpoint 追加：上限由硬编码改为系统设置可调（合法 1-20，非法 fail-safe 回退 5）。
- */
-export const DEFAULT_MAX_MCP_TOOL_ROUNDS = 5
-export const MCP_MAX_ROUNDS_UPPER_BOUND = 20
-
-/** 读 ai_config.mcp_max_rounds；NULL/非整数/<1/>20（含列缺失异常）一律回退 5（fail-safe） */
-export function getMcpMaxRounds(): number {
-  try {
-    const row = getDatabase()
-      .prepare('SELECT mcp_max_rounds FROM ai_config LIMIT 1')
-      .get() as { mcp_max_rounds?: number | null } | undefined
-    const v = Number(row?.mcp_max_rounds)
-    if (!Number.isInteger(v) || v < 1 || v > MCP_MAX_ROUNDS_UPPER_BOUND) {
-      return DEFAULT_MAX_MCP_TOOL_ROUNDS
-    }
-    return v
-  } catch {
-    return DEFAULT_MAX_MCP_TOOL_ROUNDS
-  }
-}
-
-/** 设置页写入口：仅收纳 1-20 整数，非法值拒绝落库（不静默钳制，错误显式回传 UI） */
-export function setMcpMaxRounds(rounds: number): { success: boolean; error?: string } {
-  if (!Number.isInteger(rounds) || rounds < 1 || rounds > MCP_MAX_ROUNDS_UPPER_BOUND) {
-    return { success: false, error: `MCP 轮次上限必须在 1-${MCP_MAX_ROUNDS_UPPER_BOUND} 之间` }
-  }
-  getDatabase()
-    .prepare('UPDATE ai_config SET mcp_max_rounds = ?')
-    .run(rounds)
-  return { success: true }
-}
-
-const mcpRoundLimitPrompt = (maxRounds: number): string =>
-  `工具调用轮次已达上限（${maxRounds}），请基于以上已获得的工具结果直接总结回答，不要再输出工具调用标记。`
-
-/**
+ * 28-06 缺陷④（用户需求）：mcp_max_rounds 子限全链路退役——MCP 连续调用不再受
+ * 「子限 mcp_max_rounds（默认 5）」钳制，MCP 步骤本就入 state.steps，统一受
+ * agent_max_rounds 步数硬顶约束（D-13 诚实收尾路径不变）。DB 列 ai_config.mcp_max_rounds
+ * 保留不清除不迁移（向后兼容红线，只是不再读）；getMcpMaxRounds/setMcpMaxRounds 及
+ * mcpRoundLimitPrompt、设置页 McpRoundsInput、IPC/preload 暴露一并退役。
+ *
  * Phase 28（AGENT-04，D-04）：agent 循环硬顶三参数——步数上限/熔断次数/冷却时长。
  * token 预算为内部硬顶（28-03）不暴露设置页。三参数照 mcp_max_rounds 同款
  * get（fail-safe 回退默认）/set（非法拒绝落库显式回错）模式。
@@ -1668,10 +1635,9 @@ async function runAgentLoopInner(
   startReply: string
 ): Promise<McpLoopResult> {
   let reply = startReply
-  let limitPrompted = false
   let invalidPrompted = false
   // 上限每轮循环入口读取一次（配置热更后新一轮生效；fail-safe 回退默认）
-  const maxRounds = getMcpMaxRounds()
+  // 28-06 缺陷④：mcp_max_rounds 子限退役——MCP 调用与 CMD/KB/EXP 统一受 agent_max_rounds 步数硬顶
   const maxAgentRounds = getAgentMaxRounds()
   const burnoutCount = getAgentBurnoutCount()
   const cooldownSecs = getAgentCooldownSecs()
@@ -1703,18 +1669,8 @@ async function runAgentLoopInner(
       // 非 mcp 畸形标记（未闭合等）：fail-safe 剥离收尾（死标记不漏进气泡）
       return { kind: 'final', reply: stripAllAgentMarkers(reply) }
     }
-    // mcp 专属轮次上限（22-05 既有语义，仅 mcp 动作在场时生效）
-    if (mcpCalls.length > 0 && state.rounds >= maxRounds) {
-      if (limitPrompted) {
-        return { kind: 'final', reply: stripAllAgentMarkers(reply) || MCP_PARSE_FAIL_TEXT }
-      }
-      limitPrompted = true
-      state.extra.push({ role: 'assistant', content: reply })
-      state.extra.push({ role: 'user', content: mcpRoundLimitPrompt(maxRounds) })
-      reply = await callAI(ctx.config, [...ctx.fullMessages, ...state.extra], ctx.signal)
-      continue
-    }
     // ① 步数硬顶 / ④ token 预算硬顶 → D-13 诚实结构化收尾（wrapupPrompted 一次性防死循环）
+    // 28-06 缺陷④：MCP 调用与 CMD/KB/EXP 同受此步数硬顶（子限 mcp_max_rounds 已退役）
     const tokenOver = state.tokenUsed > AGENT_TOKEN_BUDGET
     if (state.rounds >= maxAgentRounds || tokenOver) {
       if (state.wrapupPrompted) {

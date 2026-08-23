@@ -28,7 +28,7 @@ const PARAM_SPECS: ParamSpec[] = [
     min: 1,
     max: 30,
     fallback: 12,
-    hint: 'AI agent 任务最多执行的步骤数（检索/命令/工具各算一步），超限后诚实收尾总结。范围 1-30，默认 12。',
+    hint: 'AI agent 任务最多执行的步骤数（检索/命令/工具各算一步，含 MCP 工具调用），超限后诚实收尾总结。范围 1-30，默认 12。',
   },
   {
     key: 'burnoutCount',

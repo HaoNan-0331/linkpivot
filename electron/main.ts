@@ -10,7 +10,7 @@ import { generateCaptcha, login, isFirstRun, initAdmin } from './services/auth'
 import { setDeviceMasterKey, listDevices, createDevice, updateDevice, deleteDevice, getDeviceById, maskDeviceSecrets, checkDeviceName, listDuplicateGroups, backfillNameHash, ensureNameUniqueIndex } from './services/device'
 import { setTopologyMasterKey, listTopologies, getTopologyById, createTopology, updateTopology, deleteTopology, exportTopology, importTopology } from './services/topology'
 import { setConnectionMasterKey, openTerminal, openWebSafe, writeToSession, writeByWebContentsId, disconnectSession, testDeviceConnection } from './services/connection'
-import { setAiMasterKey, chat, getAiConfigMasked, saveAiConfig, getCommandWhitelist, saveCommandWhitelist, getExecMode, setExecMode, getMcpMaxRounds, setMcpMaxRounds, confirmCommand, getAgentMaxRounds, setAgentMaxRounds, getAgentBurnoutCount, setAgentBurnoutCount, getAgentCooldownSecs, setAgentCooldownSecs, getAiLogs, getChatHistory, saveChatMessage as aiSaveChatMessage, createSession, listSessions, getSessionMessages, deleteSession, updateSessionTitle, reconcileGuardLogs, ChatInterruptedError, registerChatCancel, finishChatCancel, cancelChatForWebContents } from './services/ai'
+import { setAiMasterKey, chat, getAiConfigMasked, saveAiConfig, getCommandWhitelist, saveCommandWhitelist, getExecMode, setExecMode, confirmCommand, getAgentMaxRounds, setAgentMaxRounds, getAgentBurnoutCount, setAgentBurnoutCount, getAgentCooldownSecs, setAgentCooldownSecs, getAiLogs, getChatHistory, saveChatMessage as aiSaveChatMessage, createSession, listSessions, getSessionMessages, deleteSession, updateSessionTitle, reconcileGuardLogs, ChatInterruptedError, registerChatCancel, finishChatCancel, cancelChatForWebContents } from './services/ai'
 import { discoverTopology } from './services/discovery'
 import { getSystemLogs, createSystemLog, setSystemLogMasterKey, backfillSystemLogEnc } from './services/systemLog'
 import { backfillAiExecLogEnc } from './services/aiExecLogger'
@@ -315,9 +315,8 @@ app.whenReady().then(() => {
   ipcMain.handle('ai:saveCommandWhitelist', secure((_e, list) => saveCommandWhitelist(list)))
   ipcMain.handle('ai:getExecMode', secure(() => getExecMode()))
   ipcMain.handle('ai:setExecMode', secure((_e, mode, password) => setExecMode(mode, password)))
-  // 22-05 checkpoint：MCP 连续调用轮次上限系统设置可调（读侧 fail-safe，写侧 1-20 校验）
-  ipcMain.handle('ai:getMcpMaxRounds', secure(() => getMcpMaxRounds()))
-  ipcMain.handle('ai:setMcpMaxRounds', secure((_e, rounds) => setMcpMaxRounds(rounds)))
+  // 28-06 缺陷④：ai:getMcpMaxRounds / ai:setMcpMaxRounds IPC 退役（MCP 调用并入
+  // agent_max_rounds 步数硬顶，ai_config.mcp_max_rounds 列保留不读——向后兼容）
   // Phase 28（AGENT-04，D-04）：agent 循环硬顶三参数系统设置可调
   //（读侧 fail-safe 回退默认 12/2/60，写侧 1-30/1-5/10-600 校验拒绝落库）
   ipcMain.handle('ai:getAgentMaxRounds', secure(() => getAgentMaxRounds()))

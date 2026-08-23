@@ -126,9 +126,7 @@ export interface ElectronAPI {
     saveCommandWhitelist: (list: string[]) => Promise<void>
     getExecMode: () => Promise<'confirm' | 'smart' | 'auto'>
     setExecMode: (mode: string, password: string) => Promise<{ success: boolean; error?: string }>
-    // 22-05 checkpoint：MCP 连续调用轮次上限（合法 1-20，默认 5；非法库值 main 侧 fail-safe 回退 5）
-    getMcpMaxRounds: () => Promise<number>
-    setMcpMaxRounds: (rounds: number) => Promise<{ success: boolean; error?: string }>
+    // 28-06 缺陷④：getMcpMaxRounds/setMcpMaxRounds 退役（MCP 调用并入 agent 步数硬顶）
     // Phase 28（28-05，D-04）：Agent 硬顶三参数（步数 1-30 默认 12 / 熔断 1-5 默认 2 / 冷却 10-600s 默认 60）
     getAgentMaxRounds: () => Promise<number>
     setAgentMaxRounds: (rounds: number) => Promise<{ success: boolean; error?: string }>

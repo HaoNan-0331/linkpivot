@@ -55,9 +55,7 @@ const api = {
     saveCommandWhitelist: (list: string[]) => ipcRenderer.invoke('ai:saveCommandWhitelist', list),
     getExecMode: () => ipcRenderer.invoke('ai:getExecMode'),
     setExecMode: (mode: string, password: string) => ipcRenderer.invoke('ai:setExecMode', mode, password),
-    // 22-05 checkpoint：MCP 轮次上限读写
-    getMcpMaxRounds: () => ipcRenderer.invoke('ai:getMcpMaxRounds'),
-    setMcpMaxRounds: (rounds: number) => ipcRenderer.invoke('ai:setMcpMaxRounds', rounds),
+    // 28-06 缺陷④：getMcpMaxRounds/setMcpMaxRounds 退役（MCP 调用并入 agent 步数硬顶）
     // Phase 28（28-05，D-04）：Agent 硬顶三参数读写（main 侧 set 层硬校验 + renderer InputNumber 钳制双重防线）
     getAgentMaxRounds: () => ipcRenderer.invoke('ai:getAgentMaxRounds'),
     setAgentMaxRounds: (rounds: number) => ipcRenderer.invoke('ai:setAgentMaxRounds', rounds),

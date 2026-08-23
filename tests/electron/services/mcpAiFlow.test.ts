@@ -43,7 +43,9 @@ vi.mock('../../../electron/services/promptService', () => ({
         ? '{{deviceInfo}}{{experienceContext}}'
         : id === 'ai.chat.mcpTools'
           ? '{{tools}}'
-          : ''
+          : id === 'ai.chat.agentHonestWrapup'
+            ? '自主执行已因系统限制停止：{{reason}}（已进行 {{steps}} 步）。'
+            : ''
     ),
   },
 }))
@@ -72,13 +74,14 @@ let db: Database.Database
 // MK 常量：makeDb（模块内先声明）与 Task 3 的 setAiMasterKey 共用（import 提升，TDZ 无虞——调用发生在模块求值后）
 const MK_SEED = 'test-mk-22-03'
 
-function makeDb(execMode: string, mcpMaxRounds?: number | null): Database.Database {
+function makeDb(execMode: string): Database.Database {
   const d = new Database(':memory:')
   d.exec(`
     CREATE TABLE ai_config (
       id TEXT PRIMARY KEY, provider_enc TEXT, api_key_enc TEXT, base_url_enc TEXT, model_name_enc TEXT,
       vision_base_url_enc TEXT, vision_api_key_enc TEXT, vision_model_enc TEXT,
       exec_mode TEXT DEFAULT 'confirm', mcp_max_rounds INTEGER DEFAULT 5,
+      agent_max_rounds INTEGER, agent_burnout_count INTEGER, agent_cooldown_secs INTEGER,
       created_at TEXT DEFAULT (datetime('now','localtime'))
     );
     CREATE TABLE command_whitelist (id TEXT PRIMARY KEY, pattern TEXT NOT NULL UNIQUE);
@@ -114,9 +117,6 @@ function makeDb(execMode: string, mcpMaxRounds?: number | null): Database.Databa
     INSERT INTO ai_config (id, api_key_enc) VALUES ('cfg1', ?);
   `)
   d.prepare('UPDATE ai_config SET exec_mode = ?, api_key_enc = ?').run(execMode, encField('test-key', MK_SEED))
-  if (mcpMaxRounds !== undefined) {
-    d.prepare('UPDATE ai_config SET mcp_max_rounds = ?').run(mcpMaxRounds)
-  }
   return d
 }
 
@@ -197,7 +197,7 @@ describe('classifyBatch（D-04 批次语义）', () => {
 
 import { encField } from '../../../electron/utils/crypto'
 import { MCP_INJECTION_GUARD } from '../../../electron/services/promptRegistry'
-import { chat, confirmCommand, setAiMasterKey, getMcpMaxRounds, setMcpMaxRounds } from '../../../electron/services/ai'
+import { chat, confirmCommand, setAiMasterKey } from '../../../electron/services/ai'
 import { callToolWithTimeout } from '../../../electron/services/mcpClient'
 import { isCommandAllowed } from '../../../electron/services/commandSafety'
 import { createLog, updateLogStatus } from '../../../electron/services/aiExecLogger'
@@ -484,20 +484,15 @@ describe('连续调用有界循环（22-05 用户裁决）', () => {
     expect(third.messages.filter((m: any) => m.role === 'assistant').length).toBeGreaterThanOrEqual(2)
   })
 
-  it('超限：连续 6 轮标记 → 工具仅执行 5 次，第 6 轮不执行，回注上限提示后收尾', async () => {
-    const fetchMock = queueReplies(
-      CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, '超限收尾总结'
+  it('28-06 缺陷④：连续 6 轮标记全部执行（mcp 子限退役，默认 agent_max_rounds=12 内不截断）', async () => {
+    queueReplies(
+      CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, '连续收尾总结'
     )
     const emitted: any[] = []
     const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null, (p) => emitted.push(p))
-    expect(JSON.parse(out).content).toBe('超限收尾总结')
-    expect(callToolWithTimeout).toHaveBeenCalledTimes(5)
-    expect(emitted).toHaveLength(5)
-    // 收尾那次 callAI（第 7 次）请求体含上限提示回注（user-role）
-    const last = JSON.parse((fetchMock.mock.calls[6][1] as any).body)
-    expect(last.messages.some(
-      (m: any) => m.role === 'user' && m.content.includes('工具调用轮次已达上限')
-    )).toBe(true)
+    expect(JSON.parse(out).content).toBe('连续收尾总结')
+    expect(callToolWithTimeout).toHaveBeenCalledTimes(6)
+    expect(emitted).toHaveLength(6)
   })
 
   it('确认流多轮：每轮独立弹窗，确认后带循环状态续跑（拒绝语义不变由既有测试锁死）', async () => {
@@ -743,89 +738,42 @@ describe('sanitizeUntrusted（T-22-08/T-22-10）', () => {
   })
 })
 
-// ---------- 22-05 checkpoint 追加：MCP 轮次上限系统设置可调 ----------
+// ---------- 28-06 缺陷④：mcp_max_rounds 子限退役——MCP 调用并入 agent_max_rounds 步数硬顶 ----------
 
-describe('getMcpMaxRounds / setMcpMaxRounds（读写 + fail-safe 校验）', () => {
-  it('合法值 1/5/20 读取生效；setMcpMaxRounds 落库', () => {
-    for (const v of [1, 5, 20]) {
-      db = makeDb('smart', v)
-      expect(getMcpMaxRounds()).toBe(v)
-    }
-    db = makeDb('smart')
-    expect(setMcpMaxRounds(12).success).toBe(true)
-    expect(getMcpMaxRounds()).toBe(12)
-  })
-
-  it('非法值（0/负数/21/NULL/非整数）读取一律回退 5（fail-safe）', () => {
-    for (const bad of [0, -3, 21, null]) {
-      db = makeDb('smart', bad)
-      expect(getMcpMaxRounds()).toBe(5)
-    }
-  })
-
-  it('setMcpMaxRounds 拒绝 1-20 之外与非整数值（不落库）', () => {
-    db = makeDb('smart', 7)
-    for (const bad of [0, -1, 21, 1.5, NaN]) {
-      expect(setMcpMaxRounds(bad).success).toBe(false)
-    }
-    expect(getMcpMaxRounds()).toBe(7)
-  })
-})
-
-describe('轮次上限配置驱动主循环（22-05 checkpoint 需求）', () => {
-  // 注意：db 必须在 seed 之前建好（轮次值随 makeDb 注入），故各用例内先 makeDb 再 seed
+describe('MCP 步数并入 agent_max_rounds 硬顶（28-06 缺陷④）', () => {
   beforeEach(() => {
     vi.mocked(callToolWithTimeout).mockResolvedValue({ ok: 1 } as any)
   })
 
-  it('上限=1：等价旧单轮行为——仅执行 1 次后回注上限提示收尾', async () => {
-    db = makeDb('smart', 1)
-    seedDevice('dev1')
-    seedMcp('dev1', { skipConfirm: 1 })
-    const fetchMock = queueReplies(CALL_MARKER, CALL_MARKER, '单轮收尾')
-    const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
-    expect(JSON.parse(out).content).toBe('单轮收尾')
-    expect(callToolWithTimeout).toHaveBeenCalledTimes(1)
-    const last = JSON.parse((fetchMock.mock.calls[2][1] as any).body)
-    expect(last.messages.some(
-      (m: any) => m.role === 'user' && m.content.includes('工具调用轮次已达上限')
-    )).toBe(true)
-  })
-
-  it('上限=20：6 轮标记全部执行（不超过 5 的旧硬编码不再截断）', async () => {
-    db = makeDb('smart', 20)
-    seedDevice('dev1')
-    seedMcp('dev1', { skipConfirm: 1 })
-    queueReplies(
-      CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, '六轮收尾'
-    )
-    const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
-    expect(JSON.parse(out).content).toBe('六轮收尾')
-    expect(callToolWithTimeout).toHaveBeenCalledTimes(6)
-  })
-
-  it('配置非法（21）→ fail-safe 回退 5：第 6 轮不执行', async () => {
-    db = makeDb('smart', 21)
-    seedDevice('dev1')
-    seedMcp('dev1', { skipConfirm: 1 })
-    queueReplies(
-      CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, '回退收尾'
-    )
-    const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
-    expect(JSON.parse(out).content).toBe('回退收尾')
-    expect(callToolWithTimeout).toHaveBeenCalledTimes(5)
-  })
-
-  it('默认（未配置，DEFAULT 5）：行为与旧硬编码一致', async () => {
+  it('agent_max_rounds=2：连续 MCP 标记第 3 轮不执行，回注步数上限诚实收尾 prompt', async () => {
     db = makeDb('smart')
     seedDevice('dev1')
     seedMcp('dev1', { skipConfirm: 1 })
-    queueReplies(
-      CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, '默认收尾'
+    db.prepare('UPDATE ai_config SET agent_max_rounds = 2').run()
+    const fetchMock = queueReplies(
+      CALL_MARKER, CALL_MARKER, CALL_MARKER, '步数硬顶收尾'
     )
     const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
-    expect(JSON.parse(out).content).toBe('默认收尾')
-    expect(callToolWithTimeout).toHaveBeenCalledTimes(5)
+    expect(JSON.parse(out).content).toBe('步数硬顶收尾')
+    // 仅前 2 轮工具执行（第 3 轮命中步数硬顶，不再调用工具）
+    expect(callToolWithTimeout).toHaveBeenCalledTimes(2)
+    // 收尾 callAI 回注诚实收尾模板（步数上限原因，D-13）
+    const wrapMsgs = JSON.parse((fetchMock.mock.calls[3][1] as any).body).messages
+      .filter((m: any) => m.role === 'user')
+    expect(wrapMsgs.some((m: any) => m.content.includes('步数上限'))).toBe(true)
+    // 旧 mcp 子限提示（工具调用轮次已达上限）已随子限退役
+    expect(wrapMsgs.some((m: any) => m.content.includes('工具调用轮次已达上限'))).toBe(false)
+  })
+
+  it('子限退役：db 残留 mcp_max_rounds=1 不再截断（列保留不读，向后兼容）', async () => {
+    db = makeDb('smart')
+    seedDevice('dev1')
+    seedMcp('dev1', { skipConfirm: 1 })
+    db.prepare('UPDATE ai_config SET mcp_max_rounds = 1').run()
+    queueReplies(CALL_MARKER, CALL_MARKER, '兼容收尾')
+    const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
+    expect(JSON.parse(out).content).toBe('兼容收尾')
+    expect(callToolWithTimeout).toHaveBeenCalledTimes(2)
   })
 })
 

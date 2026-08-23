@@ -4,7 +4,7 @@ import { LogoutOutlined, PlayCircleOutlined, DatabaseOutlined } from '@ant-desig
 import { useAuthStore } from '../../stores/authStore'
 import CommandWhitelistEditor from '../settings/CommandWhitelistEditor'
 import ExecModeSwitch from '../settings/ExecModeSwitch'
-import McpRoundsInput from '../settings/McpRoundsInput'
+// 28-06 缺陷④：McpRoundsInput 已退役删除（MCP 连续调用并入 Agent 步数硬顶）
 import AgentLimitsCard from '../settings/AgentLimitsCard'
 import PromptTab from '../settings/PromptTab'
 import McpTab from '../settings/McpTab'
@@ -188,8 +188,8 @@ export default function SettingsPage() {
       </Card>
       <div style={{ marginBottom: 16 }}><CommandWhitelistEditor /></div>
       <div style={{ marginBottom: 16 }}><ExecModeSwitch /></div>
-      <div style={{ marginBottom: 16 }}><McpRoundsInput /></div>
-      {/* Phase 28（28-05，D-04）：Agent 硬顶三参数（与 mcp_max_rounds 同区同款） */}
+      {/* 28-06 缺陷④：McpRoundsInput 卸载退役（MCP 连续调用并入 Agent 步数硬顶） */}
+      {/* Phase 28（28-05，D-04）：Agent 硬顶三参数（含 MCP 工具调用步数） */}
       <div style={{ marginBottom: 16 }}><AgentLimitsCard /></div>
       <Divider />
       <Space>
