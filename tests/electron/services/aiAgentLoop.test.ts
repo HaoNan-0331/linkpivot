@@ -80,7 +80,9 @@ vi.mock('../../../electron/services/promptService', () => ({
           ? '资源地图：可用 [CMD]/[KB_SEARCH]/[EXP_SEARCH] 标记。'
           : id === 'ai.chat.agentHonestWrapup'
             ? '自主执行已因系统限制停止：{{reason}}（已进行 {{steps}} 步）。\n【执行进度】进行到第 {{steps}} 步，因 {{reason}} 停止。请按模板输出收尾报告。'
-            : ''
+            : id === 'ai.chat.agentConflictGuide'
+              ? '三源冲突标注（D-10）：经验库/资料库/设备实时输出不一致时，正文内联「⚠ X 与 Y 不一致」并在末尾输出冲突清单，禁止静默取舍。'
+              : ''
     ),
   },
 }))
@@ -120,7 +122,8 @@ function makeDb(execMode: string): Database.Database {
     CREATE TABLE command_whitelist (id TEXT PRIMARY KEY, pattern TEXT NOT NULL UNIQUE);
     CREATE TABLE chat_history (
       id TEXT PRIMARY KEY, role TEXT NOT NULL, content_enc TEXT NOT NULL,
-      device_id TEXT, session_id TEXT, created_at TEXT DEFAULT (datetime('now','localtime'))
+      device_id TEXT, session_id TEXT, meta_enc TEXT,
+      created_at TEXT DEFAULT (datetime('now','localtime'))
     );
     CREATE TABLE chat_sessions (id TEXT PRIMARY KEY, title TEXT NOT NULL, device_id TEXT, created_at TEXT DEFAULT (datetime('now','localtime')));
     CREATE TABLE ai_exec_logs (
@@ -145,10 +148,11 @@ vi.mock('../../../electron/database/connection', () => ({
   getDatabase: () => db,
 }))
 
-import { encField } from '../../../electron/utils/crypto'
+import { encField, decField } from '../../../electron/utils/crypto'
 import {
   chat, confirmCommand, setAiMasterKey,
   normalizeAgentKey, callAIWithUsage,
+  getChatHistory, buildAgentMeta,
 } from '../../../electron/services/ai'
 import { isCommandAllowed } from '../../../electron/services/commandSafety'
 import { search as kbSearch } from '../../../electron/services/knowledgeBaseService'
@@ -272,7 +276,15 @@ describe('Task 2: 四标记统一循环（混合动作 + KB/EXP 循环内直执�
       '混合轮总结'
     )
     const out = await chat([{ role: 'user', content: '查状态和资料' }], ['dev1'], null)
-    expect(out).toBe('混合轮总结')
+    // 28-04：有执行轨迹的最终回答包装 agent_answer payload（content + 代码层 sources/steps/tier）
+    const payload = JSON.parse(out)
+    expect(payload.type).toBe('agent_answer')
+    expect(payload.content).toBe('混合轮总结')
+    expect(payload.noRealtimeData).toBe(false)
+    expect(payload.tier).toBe('knowledge')
+    expect(payload.sources.some((s: any) => s.kind === 'device')).toBe(true)
+    expect(payload.sources.some((s: any) => s.kind === 'kb')).toBe(true)
+    expect(payload.steps.some((s: any) => s.actionType === 'cmd' && s.status === 'done')).toBe(true)
     expect(vi.mocked(kbSearch)).toHaveBeenCalledWith('vlan 原理', ['dev1'], 5)
     // 命令两轮各执行一次（inline 轮 + loop 轮），无重试（成功路径）
     expect(FakeClient.count).toBe(2)
@@ -311,7 +323,7 @@ describe('Task 2: 硬顶①步数 + 硬顶④token 预算 → D-13 诚实收尾'
       '【执行进度】收尾报告'
     )
     const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
-    expect(out).toBe('【执行进度】收尾报告')
+    expect(JSON.parse(out).content).toBe('【执行进度】收尾报告')
     // 第 2 轮命令未执行（仅 inline 轮 1 次）
     expect(FakeClient.count).toBe(1)
     // 第 3 次 callAI 回注诚实收尾模板（含步数上限原因 + 当前步数）
@@ -329,7 +341,7 @@ describe('Task 2: 硬顶①步数 + 硬顶④token 预算 → D-13 诚实收尾'
       'token 收尾'
     )
     const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
-    expect(out).toBe('token 收尾')
+    expect(JSON.parse(out).content).toBe('token 收尾')
     expect(FakeClient.count).toBe(1)
     const wrapMsg = reqMsgs(fetchMock, 2).filter((m: any) => m.role === 'user').pop()
     expect(wrapMsg.content).toContain('token 预算')
@@ -362,7 +374,7 @@ describe('Task 2: 硬顶②熔断 + 硬顶③冷却 + 重试降级（Pitfall 10 
       '熔断收尾'
     )
     const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
-    expect(out).toBe('熔断收尾')
+    expect(JSON.parse(out).content).toBe('熔断收尾')
     // inline 1 + r2（重试预算内 3 次全失败，fc=1）+ r3 冷却跳过（fc=2）+ r4 熔断 0 次 = 4
     expect(FakeClient.count).toBe(4)
     const r4Msg = reqMsgs(fetchMock, 4).filter((m: any) => m.role === 'user').pop()
@@ -447,7 +459,7 @@ describe('Task 2: CMD confirm 续跑不断头（Pitfall 2 主路径修复）', (
     const out1 = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
     expect(JSON.parse(out1).type).toBe('confirm_required')
     const final = await confirmCommand(JSON.parse(out1).execId, true)
-    expect(final).toBe('续跑收尾')
+    expect(JSON.parse(final).content).toBe('续跑收尾')
     // 确认后命令执行 + KB 检索在续跑循环内发生
     expect(FakeClient.count).toBe(1)
     expect(vi.mocked(kbSearch)).toHaveBeenCalledWith('vlan 原理', ['dev1'], 5)
@@ -470,7 +482,105 @@ describe('Task 2: CMD confirm 续跑不断头（Pitfall 2 主路径修复）', (
     // 第 1 条已执行，第 2 条挂起未执行
     expect(FakeClient.count).toBe(1)
     const final = await confirmCommand(payload2.execId, true)
-    expect(final).toBe('二轮确认后收尾')
+    expect(JSON.parse(final).content).toBe('二轮确认后收尾')
     expect(FakeClient.count).toBe(2)
+  })
+})
+
+// ---------- Phase 28 Plan 28-04：chat() 分档预取接线 + 后置证据校验 + agent_answer + meta_enc ----------
+
+describe('28-04 Task 1: 分档强制预取 + 后置证据校验 + agent_answer payload', () => {
+  it('buildAgentMeta 零轨迹：noRealtimeData===true（代码层判定，D-11）', () => {
+    const state = { steps: [], sources: [] } as any
+    const meta = buildAgentMeta(state, 'knowledge')
+    expect(meta.noRealtimeData).toBe(true)
+    expect(meta.tier).toBe('knowledge')
+    expect(meta.sources).toEqual([])
+  })
+
+  it('buildAgentMeta 有 CMD 步骤/来源：noRealtimeData===false', () => {
+    const state = {
+      steps: [{ stepIndex: 0, actionType: 'cmd', status: 'done' }],
+      sources: [{ kind: 'device', title: 'dev1' }],
+    } as any
+    expect(buildAgentMeta(state, 'troubleshoot').noRealtimeData).toBe(false)
+  })
+
+  it('troubleshoot 档缺 exp → 收尾自动补查一次并回注（AGENT-03 证据闭环）', async () => {
+    // 预取 exp 零命中（第一次调用），收尾补查命中（第二次调用）
+    retrieveForAnswerMock
+      .mockResolvedValueOnce({ injected: [] })
+      .mockResolvedValue(EXP_HIT)
+    const fetchMock = queueReplies('初步分析', '补查后总结')
+    const out = await chat([{ role: 'user', content: '网络故障排查' }], undefined, null)
+    // 预取（callAI 前）+ 补查各一次检索
+    expect(retrieveForAnswerMock).toHaveBeenCalledTimes(2)
+    // 补查命中 → 追加一次 callAI 回注补查结果
+    expect(fetchMock.mock.calls.length).toBe(2)
+    const second = reqMsgs(fetchMock, 1)
+    expect(second.some((m: any) => m.role === 'user' && m.content.includes('经验库中检索到的相关经验'))).toBe(true)
+    const payload = JSON.parse(out)
+    expect(payload.type).toBe('agent_answer')
+    expect(payload.content).toBe('补查后总结')
+    expect(payload.tier).toBe('troubleshoot')
+    expect(payload.sources.some((s: any) => s.kind === 'exp')).toBe(true)
+    expect(payload.noRealtimeData).toBe(false)
+  })
+
+  it('补查零命中：不加 LLM 轮，知情落 meta（backfillNotes），回复正文不变', async () => {
+    retrieveForAnswerMock.mockResolvedValue({ injected: [] })
+    const fetchMock = queueReplies('直接回答')
+    const out = await chat([{ role: 'user', content: '网络故障排查' }], undefined, null)
+    expect(fetchMock.mock.calls.length).toBe(1)
+    const payload = JSON.parse(out)
+    expect(payload.type).toBe('agent_answer')
+    expect(payload.content).toBe('直接回答')
+    expect(payload.noRealtimeData).toBe(true)
+    expect(payload.backfillNotes.some((n: string) => n.includes('无相关内容'))).toBe(true)
+  })
+
+  it('systemPrompt 追加三源冲突指令（D-10：内联 ⚠ + 末尾冲突清单，禁止静默取舍）', async () => {
+    const fetchMock = queueReplies('好的')
+    await chat([{ role: 'user', content: '你好' }], undefined, null)
+    const sys = reqMsgs(fetchMock, 0)[0]
+    expect(sys.role).toBe('system')
+    expect(sys.content).toContain('禁止静默取舍')
+  })
+
+  it('meta_enc 持久化：最终回答落 chat_history.meta_enc（sources/steps/tier/noRealtimeData）', async () => {
+    allowCmd()
+    queueReplies('[CMD:dev1]display version[/CMD]', '执行完成总结')
+    await chat([{ role: 'user', content: '查状态和资料' }], ['dev1'], 'sess-28-04')
+    const row = db.prepare(
+      "SELECT meta_enc FROM chat_history WHERE role='assistant' AND session_id=? ORDER BY created_at DESC LIMIT 1"
+    ).get('sess-28-04') as any
+    expect(row.meta_enc).toBeTruthy()
+    const meta = JSON.parse(decField(row.meta_enc, MK) as string)
+    expect(meta.tier).toBe('knowledge')
+    expect(meta.noRealtimeData).toBe(false)
+    expect(meta.sources.some((s: any) => s.kind === 'device')).toBe(true)
+    expect(meta.steps.some((s: any) => s.actionType === 'cmd')).toBe(true)
+  })
+
+  it('无 meta_enc 历史行读取不 throw（降级 meta undefined）', () => {
+    const legacy = new Database(':memory:')
+    legacy.exec(`
+      CREATE TABLE chat_history (
+        id TEXT PRIMARY KEY, role TEXT NOT NULL, content_enc TEXT NOT NULL,
+        device_id TEXT, session_id TEXT, created_at TEXT DEFAULT (datetime('now','localtime'))
+      );
+      CREATE TABLE ai_config (id TEXT PRIMARY KEY, provider_enc TEXT, api_key_enc TEXT, base_url_enc TEXT, model_name_enc TEXT,
+        vision_base_url_enc TEXT, vision_api_key_enc TEXT, vision_model_enc TEXT,
+        exec_mode TEXT DEFAULT 'confirm', mcp_max_rounds INTEGER DEFAULT 5,
+        agent_max_rounds INTEGER, agent_burnout_count INTEGER, agent_cooldown_secs INTEGER,
+        created_at TEXT DEFAULT (datetime('now','localtime')));
+    `)
+    legacy.prepare('INSERT INTO chat_history (id, role, content_enc) VALUES (?, ?, ?)')
+      .run('h1', 'user', encField('历史消息', MK))
+    db = legacy
+    const rows = getChatHistory()
+    expect(rows.length).toBeGreaterThan(0)
+    expect(rows[0].content).toBe('历史消息')
+    expect(rows[0].meta).toBeUndefined()
   })
 })
