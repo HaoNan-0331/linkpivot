@@ -221,3 +221,36 @@ describe('verifySourcesEvidence（后置证据校验 fail-closed）', () => {
     expect(r.missing).toEqual(['device'])
   })
 })
+
+describe('28-06 增强a：预取零命中换词引导', () => {
+  it('双源零命中 → promptSection 含 EXP/KB 换词引导段与原话关键词', async () => {
+    vi.mocked(retrieveForAnswer).mockResolvedValue({ injected: [], reranked: [], finalAnswer: '' } as any)
+    vi.mocked(kbSearch).mockResolvedValue({ rows: [], degraded: false, indexTotal: 0, indexCapped: null } as any)
+
+    const r = await retrieveForTier({ tier: 'troubleshoot', userMessage: '核心交换机 ping 不通怎么排查' })
+    expect(r.promptSection).toContain('经验库预取（关键词：「核心交换机 ping 不通怎么排查」）未命中相关经验')
+    expect(r.promptSection).toContain('[EXP_SEARCH]更具体的关键词[/EXP_SEARCH]')
+    expect(r.promptSection).toContain('知识库预取（关键词：「核心交换机 ping 不通怎么排查」）未命中相关文档')
+    expect(r.promptSection).toContain('[KB_SEARCH]更具体的关键词[/KB_SEARCH]')
+  })
+
+  it('超长原话截断为 40 字符 + 省略号', async () => {
+    vi.mocked(retrieveForAnswer).mockResolvedValue({ injected: [], reranked: [], finalAnswer: '' } as any)
+    vi.mocked(kbSearch).mockResolvedValue({ rows: [], degraded: false, indexTotal: 0, indexCapped: null } as any)
+
+    const long = 'a'.repeat(80)
+    const r = await retrieveForTier({ tier: 'troubleshoot', userMessage: long })
+    expect(r.promptSection).toContain(`「${'a'.repeat(40)}…」`)
+    expect(r.promptSection).not.toContain(`「${long}」`)
+  })
+
+  it('命中场景不注入引导段（防污染正常上下文）', async () => {
+    vi.mocked(retrieveForAnswer).mockResolvedValue({ injected: [EXP_HIT], reranked: [], finalAnswer: '' } as any)
+    vi.mocked(kbSearch).mockResolvedValue({ rows: [KB_ROW as any], degraded: false, indexTotal: 1, indexCapped: null } as any)
+
+    const r = await retrieveForTier({ tier: 'troubleshoot', userMessage: '端口 down 处置' })
+    expect(r.promptSection).toContain('端口 down 处置')
+    expect(r.promptSection).not.toContain('未命中相关经验')
+    expect(r.promptSection).not.toContain('未命中相关文档')
+  })
+})

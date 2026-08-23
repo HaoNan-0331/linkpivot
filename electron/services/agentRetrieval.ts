@@ -227,6 +227,22 @@ export async function retrieveForTier(input: TierRetrieveInput): Promise<TierRet
   if (kbHits.length > 0) {
     sections.push('相关知识库文档：\n' + kbHits.map((k) => `- ${k.title}：${k.content}`).join('\n'))
   }
+  // 28-06 增强a：预取零命中显式告知 + 换词主动检索引导——预取/后置补查都用用户原话做检索词，
+  // 词不匹配时两层代码检索全白搭；唯一换词路径是 AI 主动打标记（模型行为），此处把「可以换词」
+  // 从资源地图的隐性能力变成针对本次零命中的明确指令，杜绝 AI 拿零命中当「库为空」直接收尾。
+  const qBrief = input.userMessage.length > 40 ? `${input.userMessage.slice(0, 40)}…` : input.userMessage
+  if (expHits.length === 0 && plan.includes('exp')) {
+    sections.push(
+      `经验库预取（关键词：「${qBrief}」）未命中相关经验。若你认为可能存在相关运维经验，` +
+        '请在回复中单独输出一行标记 [EXP_SEARCH]更具体的关键词[/EXP_SEARCH] 主动检索；检索前不要断言经验库为空。'
+    )
+  }
+  if (kbHits.length === 0 && plan.includes('kb')) {
+    sections.push(
+      `知识库预取（关键词：「${qBrief}」）未命中相关文档。若你认为可能存在相关文档，` +
+        '请用 [KB_SEARCH]更具体的关键词[/KB_SEARCH] 主动检索。'
+    )
+  }
   if (plan.includes('device')) sections.push(DEVICE_HINT_TEXT)
 
   return { demoMode: false, plan, injected, promptSection: sections.join('\n\n') }
