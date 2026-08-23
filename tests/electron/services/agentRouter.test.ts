@@ -86,6 +86,32 @@ describe('中文运维语料关键词覆盖（RESEARCH 矩阵草案）', () => {
   })
 })
 
+describe('28-06 缺陷③：查询动词 × 设备状态目标 复合规则', () => {
+  it('「查询这个设备的版本信息」→ inspection（真机缺陷复现句）', () => {
+    expect(classifyTier('查询这个设备的版本信息')).toBe('inspection')
+  })
+
+  it('接口/状态/内存等状态目标 × 查询动词 → inspection', () => {
+    for (const m of ['查看一下接口情况', '查一下设备状态', '看下内存使用', 'show version 结果帮我看看', '获取接口列表']) {
+      expect(classifyTier(m), m).toBe('inspection')
+    }
+  })
+
+  it('配置类目标仍走 configQuery（查询配置 ≠ 状态查询）', () => {
+    for (const m of ['查询这个设备的配置', '查看 vlan 配置', '看下路由表']) {
+      expect(classifyTier(m), m).toBe('configQuery')
+    }
+  })
+
+  it('故障词优先级不因复合规则改变：接口 down 了查看状态 → troubleshoot', () => {
+    expect(classifyTier('接口 down 了查看状态')).toBe('troubleshoot')
+  })
+
+  it('纯状态名词无查询动词不误升档：设备版本是什么意思 → knowledge', () => {
+    expect(classifyTier('设备版本是什么意思')).toBe('knowledge')
+  })
+})
+
 describe('TIER_LABELS 中文名映射（UI-SPEC 文案）', () => {
   it('四档齐全', () => {
     expect(TIER_LABELS.troubleshoot).toBe('故障排查')

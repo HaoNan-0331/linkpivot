@@ -35,6 +35,18 @@ const INSPECTION_KEYWORDS = new Set([
 ])
 
 /**
+ * 28-06 真机验收缺陷 ③：查询动词 × 设备状态目标 复合规则——「查询/查看这个设备的
+ * 版本/接口信息」类中文运维语料（单设备状态查询）此前零命中落 knowledge 默认档。
+ * 命中 → inspection（巡检执行：注入设备上下文提示 AI 可 [CMD] 查实时状态，28-02
+ * 四档语义）；配置类目标（配置/vlan/路由）不在此列——由 CONFIG_QUERY_KEYWORDS
+ * 平面命中保持 configQuery（「查询配置」语义即配置查询）。
+ */
+const INSPECTION_QUERY_VERBS = new Set(['查询', '查看', '查一下', '看一下', '看下', '获取', 'show'])
+const INSPECTION_QUERY_TARGETS = new Set([
+  '版本', 'version', '接口', 'interface', '状态', '内存', 'cpu', '温度', '电源', '风扇', 'mac地址', 'arp',
+])
+
+/**
  * 四档分类：输入 toLowerCase().trim() 归一后按优先级匹配（troubleshoot > inspection > configQuery），
  * 零命中返回 'knowledge'（fail-closed 最保守默认档）。
  */
@@ -44,6 +56,12 @@ export function classifyTier(userMessage: string): AgentTier {
 
   for (const kw of TROUBLESHOOT_KEYWORDS) if (normalized.includes(kw)) return 'troubleshoot'
   for (const kw of INSPECTION_KEYWORDS) if (normalized.includes(kw)) return 'inspection'
+  // 28-06 缺陷 ③：查询动词 + 设备状态目标 复合命中 → inspection（先于 configQuery——
+  // 「查看接口状态」是设备实时状态查询而非配置语义）
+  const hasQueryVerb = [...INSPECTION_QUERY_VERBS].some((v) => normalized.includes(v))
+  if (hasQueryVerb && [...INSPECTION_QUERY_TARGETS].some((t) => normalized.includes(t))) {
+    return 'inspection'
+  }
   for (const kw of CONFIG_QUERY_KEYWORDS) if (normalized.includes(kw)) return 'configQuery'
   return 'knowledge'
 }
