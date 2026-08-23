@@ -234,6 +234,7 @@ function stepToToolResultMessage(s: unknown): ToolResultMessage | undefined {
     actionType,
     stepStatus: stepStatus as AgentStepStatus,
     ...(o.prefetched === true ? { prefetched: true } : {}),
+    ...(o.backfilled === true ? { backfilled: true } : {}),
   }
   return isValidToolResultPayload(payload) ? payload : undefined
 }

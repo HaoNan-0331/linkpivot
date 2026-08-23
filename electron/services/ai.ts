@@ -1025,6 +1025,11 @@ export interface AgentStep {
    * （回注轮数），预取步天然不占 agent_max_rounds 步数 N；renderer 据此加「[预取]」前缀。
    */
   prefetched?: boolean
+  /**
+   * 28-06 R8：后置证据补查步骤标志——runEvidenceBackfill 收尾按 TIER_RETRIEVAL_PLAN
+   * 补查缺席源（真实检索），同样不占步数硬顶；renderer 据此加「[补查]」前缀。
+   */
+  backfilled?: boolean
 }
 
 /** 来源轨迹（D-09：由代码层按执行轨迹生成，prompt 文本不参与来源判定） */
@@ -1321,30 +1326,36 @@ function agentStepToToolResultPayload(s: AgentStep): ToolResultPayload {
     actionType: s.actionType,
     stepStatus: s.status,
     ...(s.prefetched ? { prefetched: true } : {}),
+    ...(s.backfilled ? { backfilled: true } : {}),
   }
 }
 
 /**
- * 28-06 R6 增强 a：预取步骤卡入栈——分档预取每源一张，状态直接 done（预取在首轮
- * callAI 之前已完成，无 running 过程态）；只 emit 一次终态卡。prefetched 标志标记，
- * 硬顶按 state.rounds 计数——预取步永不消耗 agent_max_rounds 步数 N。
+ * 28-06 R6 增强 a / R8：带标注检索步骤卡入栈——预取（prefetched）/补查（backfilled）
+ * /无标注（AI 主动，循环外二段式）三类共用。状态直接 done（检索在步骤卡入栈前已完成，
+ * 无 running 过程态；检索失败可传 failed）；只 emit 一次终态卡。标注标志只影响 renderer
+ * 前缀，硬顶按 state.rounds 计数——带标注步永不消耗 agent_max_rounds 步数 N。
  */
-function pushPrefetchedStep(
+function pushTaggedRetrievalStep(
   state: AgentLoopState,
   actionType: 'kb' | 'exp',
   query: string,
-  outputSummary: string
-): void {
+  outputSummary: string,
+  tag?: 'prefetched' | 'backfilled',
+  status: AgentStep['status'] = 'done'
+): AgentStep {
   const step: AgentStep = {
     stepIndex: state.steps.length,
     actionType,
-    status: 'done',
+    status,
     query: sanitizeUntrusted(query, 200),
-    outputSummary,
-    prefetched: true,
+    outputSummary: sanitizeUntrusted(outputSummary, 200),
+    ...(tag === 'prefetched' ? { prefetched: true } : {}),
+    ...(tag === 'backfilled' ? { backfilled: true } : {}),
   }
   state.steps.push(step)
   state.emitStep?.(step)
+  return step
 }
 
 /**
@@ -2478,6 +2489,12 @@ async function runEvidenceBackfill(
       try {
         const retrieval = await retrieveForAnswer({ userMessage: query, deviceIds: ctx.deviceIds })
         const injected = retrieval?.injected ?? []
+        // 28-06 R8：补查是真实检索——每源生成步骤卡（[补查] 前缀，不占步数硬顶、随
+        // state.steps 入 meta_enc 持久化），命中/未命中如实；此前命中入 sources、底部有
+        // 文字但过程卡不可见（第三处可见性缺口，与 R6 预取盲区同型）。
+        pushTaggedRetrievalStep(state, 'exp', query,
+          injected.length > 0 ? `命中 ${injected.length} 条：${injected.map((e: any) => e.title).join('；')}` : '经验库未命中（补查）',
+          'backfilled')
         if (injected.length > 0) {
           hasNewEvidence = true
           sections.push(`以下是系统补查经验库命中的相关经验（关键词: "${query}"）：\n\n${buildExpContextText(injected, !!(ctx.deviceIds && ctx.deviceIds.length > 0))}`)
@@ -2489,11 +2506,16 @@ async function runEvidenceBackfill(
           sections.push(`【系统补查·经验库】经验库无相关内容（系统已自动补查"${query}"，未命中）。`)
         }
       } catch {
+        pushTaggedRetrievalStep(state, 'exp', query, '经验库补查失败', 'backfilled', 'failed')
         sections.push('【系统补查·经验库】经验库补查失败。')
       }
     } else if (kind === 'kb') {
       try {
         const rows = (await kbSearch(query, ctx.deviceIds, 5)).rows ?? []
+        // 28-06 R8：kb 补查同样生成步骤卡（与 exp 补查同构）
+        pushTaggedRetrievalStep(state, 'kb', query,
+          rows.length > 0 ? `命中 ${rows.length} 条：${rows.map((r: any) => `${r.document?.title ?? '文档'} / ${r.title || '无标题'}`).join('；')}` : '知识库未命中（补查）',
+          'backfilled')
         if (rows.length > 0) {
           hasNewEvidence = true
           const { contextText, references } = buildKbRoundContext(rows)
@@ -2504,6 +2526,7 @@ async function runEvidenceBackfill(
           sections.push(`【系统补查·知识库】知识库无相关内容（系统已自动补查"${query}"，未命中）。`)
         }
       } catch {
+        pushTaggedRetrievalStep(state, 'kb', query, '知识库补查失败', 'backfilled', 'failed')
         sections.push('【系统补查·知识库】知识库补查失败。')
       }
     } else if (kind === 'device') {
@@ -2759,16 +2782,63 @@ export async function chat(
   // 模型不再丢失已注入的文档/经验上下文。
   const extraContext: Array<{ role: string; content: string }> = []
 
+  // ---- 28-06 R8：agentState 提前创建（二段式 KB/EXP 分支之前）----
+  // 此前 state 在二段式之后才创建，导致循环外二段式检索（AI 主动 [KB_SEARCH]/[EXP_SEARCH]
+  // 的真实检索路径）既无步骤卡、也不入 sources 轨迹（收尾补查会重复检索同一源）。
+  // 提前后：二段式检索同样生成步骤卡（无前缀=AI 主动）+ sources 记录（审计表路径⑤）。
+  const agentState = createAgentLoopState()
+  // 28-05（D-08 步骤级推送）：注入 emitStep——步骤轨迹经 ctx.emitToolResult 以 tool_result
+  // 扩展载荷（stepIndex/actionType/stepStatus）推送 renderer 步骤卡。agentState 随
+  // pendingBatches 按引用携带，confirm 续跑推送不断链。emitToolResult 缺席（无窗口）零推送。
+  agentState.emitStep = emitToolResult ? (s) => emitToolResult(agentStepToToolResultPayload(s)) : undefined
+  // 28-04：分档预取命中即入 sources 轨迹（代码层溯源，D-09——预取是真实检索而非模型自述）
+  for (const inj of tierInjected) {
+    agentState.sources.push({ kind: inj.kind, title: inj.title, refId: inj.sourceId ?? undefined })
+  }
+  // 28-06 R6 增强 a：分档预取生成步骤卡（过程可见）——按预取实际发生顺序（exp 先于 kb，
+  // 与 retrieveForTier 执行序一致）每源一张，状态直接 done；硬顶按 state.rounds 计数，
+  // 预取步不占步数 N。目录清单注入（R4）同样给卡（query 标「目录清单」）。
+  if (!tierRetrieval.demoMode) {
+    for (const kind of ['exp', 'kb'] as const) {
+      if (!tierRetrieval.plan.includes(kind)) continue
+      const hits = tierInjected.filter((x) => x.kind === kind)
+      const isCatalog = hits.some((x) => x.title.includes('目录清单'))
+      const libName = kind === 'exp' ? '经验库' : '知识库'
+      const summary = isCatalog
+        ? `${libName}目录清单已注入`
+        : hits.length > 0
+          ? `命中 ${hits.length} 条：${hits.map((h) => h.title).join('；')}`
+          : '未命中'
+      pushTaggedRetrievalStep(agentState, kind, isCatalog ? `${libName}目录清单` : userMessage, summary, 'prefetched')
+    }
+  }
+
   if (!firstReplyEntersLoop && kbSearchMatch) {
     const searchQuery = kbSearchMatch[1].trim()
+    // 28-06 R8：二段式 KB 检索是真实检索路径——入 ai_exec_logs 审计（与循环内 runKbSearchStep
+    // 同构 kb:query，只读无确认门）+ 步骤卡 + sources 轨迹（收尾补查不再重复检索已查源）。
+    try {
+      createLog({
+        deviceId: '', deviceName: '', command: `kb:query ${sanitizeUntrusted(searchQuery, 200)}`,
+        status: 'executed', mode: execMode,
+        aiReason: sanitizeUntrusted(searchQuery, 500), promptText: '', aiResponse: '',
+      })
+    } catch { /* 审计失败不阻断检索（aiExecLogger 异常降级） */ }
     try {
       const searchResults = (await kbSearch(searchQuery, deviceIds, 5)).rows
+      // 28-06 R8：检索步骤卡（无前缀=AI 主动打标检索），命中/未命中如实
+      pushTaggedRetrievalStep(agentState, 'kb', searchQuery,
+        searchResults && searchResults.length > 0
+          ? `命中 ${searchResults.length} 条：${searchResults.map((r: any) => `${r.document?.title ?? '文档'} / ${r.title || '无标题'}`).join('；')}`
+          : '知识库未命中')
       if (searchResults.length > 0) {
         // Build context from search results, replacing [图片N] with descriptions
         // Phase 28（28-03）：抽取为 buildKbRoundContext——chat() 首答回复分支与
         // runAgentLoop 循环内 KB 动作分支（WR-05 解除）共用同一构造，避免两处漂移。
         const { contextText: kbContext, references: kbRefs } = buildKbRoundContext(searchResults)
         mergeKbRefs(kbReferences, kbRefs)
+        // 28-06 R8：kb 命中入 sources 轨迹（D-09——二段式检索是代码层可溯源的真实检索）
+        agentState.sources.push(...kbRefs.map((r) => ({ kind: 'kb' as const, title: `${r.docTitle} / ${r.chunkTitle}`, refId: r.docId })))
 
         // Feed results back to AI for final answer（WR-02：回注轮入共享 extraContext）
         extraContext.push({ role: 'assistant', content: aiReply })
@@ -2785,6 +2855,8 @@ export async function chat(
         finalAiReply = await callAI(config, [...fullMessages, ...extraContext], signal)
       }
     } catch {
+      // 28-06 R8：检索失败同样落步骤卡（failed）——真实尝试过的检索过程可见
+      pushTaggedRetrievalStep(agentState, 'kb', searchQuery, '知识库检索失败', undefined, 'failed')
       // KB search failed — strip the tag and use original reply
       finalAiReply = aiReply.replace(/\[KB_SEARCH\].*?\[\/KB_SEARCH\]/gs, '').trim()
     }
@@ -2798,9 +2870,22 @@ export async function chat(
   const expSearchMatch = finalAiReply.match(/\[EXP_SEARCH\](.*?)\[\/EXP_SEARCH\]/s)
   if (!firstReplyEntersLoop && expSearchMatch) {
     const expQuery = sanitizeUntrusted(expSearchMatch[1].trim(), 500)
+    // 28-06 R8：二段式 EXP 检索同样入审计（exp:query）+ 步骤卡 + sources（与 KB 分支同构）
+    try {
+      createLog({
+        deviceId: '', deviceName: '', command: `exp:query ${expQuery}`,
+        status: 'executed', mode: execMode,
+        aiReason: expQuery, promptText: '', aiResponse: '',
+      })
+    } catch { /* 审计失败不阻断检索（aiExecLogger 异常降级） */ }
     try {
       const retrieval = await retrieveForAnswer({ userMessage: expQuery, deviceIds })
+      pushTaggedRetrievalStep(agentState, 'exp', expQuery,
+        retrieval.injected && retrieval.injected.length > 0
+          ? `命中 ${retrieval.injected.length} 条：${retrieval.injected.map((e: any) => e.title).join('；')}`
+          : '经验库未命中')
       if (retrieval.injected.length > 0) {
+        agentState.sources.push(...retrieval.injected.map((e: any) => ({ kind: 'exp' as const, title: e.title, refId: e.exp_id })))
         const expContext = buildExpContextText(retrieval.injected, !!(deviceIds && deviceIds.length > 0))
         // expReferences 溯源产出（原自动预取段迁移至此，payload 结构不变，D-08；
         // 28-04：与分档预取引用合并去重）
@@ -2833,6 +2918,8 @@ export async function chat(
         finalAiReply = await callAI(config, followUpMessages, signal)
       }
     } catch {
+      // 28-06 R8：检索失败同样落步骤卡（failed）——真实尝试过的检索过程可见
+      pushTaggedRetrievalStep(agentState, 'exp', expQuery, '经验库检索失败', undefined, 'failed')
       // 检索失败 — strip 标记降级（照 KB catch 形态）
       finalAiReply = finalAiReply.replace(/\[EXP_SEARCH\].*?\[\/EXP_SEARCH\]/gs, '').trim()
     }
@@ -2868,32 +2955,8 @@ export async function chat(
     userMessage,
     signal,
   }
-  const agentState = createAgentLoopState()
-  // 28-05（D-08 步骤级推送）：注入 emitStep——步骤轨迹经 ctx.emitToolResult 以 tool_result
-  // 扩展载荷（stepIndex/actionType/stepStatus）推送 renderer 步骤卡。agentState 随
-  // pendingBatches 按引用携带，confirm 续跑推送不断链。emitToolResult 缺席（无窗口）零推送。
-  agentState.emitStep = emitToolResult ? (s) => emitToolResult(agentStepToToolResultPayload(s)) : undefined
-  // 28-04：分档预取命中即入 sources 轨迹（代码层溯源，D-09——预取是真实检索而非模型自述）
-  for (const inj of tierInjected) {
-    agentState.sources.push({ kind: inj.kind, title: inj.title, refId: inj.sourceId ?? undefined })
-  }
-  // 28-06 R6 增强 a：分档预取生成步骤卡（过程可见）——按预取实际发生顺序（exp 先于 kb，
-  // 与 retrieveForTier 执行序一致）每源一张，状态直接 done；硬顶按 state.rounds 计数，
-  // 预取步不占步数 N。目录清单注入（R4）同样给卡（query 标「目录清单」）。
-  if (!tierRetrieval.demoMode) {
-    for (const kind of ['exp', 'kb'] as const) {
-      if (!tierRetrieval.plan.includes(kind)) continue
-      const hits = tierInjected.filter((x) => x.kind === kind)
-      const isCatalog = hits.some((x) => x.title.includes('目录清单'))
-      const libName = kind === 'exp' ? '经验库' : '知识库'
-      const summary = isCatalog
-        ? `${libName}目录清单已注入`
-        : hits.length > 0
-          ? sanitizeUntrusted(`命中 ${hits.length} 条：${hits.map((h) => h.title).join('；')}`, 200)
-          : '未命中'
-      pushPrefetchedStep(agentState, kind, isCatalog ? `${libName}目录清单` : userMessage, summary)
-    }
-  }
+  // 28-06 R8：agentState 创建/emitStep 注入/预取 sources+步骤卡已提前到二段式 KB/EXP
+  // 分支之前（循环外二段式检索同享步骤卡与 sources 轨迹），此处不再重复创建。
   // 28-04（AGENT-03）：收尾证据补查一次性标志（多出口只补查一次）
   let evidenceBackfilled = false
 

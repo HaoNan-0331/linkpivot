@@ -1275,3 +1275,120 @@ describe('28-06 R2 缺陷③：confirm 续跑阶段停止有效（signal 贯穿�
     expect(payload.hardStop).toBe('user_cancel')
   })
 })
+
+// ---------- 28-06 R8：后置证据补查步骤卡 + 检索路径卡片覆盖审计 ----------
+
+describe('28-06 R8：后置证据补查生成步骤卡（真实检索过程可见）', () => {
+  it('troubleshoot 档预取双零命中 → 补查 exp 命中 + kb 未命中：补查卡 backfilled 标志、命中/未命中如实、stepIndex 唯一、meta 持久化', async () => {
+    // 预取 exp/kb 双零命中（第 1 次检索），补查 exp 命中（第 2 次）、kb 仍零命中
+    retrieveForAnswerMock
+      .mockResolvedValueOnce({ injected: [] })
+      .mockResolvedValue(EXP_HIT)
+    const payloads: any[] = []
+    // 预取零命中 → 引导 AI 换词；AI 纯文本收尾不换词 → 补查（callAI：首答 + 补查回注）
+    const fetchMock = queueReplies('初步分析', '补查后总结')
+    await chat([{ role: 'user', content: '网络故障排查' }], undefined, 'sess-r8-a', (p) => payloads.push(p))
+    // 补查命中 → 追加回注轮
+    expect(fetchMock.mock.calls.length).toBe(2)
+    // 预取卡 2 张（exp/kb 未命中）+ 补查卡 2 张（exp 命中 / kb 未命中）全部 emit
+    const preCards = payloads.filter((p) => p.prefetched === true)
+    expect(preCards).toHaveLength(2)
+    const backfillExp = payloads.find((p) => p.backfilled === true && p.actionType === 'exp' && p.stepStatus === 'done')
+    const backfillKb = payloads.find((p) => p.backfilled === true && p.actionType === 'kb' && p.stepStatus === 'done')
+    expect(backfillExp).toBeTruthy()
+    expect(backfillExp.resultJson).toContain('命中 1 条')
+    expect(backfillExp.resultJson).toContain('ARP 排查')
+    expect(backfillKb).toBeTruthy()
+    expect(backfillKb.resultJson).toContain('未命中')
+    // stepIndex 全序列唯一（renderer 同构模拟零互覆）
+    const cards = simulateRendererCards(payloads)
+    const idxes = cards.map((c) => c.stepIndex)
+    expect(new Set(idxes).size).toBe(idxes.length)
+    expect(cards.filter((c) => c.backfilled)).toHaveLength(2)
+    // 补查步随 meta_enc 持久化（历史恢复可见）+ renderer 透传 backfilled 标志
+    const msgs = getSessionMessages('sess-r8-a')
+    const last = msgs[msgs.length - 1]
+    expect(last.meta?.steps.some((s: any) => s.backfilled === true)).toBe(true)
+    const restored = historyMessageToChatMsgs({
+      id: last.id, role: 'assistant', content: last.content, createdAt: last.createdAt, meta: last.meta,
+    })
+    expect(restored.some((m) => m.toolResult?.backfilled === true)).toBe(true)
+  })
+
+  it('补查步不占步数硬顶：agent_max_rounds=1 下补查卡在场，收尾仍报「第 1 步」', async () => {
+    allowCmd()
+    db.prepare('UPDATE ai_config SET agent_max_rounds = 1').run()
+    retrieveForAnswerMock.mockResolvedValue(EXP_HIT)
+    vi.mocked(kbSearch).mockResolvedValue({ rows: [] } as any)
+    const fetchMock = queueReplies(
+      '[CMD:dev1]display version[/CMD]',
+      '[CMD:dev1]display clock[/CMD]',
+      '【执行进度】收尾报告'
+    )
+    const out = await chat([{ role: 'user', content: '网络故障排查' }], ['dev1'], null)
+    const wrapMsg = reqMsgs(fetchMock, 2).filter((m: any) => m.role === 'user').pop()
+    expect(wrapMsg.content).toContain('第 1 步')
+    const payload = JSON.parse(out)
+    expect(payload.steps.some((s: any) => s.backfilled === true)).toBe(true)
+  })
+
+  it('inspection 档补查源与分档一致：plan 不含 kb → kbSearch 零调用、零 kb 卡（补查只按 TIER_RETRIEVAL_PLAN）', async () => {
+    retrieveForAnswerMock.mockResolvedValue({ injected: [] })
+    const payloads: any[] = []
+    queueReplies('巡检总结')
+    await chat([{ role: 'user', content: '帮我巡检一遍网络情况' }], undefined, null, (p) => payloads.push(p))
+    // inspection plan = [exp, device]：exp 预取一次，kb 全链路零检索
+    expect(retrieveForAnswerMock).toHaveBeenCalledTimes(2) // 预取 + 补查（exp 缺席补一次）
+    expect(vi.mocked(kbSearch)).not.toHaveBeenCalled()
+    expect(payloads.some((p) => p.actionType === 'kb')).toBe(false)
+    expect(payloads.some((p) => p.backfilled === true && p.actionType === 'exp')).toBe(true)
+  })
+})
+
+describe('28-06 R8：循环外二段式 KB/EXP 检索生成步骤卡（真实检索过程可见 + 不重复补查）', () => {
+  it('AI 主动 [KB_SEARCH]（无 CMD/MCP，不进循环）：检索卡无前缀、命中入 sources、kb 不被补查重复检索', async () => {
+    vi.mocked(kbSearch).mockResolvedValue(KB_ROWS as any)
+    retrieveForAnswerMock.mockResolvedValue(EXP_HIT) // knowledge 档 exp 预取命中 → exp 不缺席
+    const payloads: any[] = []
+    queueReplies(
+      '查文档 [KB_SEARCH]vlan 原理[/KB_SEARCH]',
+      '基于文档的回答'
+    )
+    const out = await chat([{ role: 'user', content: 'vlan 原理与排查经验' }], undefined, null, (p) => payloads.push(p))
+    // 预取 kb 1 次 + 二段式 kb 1 次 = 恰 2 次（修复前 sources 不记二段式 → 补查第 3 次重复检索）
+    expect(vi.mocked(kbSearch)).toHaveBeenCalledTimes(2)
+    // 二段式检索卡：无前缀（AI 主动），stepStatus done，命中概要
+    const plainKb = payloads.find((p) => p.actionType === 'kb' && !p.prefetched && !p.backfilled && p.stepStatus === 'done')
+    expect(plainKb).toBeTruthy()
+    expect(plainKb.argsJson).toBe('vlan 原理')
+    expect(plainKb.resultJson).toContain('命中 1 条')
+    // exp+kb 双引用在场 → exp_answer 合并契约（wrapAgentFinalPayload 既有优先序）
+    expect(JSON.parse(out).type).toBe('exp_answer')
+  })
+
+  it('AI 主动 [EXP_SEARCH] 二段式：检索卡 + sources 记录（exp 不被补查重复检索）', async () => {
+    retrieveForAnswerMock.mockResolvedValue(EXP_HIT)
+    vi.mocked(kbSearch).mockResolvedValue(KB_ROWS as any) // kb 预取命中
+    const payloads: any[] = []
+    queueReplies(
+      '查经验 [EXP_SEARCH]ARP 异常[/EXP_SEARCH]',
+      '基于经验的回答'
+    )
+    await chat([{ role: 'user', content: 'vlan 原理与排查经验' }], undefined, null, (p) => payloads.push(p))
+    // 预取 exp 1 次 + 二段式 1 次 = 恰 2 次（补查不再第 3 次）
+    expect(retrieveForAnswerMock).toHaveBeenCalledTimes(2)
+    const plainExp = payloads.find((p) => p.actionType === 'exp' && !p.prefetched && !p.backfilled && p.stepStatus === 'done')
+    expect(plainExp).toBeTruthy()
+    expect(plainExp.argsJson).toBe('ARP 异常')
+    expect(plainExp.resultJson).toContain('ARP 排查')
+  })
+
+  it('二段式检索失败（kbSearch throw）：failed 步骤卡如实（检索失败过程可见）', async () => {
+    retrieveForAnswerMock.mockResolvedValue(EXP_HIT)
+    vi.mocked(kbSearch).mockRejectedValue(new Error('kb down'))
+    const payloads: any[] = []
+    queueReplies('查文档 [KB_SEARCH]vlan[/KB_SEARCH]')
+    await chat([{ role: 'user', content: 'vlan 原理与排查经验' }], undefined, null, (p) => payloads.push(p))
+    expect(payloads.some((p) => p.actionType === 'kb' && p.stepStatus === 'failed' && p.status === 'failed')).toBe(true)
+  })
+})

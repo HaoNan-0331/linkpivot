@@ -38,8 +38,9 @@ const STEP_STATUS_META: Record<AgentStepStatus, { color: string; label: string; 
 
 // 步骤卡片动作描述模板（UI-SPEC Copywriting：main 生成，renderer 按 actionType 呈现）
 // 28-06 R6 增强 a：prefetched 步骤（分档预取，循环前已完成的检索）加「[预取]」前缀
+// 28-06 R8：backfilled 步骤（收尾证据补查的检索）加「[补查]」前缀；无前缀 = AI 主动检索
 function stepActionLabel(data: ToolResultMessage): string {
-  const prefix = data.prefetched ? '[预取] ' : ''
+  const prefix = data.prefetched ? '[预取] ' : data.backfilled ? '[补查] ' : ''
   const firstLine = (data.argsJson || '').split('\n')[0]
   switch (data.actionType) {
     case 'cmd':
