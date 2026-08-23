@@ -393,7 +393,7 @@ export default function KnowledgeBasePage() {
             label: '文档',
             children: (
               <>
-                <Card title="资料库" style={{ marginBottom: 16 }}>
+                <Card title="知识库" style={{ marginBottom: 16 }}>
         <Space wrap style={{ marginBottom: 16 }}>
           <Upload
             accept=".txt,.pdf,.doc,.docx"

@@ -47,8 +47,8 @@ export const PROMPT_REGISTRY: PromptRegistryEntry[] = [
       '如果只有一个设备，也可以用 [CMD]命令内容[/CMD]\n' +
       '每个命令单独一行。你可以在命令前后添加解释说明。\n' +
       '注意：只能执行只读查询命令（如 display、show、ping、traceroute），不能执行修改配置的命令。\n\n' +
-      '你还可以查询资料库中已上传的设备文档。\n' +
-      '**必须使用资料库搜索的场景**（优先级高于SSH命令）：\n' +
+      '你还可以查询知识库中已上传的设备文档。\n' +
+      '**必须使用知识库搜索的场景**（优先级高于SSH命令）：\n' +
       '- 用户询问设备的默认账号/密码、初始配置、出厂设置\n' +
       '- 用户询问设备功能说明、配置方法、操作指南\n' +
       '- 用户询问设备规格参数、支持的特性\n' +
@@ -66,7 +66,7 @@ export const PROMPT_REGISTRY: PromptRegistryEntry[] = [
     ],
     safetyCritical: true,
     group: 'AI 对话',
-    description: '设备对话 system prompt（含 [CMD] 命令执行格式与 [KB_SEARCH] 资料库检索约束）',
+    description: '设备对话 system prompt（含 [CMD] 命令执行格式与 [KB_SEARCH] 知识库检索约束）',
   },
   {
     id: 'ai.chat.mcpTools',
@@ -99,16 +99,16 @@ export const PROMPT_REGISTRY: PromptRegistryEntry[] = [
     // 纯静态（无 {{var}} 占位），由 ai.ts chat() 拼接在 systemPrompt 末尾（用户可编辑）。
     content:
       '你可用的资源手段清单（按问题自主选择，可组合多手段综合作答）：\n' +
-      '- [KB_SEARCH]关键词[/KB_SEARCH]：查询资料库（设备文档/配置指南/规格参数）\n' +
+      '- [KB_SEARCH]关键词[/KB_SEARCH]：查询知识库（设备文档/配置指南/规格参数）\n' +
       '- [EXP_SEARCH]关键词[/EXP_SEARCH]：查询经验库（历史故障处理、最佳实践等沉淀经验）\n' +
       '- [MCP_TOOL_CALL]：调用当前选中设备绑定的 MCP 工具（需设备已绑定，详见工具清单）\n' +
       '- [CMD:设备名]命令[/CMD]：在目标设备上执行只读查询命令\n' +
       '使用建议：\n' +
       '- 配置变更、故障处理、历史踩坑类问题 → 优先 [EXP_SEARCH] 查经验库\n' +
       '- 涉及历史处理/经验类提问（如「你处理过X吗」「之前怎么解决的」）必先查经验库再回答，不得凭通用知识直接作答历史经验类问题\n' +
-      '- 产品概念、默认账号/密码、参数规格、配置方法说明 → 优先 [KB_SEARCH] 查资料库\n' +
+      '- 产品概念、默认账号/密码、参数规格、配置方法说明 → 优先 [KB_SEARCH] 查知识库\n' +
       '- 设备实时状态、运行数据 → 用 MCP 工具或 [CMD] 命令\n' +
-      '- 可组合多手段综合作答（如先查经验库再查资料库）。\n' +
+      '- 可组合多手段综合作答（如先查经验库再查知识库）。\n' +
       '[EXP_SEARCH] 用法：在回复中单独输出一行标记 [EXP_SEARCH]关键词[/EXP_SEARCH]，' +
       '系统会返回相关经验片段（已按与当前设备的关联度排序并标注可信度分级），你基于这些内容回答。每次最多使用一次 EXP_SEARCH。',
     requiredVars: [],
@@ -261,7 +261,7 @@ export const PROMPT_REGISTRY: PromptRegistryEntry[] = [
     id: 'kb.pick',
     version: 1,
     // 原样搬移自 knowledgeBaseService.ts:751-760 pickPrompt（模板字符串，3 个插值段转 {{var}} 占位）
-    content: `你是一个文档检索助手。以下是资料库中所有文档的章节索引。用户提出了一个问题，请从索引中选出与问题最相关的章节。
+    content: `你是一个文档检索助手。以下是知识库中所有文档的章节索引。用户提出了一个问题，请从索引中选出与问题最相关的章节。
 
 用户问题：{{query}}
 
@@ -273,7 +273,7 @@ export const PROMPT_REGISTRY: PromptRegistryEntry[] = [
 只返回编号，不要解释。`,
     requiredVars: ['query', 'indexBlock', 'topK'],
     group: '知识库',
-    description: '资料库检索：从章节索引中挑选与问题最相关的章节',
+    description: '知识库检索：从章节索引中挑选与问题最相关的章节',
   },
   {
     id: 'ai.chat.agentHonestWrapup',
@@ -324,11 +324,11 @@ export const PROMPT_REGISTRY: PromptRegistryEntry[] = [
   {
     id: 'ai.chat.agentConflictGuide',
     version: 1,
-    // Phase 28（28-04，D-10）：三源冲突标注指令——经验库/资料库/设备实时输出（含 MCP 工具结果）
+    // Phase 28（28-04，D-10）：三源冲突标注指令——经验库/知识库/设备实时输出（含 MCP 工具结果）
     // 内容不一致时正文内联「⚠ X 与 Y 不一致」+ 末尾冲突清单，禁止静默取舍任一来源。
     // 口径为 prompt 驱动（可编辑面）；代码层另有 sources 轨迹保证三源并列可见（T-28-04-04）。
     content:
-      '多源冲突标注要求：当你的回答同时依据多个来源（经验库、资料库、设备实时输出、MCP 工具结果）且它们内容不一致时，'
+      '多源冲突标注要求：当你的回答同时依据多个来源（经验库、知识库、设备实时输出、MCP 工具结果）且它们内容不一致时，'
         + '必须在正文相应位置内联标注「⚠ X 与 Y 不一致：…」简述差异，并在回复末尾输出【冲突清单】逐条列出冲突的来源与差异；'
         + '禁止静默取舍任一来源、禁止无标注地只采用其一。',
     requiredVars: [],

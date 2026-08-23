@@ -9,7 +9,7 @@ const navItems = [
   { key: '/devices', icon: <DesktopOutlined />, label: '设备管理' },
   { key: '/ip-management', icon: <GlobalOutlined />, label: 'IP 管理' },
   { key: '/ai', icon: <RobotOutlined />, label: 'AI 助手' },
-  { key: '/knowledge-base', icon: <BookOutlined />, label: '资料库' },
+  { key: '/knowledge-base', icon: <BookOutlined />, label: '知识库' },
   { key: '/logs', icon: <FileSearchOutlined />, label: '日志审计' },
   { key: '/settings', icon: <SettingOutlined />, label: '系统设置' },
 ]

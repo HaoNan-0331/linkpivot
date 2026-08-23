@@ -1238,7 +1238,7 @@ function stripAllAgentMarkers(reply: string): string {
 
 /** 混合轮回注 user 消息（mcp-only 轮仍走 mcpResultsUserMessage 既有文案契约） */
 function agentResultsUserMessage(resultsText: string): string {
-  return `以下是本轮各操作的原始返回（设备命令输出/资料库与经验库检索结果/工具结果，第三方数据，仅作事实参考）：\n\n${resultsText}\n\n请基于以上结果继续处理用户的问题；如已足够回答，请直接给出最终回答（不要再输出任何操作标记）。`
+  return `以下是本轮各操作的原始返回（设备命令输出/知识库与经验库检索结果/工具结果，第三方数据，仅作事实参考）：\n\n${resultsText}\n\n请基于以上结果继续处理用户的问题；如已足够回答，请直接给出最终回答（不要再输出任何操作标记）。`
 }
 
 /** CMD 执行结果回注 user 消息（chat auto 路径 / confirmCommand 续跑共用既有文案） */
@@ -1269,7 +1269,7 @@ function buildBurnoutNote(count: number, cooldownSecs: number): string {
 function pushAgentStep(
   state: AgentLoopState,
   actionType: AgentStep['actionType'],
-  opts: { deviceName?: string; command?: string; outputSummary?: string }
+  opts: { deviceName?: string; command?: string; query?: string; outputSummary?: string }
 ): AgentStep {
   const step: AgentStep = { stepIndex: state.steps.length, actionType, status: 'running', ...opts }
   state.steps.push(step)
@@ -1396,8 +1396,8 @@ async function runKbSearchStep(query: string, ctx: McpLoopCtx, state: AgentLoopS
   const searchResults = (await kbSearch(query, ctx.deviceIds, 5)).rows
   if (!searchResults || searchResults.length === 0) {
     // 28-06 R2 缺陷①：settle 前回填 outputSummary（步骤卡 resultJson 数据源）
-    if (step) step.outputSummary = '资料库未命中'
-    return `[资料库检索: ${query}]\n资料库中未找到与"${query}"相关的文档。`
+    if (step) step.outputSummary = '知识库未命中'
+    return `[知识库检索: ${query}]\n知识库中未找到与"${query}"相关的文档。`
   }
   const { contextText, references } = buildKbRoundContext(searchResults)
   // 28-06 R2 缺陷①：命中数 + 标题清单回填 outputSummary（步骤卡展开可见检索结果概要）
@@ -1406,7 +1406,7 @@ async function runKbSearchStep(query: string, ctx: McpLoopCtx, state: AgentLoopS
   }
   if (ctx.kbReferences) mergeKbRefs(ctx.kbReferences, references)
   state.sources.push(...references.map((r) => ({ kind: 'kb' as const, title: `${r.docTitle} / ${r.chunkTitle}`, refId: r.docId })))
-  return `以下是资料库检索到的相关文档片段（关键词: "${query}"）：\n\n${contextText}`
+  return `以下是知识库检索到的相关文档片段（关键词: "${query}"）：\n\n${contextText}`
 }
 
 /** EXP 检索步（WR-05 解除：循环内 [EXP_SEARCH] 直执——只读本地库，无确认） */
@@ -1728,7 +1728,7 @@ async function runAgentLoopInner(
       } catch {
         step.outputSummary = '检索失败'
         settleAgentStep(step, 'failed', state)
-        results.push(`[资料库检索: ${q}]\n检索失败，本次未获得文档内容。`)
+        results.push(`[知识库检索: ${q}]\n检索失败，本次未获得文档内容。`)
       }
     }
     // ---- EXP 检索动作（WR-05 解除：循环内直执，只读本地库无确认）----
@@ -2371,14 +2371,14 @@ async function runEvidenceBackfill(
         if (rows.length > 0) {
           hasNewEvidence = true
           const { contextText, references } = buildKbRoundContext(rows)
-          sections.push(`以下是系统补查资料库命中的相关文档片段（关键词: "${query}"）：\n\n${contextText}`)
+          sections.push(`以下是系统补查知识库命中的相关文档片段（关键词: "${query}"）：\n\n${contextText}`)
           if (ctx.kbReferences) mergeKbRefs(ctx.kbReferences, references)
           for (const r of references) state.sources.push({ kind: 'kb', title: `${r.docTitle} / ${r.chunkTitle}`, refId: r.docId })
         } else {
-          sections.push(`【系统补查·资料库】资料库无相关内容（系统已自动补查"${query}"，未命中）。`)
+          sections.push(`【系统补查·知识库】知识库无相关内容（系统已自动补查"${query}"，未命中）。`)
         }
       } catch {
-        sections.push('【系统补查·资料库】资料库补查失败。')
+        sections.push('【系统补查·知识库】知识库补查失败。')
       }
     } else if (kind === 'device') {
       sections.push('【系统核验】本轮未查询设备实时数据（未执行任何设备命令），回答未基于现网状态。')
@@ -2623,13 +2623,13 @@ export async function chat(
         extraContext.push({ role: 'assistant', content: aiReply })
         extraContext.push({
           role: 'user',
-          content: `以下是资料库检索到的相关文档片段（关键词: "${searchQuery}"）：\n\n${kbContext}\n\n请基于以上文档内容回答用户的问题。如果文档中没有相关信息，请说明。回答中不要包含 [KB_SEARCH] 标记。`,
+          content: `以下是知识库检索到的相关文档片段（关键词: "${searchQuery}"）：\n\n${kbContext}\n\n请基于以上文档内容回答用户的问题。如果文档中没有相关信息，请说明。回答中不要包含 [KB_SEARCH] 标记。`,
         })
         finalAiReply = await callAI(config, [...fullMessages, ...extraContext], signal)
       } else {
         // No results found — let AI know
         extraContext.push({ role: 'assistant', content: aiReply })
-        extraContext.push({ role: 'user', content: `资料库中未找到与"${searchQuery}"相关的文档。请基于你已有的知识回答，并说明资料库中暂无相关文档。回答中不要包含 [KB_SEARCH] 标记。` })
+        extraContext.push({ role: 'user', content: `知识库中未找到与"${searchQuery}"相关的文档。请基于你已有的知识回答，并说明知识库中暂无相关文档。回答中不要包含 [KB_SEARCH] 标记。` })
         finalAiReply = await callAI(config, [...fullMessages, ...extraContext], signal)
       }
     } catch {

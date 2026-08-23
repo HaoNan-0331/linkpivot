@@ -170,7 +170,7 @@ export default function SettingsPage() {
         </Form>
       </Card>
       <Card title="多模态模型配置" size="small" style={{ marginBottom: 16 }}>
-        <p style={{ color: '#999', fontSize: 12, marginTop: 0 }}>用于资料库图片识别。未配置时，图片功能将降级（图片仅存储不生成描述）。</p>
+        <p style={{ color: '#999', fontSize: 12, marginTop: 0 }}>用于知识库图片识别。未配置时，图片功能将降级（图片仅存储不生成描述）。</p>
         <Form form={form} layout="vertical">
           <Form.Item label="Base URL" name="visionBaseUrl">
             <Input placeholder="留空则使用上方 AI 模型的 Base URL" />

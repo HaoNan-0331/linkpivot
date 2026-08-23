@@ -84,7 +84,7 @@ vi.mock('../../../electron/services/promptService', () => ({
           : id === 'ai.chat.agentHonestWrapup'
             ? '自主执行已因系统限制停止：{{reason}}（已进行 {{steps}} 步）。\n【执行进度】进行到第 {{steps}} 步，因 {{reason}} 停止。请按模板输出收尾报告。'
             : id === 'ai.chat.agentConflictGuide'
-              ? '三源冲突标注（D-10）：经验库/资料库/设备实时输出不一致时，正文内联「⚠ X 与 Y 不一致」并在末尾输出冲突清单，禁止静默取舍。'
+              ? '三源冲突标注（D-10）：经验库/知识库/设备实时输出不一致时，正文内联「⚠ X 与 Y 不一致」并在末尾输出冲突清单，禁止静默取舍。'
               : ''
     ),
   },

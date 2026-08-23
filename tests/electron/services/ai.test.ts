@@ -418,7 +418,7 @@ describe('Phase 23 code-review 回归（WR-02 ~ WR-06）', () => {
     const out = await chat([{ role: 'user', content: 'ARP 异常怎么排查' }], ['a1'], null)
     // 第三次 callAI 上下文：KB 轮 user 消息 + assistant 轮为 KB 改写后回复 + EXP user 消息
     const third = JSON.parse((fetchMock.mock.calls[2][1] as any).body)
-    expect(third.messages.some((m: any) => m.role === 'user' && m.content.includes('资料库检索到的相关文档片段'))).toBe(true)
+    expect(third.messages.some((m: any) => m.role === 'user' && m.content.includes('知识库检索到的相关文档片段'))).toBe(true)
     expect(third.messages.some((m: any) => m.role === 'assistant' && m.content.includes('根据文档：查接口计数'))).toBe(true)
     expect(third.messages.some((m: any) => m.role === 'user' && m.content.includes('经验库中检索到的相关经验'))).toBe(true)
     // 混合 references：kb + experience（Phase 11 WR-01 合并路径）
