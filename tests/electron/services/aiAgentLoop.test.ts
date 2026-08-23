@@ -777,6 +777,25 @@ describe('28-06 R2 缺陷⑥：历史恢复 meta 通道（getSessionMessages 返
   })
 })
 
+describe('28-06 R2 缺陷②：device 来源按设备判重（同设备多命令只计一条）', () => {
+  it('同设备两条命令 sources 只一条 device；kb/exp 条目不去重', async () => {
+    allowCmd()
+    FakeClient.output = 'OK'
+    vi.mocked(kbSearch).mockResolvedValue(KB_ROWS as any)
+    queueReplies(
+      '[CMD:dev1]display version[/CMD] [CMD:dev1]display vlan[/CMD]',
+      '再查资料 [KB_SEARCH]vlan 原理[/KB_SEARCH]',
+      '总结'
+    )
+    const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
+    const payload = JSON.parse(out)
+    const deviceSources = payload.sources.filter((s: any) => s.kind === 'device')
+    expect(deviceSources).toHaveLength(1)
+    // kb 来源照常（不同文档条目不去重）
+    expect(payload.sources.some((s: any) => s.kind === 'kb')).toBe(true)
+  })
+})
+
 describe('28-06 R2 缺陷⑤：confirm 续跑结果回注（命令输出必须送达 LLM）', () => {
   it('confirm 档：确认执行后续跑 callAI 的回注 user 消息包含命令真实输出', async () => {
     db.prepare("UPDATE ai_config SET exec_mode = 'confirm'").run()

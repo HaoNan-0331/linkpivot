@@ -1026,6 +1026,15 @@ export interface SourceRecord {
 }
 
 /**
+ * 28-06 R2 缺陷②：device 来源按 deviceId 判重入栈——同设备多条命令（version+vlan）
+ * 只计一条设备来源；kb/exp 按条目不去重（不同文档/经验条目是真实来源数）。
+ */
+function pushDeviceSource(state: AgentLoopState, deviceName: string, deviceId: string): void {
+  if (state.sources.some((s) => s.kind === 'device' && s.refId === deviceId)) return
+  state.sources.push({ kind: 'device', title: deviceName, refId: deviceId })
+}
+
+/**
  * Phase 28（28-03，Pitfall 1 结构性修复）：agent 循环可变状态对象化——steps/sources/
  * failureCounts/cooldowns/tokenUsed/retryBudgets 并入状态对象，随确认批次（pendingBatches）
  * 按引用携带续跑，confirm 模式（默认 exec_mode）每步确认后不再丢轨迹。wrapupPrompted
@@ -1597,7 +1606,7 @@ async function runAgentCmdRound(
     settleAgentStep(step, success ? 'done' : 'failed', state)
     if (success) {
       state.failureCounts.delete(key)
-      state.sources.push({ kind: 'device', title: c.deviceName, refId: c.deviceId })
+      pushDeviceSource(state, c.deviceName, c.deviceId)
       results.push(`设备: ${c.deviceName}\n命令: ${c.command}\n状态: executed\n输出:\n${outputSummary}`)
     } else {
       const newCount = (state.failureCounts.get(key) ?? 0) + 1
@@ -2086,7 +2095,7 @@ export async function confirmCommand(
             step.outputSummary = sanitizeUntrusted(r.output || '', 200)
             settleAgentStep(step, 'done', batch.agentLoop!.agentState)
           }
-          if (batch.agentLoop) batch.agentLoop.agentState.sources.push({ kind: 'device', title: cmds[i].deviceName, refId: deviceId })
+          if (batch.agentLoop) pushDeviceSource(batch.agentLoop.agentState, cmds[i].deviceName, deviceId)
           // 28-06 R2 缺陷⑤：成功但零输出必须落显式 ground 文本——空「输出:\n」会让 LLM
           // 自行脑补「未获得设备返回的实时输出」并放弃后续多步任务（服务级回注链复现
           // 测试已锁死非空输出必达；此为空输出分支的兜底加固）
@@ -3017,7 +3026,7 @@ export async function chat(
           updateLogStatus(cmds[i].logId, 'executed')
           step.outputSummary = sanitizeUntrusted(r.output || '', 200)
           settleAgentStep(step, 'done', agentState)
-          agentState.sources.push({ kind: 'device', title: cmds[i].deviceName, refId: deviceId })
+          pushDeviceSource(agentState, cmds[i].deviceName, deviceId)
           cmdResults.push({
             deviceName: cmds[i].deviceName, cmd: r.command,
             output: (r.output || '').trim() ? r.output : '（命令已执行成功，但设备未返回任何输出文本；如需该数据请重试或换命令）',
