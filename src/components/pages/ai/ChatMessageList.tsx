@@ -1,7 +1,7 @@
 import { useRef, useEffect, useState } from 'react'
-import { Spin, Tag, Button } from 'antd'
+import { Spin, Tag, Button, Popover } from 'antd'
 import { RobotOutlined, UserOutlined, BookOutlined } from '@ant-design/icons'
-import type { ChatMsg, ReferenceItem } from './types'
+import type { AgentSourceItem, AgentTierName, ChatMsg, ReferenceItem } from './types'
 import type { Experience } from '@/types/experience'
 import ExperienceDetailModal from '../../knowledge/ExperienceDetailModal'
 import SessionMessagesModal from './SessionMessagesModal'
@@ -15,6 +15,37 @@ interface ChatMessageListProps {
   onStop?: () => void
 }
 
+// Phase 28（28-05，D-12）：分档标签中文名（agentRouter.TIER_LABELS 同款，renderer 侧副本）
+const TIER_LABELS: Record<AgentTierName, string> = {
+  troubleshoot: '故障排查',
+  configQuery: '配置查询',
+  knowledge: '知识问答',
+  inspection: '巡检执行',
+}
+
+// 分档 Popover：本档预取数据源清单（静态列表，无交互纵深——UI-SPEC §Interaction 7）
+const TIER_PREFETCH_LIST: Record<AgentTierName, string[]> = {
+  troubleshoot: ['知识库', '经验库', '设备上下文'],
+  configQuery: ['知识库', '经验库', '设备上下文'],
+  knowledge: ['知识库', '经验库'],
+  inspection: ['知识库', '经验库', '设备上下文'],
+}
+
+// Phase 28（28-05，D-09）：来源徽章文案（kind → 📚/📗/🔧 前缀锚点，UI-SPEC §Copywriting；N=0 不显示）
+const SOURCE_BADGE_LABELS: Record<AgentSourceItem['kind'], string> = {
+  kb: '📚 知识库',
+  exp: '📗 经验',
+  device: '🔧 设备',
+  mcp: '🔧 工具',
+}
+
+const SOURCE_KIND_NAMES: Record<AgentSourceItem['kind'], string> = {
+  kb: '知识库',
+  exp: '经验库',
+  device: '设备',
+  mcp: '工具',
+}
+
 export default function ChatMessageList({ messages, loading, agentRunning, onStop }: ChatMessageListProps) {
   const chatEndRef = useRef<HTMLDivElement>(null)
 
@@ -25,6 +56,8 @@ export default function ChatMessageList({ messages, loading, agentRunning, onSto
   const [detailOpen, setDetailOpen] = useState(false)
   const [sessionModalId, setSessionModalId] = useState<string | null>(null)
   const [sessionModalOpen, setSessionModalOpen] = useState(false)
+  // Phase 28（28-05，D-09）：来源徽章行展开态（按消息下标，点击徽章展开明细列表）
+  const [expandedSources, setExpandedSources] = useState<Set<number>>(new Set())
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -86,6 +119,70 @@ export default function ChatMessageList({ messages, loading, agentRunning, onSto
     )
   }
 
+  // Phase 28（28-05，D-09/D-11/D-12）：agent 轨迹 meta 渲染——来源徽章行 + 明细展开 +
+  // 无源灰 Tag + 补查知情记录。全部只认 payload 结构化字段（msg.agentMeta），
+  // AI 正文 content 字符串无任何触发路径（T-28-05-01 红线）。
+  const renderAgentMeta = (msg: ChatMsg, idx: number) => {
+    const meta = msg.agentMeta
+    if (!meta) return null // 历史消息无 meta（meta_enc 缺失/降级）自然跳过，零报错
+    const expanded = expandedSources.has(idx)
+    const badgeKinds = (Object.keys(SOURCE_BADGE_LABELS) as AgentSourceItem['kind'][])
+      .map((k) => ({ kind: k, items: meta.sources.filter((s) => s.kind === k) }))
+      .filter((g) => g.items.length > 0) // N=0 的类型不显示徽章（UI-SPEC）
+    return (
+      <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed #e8e8e8' }}>
+        {badgeKinds.map((g) => (
+          <Tag
+            key={g.kind}
+            style={{ cursor: 'pointer', fontSize: 12 }}
+            onClick={() =>
+              setExpandedSources((prev) => {
+                const next = new Set(prev)
+                if (next.has(idx)) next.delete(idx)
+                else next.add(idx)
+                return next
+              })
+            }
+          >
+            {SOURCE_BADGE_LABELS[g.kind]} ×{g.items.length}
+          </Tag>
+        ))}
+        {/* D-11 无源声明：零检索零执行固定灰 Tag——只由 payload 布尔驱动，正文字符串不可触发 */}
+        {meta.noRealtimeData === true && <Tag style={{ fontSize: 12 }}>未查询实时数据</Tag>}
+        {expanded && (
+          <div style={{ marginTop: 4 }}>
+            {badgeKinds.flatMap((g) =>
+              g.items.map((s, si) => (
+                <div
+                  key={`${g.kind}-${si}`}
+                  style={{
+                    fontSize: 12,
+                    lineHeight: 1.8,
+                    color: s.kind === 'exp' && s.refId ? '#1890ff' : '#666',
+                    cursor: s.kind === 'exp' && s.refId ? 'pointer' : 'default',
+                  }}
+                  title={s.kind === 'exp' && s.refId ? '点击查看经验详情' : undefined}
+                  onClick={() => {
+                    if (s.kind === 'exp' && s.refId) openExperience(s.refId)
+                  }}
+                >
+                  [{SOURCE_KIND_NAMES[s.kind]}] {s.title}
+                  {s.summary ? ` — ${s.summary}` : ''}
+                </div>
+              ))
+            )}
+          </div>
+        )}
+        {/* 28-04（AGENT-03）：补查知情记录（零命中/设备未查），结构化通道非正文改写 */}
+        {meta.backfillNotes && meta.backfillNotes.length > 0 && (
+          <div style={{ fontSize: 12, color: '#999', lineHeight: 1.5, marginTop: 4 }}>
+            {meta.backfillNotes.map((n, ni) => <div key={ni}>{n}</div>)}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div style={{
       flex: 1,
@@ -129,12 +226,43 @@ export default function ChatMessageList({ messages, loading, agentRunning, onSto
             fontSize: 14,
             lineHeight: 1.6,
           }}>
-            <div style={{ marginBottom: 4 }}>
+            <div style={{ marginBottom: 4, display: 'flex', alignItems: 'center' }}>
               {msg.role === 'user' ? <UserOutlined /> : <RobotOutlined />}
               <span style={{ marginLeft: 4, fontWeight: 500 }}>
                 {msg.role === 'user' ? '我' : 'AI'}
               </span>
+              {/* D-12 分档标签：气泡右上角小 Tag，Popover 列本档预取清单（payload tier 字段驱动） */}
+              {msg.role === 'assistant' && msg.agentMeta?.tier && (
+                <Popover
+                  title={`${TIER_LABELS[msg.agentMeta.tier]}档预取数据源`}
+                  content={
+                    <div style={{ fontSize: 12 }}>
+                      本档已预取：{TIER_PREFETCH_LIST[msg.agentMeta.tier].join('、')}
+                    </div>
+                  }
+                >
+                  <Tag style={{ marginLeft: 'auto', fontSize: 12, cursor: 'pointer', marginRight: 0 }}>
+                    {TIER_LABELS[msg.agentMeta.tier]}
+                  </Tag>
+                </Popover>
+              )}
             </div>
+            {/* D-13/D-06 硬顶诚实收尾：用户停止系统级黄底提示条（代码层 hardStop 标志驱动） */}
+            {msg.role === 'assistant' && msg.agentMeta?.hardStop === 'user_cancel' && (
+              <div
+                style={{
+                  background: '#fffbe6',
+                  border: '1px solid #ffe58f',
+                  borderRadius: 4,
+                  padding: '4px 8px',
+                  fontSize: 12,
+                  color: '#8c6d1f',
+                  marginBottom: 4,
+                }}
+              >
+                任务进行中被手动停止，未生成总结；已执行步骤保留在上方。
+              </div>
+            )}
             {msg.content}
             {msg.role === 'assistant' && msg.references && msg.references.length > 0 && (
               <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed #e8e8e8' }}>
@@ -142,6 +270,7 @@ export default function ChatMessageList({ messages, loading, agentRunning, onSto
                 {msg.references.map((ref, ri) => renderRef(ref, ri))}
               </div>
             )}
+            {msg.role === 'assistant' && renderAgentMeta(msg, idx)}
           </div>
         </div>
         )
