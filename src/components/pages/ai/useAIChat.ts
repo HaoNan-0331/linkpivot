@@ -47,9 +47,26 @@ export function useAIChat(): UseAIChatReturn {
   // Phase 22（22-05，D-03）：main→renderer `ai:toolResult` 事件订阅（22-03 下发契约，
   // 每次 MCP 工具调用完成后推送——含确认后执行分支，故必须走事件而非 chat 响应体）。
   // T-22-16 fail-closed：payload 为 unknown，逐字段校验失败整条丢弃（不降级展示、不入对话流）。
+  // Phase 28（28-05，D-08 步骤卡状态机）：payload 携带 stepIndex（agent 步骤推送）时按
+  // stepIndex 倒序定位既有卡片函数式更新（running→done 单卡状态机，禁一步两卡——RESEARCH
+  // Pitfall 4）；无 stepIndex（旧 MCP tool_result）保持追加兼容。
   useEffect(() => {
     const unsubscribe = window.api.ai.onToolResult((payload: unknown) => {
       if (!isValidToolResultPayload(payload)) return
+      if (typeof payload.stepIndex === 'number') {
+        setMessages((prev) => {
+          for (let i = prev.length - 1; i >= 0; i--) {
+            const m = prev[i]
+            if (m.toolResult && m.toolResult.stepIndex === payload.stepIndex) {
+              const next = prev.slice()
+              next[i] = { ...m, toolResult: payload }
+              return next
+            }
+          }
+          return [...prev, { role: 'assistant', content: '', toolResult: payload }]
+        })
+        return
+      }
       setMessages((prev) => [...prev, { role: 'assistant', content: '', toolResult: payload }])
     })
     return unsubscribe
@@ -155,6 +172,25 @@ export function useAIChat(): UseAIChatReturn {
       // ignore —— 守卫已由编排层 configLoading 兜底
     }
   }, [loadSessions])
+
+  // Phase 28（28-05，AGENT-05/D-06）：停止按钮——立即中止一切（main 侧 AbortController 断
+  // LLM fetch + 循环中止，在途步骤卡定格「已中断」），不触发 AI 总结；系统提示条为代码注入
+  // 非 AI 生成（UI-SPEC 文案）。main 侧无进行中对话时显式回误（不误伤他人窗口），静默忽略。
+  const handleStop = useCallback(async () => {
+    if (!loading) return
+    try {
+      const r = await window.api.ai.cancelChat()
+      if (r && r.success === false) {
+        message.error(r.error || '停止失败：当前无进行中的对话')
+        return
+      }
+    } catch (e: unknown) {
+      message.error('停止失败：' + (e instanceof Error ? e.message : String(e)))
+      return
+    }
+    setLoading(false)
+    setMessages((prev) => [...prev, { role: 'assistant', content: '已停止——任务中断，不生成总结；已执行步骤保留在上方' }])
+  }, [loading])
 
   const handleSend = useCallback(async () => {
     const text = input.trim()
@@ -304,6 +340,9 @@ export function useAIChat(): UseAIChatReturn {
     handleDeleteSession,
     handleSend,
     handleConfirm,
+    // Phase 28（28-05）：停止按钮链路（agent 任务运行中进度区常驻，D-06 立即中止）
+    agentRunning: loading,
+    handleStop,
     summarizing,
     canSummarize: messages.length > 0,
     handleSummarize,

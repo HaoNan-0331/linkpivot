@@ -722,6 +722,11 @@ export interface ToolResultPayload {
   resultJson: string
   status: 'success' | 'failed' | 'timeout'
   errorText?: string
+  /** Phase 28（28-05，D-08 步骤级推送）：agent 步骤扩展字段——在场时 renderer 按步骤卡状态机
+   *  以 stepIndex 定位更新；旧 MCP payload 无新字段自然降级（追加式）。 */
+  stepIndex?: number
+  actionType?: AgentStep['actionType']
+  stepStatus?: AgentStep['status']
 }
 
 /** 选中设备的 MCP 上下文（注入 + 执行白名单判定用） */
@@ -1058,6 +1063,12 @@ export interface AgentLoopState extends McpLoopState {
   hardStop?: 'user_cancel'
   /** 28-04（AGENT-03）：收尾证据补查的知情记录（零命中/设备未查提示），随 payload/meta 持久化 */
   backfillNotes?: string[]
+  /**
+   * Phase 28（28-05，D-08 步骤级推送）：步骤轨迹 → ai:toolResult 扩展载荷推送回调。
+   * chat() 构造 state 后注入（ctx.emitToolResult 包装）；pendingBatches 按引用携带 agentState，
+   * confirm 续跑推送不断链。旧 renderer 校验链（isValidToolResultPayload）只认基础字段，天然兼容。
+   */
+  emitStep?: (step: AgentStep) => void
 }
 
 export function createAgentLoopState(): AgentLoopState {
@@ -1269,7 +1280,42 @@ function pushAgentStep(
 ): AgentStep {
   const step: AgentStep = { stepIndex: state.steps.length, actionType, status: 'running', ...opts }
   state.steps.push(step)
+  // 28-05（D-08）：入栈即推 running 卡片（后续 settle 再推终态）。mcp 步骤不推——
+  // runMcpCall 已按真实工具结果下发 tool_result 卡片，重复推送即一步两卡（UI 契约禁止）。
+  if (actionType !== 'mcp') state.emitStep?.(step)
   return step
+}
+
+/** 步骤状态落定 + 推送（28-05，D-08 步骤级推送：每次状态迁移即推一次，renderer 按 stepIndex 更新） */
+function settleAgentStep(step: AgentStep, status: AgentStep['status'], state: AgentLoopState): AgentStep {
+  step.status = status
+  if (step.actionType !== 'mcp') state.emitStep?.(step)
+  return step
+}
+
+/**
+ * AgentStep → tool_result 扩展载荷（28-05 renderer 步骤卡数据源）。
+ * 基础字段满足既有 renderer fail-closed 校验（type/server/tool/deviceName/argsJson/
+ * resultJson/status 枚举）；stepIndex/actionType/stepStatus 为步骤卡状态机扩展字段。
+ */
+function agentStepToToolResultPayload(s: AgentStep): ToolResultPayload {
+  const toolLabel =
+    s.actionType === 'cmd' ? '命令执行'
+    : s.actionType === 'kb' ? '知识库检索'
+    : s.actionType === 'exp' ? '经验库检索'
+    : 'MCP 工具'
+  return {
+    type: 'tool_result',
+    server: 'agent',
+    tool: toolLabel,
+    deviceName: s.deviceName ?? '',
+    argsJson: s.command ?? '',
+    resultJson: s.outputSummary ?? '',
+    status: s.status === 'failed' || s.status === 'burned' ? 'failed' : 'success',
+    stepIndex: s.stepIndex,
+    actionType: s.actionType,
+    stepStatus: s.status,
+  }
 }
 
 function parseKbQueries(reply: string): string[] {
@@ -1413,14 +1459,14 @@ async function runAgentCmdRound(
     // 硬区禁止令，不执行（D-13/D-15）。冷却跳过同样计入连续未成功（操作仍未交付）。
     const failCount = state.failureCounts.get(key) ?? 0
     if (failCount >= limits.burnoutCount) {
-      pushAgentStep(state, 'cmd', { deviceName: String(targetDevice.name), command: cmd, outputSummary: '连续失败熔断' }).status = 'burned'
+      settleAgentStep(pushAgentStep(state, 'cmd', { deviceName: String(targetDevice.name), command: cmd, outputSummary: '连续失败熔断' }), 'burned', state)
       results.push(`设备: ${targetDevice.name}\n命令: ${cmd}\n状态: burned\n输出:\n该操作已连续失败 ${failCount} 次被系统熔断，本轮不再执行。\n${buildBurnoutNote(failCount, limits.cooldownSecs)}`)
       continue
     }
     // ③ 冷却硬顶：同 deviceId:command 失败后冷却期内跳过（D-15：仅本 agentState 内生效）
     if ((state.cooldowns.get(key) ?? 0) > Date.now()) {
       state.failureCounts.set(key, failCount + 1)
-      pushAgentStep(state, 'cmd', { deviceName: String(targetDevice.name), command: cmd, outputSummary: '冷却中跳过' }).status = 'cooldown'
+      settleAgentStep(pushAgentStep(state, 'cmd', { deviceName: String(targetDevice.name), command: cmd, outputSummary: '冷却中跳过' }), 'cooldown', state)
       results.push(`设备: ${targetDevice.name}\n命令: ${cmd}\n状态: cooldown\n输出:\n该命令前次失败，冷却中（${limits.cooldownSecs}s 内不重复执行），本轮已跳过。`)
       continue
     }
@@ -1520,13 +1566,13 @@ async function runAgentCmdRound(
         if (success || remaining <= 0) break
         remaining--
         state.retryBudgets.set(key, remaining)
-        step.status = 'retrying'
+        settleAgentStep(step, 'retrying', state)
       }
     }
     updateLogStatus(c.logId, success ? 'executed' : 'failed')
     const outputSummary = sanitizeUntrusted(output, 4000)
-    step.status = success ? 'done' : 'failed'
     step.outputSummary = outputSummary.substring(0, 200)
+    settleAgentStep(step, success ? 'done' : 'failed', state)
     if (success) {
       state.failureCounts.delete(key)
       state.sources.push({ kind: 'device', title: c.deviceName, refId: c.deviceId })
@@ -1551,7 +1597,7 @@ async function runAgentCmdRound(
  */
 export function agentInterruptedFinal(state: AgentLoopState): McpLoopResult {
   for (const s of state.steps) {
-    if (s.status === 'running' || s.status === 'retrying') s.status = 'interrupted'
+    if (s.status === 'running' || s.status === 'retrying') settleAgentStep(s, 'interrupted', state)
   }
   state.hardStop = 'user_cancel'
   return { kind: 'final', reply: AGENT_INTERRUPTED_NOTICE }
@@ -1657,9 +1703,9 @@ async function runAgentLoopInner(
       const step = pushAgentStep(state, 'kb', {})
       try {
         results.push(await runKbSearchStep(q, ctx, state))
-        step.status = 'done'
+        settleAgentStep(step, 'done', state)
       } catch {
-        step.status = 'failed'
+        settleAgentStep(step, 'failed', state)
         results.push(`[资料库检索: ${q}]\n检索失败，本次未获得文档内容。`)
       }
     }
@@ -1668,9 +1714,9 @@ async function runAgentLoopInner(
       const step = pushAgentStep(state, 'exp', {})
       try {
         results.push(await runExpSearchStep(q, ctx, state))
-        step.status = 'done'
+        settleAgentStep(step, 'done', state)
       } catch {
-        step.status = 'failed'
+        settleAgentStep(step, 'failed', state)
         results.push(`[经验库检索: ${q}]\n检索失败，本次未获得经验内容。`)
       }
     }
@@ -1726,10 +1772,10 @@ async function runAgentLoopInner(
         for (let i = 0; i < mcpCalls.length; i++) {
           const r = await runMcpCall(mcpCalls[i], logIds[i], ctx.emitToolResult)
           results.push(r.text)
-          pushAgentStep(state, 'mcp', {
+          settleAgentStep(pushAgentStep(state, 'mcp', {
             deviceName: String(mcpCalls[i].context.device?.name ?? ''),
             command: `${mcpCalls[i].context.serverName} · ${mcpCalls[i].tool.name}`,
-          }).status = 'done'
+          }), 'done', state)
           state.sources.push({ kind: 'mcp', title: `${mcpCalls[i].context.serverName} · ${mcpCalls[i].tool.name}` })
         }
       } else {
@@ -2017,14 +2063,14 @@ export async function confirmCommand(
         if (r && r.success) {
           updateLogStatus(cmds[i].logId, 'executed')
           if (step) {
-            step.status = 'done'
             step.outputSummary = sanitizeUntrusted(r.output || '', 200)
+            settleAgentStep(step, 'done', batch.agentLoop!.agentState)
           }
           if (batch.agentLoop) batch.agentLoop.agentState.sources.push({ kind: 'device', title: cmds[i].deviceName, refId: deviceId })
           cmdResults.push({ deviceName: cmds[i].deviceName, cmd: r.command, output: r.output, status: 'executed' })
         } else {
           updateLogStatus(cmds[i].logId, 'failed')
-          if (step) step.status = 'failed'
+          if (step) settleAgentStep(step, 'failed', batch.agentLoop!.agentState)
           cmdResults.push({ deviceName: cmds[i].deviceName, cmd: cmds[i].command, output: r?.output || '执行失败', status: 'failed' })
         }
       }
@@ -2627,6 +2673,10 @@ export async function chat(
     signal,
   }
   const agentState = createAgentLoopState()
+  // 28-05（D-08 步骤级推送）：注入 emitStep——步骤轨迹经 ctx.emitToolResult 以 tool_result
+  // 扩展载荷（stepIndex/actionType/stepStatus）推送 renderer 步骤卡。agentState 随
+  // pendingBatches 按引用携带，confirm 续跑推送不断链。emitToolResult 缺席（无窗口）零推送。
+  agentState.emitStep = emitToolResult ? (s) => emitToolResult(agentStepToToolResultPayload(s)) : undefined
   // 28-04：分档预取命中即入 sources 轨迹（代码层溯源，D-09——预取是真实检索而非模型自述）
   for (const inj of tierInjected) {
     agentState.sources.push({ kind: inj.kind, title: inj.title, refId: inj.sourceId ?? undefined })
@@ -2928,22 +2978,22 @@ export async function chat(
         const step = pushAgentStep(agentState, 'cmd', { deviceName: cmds[i].deviceName, command: cmds[i].command })
         if (r && r.success) {
           updateLogStatus(cmds[i].logId, 'executed')
-          step.status = 'done'
           step.outputSummary = sanitizeUntrusted(r.output || '', 200)
+          settleAgentStep(step, 'done', agentState)
           agentState.sources.push({ kind: 'device', title: cmds[i].deviceName, refId: deviceId })
           cmdResults.push({ deviceName: cmds[i].deviceName, cmd: r.command, output: r.output, status: 'executed' })
         } else {
           updateLogStatus(cmds[i].logId, 'failed')
-          step.status = 'failed'
+          settleAgentStep(step, 'failed', agentState)
           cmdResults.push({ deviceName: cmds[i].deviceName, cmd: cmds[i].command, output: r?.output || '执行失败', status: 'failed' })
         }
       }
     } catch (err: any) {
       for (const cmd of cmds) {
         updateLogStatus(cmd.logId, 'failed')
-        pushAgentStep(agentState, 'cmd', {
+        settleAgentStep(pushAgentStep(agentState, 'cmd', {
           deviceName: cmd.deviceName, command: cmd.command, outputSummary: sanitizeUntrusted(`执行失败: ${err.message}`, 200),
-        }).status = 'failed'
+        }), 'failed', agentState)
         cmdResults.push({ deviceName: cmd.deviceName, cmd: cmd.command, output: `执行失败: ${err.message}`, status: 'failed' })
       }
     }

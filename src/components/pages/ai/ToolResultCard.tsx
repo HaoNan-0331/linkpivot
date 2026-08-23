@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { Tag, Button } from 'antd'
-import type { ToolResultMessage } from './types'
+import { Tag, Button, Spin } from 'antd'
+import type { AgentStepStatus, ToolResultMessage } from './types'
 
 /**
  * ToolResultCard —— MCP 工具调用结果结构化卡片（Phase 22 / 22-05，D-03 / MCS-04）。
@@ -19,12 +19,45 @@ const TRUNCATED_SUFFIX_RE = /…\[已截断至 (\d+) 字符\]\s*$/
 // 超时人话原因固定文案（UI-SPEC Error state，MCS-05）
 const TIMEOUT_REASON = '工具服务 60 秒内未响应，已自动中断'
 
+// Phase 28（28-05，D-08/D-13/D-14/D-15）：agent 步骤状态徽标七值分色表（UI-SPEC §Color 穷举，
+// 与 27 期确认弹窗三色域互不混淆——重试中 orange 为过程态非安全等级）。
+const STEP_STATUS_META: Record<AgentStepStatus, { color: string; label: string; spin?: boolean; redBorder?: boolean }> = {
+  running: { color: 'processing', label: '执行中', spin: true },
+  done: { color: 'green', label: '完成' },
+  failed: { color: 'red', label: '失败' },
+  retrying: { color: 'orange', label: '重试中' },
+  burned: { color: 'volcano', label: '已熔断（连续重复）', redBorder: true },
+  cooldown: { color: 'default', label: '冷却中' },
+  interrupted: { color: 'default', label: '已中断' },
+}
+
+// 步骤卡片动作描述模板（UI-SPEC Copywriting：main 生成，renderer 按 actionType 呈现）
+function stepActionLabel(data: ToolResultMessage): string {
+  const firstLine = (data.argsJson || '').split('\n')[0]
+  switch (data.actionType) {
+    case 'cmd':
+      return data.deviceName ? `在 ${data.deviceName} 执行 ${firstLine}` : `执行 ${firstLine}`
+    case 'kb':
+      return `检索知识库${firstLine ? `：${firstLine}` : ''}`
+    case 'exp':
+      return `检索经验库${firstLine ? `：${firstLine}` : ''}`
+    case 'mcp':
+      return `调用工具 ${data.tool}`
+    default:
+      return `${data.tool} · ${data.deviceName}`
+  }
+}
+
 interface ToolResultCardProps {
   data: ToolResultMessage
 }
 
 export default function ToolResultCard({ data }: ToolResultCardProps) {
   const [expanded, setExpanded] = useState(false)
+
+  // Phase 28（28-05）：agent 步骤卡（stepStatus 在场）——七态徽标 + 动作描述模板；
+  // burned/failed 超限放弃整卡红边框（D-14）。旧 MCP payload 无 stepStatus 走原三态渲染。
+  const stepMeta = data.stepStatus !== undefined ? STEP_STATUS_META[data.stepStatus] : undefined
 
   const statusMeta =
     data.status === 'success'
@@ -62,7 +95,7 @@ export default function ToolResultCard({ data }: ToolResultCardProps) {
     <div
       style={{
         background: '#fafafa',
-        border: '1px solid #e8e8e8',
+        border: stepMeta?.redBorder ? '1px solid #cf1322' : '1px solid #e8e8e8',
         borderRadius: 8,
         padding: '8px 12px',
         fontSize: 13,
@@ -70,11 +103,18 @@ export default function ToolResultCard({ data }: ToolResultCardProps) {
         maxWidth: '100%',
       }}
     >
-      {/* 头部：工具名 · 设备名 + 状态 Tag */}
+      {/* 头部：agent 步骤卡 = 动作描述模板 + 七态徽标；旧 MCP 卡 = 工具名 · 设备名 + 三态 Tag */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <strong>{data.tool} · {data.deviceName}</strong>
-        <Tag color={statusMeta.color}>{statusMeta.label}</Tag>
-        <span style={{ color: '#999', fontSize: 12 }}>{data.server}</span>
+        <strong>{stepMeta ? stepActionLabel(data) : `${data.tool} · ${data.deviceName}`}</strong>
+        {stepMeta ? (
+          <Tag color={stepMeta.color}>
+            {stepMeta.spin && <Spin size="small" style={{ marginRight: 4 }} />}
+            {stepMeta.label}
+          </Tag>
+        ) : (
+          <Tag color={statusMeta.color}>{statusMeta.label}</Tag>
+        )}
+        {!stepMeta && <span style={{ color: '#999', fontSize: 12 }}>{data.server}</span>}
       </div>
 
       {/* 调用参数：JSON 原文 monospace */}

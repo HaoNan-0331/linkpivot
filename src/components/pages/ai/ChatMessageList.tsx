@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState } from 'react'
-import { Spin, Tag } from 'antd'
+import { Spin, Tag, Button } from 'antd'
 import { RobotOutlined, UserOutlined, BookOutlined } from '@ant-design/icons'
 import type { ChatMsg, ReferenceItem } from './types'
 import type { Experience } from '@/types/experience'
@@ -10,9 +10,12 @@ import ToolResultCard from './ToolResultCard'
 interface ChatMessageListProps {
   messages: ChatMsg[]
   loading: boolean
+  /** Phase 28（28-05，D-06）：agent 任务运行中常驻停止按钮（进度区，不得被消息顶走） */
+  agentRunning?: boolean
+  onStop?: () => void
 }
 
-export default function ChatMessageList({ messages, loading }: ChatMessageListProps) {
+export default function ChatMessageList({ messages, loading, agentRunning, onStop }: ChatMessageListProps) {
   const chatEndRef = useRef<HTMLDivElement>(null)
 
   // Phase 11 RETRIEVE-03：点击经验/会话引用打开复用 Modal（D-11-12 不新建）
@@ -147,6 +150,12 @@ export default function ChatMessageList({ messages, loading }: ChatMessageListPr
         <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 12 }}>
           <div style={{ padding: '8px 12px', background: '#fff', borderRadius: 8, border: '1px solid #e8e8e8' }}>
             <Spin size="small" /> <span style={{ marginLeft: 8, color: '#999' }}>思考中...</span>
+            {/* Phase 28（28-05，D-06）：agent 任务运行中常驻「停止」——立即中止，无二次确认 */}
+            {agentRunning && onStop && (
+              <Button danger size="small" style={{ marginLeft: 12 }} onClick={onStop}>
+                停止
+              </Button>
+            )}
           </div>
         </div>
       )}

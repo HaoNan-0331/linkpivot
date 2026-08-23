@@ -1,4 +1,4 @@
-import type { ConfirmData, ReferenceItem, ToolResultMessage } from './types'
+import type { AgentMeta, AgentSourceItem, AgentTierName, ConfirmData, ReferenceItem, ToolResultMessage } from './types'
 
 /**
  * parseAiReply —— AI 应答解析纯函数（Phase 19 REN-02 / 审计 R-M5，D-10）。
@@ -16,7 +16,7 @@ import type { ConfirmData, ReferenceItem, ToolResultMessage } from './types'
 export type ParsedAiReply =
   | { kind: 'plain'; content: string }
   | { kind: 'confirm'; content: string; confirm: ConfirmData }
-  | { kind: 'answer'; content: string; references: ReferenceItem[] }
+  | { kind: 'answer'; content: string; references: ReferenceItem[]; agentMeta?: AgentMeta }
   | { kind: 'toolResult'; toolResult: ToolResultMessage }
 
 /**
@@ -30,9 +30,10 @@ export function parsedToMessages(parsed: ParsedAiReply): Array<{
   content: string
   references?: ReferenceItem[]
   toolResult?: ToolResultMessage
+  agentMeta?: AgentMeta
 }> {
   if (parsed.kind === 'answer') {
-    return [{ role: 'assistant', content: parsed.content, references: parsed.references }]
+    return [{ role: 'assistant', content: parsed.content, references: parsed.references, agentMeta: parsed.agentMeta }]
   }
   if (parsed.kind === 'toolResult') {
     return [{ role: 'assistant', content: '', toolResult: parsed.toolResult }]
@@ -41,6 +42,38 @@ export function parsedToMessages(parsed: ParsedAiReply): Array<{
 }
 
 const isStr = (v: unknown): v is string => typeof v === 'string'
+
+// Phase 28（28-05）：agent 轨迹 meta 逐字段校验（D-09/D-11/D-12——sources/tier/noRealtimeData
+// 只能来自 payload 结构化字段，畸形项丢弃；AI 正文不可伪造）。meta 任一有效字段在场才产出。
+const AGENT_SOURCE_KINDS = ['kb', 'exp', 'device', 'mcp'] as const
+const AGENT_TIER_NAMES: readonly AgentTierName[] = ['troubleshoot', 'configQuery', 'knowledge', 'inspection']
+
+function parseAgentMeta(p: Record<string, unknown>): AgentMeta | undefined {
+  let meta: AgentMeta | undefined
+  if (Array.isArray(p.sources)) {
+    const sources: AgentSourceItem[] = p.sources.flatMap((s) => {
+      if (s === null || typeof s !== 'object') return []
+      const o = s as Record<string, unknown>
+      if (!isStr(o.title) || !(AGENT_SOURCE_KINDS as readonly string[]).includes(o.kind as string)) return []
+      const item: AgentSourceItem = { kind: o.kind as AgentSourceItem['kind'], title: o.title }
+      if (isStr(o.summary)) item.summary = o.summary
+      if (isStr(o.refId)) item.refId = o.refId
+      return [item]
+    })
+    if (sources.length > 0) meta = { sources }
+  }
+  if (meta === undefined && Array.isArray(p.sources)) return undefined
+  if (p.tier !== undefined) {
+    if (!(AGENT_TIER_NAMES as readonly string[]).includes(p.tier as string)) return undefined
+    meta = { sources: [], ...(meta ?? {}) , tier: p.tier as AgentTierName }
+  }
+  if (p.noRealtimeData === true) meta = { sources: [], ...(meta ?? {}), noRealtimeData: true }
+  if (p.hardStop === 'user_cancel') meta = { sources: [], ...(meta ?? {}), hardStop: 'user_cancel' }
+  if (Array.isArray(p.backfillNotes) && p.backfillNotes.every(isStr) && p.backfillNotes.length > 0) {
+    meta = { sources: [], ...(meta ?? {}), backfillNotes: p.backfillNotes as string[] }
+  }
+  return meta
+}
 
 const TOOL_RESULT_STATUSES = ['success', 'failed', 'timeout'] as const
 
@@ -209,10 +242,24 @@ export function parseAiReply(raw: string): ParsedAiReply {
     return { kind: 'toolResult', toolResult }
   }
 
+  // Phase 28（28-05，AGENT-05）：agent_answer——无 kb/exp 引用但有执行轨迹的最终回答。
+  // 照 exp_answer 先例逐字段校验；content 非 string 整体降级 plain（fail-closed）。
+  // 28-04 refs-priority 契约：kb/exp 引用在场时保持 kb_answer/exp_answer 类型 + meta 附带。
+  if (p.type === 'agent_answer') {
+    if (!isStr(p.content)) return { kind: 'plain', content: raw }
+    const references = Array.isArray(p.references)
+      ? p.references.flatMap((r) => normalizeReference(r))
+      : []
+    return { kind: 'answer', content: p.content, references, agentMeta: parseAgentMeta(p) }
+  }
+
   if (p.type === 'kb_answer' || p.type === 'exp_answer') {
     const references = Array.isArray(p.references)
       ? p.references.flatMap((r) => normalizeReference(r))
       : []
+    // 28-04：既有契约类型 + agent meta 字段附带（sources/tier/noRealtimeData 同样交付）
+    const agentMeta = parseAgentMeta(p)
+    if (agentMeta) return { kind: 'answer', content: isStr(p.content) ? p.content : '', references, agentMeta }
     return { kind: 'answer', content: isStr(p.content) ? p.content : '', references }
   }
 

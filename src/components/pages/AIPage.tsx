@@ -84,7 +84,8 @@ export default function AIPage() {
             onChange={chat.setSelectedDevices}
           />
         </div>
-        <ChatMessageList messages={chat.messages} loading={chat.loading} />
+        {/* Phase 28（28-05）：agentRunning/handleStop——agent 任务运行中进度区常驻停止按钮（D-06） */}
+        <ChatMessageList messages={chat.messages} loading={chat.loading} agentRunning={chat.agentRunning} onStop={chat.handleStop} />
         <ChatInput
           value={chat.input}
           loading={chat.loading}

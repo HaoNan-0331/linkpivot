@@ -43,7 +43,33 @@ export interface ChatMsg {
   references?: ReferenceItem[]
   // Phase 22（22-05，D-03）：tool_result 事件入列后的结构化卡片数据源
   toolResult?: ToolResultMessage
+  // Phase 28（28-05，D-09/D-11/D-12）：agent 轨迹 meta（sources/tier/noRealtimeData 等），
+  // 仅由 payload 字段驱动渲染（来源徽章/分档标签/无源标签），AI 正文字符串无触发路径
+  agentMeta?: AgentMeta
 }
+
+/** Phase 28（28-05）：agent 步骤状态七值（与 main 侧 AgentStep.status 契约逐字对齐） */
+export type AgentStepStatus = 'running' | 'done' | 'failed' | 'retrying' | 'burned' | 'cooldown' | 'interrupted'
+
+/** Phase 28（28-05）：来源轨迹项（main 侧 SourceRecord 契约，代码层生成非 AI 自述） */
+export interface AgentSourceItem {
+  kind: 'kb' | 'exp' | 'device' | 'mcp'
+  title: string
+  summary?: string
+  refId?: string
+}
+
+/** Phase 28（28-05）：agent 回答结构化轨迹（D-09 来源 / D-11 无源声明 / D-12 分档） */
+export interface AgentMeta {
+  sources: AgentSourceItem[]
+  tier?: AgentTierName
+  noRealtimeData?: boolean
+  hardStop?: 'user_cancel'
+  backfillNotes?: string[]
+}
+
+/** Phase 28（28-05）：分档四值（main 侧 agentRouter.AgentTier 契约对齐） */
+export type AgentTierName = 'troubleshoot' | 'configQuery' | 'knowledge' | 'inspection'
 
 /**
  * MCP 工具调用结果载荷（Phase 22 / 22-05，D-03）。
@@ -59,6 +85,11 @@ export interface ToolResultMessage {
   resultJson: string
   status: 'success' | 'failed' | 'timeout'
   errorText?: string
+  // Phase 28（28-05，D-08 步骤级推送）：agent 步骤扩展字段——存在即按步骤卡状态机渲染
+  // （useAIChat 按 stepIndex 定位更新既有卡片）；旧 MCP payload 无新字段自然降级追加
+  stepIndex?: number
+  actionType?: 'cmd' | 'kb' | 'exp' | 'mcp'
+  stepStatus?: AgentStepStatus
 }
 
 /**
@@ -121,6 +152,10 @@ export interface UseAIChatReturn {
   handleDeleteSession: (id: string) => Promise<void>
   handleSend: () => Promise<void>
   handleConfirm: (approved: boolean) => Promise<void>
+  // Phase 28（28-05，AGENT-05/D-06）：agent 任务运行中标志（= loading）+ 停止按钮回调
+  // （调 window.api.ai.cancelChat 立即中止，不触发 AI 总结，步骤卡自然保留）
+  agentRunning: boolean
+  handleStop: () => Promise<void>
   // Phase 8 Plan 03：经验总结（点「经验总结」按钮）
   summarizing: boolean
   canSummarize: boolean        // 会话有内容才可点（SC1 强约束）
