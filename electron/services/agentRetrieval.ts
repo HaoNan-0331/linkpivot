@@ -15,7 +15,8 @@
 
 import { getAiConfig } from './ai'
 import { retrieveForAnswer } from './experienceRetrieval'
-import { search as kbSearch } from './knowledgeBaseService'
+import { search as kbSearch, listDocuments } from './knowledgeBaseService'
+import { listExperiences } from './experienceService'
 import type { AgentTier } from './agentRouter'
 
 /** 证据源种类（KB 文档 / EXP 经验 / 设备上下文提示 / MCP 工具调用轨迹）。 */
@@ -41,6 +42,72 @@ export const KB_TOP_K = 5
 /** 设备上下文提示文本（只提示可查，不给数据不执行命令）。 */
 const DEVICE_HINT_TEXT =
   '设备上下文：如需现网实时状态，可使用 [CMD:设备名] 命令标记查询（命令仍经白名单与越权防线确认后执行）。'
+
+/**
+ * 28-06 R4（目录意图）：目录性问法词——「库里有什么」是目录列举请求而非检索请求，
+ * 用户不知道标题含什么词，关键词检索注定空手（真机缺陷：AI 收零结果脑补「库是空的」）。
+ * 命中目录意图时跳过关键词检索，代码层直接列标题清单注入。
+ */
+const CATALOG_QUESTION_RE =
+  /(有哪些|有什么|有些什么|些什么|哪一些|包含哪些|包含什么|列一下|列出来|列个|清单|目录|列表|都是啥|都有啥|有啥|些啥|啥内容|什么内容)/
+
+/** 目录清单注入条数上限（防超长 prompt）。 */
+export const CATALOG_TOP_N = 20
+
+/** 目录意图目标库（exp=经验库 / kb=知识库）。 */
+export type CatalogKind = 'exp' | 'kb'
+
+/** 消息是否提及经验库字样（零命中兜底防 AI 事实性错误「库是空的」）。 */
+export function mentionsExpLibrary(userMessage: string): boolean {
+  return /经验库|经验/.test(userMessage || '')
+}
+
+/** 消息是否提及知识库字样（含更名前「资料库」用户习惯）。 */
+export function mentionsKbLibrary(userMessage: string): boolean {
+  return /知识库|资料库/.test(userMessage || '')
+}
+
+/**
+ * 目录意图识别（纯函数，privilegeGuard 风格可单测）：
+ * 目录问法 × 库字样命中 → 返回目标库；普通检索问法返回 null（行为零回归）。
+ * 同时提两库时经验库优先（先列经验清单，AI 可再触 kb 目录意图追问）。
+ */
+export function detectCatalogIntent(userMessage: string): CatalogKind | null {
+  const msg = userMessage || ''
+  if (!CATALOG_QUESTION_RE.test(msg)) return null
+  if (mentionsExpLibrary(msg)) return 'exp'
+  if (mentionsKbLibrary(msg)) return 'kb'
+  return null
+}
+
+/** 目录清单（titles 为原始标题，不可信文本——注入 prompt 前由接线层 sanitizeUntrusted 清洗）。 */
+export interface CatalogListing {
+  total: number
+  titles: string[]
+}
+
+/** 经验库目录清单（只列已发布经验，published + bi-temporal 过滤同检索池口径）。 */
+export function listExpCatalog(limit = CATALOG_TOP_N): CatalogListing {
+  const { rows, total } = listExperiences({ status: 'published', includeInvalid: false, limit })
+  return { total: total ?? rows.length, titles: rows.map((r: any) => r.title || '无标题') }
+}
+
+/** 知识库目录清单（文档标题，复用既有 listDocuments 最小查询，不新建接口）。 */
+export function listKbCatalog(limit = CATALOG_TOP_N): CatalogListing {
+  const docs = listDocuments()
+  return { total: docs.length, titles: docs.slice(0, limit).map((d: any) => d.title || d.file_name || '无标题') }
+}
+
+/** 目录清单 → 注入文本（经验库共 N 条已发布经验：1. xxx 2. xxx ...）。 */
+export function buildCatalogText(kind: CatalogKind, listing: CatalogListing): string {
+  const name = kind === 'exp' ? '经验库' : '知识库'
+  if (!listing.titles || listing.titles.length === 0) {
+    return `${name}当前没有${kind === 'exp' ? '已发布经验' : '任何文档'}（此为系统核实的真实清单，非推测）`
+  }
+  return `${name}共 ${listing.total} 条${kind === 'exp' ? '已发布经验' : '文档'}：${listing.titles
+    .map((t, i) => `${i + 1}. ${t}`)
+    .join(' ')}`
+}
 
 export interface TierRetrieveInput {
   tier: AgentTier
@@ -81,32 +148,72 @@ export async function retrieveForTier(input: TierRetrieveInput): Promise<TierRet
 
   const injected: InjectedSource[] = []
 
+  // 28-06 R4：目录意图（「经验库里有些啥」类）——目录列举请求不做关键词检索，
+  // 代码层直接列标题清单注入（检索对泛问句注定零命中，AI 拿零结果会脑补「库是空的」）。
+  const catalogIntent = detectCatalogIntent(input.userMessage)
+
   // EXP 检索（复用 experienceRetrieval 检索链：粗筛→精排→阈值→验证）
   if (plan.includes('exp')) {
-    try {
-      const exp = await retrieveForAnswer({ userMessage: input.userMessage, deviceIds: input.deviceIds })
-      for (const e of exp.injected) {
-        injected.push({ kind: 'exp', title: e.title, content: e.content, sourceId: e.exp_id })
+    if (catalogIntent === 'exp') {
+      try {
+        const text = buildCatalogText('exp', listExpCatalog())
+        injected.push({ kind: 'exp', title: '经验库目录清单', content: text, sourceId: null })
+      } catch (err) {
+        console.warn('[agentRetrieval] exp catalog failed', (err as Error).message)
       }
-    } catch (err) {
-      console.warn('[agentRetrieval] exp source failed', (err as Error).message)
+    } else {
+      try {
+        const exp = await retrieveForAnswer({ userMessage: input.userMessage, deviceIds: input.deviceIds })
+        for (const e of exp.injected) {
+          injected.push({ kind: 'exp', title: e.title, content: e.content, sourceId: e.exp_id })
+        }
+      } catch (err) {
+        console.warn('[agentRetrieval] exp source failed', (err as Error).message)
+      }
+      // 28-06 R4 兜底防线：零命中且用户消息提及经验库 → 附目录清单（防 AI 事实性错误「库是空的」）
+      if (injected.every((x) => x.kind !== 'exp') && mentionsExpLibrary(input.userMessage)) {
+        try {
+          const text = buildCatalogText('exp', listExpCatalog())
+          injected.push({ kind: 'exp', title: '经验库目录清单', content: text, sourceId: null })
+        } catch (err) {
+          console.warn('[agentRetrieval] exp catalog fallback failed', (err as Error).message)
+        }
+      }
     }
   }
 
   // KB 检索（knowledgeBaseService.search：LLM 索引挑选，含降级路径）
   if (plan.includes('kb')) {
-    try {
-      const kb = await kbSearch(input.userMessage, input.deviceIds, KB_TOP_K)
-      for (const row of kb.rows ?? []) {
-        injected.push({
-          kind: 'kb',
-          title: `${row.document?.title ?? '文档'} / ${row.title || '无标题'}`,
-          content: row.content || '',
-          sourceId: row.id ?? null,
-        })
+    if (catalogIntent === 'kb') {
+      try {
+        const text = buildCatalogText('kb', listKbCatalog())
+        injected.push({ kind: 'kb', title: '知识库目录清单', content: text, sourceId: null })
+      } catch (err) {
+        console.warn('[agentRetrieval] kb catalog failed', (err as Error).message)
       }
-    } catch (err) {
-      console.warn('[agentRetrieval] kb source failed', (err as Error).message)
+    } else {
+      try {
+        const kb = await kbSearch(input.userMessage, input.deviceIds, KB_TOP_K)
+        for (const row of kb.rows ?? []) {
+          injected.push({
+            kind: 'kb',
+            title: `${row.document?.title ?? '文档'} / ${row.title || '无标题'}`,
+            content: row.content || '',
+            sourceId: row.id ?? null,
+          })
+        }
+      } catch (err) {
+        console.warn('[agentRetrieval] kb source failed', (err as Error).message)
+      }
+      // 28-06 R4 兜底防线：零命中且用户消息提及知识库 → 附目录清单
+      if (injected.every((x) => x.kind !== 'kb') && mentionsKbLibrary(input.userMessage)) {
+        try {
+          const text = buildCatalogText('kb', listKbCatalog())
+          injected.push({ kind: 'kb', title: '知识库目录清单', content: text, sourceId: null })
+        } catch (err) {
+          console.warn('[agentRetrieval] kb catalog fallback failed', (err as Error).message)
+        }
+      }
     }
   }
 

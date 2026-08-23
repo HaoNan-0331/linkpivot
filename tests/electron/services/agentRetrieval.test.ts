@@ -16,16 +16,24 @@ vi.mock('../../../electron/services/experienceRetrieval', () => ({
 }))
 vi.mock('../../../electron/services/knowledgeBaseService', () => ({
   search: vi.fn(),
+  listDocuments: vi.fn(),
+}))
+vi.mock('../../../electron/services/experienceService', () => ({
+  listExperiences: vi.fn(),
 }))
 
 import {
   TIER_RETRIEVAL_PLAN,
   retrieveForTier,
   verifySourcesEvidence,
+  detectCatalogIntent,
+  buildCatalogText,
 } from '../../../electron/services/agentRetrieval'
 import { getAiConfig } from '../../../electron/services/ai'
 import { retrieveForAnswer } from '../../../electron/services/experienceRetrieval'
 import { search as kbSearch } from '../../../electron/services/knowledgeBaseService'
+import { listExperiences } from '../../../electron/services/experienceService'
+import { listDocuments } from '../../../electron/services/knowledgeBaseService'
 
 const EXP_HIT = {
   exp_id: 'e1', title: '端口 down 处置', content: '先看光衰', source_session_id: null, unsupported: false,
@@ -39,6 +47,8 @@ beforeEach(() => {
   vi.mocked(getAiConfig).mockReturnValue({ apiKey: 'k' } as any)
   vi.mocked(retrieveForAnswer).mockReset()
   vi.mocked(kbSearch).mockReset()
+  vi.mocked(listExperiences).mockReset()
+  vi.mocked(listDocuments).mockReset()
 })
 
 describe('TIER_RETRIEVAL_PLAN 四档矩阵', () => {
@@ -108,6 +118,77 @@ describe('retrieveForTier', () => {
     expect(r.demoMode).toBe(false)
     expect(r.injected.filter((x) => x.kind === 'exp')).toHaveLength(0)
     expect(r.injected.filter((x) => x.kind === 'kb')).toHaveLength(1)
+  })
+})
+
+describe('28-06 R4：目录意图识别 + 清单注入 + 零命中兜底', () => {
+  it('目录问法「我的经验库里面有些啥经验」→ 走清单注入非检索', async () => {
+    vi.mocked(listExperiences).mockReturnValue({
+      rows: [{ title: '评估并升级交换机固件版本' }, { title: '上联配置链路聚合增加冗余' }],
+      total: 2, truncated: false,
+    } as any)
+    vi.mocked(kbSearch).mockResolvedValue({ rows: [], degraded: false, indexTotal: 0, indexCapped: null } as any)
+
+    const r = await retrieveForTier({ tier: 'knowledge', userMessage: '我的经验库里面有些啥经验' })
+    // 清单走 listExperiences published 池，不走关键词检索链
+    expect(listExperiences).toHaveBeenCalledWith(expect.objectContaining({ status: 'published', includeInvalid: false }))
+    expect(retrieveForAnswer).not.toHaveBeenCalled()
+    // 注入文本含真实标题清单
+    expect(r.promptSection).toContain('经验库共 2 条已发布经验')
+    expect(r.promptSection).toContain('评估并升级交换机固件版本')
+    expect(r.injected.some((x) => x.title === '经验库目录清单')).toBe(true)
+  })
+
+  it('知识库目录问法 → kb 清单注入（同构）', async () => {
+    vi.mocked(listDocuments).mockReturnValue([
+      { title: '交换机手册', file_name: 'a.pdf' }, { title: '', file_name: 'b.pdf' },
+    ] as any)
+    vi.mocked(retrieveForAnswer).mockResolvedValue({ demoMode: false, injected: [], reranked: [], finalAnswer: '' } as any)
+
+    const r = await retrieveForTier({ tier: 'knowledge', userMessage: '知识库里都有哪些文档' })
+    expect(kbSearch).not.toHaveBeenCalled()
+    expect(r.promptSection).toContain('知识库共 2 条文档')
+    expect(r.promptSection).toContain('交换机手册')
+    expect(r.promptSection).toContain('b.pdf') // title 空回落 file_name
+  })
+
+  it('泛词检索零命中 + 消息含「经验库」→ 兜底清单在场', async () => {
+    vi.mocked(retrieveForAnswer).mockResolvedValue({ demoMode: false, injected: [], reranked: [], finalAnswer: '' } as any)
+    vi.mocked(kbSearch).mockResolvedValue({ rows: [], degraded: false, indexTotal: 0, indexCapped: null } as any)
+    vi.mocked(listExperiences).mockReturnValue({
+      rows: [{ title: '环路处置经验' }], total: 1, truncated: false,
+    } as any)
+
+    const r = await retrieveForTier({ tier: 'knowledge', userMessage: '帮我从经验库找一下环路处理' })
+    expect(retrieveForAnswer).toHaveBeenCalled() // 走了正常检索
+    expect(r.promptSection).toContain('经验库共 1 条已发布经验') // 零命中兜底清单在场
+    expect(r.promptSection).toContain('环路处置经验')
+  })
+
+  it('普通检索问法不触发目录意图（行为不回归）', async () => {
+    vi.mocked(retrieveForAnswer).mockResolvedValue({ demoMode: false, injected: [], reranked: [], finalAnswer: '' } as any)
+    vi.mocked(kbSearch).mockResolvedValue({ rows: [], degraded: false, indexTotal: 0, indexCapped: null } as any)
+
+    const r = await retrieveForTier({ tier: 'knowledge', userMessage: 'stp 环路怎么防' })
+    expect(retrieveForAnswer).toHaveBeenCalled()
+    expect(listExperiences).not.toHaveBeenCalled()
+    expect(listDocuments).not.toHaveBeenCalled()
+    expect(r.promptSection).not.toContain('目录清单')
+    expect(r.promptSection).not.toContain('经验库共')
+  })
+
+  it('detectCatalogIntent 纯函数：中文目录问法变体覆盖', () => {
+    expect(detectCatalogIntent('我的经验库里面有些啥经验')).toBe('exp')
+    expect(detectCatalogIntent('经验库有哪些内容')).toBe('exp')
+    expect(detectCatalogIntent('知识库列一下清单')).toBe('kb')
+    expect(detectCatalogIntent('知识库目录是什么')).toBe('kb')
+    expect(detectCatalogIntent('资料库都有啥')).toBe('kb')
+    expect(detectCatalogIntent('stp 环路怎么防')).toBeNull()
+    expect(detectCatalogIntent('怎么配置 vlan')).toBeNull()
+  })
+
+  it('buildCatalogText：空库给核实性空清单文案', () => {
+    expect(buildCatalogText('exp', { total: 0, titles: [] })).toContain('没有已发布经验')
   })
 })
 

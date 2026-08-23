@@ -19,7 +19,10 @@ import { McpToolPolicy, type McpToolCacheRow } from './mcpToolPolicy'
 import { McpService } from './mcpService'
 import { callToolWithTimeout } from './mcpClient'
 import { classifyTier, type AgentTier } from './agentRouter'
-import { retrieveForTier, verifySourcesEvidence, type InjectedSource } from './agentRetrieval'
+import {
+  retrieveForTier, verifySourcesEvidence, listExpCatalog, listKbCatalog,
+  buildCatalogText, mentionsExpLibrary, mentionsKbLibrary, type InjectedSource,
+} from './agentRetrieval'
 
 let MK = ''
 export function setAiMasterKey(key: string) {
@@ -1462,7 +1465,17 @@ async function runKbSearchStep(query: string, ctx: McpLoopCtx, state: AgentLoopS
   if (!searchResults || searchResults.length === 0) {
     // 28-06 R2 缺陷①：settle 前回填 outputSummary（步骤卡 resultJson 数据源）
     if (step) step.outputSummary = '知识库未命中'
-    return `[知识库检索: ${query}]\n知识库中未找到与"${query}"相关的文档。`
+    // 28-06 R4 兜底：零命中但用户消息提及知识库 → 附目录清单（防 AI 脑补「库是空的」）
+    let missText = `[知识库检索: ${query}]\n知识库中未找到与"${query}"相关的文档。`
+    if (ctx.userMessage && mentionsKbLibrary(ctx.userMessage)) {
+      try {
+        const listing = listKbCatalog()
+        missText += `\n[知识库目录·系统附带] ${sanitizeUntrusted(buildCatalogText('kb', listing), 2000)}`
+        state.sources.push({ kind: 'kb', title: '知识库目录清单', refId: undefined })
+        if (step) step.outputSummary = sanitizeUntrusted(`知识库未命中（${listing.total} 条文档在库）`, 200)
+      } catch { /* 清单失败保持未命中原样 */ }
+    }
+    return missText
   }
   const { contextText, references } = buildKbRoundContext(searchResults)
   // 28-06 R2 缺陷①：命中数 + 标题清单回填 outputSummary（步骤卡展开可见检索结果概要）
@@ -1489,7 +1502,17 @@ async function runExpSearchStep(query: string, ctx: McpLoopCtx, state: AgentLoop
   if (!retrieval.injected || retrieval.injected.length === 0) {
     // 28-06 R2 缺陷①：settle 前回填 outputSummary（步骤卡 resultJson 数据源）
     if (step) step.outputSummary = '经验库未命中'
-    return `[经验库检索: ${expQuery}]\n经验库中未找到与"${expQuery}"相关的经验。`
+    // 28-06 R4 兜底：零命中但用户消息提及经验库 → 附目录清单（防 AI 脑补「库是空的」）
+    let missText = `[经验库检索: ${expQuery}]\n经验库中未找到与"${expQuery}"相关的经验。`
+    if (ctx.userMessage && mentionsExpLibrary(ctx.userMessage)) {
+      try {
+        const listing = listExpCatalog()
+        missText += `\n[经验库目录·系统附带] ${sanitizeUntrusted(buildCatalogText('exp', listing), 2000)}`
+        state.sources.push({ kind: 'exp', title: '经验库目录清单', refId: undefined })
+        if (step) step.outputSummary = sanitizeUntrusted(`经验库未命中（${listing.total} 条已发布经验在库）`, 200)
+      } catch { /* 清单失败保持未命中原样 */ }
+    }
+    return missText
   }
   const expContext = buildExpContextText(retrieval.injected, !!(ctx.deviceIds && ctx.deviceIds.length > 0))
   const newRefs = retrieval.injected.map((e) => ({
@@ -2578,6 +2601,21 @@ export async function chat(
   const userMessage = messages[messages.length - 1]?.content ?? ''
   const tier = classifyTier(userMessage)
   const tierRetrieval = await retrieveForTier({ tier, userMessage, deviceIds })
+  // 28-06 R4：目录意图清单注入入审计（command 列 exp:list/kb:list，与 kb:query/exp:query
+  // 只读先例同构——只读列表无确认门；清单在 injected 即代表发生了真实列表查询）。
+  if (!tierRetrieval.demoMode) {
+    for (const kind of ['exp', 'kb'] as const) {
+      if (!tierRetrieval.plan.includes(kind)) continue
+      if (!tierRetrieval.injected.some((x) => x.kind === kind && x.title.includes('目录清单'))) continue
+      try {
+        createLog({
+          deviceId: '', deviceName: '', command: `${kind}:list`,
+          status: 'executed', mode: execMode,
+          aiReason: sanitizeUntrusted(userMessage, 500), promptText: '', aiResponse: '',
+        })
+      } catch { /* 审计失败不阻断（aiExecLogger 异常降级） */ }
+    }
+  }
   const tierInjected: InjectedSource[] = tierRetrieval.demoMode ? [] : tierRetrieval.injected
   mergeExpRefs(expReferences, tierInjected
     .filter((i) => i.kind === 'exp')
