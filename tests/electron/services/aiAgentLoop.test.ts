@@ -157,6 +157,8 @@ import {
   normalizeAgentKey, callAIWithUsage,
   getChatHistory, buildAgentMeta, getSessionMessages,
 } from '../../../electron/services/ai'
+// 28-06 R5 缺陷A：renderer 历史恢复纯函数（parseAiReply.ts 无 DOM 依赖，可被 electron 套件直接消费）
+import { historyMessageToChatMsgs } from '../../../src/components/pages/ai/parseAiReply'
 import { isCommandAllowed } from '../../../electron/services/commandSafety'
 import { search as kbSearch } from '../../../electron/services/knowledgeBaseService'
 import { createLog as createLogMock, updateLogStatus as updateLogStatusMock } from '../../../electron/services/aiExecLogger'
@@ -926,6 +928,59 @@ describe('28-06 R2 缺陷⑤：confirm 续跑结果回注（命令输出必须�
     const userMsg = msgs.filter((m: any) => m.role === 'user').pop()
     expect(userMsg.content).toContain('状态: executed')
     expect(userMsg.content).toContain('设备未返回任何输出文本')
+  })
+})
+
+describe('28-06 R5 缺陷A：中断轨迹持久化（切会话再切回步骤卡不丢）', () => {
+  it('多步任务中断：chat_history.meta_enc 落库且 steps 含已执行步骤 + interrupted 定格 + hardStop', async () => {
+    allowCmd()
+    const controller = new AbortController()
+    let calls = 0
+    const fetchMock = vi.fn(async (_u: string, init?: RequestInit) => {
+      calls++
+      if (calls === 1) {
+        return { ok: true, json: async () => ({ choices: [{ message: { content: '[CMD:dev1]display version[/CMD]' } }] }) }
+      }
+      // 第 1 步命令已执行、第 2 次 callAI（循环续跑）中被用户停止
+      controller.abort()
+      if (init?.signal?.aborted) throw new DOMException('This operation was aborted', 'AbortError')
+      return { ok: true, json: async () => ({ choices: [{ message: { content: 'x' } }] }) }
+    })
+    global.fetch = fetchMock as unknown as typeof fetch
+    const out = await chat([{ role: 'user', content: '查版本再查时钟' }], ['dev1'], 'sess-r5-int', undefined, controller.signal)
+    const payload = JSON.parse(out)
+    expect(payload.hardStop).toBe('user_cancel')
+    expect(FakeClient.count).toBe(1)
+    // 中断轨迹必须持久化到 meta_enc（历史恢复数据源）
+    const row = db.prepare(
+      "SELECT meta_enc FROM chat_history WHERE role='assistant' AND session_id=? ORDER BY created_at DESC LIMIT 1"
+    ).get('sess-r5-int') as any
+    expect(row.meta_enc).toBeTruthy()
+    const meta = JSON.parse(decField(row.meta_enc, MK) as string)
+    expect(meta.hardStop).toBe('user_cancel')
+    expect(meta.steps.some((s: any) => s.actionType === 'cmd' && s.status === 'done')).toBe(true)
+    // 全链路：getSessionMessages 读回 meta → renderer 历史恢复重建步骤卡（含 interrupted 定格）
+    const msgs = getSessionMessages('sess-r5-int')
+    const last = msgs[msgs.length - 1]
+    expect(last.meta?.steps).toBeTruthy()
+    const restored = last.meta ? historyMessageToChatMsgs({
+      id: last.id, role: 'assistant', content: last.content, createdAt: last.createdAt, meta: last.meta,
+    }) : []
+    const cards = restored.filter((m) => m.toolResult)
+    expect(cards.length).toBe((last.meta!.steps as unknown[]).length)
+    expect(cards.some((c) => c.toolResult!.stepStatus === 'done')).toBe(true)
+  })
+
+  it('首答阶段中断（尚无轨迹）：main 兜底回文中断通知也落库（含空 meta）——切回会话中断说明不丢', async () => {
+    const controller = new AbortController()
+    const fetchMock = vi.fn(async () => {
+      controller.abort()
+      throw new DOMException('This operation was aborted', 'AbortError')
+    })
+    global.fetch = fetchMock as unknown as typeof fetch
+    // chat 直接 throw ChatInterruptedError（main handler 兜底路径）
+    await expect(chat([{ role: 'user', content: '你好' }], undefined, 'sess-r5-first', undefined, controller.signal))
+      .rejects.toBeInstanceOf(ChatInterruptedError)
   })
 })
 

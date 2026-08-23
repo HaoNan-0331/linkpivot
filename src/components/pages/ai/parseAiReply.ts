@@ -210,7 +210,10 @@ function stepToToolResultMessage(s: unknown): ToolResultMessage | undefined {
   const isStr = (v: unknown): v is string => typeof v === 'string'
   if (!(AGENT_STEP_ACTION_TYPES as readonly string[]).includes(o.actionType as string)) return undefined
   if (typeof o.stepIndex !== 'number') return undefined
-  if (!(AGENT_STEP_STATUS_VALUES as readonly string[]).includes(o.stepStatus as string)) return undefined
+  // 28-06 R5 缺陷A：main 侧 AgentStep 序列化字段为 status（buildAgentMeta 原样落 meta.steps），
+  // 此前误读 stepStatus（恒 undefined）→ 历史恢复时所有步骤卡被静默丢弃（切会话再切回卡片全消失）。
+  const stepStatus = o.status !== undefined ? o.status : o.stepStatus
+  if (!(AGENT_STEP_STATUS_VALUES as readonly string[]).includes(stepStatus as string)) return undefined
   const actionType = o.actionType as ToolResultMessage['actionType']
   const toolLabel =
     actionType === 'cmd' ? '命令执行'
@@ -226,10 +229,10 @@ function stepToToolResultMessage(s: unknown): ToolResultMessage | undefined {
       ? (isStr(o.query) ? o.query : '')
       : (isStr(o.command) ? o.command : ''),
     resultJson: isStr(o.outputSummary) ? o.outputSummary : '',
-    status: o.stepStatus === 'failed' || o.stepStatus === 'burned' ? 'failed' : 'success',
+    status: stepStatus === 'failed' || stepStatus === 'burned' ? 'failed' : 'success',
     stepIndex: o.stepIndex,
     actionType,
-    stepStatus: o.stepStatus as AgentStepStatus,
+    stepStatus: stepStatus as AgentStepStatus,
   }
   return isValidToolResultPayload(payload) ? payload : undefined
 }
