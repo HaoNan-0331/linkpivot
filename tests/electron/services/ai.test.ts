@@ -90,7 +90,7 @@ function makeDb(): Database.Database {
     CREATE TABLE command_whitelist (id TEXT PRIMARY KEY, pattern TEXT NOT NULL UNIQUE);
     CREATE TABLE chat_history (
       id TEXT PRIMARY KEY, role TEXT NOT NULL, content_enc TEXT NOT NULL,
-      device_id TEXT, session_id TEXT, created_at TEXT DEFAULT (datetime('now','localtime'))
+      device_id TEXT, session_id TEXT, meta_enc TEXT, created_at TEXT DEFAULT (datetime('now','localtime'))
     );
     CREATE TABLE chat_sessions (id TEXT PRIMARY KEY, title TEXT NOT NULL, device_id TEXT, created_at TEXT DEFAULT (datetime('now','localtime')));
     CREATE TABLE ai_exec_logs (
@@ -216,10 +216,11 @@ describe('EXP_SEARCH 标记协议（Phase 23 23-02）', () => {
     expect(out).not.toContain('[EXP_SEARCH]')
   })
 
-  it('无标记：不触发经验检索（自动预取彻底移除，D-10）', async () => {
+  it('无标记：循环外不再触发经验检索——28-04 分档强制预取按代码层矩阵执行（AGENT-01 取代 D-10）', async () => {
     queueReplies('普通回答，无标记')
     const out = await chat([{ role: 'user', content: '你好' }], ['dev1'], null)
-    expect(retrieveForAnswerMock).not.toHaveBeenCalled()
+    // 28-04：classifyTier('你好')=knowledge → 预取矩阵 exp+kb，检索由代码层发起（不经模型打标）
+    expect(retrieveForAnswerMock).toHaveBeenCalledWith({ userMessage: '你好', deviceIds: ['dev1'] })
     expect(out).toBe('普通回答，无标记')
   })
 

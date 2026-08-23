@@ -84,7 +84,7 @@ function makeDb(execMode: string, mcpMaxRounds?: number | null): Database.Databa
     CREATE TABLE command_whitelist (id TEXT PRIMARY KEY, pattern TEXT NOT NULL UNIQUE);
     CREATE TABLE chat_history (
       id TEXT PRIMARY KEY, role TEXT NOT NULL, content_enc TEXT NOT NULL,
-      device_id TEXT, session_id TEXT, created_at TEXT DEFAULT (datetime('now','localtime'))
+      device_id TEXT, session_id TEXT, meta_enc TEXT, created_at TEXT DEFAULT (datetime('now','localtime'))
     );
     CREATE TABLE chat_sessions (id TEXT PRIMARY KEY, title TEXT NOT NULL, device_id TEXT, created_at TEXT DEFAULT (datetime('now','localtime')));
     CREATE TABLE ai_exec_logs (
@@ -332,7 +332,7 @@ describe('smart 直执链路（双条件免确认，D-04）', () => {
     vi.mocked(callToolWithTimeout).mockResolvedValue({ ok: 1 } as any)
     const emitted: any[] = []
     const out = await chat([{ role: 'user', content: '查状态' }], ['dev1'], null, (p) => emitted.push(p))
-    expect(out).toBe('最终总结')
+    expect(JSON.parse(out).content).toBe('最终总结')
     // tool_result 契约
     expect(emitted).toHaveLength(1)
     expect(emitted[0]).toMatchObject({
@@ -466,7 +466,7 @@ describe('连续调用有界循环（22-05 用户裁决）', () => {
     const fetchMock = queueReplies(CALL_MARKER, CALL_MARKER_2, '两轮后的最终总结')
     const emitted: any[] = []
     const out = await chat([{ role: 'user', content: '查状态' }], ['dev1'], null, (p) => emitted.push(p))
-    expect(out).toBe('两轮后的最终总结')
+    expect(JSON.parse(out).content).toBe('两轮后的最终总结')
     expect(out).not.toContain('[MCP_TOOL_CALL]')
     // 两轮工具各执行 1 次 / tool_result 各下发 1 次 / 审计各 1 条
     expect(callToolWithTimeout).toHaveBeenCalledTimes(2)
@@ -490,7 +490,7 @@ describe('连续调用有界循环（22-05 用户裁决）', () => {
     )
     const emitted: any[] = []
     const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null, (p) => emitted.push(p))
-    expect(out).toBe('超限收尾总结')
+    expect(JSON.parse(out).content).toBe('超限收尾总结')
     expect(callToolWithTimeout).toHaveBeenCalledTimes(5)
     expect(emitted).toHaveLength(5)
     // 收尾那次 callAI（第 7 次）请求体含上限提示回注（user-role）
@@ -655,7 +655,7 @@ describe('畸形载荷分诊：malformed → 格式纠正回注重试；工具�
     expect(callToolWithTimeout).toHaveBeenCalledTimes(1)
     expect(emitted).toHaveLength(1)
     expect(emitted[0]).toMatchObject({ type: 'tool_result', server: 'srv-a', tool: 'get_status', status: 'success' })
-    expect(out).toBe('纠格后的最终总结')
+    expect(JSON.parse(out).content).toBe('纠格后的最终总结')
     expect(fetchMock.mock.calls.length).toBe(3)
   })
 
@@ -784,7 +784,7 @@ describe('轮次上限配置驱动主循环（22-05 checkpoint 需求）', () =>
     seedMcp('dev1', { skipConfirm: 1 })
     const fetchMock = queueReplies(CALL_MARKER, CALL_MARKER, '单轮收尾')
     const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
-    expect(out).toBe('单轮收尾')
+    expect(JSON.parse(out).content).toBe('单轮收尾')
     expect(callToolWithTimeout).toHaveBeenCalledTimes(1)
     const last = JSON.parse((fetchMock.mock.calls[2][1] as any).body)
     expect(last.messages.some(
@@ -800,7 +800,7 @@ describe('轮次上限配置驱动主循环（22-05 checkpoint 需求）', () =>
       CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, '六轮收尾'
     )
     const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
-    expect(out).toBe('六轮收尾')
+    expect(JSON.parse(out).content).toBe('六轮收尾')
     expect(callToolWithTimeout).toHaveBeenCalledTimes(6)
   })
 
@@ -812,7 +812,7 @@ describe('轮次上限配置驱动主循环（22-05 checkpoint 需求）', () =>
       CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, '回退收尾'
     )
     const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
-    expect(out).toBe('回退收尾')
+    expect(JSON.parse(out).content).toBe('回退收尾')
     expect(callToolWithTimeout).toHaveBeenCalledTimes(5)
   })
 
@@ -824,7 +824,7 @@ describe('轮次上限配置驱动主循环（22-05 checkpoint 需求）', () =>
       CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, '默认收尾'
     )
     const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
-    expect(out).toBe('默认收尾')
+    expect(JSON.parse(out).content).toBe('默认收尾')
     expect(callToolWithTimeout).toHaveBeenCalledTimes(5)
   })
 })

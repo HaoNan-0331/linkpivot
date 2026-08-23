@@ -321,6 +321,20 @@ export const PROMPT_REGISTRY: PromptRegistryEntry[] = [
     group: 'AI 对话',
     description: 'agent 熔断说明与停止指令（⚠ 安全关键：禁止变通绕过，硬措辞为代码级常量）',
   },
+  {
+    id: 'ai.chat.agentConflictGuide',
+    version: 1,
+    // Phase 28（28-04，D-10）：三源冲突标注指令——经验库/资料库/设备实时输出（含 MCP 工具结果）
+    // 内容不一致时正文内联「⚠ X 与 Y 不一致」+ 末尾冲突清单，禁止静默取舍任一来源。
+    // 口径为 prompt 驱动（可编辑面）；代码层另有 sources 轨迹保证三源并列可见（T-28-04-04）。
+    content:
+      '多源冲突标注要求：当你的回答同时依据多个来源（经验库、资料库、设备实时输出、MCP 工具结果）且它们内容不一致时，'
+        + '必须在正文相应位置内联标注「⚠ X 与 Y 不一致：…」简述差异，并在回复末尾输出【冲突清单】逐条列出冲突的来源与差异；'
+        + '禁止静默取舍任一来源、禁止无标注地只采用其一。',
+    requiredVars: [],
+    group: 'AI 对话',
+    description: 'agent 三源冲突标注指令（D-10：内联 ⚠ + 末尾冲突清单，禁止静默取舍）',
+  },
 ]
 
 /** 按 id 查 registry 条目；未命中返回 undefined（service 层 throw 中文 Error，T-20-02）。 */

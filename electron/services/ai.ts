@@ -18,6 +18,8 @@ import { sanitizeUntrusted } from './untrustedText'
 import { McpToolPolicy, type McpToolCacheRow } from './mcpToolPolicy'
 import { McpService } from './mcpService'
 import { callToolWithTimeout } from './mcpClient'
+import { classifyTier, type AgentTier } from './agentRouter'
+import { retrieveForTier, verifySourcesEvidence, type InjectedSource } from './agentRetrieval'
 
 let MK = ''
 export function setAiMasterKey(key: string) {
@@ -237,6 +239,8 @@ export function getChatHistory(sessionId?: string, limit?: number): Array<{
   content: string
   deviceId: string | null
   createdAt: string
+  /** 28-04：agent 轨迹 meta（历史/异常行降级 undefined） */
+  meta?: Record<string, unknown>
 }> {
   // WR-09：limit 截断（取最近 N 条）防超大历史会话全量返回。默认不传 = 全量（向后兼容 ai 域自用）。
   // WR-02（18-REVIEW）：子查询 ORDER BY created_at DESC LIMIT ? 取最近 limit 条，外层 ASC 复原时间
@@ -259,6 +263,7 @@ export function getChatHistory(sessionId?: string, limit?: number): Array<{
       content: decField(row.content_enc, MK),
       deviceId: row.device_id,
       createdAt: row.created_at,
+      meta: parseChatMeta(decField(row.meta_enc, MK)),
     }))
   }
   const rows = sessionId
@@ -270,14 +275,31 @@ export function getChatHistory(sessionId?: string, limit?: number): Array<{
     content: decField(row.content_enc, MK),
     deviceId: row.device_id,
     createdAt: row.created_at,
+    meta: parseChatMeta(decField(row.meta_enc, MK)),
   }))
+}
+
+/**
+ * Phase 28（28-04，D-07）：chat_history.meta_enc 解析（agent 轨迹回看）。
+ * 历史/异常行降级 undefined 零报错（decField null / JSON 解析失败均吞掉）。
+ */
+function parseChatMeta(raw: string | null): Record<string, unknown> | undefined {
+  if (!raw) return undefined
+  try {
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed : undefined
+  } catch {
+    return undefined
+  }
 }
 
 export function saveChatMessage(
   role: string,
   content: string,
   deviceId: string | null,
-  sessionId?: string | null
+  sessionId?: string | null,
+  /** Phase 28（28-04，D-07）：agent 轨迹 meta（sources/steps/tier/noRealtimeData/hardStop），encField 加密落 meta_enc */
+  meta?: Record<string, unknown> | null
 ): void {
   // 空内容守卫：trim 后为空则抛清晰错误，不进 INSERT。
   // 防 chat() KB_SEARCH catch 把纯标签 reply 剥成空串 / LLM 超时返回空 content 时
@@ -290,6 +312,11 @@ export function saveChatMessage(
   getDatabase().prepare(
     'INSERT INTO chat_history (id, role, content_enc, device_id, session_id) VALUES (?, ?, ?, ?, ?)'
   ).run(id, role, encField(trimmed, MK), deviceId || null, sessionId || null)
+  // 28-04：meta 经 encField 写 meta_enc 列（红线：加密列只走 encField，禁裸调 encrypt）
+  if (meta) {
+    getDatabase().prepare('UPDATE chat_history SET meta_enc = ? WHERE id = ?')
+      .run(encField(JSON.stringify(meta), MK), id)
+  }
 }
 
 // ---------- AI API call ----------
@@ -1006,6 +1033,10 @@ export interface AgentLoopState extends McpLoopState {
   /** key = 归一化串，值 = 剩余重试次数（默认 DEFAULT_AGENT_RETRY_BUDGET） */
   retryBudgets: Map<string, number>
   wrapupPrompted?: boolean
+  /** 28-04（AGENT-05）：用户中断硬停标志（D-06 立即中止不总结）——meta_enc/落库回看用 */
+  hardStop?: 'user_cancel'
+  /** 28-04（AGENT-03）：收尾证据补查的知情记录（零命中/设备未查提示），随 payload/meta 持久化 */
+  backfillNotes?: string[]
 }
 
 export function createAgentLoopState(): AgentLoopState {
@@ -1120,6 +1151,9 @@ interface McpLoopCtx {
   targetDevices?: any[]
   deviceIds?: string[]
   kbReferences?: Array<{ docTitle: string; chunkTitle: string; docId: string }>
+  /** Phase 28（28-04）：分档分类结果与用户原话（证据补查检索关键词 / meta 溯源） */
+  tier?: AgentTier
+  userMessage?: string
 }
 
 /** 循环可变状态（轮次计数 + 累积回注消息；确认批次按引用携带续跑） */
@@ -1261,12 +1295,20 @@ function buildKbRoundContext(rows: any[]): {
  * 检索命中时结果片段入 sources / kbReferences（代码层溯源，D-09）。
  */
 async function runKbSearchStep(query: string, ctx: McpLoopCtx, state: AgentLoopState): Promise<string> {
+  // 28-04（RESEARCH Q4）：kb 检索步入 ai_exec_logs 审计（command 列 'kb:query'，只读检索无确认门）
+  try {
+    createLog({
+      deviceId: '', deviceName: '', command: `kb:query ${sanitizeUntrusted(query, 200)}`,
+      status: 'executed', mode: ctx.execMode,
+      aiReason: sanitizeUntrusted(query, 500), promptText: '', aiResponse: '',
+    })
+  } catch { /* 审计失败不阻断检索（aiExecLogger 异常降级） */ }
   const searchResults = (await kbSearch(query, ctx.deviceIds, 5)).rows
   if (!searchResults || searchResults.length === 0) {
     return `[资料库检索: ${query}]\n资料库中未找到与"${query}"相关的文档。`
   }
   const { contextText, references } = buildKbRoundContext(searchResults)
-  if (ctx.kbReferences) ctx.kbReferences.push(...references)
+  if (ctx.kbReferences) mergeKbRefs(ctx.kbReferences, references)
   state.sources.push(...references.map((r) => ({ kind: 'kb' as const, title: `${r.docTitle} / ${r.chunkTitle}`, refId: r.docId })))
   return `以下是资料库检索到的相关文档片段（关键词: "${query}"）：\n\n${contextText}`
 }
@@ -1274,6 +1316,14 @@ async function runKbSearchStep(query: string, ctx: McpLoopCtx, state: AgentLoopS
 /** EXP 检索步（WR-05 解除：循环内 [EXP_SEARCH] 直执——只读本地库，无确认） */
 async function runExpSearchStep(query: string, ctx: McpLoopCtx, state: AgentLoopState): Promise<string> {
   const expQuery = sanitizeUntrusted(query, 500)
+  // 28-04（RESEARCH Q4）：exp 检索步入 ai_exec_logs 审计（command 列 'exp:query'，只读检索无确认门）
+  try {
+    createLog({
+      deviceId: '', deviceName: '', command: `exp:query ${expQuery}`,
+      status: 'executed', mode: ctx.execMode,
+      aiReason: expQuery, promptText: '', aiResponse: '',
+    })
+  } catch { /* 审计失败不阻断检索（aiExecLogger 异常降级） */ }
   const retrieval = await retrieveForAnswer({ userMessage: expQuery, deviceIds: ctx.deviceIds })
   if (!retrieval.injected || retrieval.injected.length === 0) {
     return `[经验库检索: ${expQuery}]\n经验库中未找到与"${expQuery}"相关的经验。`
@@ -1285,7 +1335,8 @@ async function runExpSearchStep(query: string, ctx: McpLoopCtx, state: AgentLoop
     source_session_id: e.source_session_id ?? null,
     unsupported: e.unsupported,
   }))
-  ctx.expReferences.push(...newRefs)
+  // 28-04：exp 引用合并去重（与分档预取/补查同源命中只计一次）
+  mergeExpRefs(ctx.expReferences, newRefs)
   state.sources.push(...newRefs.map((e) => ({ kind: 'exp' as const, title: e.title, refId: e.exp_id })))
   return `以下是经验库中检索到的相关经验（关键词: "${expQuery}"）：\n\n${expContext}`
 }
@@ -1845,11 +1896,16 @@ export async function confirmCommand(
     // 复用 chat() 的完整命令解析/确认管线——至少剥离标记 + 显式提示「含未执行的
     // 命令请求」，绝不把协议垃圾原文漏进气泡（fail-safe：未执行，但用户可感知）。
     const finalReply = stripCmdMarkersWithNotice(stripExpKbSearchMarkers(res.reply))
-    saveChatMessage('assistant', finalReply, null, batch.sessionId)
-    if (batch.expReferences && batch.expReferences.length > 0) {
-      return buildExpAnswerPayload(finalReply, batch.expReferences)
-    }
-    return finalReply
+    // 28-04（AGENT-03/05）：确认续跑收尾同样走证据补查 + meta 持久化 + 统一 payload
+    const tierMcp = loopCtx.tier ?? 'knowledge'
+    const finalReplyB = await runEvidenceBackfill(loopCtx, loopState, tierMcp, finalReply)
+    saveChatMessage('assistant', finalReplyB, null, batch.sessionId, buildAgentMeta(loopState, tierMcp))
+    return wrapAgentFinalPayload(
+      finalReplyB,
+      { kbReferences: loopCtx.kbReferences ?? [], expReferences: batch.expReferences ?? [] },
+      loopState,
+      tierMcp
+    )
   }
 
   // T-20-04 fail-closed 空命令批次（回复解析失败回落的人工确认）：无命令可执行，
@@ -1893,11 +1949,21 @@ export async function confirmCommand(
       })
       for (let i = 0; i < cmds.length; i++) {
         const r = execResults[i]
+        // 28-04：确认执行路径同样入 steps/sources 轨迹（D-09 代码层溯源）
+        const step = batch.agentLoop
+          ? pushAgentStep(batch.agentLoop.agentState, 'cmd', { deviceName: cmds[i].deviceName, command: cmds[i].command })
+          : null
         if (r && r.success) {
           updateLogStatus(cmds[i].logId, 'executed')
+          if (step) {
+            step.status = 'done'
+            step.outputSummary = sanitizeUntrusted(r.output || '', 200)
+          }
+          if (batch.agentLoop) batch.agentLoop.agentState.sources.push({ kind: 'device', title: cmds[i].deviceName, refId: deviceId })
           cmdResults.push({ deviceName: cmds[i].deviceName, cmd: r.command, output: r.output, status: 'executed' })
         } else {
           updateLogStatus(cmds[i].logId, 'failed')
+          if (step) step.status = 'failed'
           cmdResults.push({ deviceName: cmds[i].deviceName, cmd: cmds[i].command, output: r?.output || '执行失败', status: 'failed' })
         }
       }
@@ -1939,6 +2005,8 @@ export async function confirmCommand(
     }
     // Bug B 同源出口兜底：追评回复 fail-safe 剥离 MCP/exp/kb 残留标记
     finalReply = stripMcpMarkers(stripExpKbSearchMarkers(res.reply))
+    // 28-04（AGENT-03/05）：确认续跑收尾证据补查 + 统一 payload/meta 持久化
+    finalReply = await runEvidenceBackfill(loopCtx, agentState, loopCtx.tier ?? 'knowledge', finalReply)
     auditMessages = [...loopCtx.fullMessages, ...agentState.extra]
   } else {
     const followUpMessages: Array<{ role: string; content: string }> = [
@@ -1957,9 +2025,23 @@ export async function confirmCommand(
     appendLogAiResponse(cmd.logId, secondPrompt, finalReply)
   }
 
-  saveChatMessage('assistant', finalReply, null, batch.sessionId)
+  saveChatMessage(
+    'assistant', finalReply, null, batch.sessionId,
+    batch.agentLoop ? buildAgentMeta(batch.agentLoop.agentState, batch.agentLoop.loopCtx.tier ?? 'knowledge') : undefined
+  )
 
-  // Phase 11 UAT fix：confirmCommand 最终回复也返经验引用（命令确认执行场景不丢来源列表）
+  // Phase 11 UAT fix：confirmCommand 最终回复也返经验引用（命令确认执行场景不丢来源列表）。
+  // 28-04：agentLoop 批次走统一 payload/meta（来源清单 + 步骤轨迹 + tier）；legacy 批次保持原样。
+  if (batch.agentLoop) {
+    const { loopCtx, agentState } = batch.agentLoop
+    const tierCmd = loopCtx.tier ?? 'knowledge'
+    return wrapAgentFinalPayload(
+      finalReply,
+      { kbReferences: loopCtx.kbReferences ?? [], expReferences: batch.expReferences ?? [] },
+      agentState,
+      tierCmd
+    )
+  }
   if (batch.expReferences && batch.expReferences.length > 0) {
     return buildExpAnswerPayload(finalReply, batch.expReferences)
   }
@@ -1989,6 +2071,172 @@ function buildExpAnswerPayload(
   expRefs: Array<{ exp_id: string; title: string; source_session_id: string | null; unsupported: boolean }>
 ): string {
   return JSON.stringify({ type: 'exp_answer', content, references: mapExpRefs(expRefs) })
+}
+
+// ---------- Phase 28（28-04）：分档预取接线 + 后置证据校验 + agent_answer payload ----------
+
+/**
+ * AGENT-05（D-09/D-11）：代码层按 AgentLoopState 真实执行轨迹生成 agent meta——
+ * sources/steps/tier 全部来自代码记录，prompt 文本无参与路径（T-28-04-04 防 prompt 伪造）。
+ * noRealtimeData = 零检索来源且无任何 cmd/mcp 执行步（纯既有知识作答）。
+ */
+export function buildAgentMeta(
+  state: Pick<AgentLoopState, 'steps' | 'sources' | 'backfillNotes'> & { hardStop?: 'user_cancel' },
+  tier: AgentTier
+): { sources: SourceRecord[]; steps: AgentStep[]; tier: AgentTier; noRealtimeData: boolean; hardStop?: 'user_cancel'; backfillNotes?: string[] } {
+  const noRealtimeData =
+    state.sources.length === 0 &&
+    !state.steps.some((s) => s.actionType === 'cmd' || s.actionType === 'mcp')
+  const meta: ReturnType<typeof buildAgentMeta> = {
+    sources: state.sources,
+    steps: state.steps,
+    tier,
+    noRealtimeData,
+  }
+  if (state.backfillNotes && state.backfillNotes.length > 0) meta.backfillNotes = state.backfillNotes
+  if (state.hardStop) meta.hardStop = state.hardStop
+  return meta
+}
+
+/** exp 引用合并（exp_id 去重——预取与循环/补查同源命中只计一次，D-09） */
+function mergeExpRefs(
+  existing: Array<{ exp_id: string; title: string; source_session_id: string | null; unsupported: boolean }>,
+  injected: Array<{ exp_id: string; title: string; source_session_id: string | null; unsupported: boolean }>
+): void {
+  const byId = new Map(existing.map((e) => [e.exp_id, e]))
+  for (const e of injected) {
+    const prev = byId.get(e.exp_id)
+    if (!prev) {
+      existing.push(e)
+      byId.set(e.exp_id, e)
+    } else if (prev.source_session_id == null && e.source_session_id != null) {
+      // 预取条目缺 source_session_id 时被完整条目覆写（保留更丰富溯源）
+      Object.assign(prev, e)
+    }
+  }
+}
+
+/** kb 引用合并（docTitle+chunkTitle 去重——预取与循环检索的 docId 口径不同，标题对齐更稳） */
+function mergeKbRefs(
+  existing: Array<{ docTitle: string; chunkTitle: string; docId: string }>,
+  refs: Array<{ docTitle: string; chunkTitle: string; docId: string }>
+): void {
+  const seen = new Set(existing.map((r) => `${r.docTitle}|${r.chunkTitle}`))
+  for (const r of refs) {
+    const key = `${r.docTitle}|${r.chunkTitle}`
+    if (!seen.has(key)) {
+      existing.push(r)
+      seen.add(key)
+    }
+  }
+}
+
+/**
+ * 最终回答统一 payload 组装（AGENT-05）：
+ * - kb/exp 引用在场：保持既有 exp_answer/kb_answer 契约（renderer 已消费），meta 字段（sources/steps/
+ *   tier/noRealtimeData）随 payload 附带；
+ * - 无 kb/exp 引用但有执行轨迹（cmd/mcp 步骤或非空 sources）：包装 { type:'agent_answer', content, ...meta }
+ *   （28-05 renderer parseAiReply 消费）；
+ * - 零轨迹纯文本：原样返回（不把普通问答变 JSON，renderer 零影响）。
+ */
+function wrapAgentFinalPayload(
+  content: string,
+  refs: {
+    kbReferences: Array<{ docTitle: string; chunkTitle: string; docId: string }>
+    expReferences: Array<{ exp_id: string; title: string; source_session_id: string | null; unsupported: boolean }>
+  },
+  state: AgentLoopState,
+  tier: AgentTier
+): string {
+  const meta = buildAgentMeta(state, tier)
+  const hasTrajectory =
+    state.sources.length > 0 || state.steps.some((s) => s.actionType === 'cmd' || s.actionType === 'mcp')
+  // kb/exp 引用在场：保持既有 kb_answer/exp_answer 契约（renderer 已消费），meta 字段附带
+  if (refs.kbReferences.length > 0 && refs.expReferences.length > 0) {
+    const merged = [
+      ...refs.kbReferences.map((r) => ({ kind: 'kb', docTitle: r.docTitle, chunkTitle: r.chunkTitle, docId: r.docId })),
+      ...mapExpRefs(refs.expReferences),
+    ]
+    return JSON.stringify({ type: 'exp_answer', content, references: merged, ...meta })
+  }
+  if (refs.kbReferences.length > 0) {
+    return JSON.stringify({ type: 'kb_answer', content, references: refs.kbReferences, ...meta })
+  }
+  if (refs.expReferences.length > 0) {
+    return JSON.stringify({ type: 'exp_answer', content, references: mapExpRefs(refs.expReferences), ...meta })
+  }
+  // 无 kb/exp 引用但有执行轨迹（cmd/mcp 步骤或非空 sources）→ agent_answer（28-05 renderer 消费）
+  if (hasTrajectory) {
+    return JSON.stringify({ type: 'agent_answer', content, references: [], ...meta })
+  }
+  return content
+}
+
+/**
+ * AGENT-03 收尾证据校验（fail-closed 闭环）：对照 TIER_RETRIEVAL_PLAN 检查循环轨迹 sources，
+ * 必查源缺席 → 对缺席检索源（exp/kb）自动补查一次：
+ * - 补查命中 → user-role 回注 + 一次 callAI 收尾（结果只进 user 消息，T-22-08）；
+ * - 补查零命中/失败/设备源未查 → 知情记录落 state.backfillNotes（随 payload/meta_enc 持久化，D-11），
+ *   不追加 LLM 轮、不改写回复正文（既有回复文本契约零污染）。
+ * 用户中断（hardStop）后不再发起任何 LLM 调用（D-06 立即中止不总结）。
+ */
+async function runEvidenceBackfill(
+  ctx: McpLoopCtx,
+  state: AgentLoopState,
+  tier: AgentTier,
+  reply: string
+): Promise<string> {
+  if (state.hardStop) return reply
+  const verify = verifySourcesEvidence({ tier, sources: state.sources })
+  if (verify.missing.length === 0) return reply
+  const query = sanitizeUntrusted(ctx.userMessage ?? '', 500)
+  const sections: string[] = []
+  let hasNewEvidence = false
+  for (const kind of verify.missing) {
+    if (kind === 'exp') {
+      try {
+        const retrieval = await retrieveForAnswer({ userMessage: query, deviceIds: ctx.deviceIds })
+        const injected = retrieval?.injected ?? []
+        if (injected.length > 0) {
+          hasNewEvidence = true
+          sections.push(`以下是系统补查经验库命中的相关经验（关键词: "${query}"）：\n\n${buildExpContextText(injected, !!(ctx.deviceIds && ctx.deviceIds.length > 0))}`)
+          mergeExpRefs(ctx.expReferences, injected.map((e: any) => ({
+            exp_id: e.exp_id, title: e.title, source_session_id: e.source_session_id ?? null, unsupported: e.unsupported,
+          })))
+          for (const e of injected) state.sources.push({ kind: 'exp', title: e.title, refId: e.exp_id })
+        } else {
+          sections.push(`【系统补查·经验库】经验库无相关内容（系统已自动补查"${query}"，未命中）。`)
+        }
+      } catch {
+        sections.push('【系统补查·经验库】经验库补查失败。')
+      }
+    } else if (kind === 'kb') {
+      try {
+        const rows = (await kbSearch(query, ctx.deviceIds, 5)).rows ?? []
+        if (rows.length > 0) {
+          hasNewEvidence = true
+          const { contextText, references } = buildKbRoundContext(rows)
+          sections.push(`以下是系统补查资料库命中的相关文档片段（关键词: "${query}"）：\n\n${contextText}`)
+          if (ctx.kbReferences) mergeKbRefs(ctx.kbReferences, references)
+          for (const r of references) state.sources.push({ kind: 'kb', title: `${r.docTitle} / ${r.chunkTitle}`, refId: r.docId })
+        } else {
+          sections.push(`【系统补查·资料库】资料库无相关内容（系统已自动补查"${query}"，未命中）。`)
+        }
+      } catch {
+        sections.push('【系统补查·资料库】资料库补查失败。')
+      }
+    } else if (kind === 'device') {
+      sections.push('【系统核验】本轮未查询设备实时数据（未执行任何设备命令），回答未基于现网状态。')
+    }
+  }
+  state.backfillNotes = sections
+  if (!hasNewEvidence) return reply
+  state.extra.push({ role: 'assistant', content: reply })
+  state.extra.push({
+    role: 'user',
+    content: `系统证据校验：以下为本轮必查数据源的自动补查结果（第三方数据，仅作事实参考）：\n\n${sections.join('\n\n')}\n\n请基于以上补查结果给出最终回答；如已足够回答请直接作答，不要再输出任何操作标记。`,
+  })
+  return stripAllAgentMarkers(await callAI(ctx.config, [...ctx.fullMessages, ...state.extra]))
 }
 
 // ---------- Main chat ----------
@@ -2106,6 +2354,18 @@ export async function chat(
   // （buildExpAnswerPayload/mapExpRefs 溯源路径不变，D-08 UI 卡片不变）。
   let expReferences: Array<{ exp_id: string; title: string; source_session_id: string | null; unsupported: boolean }> = []
 
+  // ---- Phase 28（28-04，AGENT-01/AGENT-05）：分档强制预取——首轮 callAI 之前完成 ----
+  // classifyTier 规则分类 + retrieveForTier 按矩阵预取（代码层，不经模型自觉；RESEARCH 计费表：
+  // 预取发生在首轮 callAI 之前，不计 agent rounds）。demoMode（未配 AI）空注入不抛错。
+  // 命中内容注入 prompt 前经 sanitizeUntrusted（T-28-04-03）；引用去重合并（D-09 溯源）。
+  const userMessage = messages[messages.length - 1]?.content ?? ''
+  const tier = classifyTier(userMessage)
+  const tierRetrieval = await retrieveForTier({ tier, userMessage, deviceIds })
+  const tierInjected: InjectedSource[] = tierRetrieval.demoMode ? [] : tierRetrieval.injected
+  mergeExpRefs(expReferences, tierInjected
+    .filter((i) => i.kind === 'exp')
+    .map((i) => ({ exp_id: String(i.sourceId), title: i.title, source_session_id: null, unsupported: false })))
+
   // Phase 20 PMT-01：systemPrompt 静态头收敛到 promptRegistry（用户可 override），
   // 动态注入段（deviceInfo）按 registry 占位符填入；experienceContext 占位符自 23-02
   // 自动预取移除后恒填空串（registry 契约保留，历史 override 兼容）。
@@ -2153,6 +2413,10 @@ export async function chat(
     // 可编辑 registry 条目，恒注入（不依赖设备绑定）——AI 不知用法就不会打标。
     '\n\n' +
     PromptService.getPrompt('ai.chat.resourceMap') +
+    // Phase 28（28-04，D-10）：三源冲突标注指令（prompt 驱动口径）——正文内联「⚠ X 与 Y 不一致」+
+    // 末尾冲突清单；静默取舍禁止。代码层另有 sources 轨迹保证三源并列可见（不静默）。
+    '\n\n' +
+    (PromptService.getPrompt('ai.chat.agentConflictGuide') || '') +
     // Phase 23（23-03 复验反馈）：命令风格指引——按设备类型选命令风格（服务器→Linux
     // 只读命令、网络设备→show/display）。可编辑 registry 条目，仅选中设备时注入
     //（无目标设备时指引无意义，提示词保持干净）。
@@ -2163,12 +2427,24 @@ export async function chat(
     { role: 'system', content: systemPrompt },
     ...messages,
   ]
+  // 28-04：分档预取注入段只进 user-role 消息（结果绝不进 system prompt，T-22-08），
+  // KB/EXP 命中内容属不可信文本，注入前经 sanitizeUntrusted 截断清洗（T-28-04-03）。
+  if (!tierRetrieval.demoMode && tierRetrieval.promptSection) {
+    fullMessages.push({
+      role: 'user',
+      content: `[系统预取·分档上下文]\n${sanitizeUntrusted(tierRetrieval.promptSection, 8000)}`,
+    })
+  }
 
   const aiReply = await callAI(config, fullMessages)
 
   // Check for KB_SEARCH tool call
   const kbSearchMatch = aiReply.match(/\[KB_SEARCH\](.*?)\[\/KB_SEARCH\]/s)
   let kbReferences: Array<{ docTitle: string; chunkTitle: string; docId: string }> = []
+  // 28-04：分档预取 kb 引用并入（docId+chunkTitle 去重）
+  mergeKbRefs(kbReferences, tierInjected
+    .filter((i) => i.kind === 'kb')
+    .map((i) => ({ docTitle: i.title.split(' / ')[0] ?? i.title, chunkTitle: i.title.split(' / ')[1] ?? '', docId: String(i.sourceId ?? '') })))
   let finalAiReply = aiReply
   // WR-02/WR-05 fix（Phase 23 code-review）：KB/EXP 回注轮收敛到共享累积上下文——
   // 后续二段式（EXP/qOnly 重试）与 MCP 循环 loopCtx.fullMessages 都以此为基底，
@@ -2184,7 +2460,7 @@ export async function chat(
         // Phase 28（28-03）：抽取为 buildKbRoundContext——chat() 首答回复分支与
         // runAgentLoop 循环内 KB 动作分支（WR-05 解除）共用同一构造，避免两处漂移。
         const { contextText: kbContext, references: kbRefs } = buildKbRoundContext(searchResults)
-        kbReferences = kbRefs
+        mergeKbRefs(kbReferences, kbRefs)
 
         // Feed results back to AI for final answer（WR-02：回注轮入共享 extraContext）
         extraContext.push({ role: 'assistant', content: aiReply })
@@ -2217,13 +2493,14 @@ export async function chat(
       const retrieval = await retrieveForAnswer({ userMessage: expQuery, deviceIds })
       if (retrieval.injected.length > 0) {
         const expContext = buildExpContextText(retrieval.injected, !!(deviceIds && deviceIds.length > 0))
-        // expReferences 溯源产出（原自动预取段迁移至此，payload 结构不变，D-08）
-        expReferences = retrieval.injected.map((e) => ({
+        // expReferences 溯源产出（原自动预取段迁移至此，payload 结构不变，D-08；
+        // 28-04：与分档预取引用合并去重）
+        mergeExpRefs(expReferences, retrieval.injected.map((e) => ({
           exp_id: e.exp_id,
           title: e.title,
           source_session_id: e.source_session_id ?? null,
           unsupported: e.unsupported,
-        }))
+        })))
         // WR-02 fix：assistant 轮用改写后的最终回复（KB 命中时 finalAiReply 是基于
         // KB 回注的第二次回复），KB 轮消息已在共享 extraContext 中——历史自洽。
         const followUpMessages = [
@@ -2275,8 +2552,16 @@ export async function chat(
     targetDevices,
     deviceIds,
     kbReferences: kbReferences,
+    tier,
+    userMessage,
   }
   const agentState = createAgentLoopState()
+  // 28-04：分档预取命中即入 sources 轨迹（代码层溯源，D-09——预取是真实检索而非模型自述）
+  for (const inj of tierInjected) {
+    agentState.sources.push({ kind: inj.kind, title: inj.title, refId: inj.sourceId ?? undefined })
+  }
+  // 28-04（AGENT-03）：收尾证据补查一次性标志（多出口只补查一次）
+  let evidenceBackfilled = false
 
   if (mcpContexts.length > 0) {
     // Phase 28（28-03）：runMcpToolLoop 已泛化为 runAgentLoop——mcp 上下文在场时首答
@@ -2409,25 +2694,17 @@ export async function chat(
 
   // No commands or no devices — just return the reply
   if (commands.length === 0 || targetDevices.length === 0) {
+    // 28-04（AGENT-03）：收尾证据校验——必查源缺席自动补查一次（多出口只补一次）
+    if (!evidenceBackfilled) {
+      evidenceBackfilled = true
+      finalAiReply = await runEvidenceBackfill(agentLoopCtx, agentState, tier, finalAiReply)
+    }
     saveChatMessage('user', messages[messages.length - 1]?.content || '', null, sessionId)
-    saveChatMessage('assistant', finalAiReply, null, sessionId)
-    // Phase 11 WR-01 fix：KB 与经验同时命中时合并 references（type 'exp_answer' 含 kb+experience 联合），
-    // 避免既有 kb_answer 早 return 丢弃经验 references（功能断流）。renderer exp_answer handler 按 r.kind 分流消费。
-    if (kbReferences.length > 0 && expReferences.length > 0) {
-      const refs = [
-        ...kbReferences.map((r: any) => ({ kind: 'kb', docTitle: r.docTitle, chunkTitle: r.chunkTitle, docId: r.docId })),
-        ...mapExpRefs(expReferences),
-      ]
-      return JSON.stringify({ type: 'exp_answer', content: finalAiReply, references: refs })
-    }
-    if (kbReferences.length > 0) {
-      return JSON.stringify({ type: 'kb_answer', content: finalAiReply, references: kbReferences })
-    }
-    // Phase 11 D-11-1/D-11-11：经验注入命中 → 返 exp_answer（references 从注入记录拿，不需 AI 标记）。
-    if (expReferences.length > 0) {
-      return buildExpAnswerPayload(finalAiReply, expReferences)
-    }
-    return finalAiReply
+    // 28-04（D-07）：agent 轨迹 meta 加密落 chat_history.meta_enc（encField 红线）
+    saveChatMessage('assistant', finalAiReply, null, sessionId, buildAgentMeta(agentState, tier))
+    // 28-04（AGENT-05）：统一 payload 组装——既有 kb_answer/exp_answer 契约保留 + meta 附带；
+    // 有轨迹无引用 → agent_answer（Phase 11 WR-01 合并语义由 wrapAgentFinalPayload 内同构保留）
+    return wrapAgentFinalPayload(finalAiReply, { kbReferences, expReferences }, agentState, tier)
   }
 
   // Collect all commands with safety check
@@ -2497,23 +2774,14 @@ export async function chat(
     // WR-04 fix：用最终改写后回复（EXP 回注/qOnly 重试版本，已 strip 标记），不用
     // 原始 aiReply（含 [EXP_SEARCH]/[CMD] 原文中间态）；并补齐 references 包装——
     // 该路径不再断流（与其余三条返回路径同构）。
-    const fullReply = finalAiReply + '\n\n' + rejectionText
+    if (!evidenceBackfilled) {
+      evidenceBackfilled = true
+      finalAiReply = await runEvidenceBackfill(agentLoopCtx, agentState, tier, finalAiReply)
+    }
+    const fullReplyAfterBackfill = finalAiReply + '\n\n' + rejectionText
     saveChatMessage('user', messages[messages.length - 1]?.content || '', null, sessionId)
-    saveChatMessage('assistant', fullReply, null, sessionId)
-    if (kbReferences.length > 0 && expReferences.length > 0) {
-      const refs = [
-        ...kbReferences.map((r: any) => ({ kind: 'kb', docTitle: r.docTitle, chunkTitle: r.chunkTitle, docId: r.docId })),
-        ...mapExpRefs(expReferences),
-      ]
-      return JSON.stringify({ type: 'exp_answer', content: fullReply, references: refs })
-    }
-    if (kbReferences.length > 0) {
-      return JSON.stringify({ type: 'kb_answer', content: fullReply, references: kbReferences })
-    }
-    if (expReferences.length > 0) {
-      return buildExpAnswerPayload(fullReply, expReferences)
-    }
-    return fullReply
+    saveChatMessage('assistant', fullReplyAfterBackfill, null, sessionId, buildAgentMeta(agentState, tier))
+    return wrapAgentFinalPayload(fullReplyAfterBackfill, { kbReferences, expReferences }, agentState, tier)
   }
 
   // Confirm mode（或 guard 命中，D-06：auto 模式命中也打断）: store batch and wait for approval
@@ -2585,17 +2853,26 @@ export async function chat(
       })
       for (let i = 0; i < cmds.length; i++) {
         const r = execResults[i]
+        // 28-04：直执路径同样入 steps/sources 轨迹（D-09 代码层溯源，meta_enc/agent_answer 消费）
+        const step = pushAgentStep(agentState, 'cmd', { deviceName: cmds[i].deviceName, command: cmds[i].command })
         if (r && r.success) {
           updateLogStatus(cmds[i].logId, 'executed')
+          step.status = 'done'
+          step.outputSummary = sanitizeUntrusted(r.output || '', 200)
+          agentState.sources.push({ kind: 'device', title: cmds[i].deviceName, refId: deviceId })
           cmdResults.push({ deviceName: cmds[i].deviceName, cmd: r.command, output: r.output, status: 'executed' })
         } else {
           updateLogStatus(cmds[i].logId, 'failed')
+          step.status = 'failed'
           cmdResults.push({ deviceName: cmds[i].deviceName, cmd: cmds[i].command, output: r?.output || '执行失败', status: 'failed' })
         }
       }
     } catch (err: any) {
       for (const cmd of cmds) {
         updateLogStatus(cmd.logId, 'failed')
+        pushAgentStep(agentState, 'cmd', {
+          deviceName: cmd.deviceName, command: cmd.command, outputSummary: sanitizeUntrusted(`执行失败: ${err.message}`, 200),
+        }).status = 'failed'
         cmdResults.push({ deviceName: cmd.deviceName, cmd: cmd.command, output: `执行失败: ${err.message}`, status: 'failed' })
       }
     }
@@ -2619,7 +2896,7 @@ export async function chat(
   const nextReply = await agentAppendRoundAndCall(
     agentLoopCtx, agentState, finalAiReply, cmdResultsUserMessage(deviceNamesStr, resultsText)
   )
-  const agentRes = await runAgentLoop(agentLoopCtx, agentState, nextReply)
+  let agentRes = await runAgentLoop(agentLoopCtx, agentState, nextReply)
   if (agentRes.kind === 'confirm_required') {
     // 循环后续轮命中 confirm 门（guard 命中打断，D-06）→ 挂起弹窗等待用户确认
     saveChatMessage('user', messages[messages.length - 1]?.content || '', null, sessionId)
@@ -2629,14 +2906,18 @@ export async function chat(
 
   // Bug B 同源出口兜底：命令执行追评回复可能夹带畸形 MCP 标记（历史标记样例诱导），
   // 此前无 strip 直进气泡——统一 fail-safe 剥离（exp/kb 残留标记同此处理）
+  // 28-04（AGENT-03）：出口前收尾证据校验补查（一次）
+  if (!evidenceBackfilled) {
+    evidenceBackfilled = true
+    agentRes = { ...agentRes, reply: await runEvidenceBackfill(agentLoopCtx, agentState, tier, agentRes.reply) }
+  }
   const finalReply = stripMcpMarkers(stripExpKbSearchMarkers(agentRes.reply))
 
   saveChatMessage('user', messages[messages.length - 1]?.content || '', null, sessionId)
-  saveChatMessage('assistant', finalReply, null, sessionId)
+  saveChatMessage('assistant', finalReply, null, sessionId, buildAgentMeta(agentState, tier))
 
-  // Phase 11 UAT fix：auto 命令路径也返经验引用（避免命令执行场景丢来源列表）
-  if (expReferences.length > 0) return buildExpAnswerPayload(finalReply, expReferences)
-  return finalReply
+  // Phase 11 UAT fix 语义保留（auto 命令路径返来源列表）+ 28-04 agent_answer/meta 统一组装
+  return wrapAgentFinalPayload(finalReply, { kbReferences, expReferences }, agentState, tier)
 }
 
 // ---------- Re-export getLogs ----------

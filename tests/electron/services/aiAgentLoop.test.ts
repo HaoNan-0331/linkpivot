@@ -276,9 +276,9 @@ describe('Task 2: 四标记统一循环（混合动作 + KB/EXP 循环内直执�
       '混合轮总结'
     )
     const out = await chat([{ role: 'user', content: '查状态和资料' }], ['dev1'], null)
-    // 28-04：有执行轨迹的最终回答包装 agent_answer payload（content + 代码层 sources/steps/tier）
+    // 28-04：有执行轨迹的最终回答附带 meta（kb 引用在场保持 kb_answer 契约 + meta 字段）
     const payload = JSON.parse(out)
-    expect(payload.type).toBe('agent_answer')
+    expect(payload.type).toBe('kb_answer')
     expect(payload.content).toBe('混合轮总结')
     expect(payload.noRealtimeData).toBe(false)
     expect(payload.tier).toBe('knowledge')
@@ -307,6 +307,7 @@ describe('Task 2: 四标记统一循环（混合动作 + KB/EXP 循环内直执�
     const third = reqMsgs(fetchMock, 2)
     expect(third.some((m: any) => m.role === 'user' && m.content.includes('经验库中检索到的相关经验'))).toBe(true)
     const payload = JSON.parse(out)
+    // 28-04：exp 引用在场保持 exp_answer 契约 + meta 字段附带
     expect(payload.type).toBe('exp_answer')
     expect(payload.references).toHaveLength(1)
     expect(payload.references[0]).toMatchObject({ kind: 'experience', expId: 'exp-1' })
@@ -437,7 +438,8 @@ describe('Task 2: 硬顶②熔断 + 硬顶③冷却 + 重试降级（Pitfall 10 
     })
     global.fetch = fetchMock as unknown as typeof fetch
     const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
-    expect(out).toBe('安全拒绝收尾')
+    // 28-04：首轮直执成功入轨迹 → agent_answer payload（content 承载正文）
+    expect(JSON.parse(out).content).toBe('安全拒绝收尾')
     // loop 两轮均为安全拒绝：零执行、零冷却（若误计冷却，第 3 轮会显示冷却中）
     expect(FakeClient.count).toBe(1)
     const r3Req = reqMsgs(fetchMock, 3).filter((m: any) => m.role === 'user').pop()
@@ -518,25 +520,28 @@ describe('28-04 Task 1: 分档强制预取 + 后置证据校验 + agent_answer p
     // 补查命中 → 追加一次 callAI 回注补查结果
     expect(fetchMock.mock.calls.length).toBe(2)
     const second = reqMsgs(fetchMock, 1)
-    expect(second.some((m: any) => m.role === 'user' && m.content.includes('经验库中检索到的相关经验'))).toBe(true)
+    expect(second.some((m: any) => m.role === 'user' && m.content.includes('系统补查经验库命中'))).toBe(true)
     const payload = JSON.parse(out)
-    expect(payload.type).toBe('agent_answer')
-    expect(payload.content).toBe('补查后总结')
+    // 补查 exp 引用并入 → exp_answer 契约 + meta（sources 含补查 exp 溯源）
+    expect(payload.type).toBe('exp_answer')
     expect(payload.tier).toBe('troubleshoot')
     expect(payload.sources.some((s: any) => s.kind === 'exp')).toBe(true)
     expect(payload.noRealtimeData).toBe(false)
   })
 
-  it('补查零命中：不加 LLM 轮，知情落 meta（backfillNotes），回复正文不变', async () => {
+  it('补查零命中：不加 LLM 轮，知情落 meta_enc（backfillNotes），零轨迹回复正文不变（纯文本契约）', async () => {
     retrieveForAnswerMock.mockResolvedValue({ injected: [] })
     const fetchMock = queueReplies('直接回答')
-    const out = await chat([{ role: 'user', content: '网络故障排查' }], undefined, null)
+    const out = await chat([{ role: 'user', content: '网络故障排查' }], undefined, 'sess-zero')
     expect(fetchMock.mock.calls.length).toBe(1)
-    const payload = JSON.parse(out)
-    expect(payload.type).toBe('agent_answer')
-    expect(payload.content).toBe('直接回答')
-    expect(payload.noRealtimeData).toBe(true)
-    expect(payload.backfillNotes.some((n: string) => n.includes('无相关内容'))).toBe(true)
+    // 零检索零执行 → 纯文本原样返回（不把普通问答变 JSON），无源标签经 meta_enc 持久化
+    expect(out).toBe('直接回答')
+    const row = db.prepare(
+      "SELECT meta_enc FROM chat_history WHERE role='assistant' AND session_id=? ORDER BY created_at DESC LIMIT 1"
+    ).get('sess-zero') as any
+    const meta = JSON.parse(decField(row.meta_enc, MK) as string)
+    expect(meta.noRealtimeData).toBe(true)
+    expect(meta.backfillNotes.some((n: string) => n.includes('无相关内容'))).toBe(true)
   })
 
   it('systemPrompt 追加三源冲突指令（D-10：内联 ⚠ + 末尾冲突清单，禁止静默取舍）', async () => {
