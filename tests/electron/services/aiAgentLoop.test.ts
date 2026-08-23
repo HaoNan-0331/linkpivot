@@ -78,7 +78,9 @@ vi.mock('../../../electron/services/promptService', () => ({
         ? '{{deviceInfo}}{{experienceContext}}'
         : id === 'ai.chat.resourceMap'
           ? '资源地图：可用 [CMD]/[KB_SEARCH]/[EXP_SEARCH] 标记。'
-          : ''
+          : id === 'ai.chat.agentHonestWrapup'
+            ? '自主执行已因系统限制停止：{{reason}}（已进行 {{steps}} 步）。\n【执行进度】进行到第 {{steps}} 步，因 {{reason}} 停止。请按模板输出收尾报告。'
+            : ''
     ),
   },
 }))
@@ -361,8 +363,8 @@ describe('Task 2: 硬顶②熔断 + 硬顶③冷却 + 重试降级（Pitfall 10 
     )
     const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
     expect(out).toBe('熔断收尾')
-    // inline 1 + r2（fc0→执行 3 次）+ r3（fc1→执行 1 次，重试预算耗尽）+ r4 熔断 0 次 = 5
-    expect(FakeClient.count).toBe(5)
+    // inline 1 + r2（重试预算内 3 次全失败，fc=1）+ r3 冷却跳过（fc=2）+ r4 熔断 0 次 = 4
+    expect(FakeClient.count).toBe(4)
     const r4Msg = reqMsgs(fetchMock, 4).filter((m: any) => m.role === 'user').pop()
     expect(r4Msg.content).toContain('熔断')
     expect(r4Msg.content).toContain(AGENT_BURNOUT_GUARD)
@@ -405,14 +407,23 @@ describe('Task 2: 硬顶②熔断 + 硬顶③冷却 + 重试降级（Pitfall 10 
 
   it('安全拒绝不计失败冷却（Pitfall 10）：白名单拒绝后下轮同命令不落入「冷却中」', async () => {
     allowCmd()
-    const fetchMock = queueReplies(
+    // 第 1 轮（inline）放行成功；第 2/3 轮（loop）改为安全拒绝（fetch 第二次起翻转 mock）
+    const replies = [
       '[CMD:dev1]display version[/CMD]',
       '[CMD:dev1]display version[/CMD]',
       '[CMD:dev1]display version[/CMD]',
-      '安全拒绝收尾'
-    )
-    // 第 1 轮（inline）放行成功，第 2/3 轮（loop）改为安全拒绝
-    vi.mocked(isCommandAllowed).mockReturnValue({ allowed: false, reason: '不在白名单' } as any)
+      '安全拒绝收尾',
+    ]
+    let callIdx = 0
+    const fetchMock = vi.fn(async () => {
+      if (callIdx >= 1) {
+        vi.mocked(isCommandAllowed).mockReturnValue({ allowed: false, reason: '不在白名单' } as any)
+      }
+      const content = replies[callIdx] ?? ''
+      callIdx++
+      return { ok: true, json: async () => ({ choices: [{ message: { content } }] }) }
+    })
+    global.fetch = fetchMock as unknown as typeof fetch
     const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
     expect(out).toBe('安全拒绝收尾')
     // loop 两轮均为安全拒绝：零执行、零冷却（若误计冷却，第 3 轮会显示冷却中）

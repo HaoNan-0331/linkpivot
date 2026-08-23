@@ -199,6 +199,7 @@ import { encField } from '../../../electron/utils/crypto'
 import { MCP_INJECTION_GUARD } from '../../../electron/services/promptRegistry'
 import { chat, confirmCommand, setAiMasterKey, getMcpMaxRounds, setMcpMaxRounds } from '../../../electron/services/ai'
 import { callToolWithTimeout } from '../../../electron/services/mcpClient'
+import { isCommandAllowed } from '../../../electron/services/commandSafety'
 import { createLog, updateLogStatus } from '../../../electron/services/aiExecLogger'
 
 const MK = MK_SEED
@@ -846,24 +847,32 @@ describe('sanitizeUntrusted 非法 maxLen fail-closed（WR-02）', () => {
 // ---------- Phase 22 code-review WR-06：MCP 收尾（rounds>0）不早返回，继续走 [CMD] 解析 ----------
 
 describe('WR-06：混合协议收尾回复的 [CMD] 标记不漏进气泡', () => {
-  it('confirmCommand MCP 收尾回复含 [CMD] → 剥离标记 + 未执行提示，原文不漏进气泡', async () => {
+  it('confirmCommand MCP 收尾回复含 [CMD] → 进入统一 agent 循环 CMD 确认门（Phase 28 升级），原文不漏进气泡', async () => {
     db = makeDb('confirm')
     seedDevice('dev1')
     seedMcp('dev1') // confirm 档总闸：工具走确认
-    const fetchMock = queueReplies(CALL_MARKER, '排查结论如下 [CMD:dev1]display version[/CMD]')
+    const fetchMock = queueReplies(CALL_MARKER, '排查结论如下 [CMD:dev1]display version[/CMD]', '命令执行后总结')
     vi.mocked(callToolWithTimeout).mockResolvedValue({ ok: 1 } as any)
+    // CMD 进确认门须先过安全白名单（默认 mock 拒绝 → rejectedCommands，不触发 confirm 门）
+    vi.mocked(isCommandAllowed).mockReturnValue({ allowed: true, reason: '' } as any)
 
     const out1 = await chat([{ role: 'user', content: '查状态并查版本' }], ['dev1'], null)
     expect(JSON.parse(out1).type).toBe('confirm_required') // 第一轮：MCP 工具确认
-    const final = await confirmCommand(JSON.parse(out1).execId, true)
+    const out2 = await confirmCommand(JSON.parse(out1).execId, true)
 
-    // 修复前：MCP 收尾 finalReply 原样返回 → [CMD:dev1] 协议标记原文漏进气泡且用户无感知
+    // Phase 28（28-03，D-01 统一循环）：MCP 续跑后的收尾回复含 [CMD] 不再 strip 降级——
+    // 循环内按既有安全链进入 CMD 确认门（confirm 档），命令真正可被执行而非静默剥离。
+    const payload2 = JSON.parse(out2)
+    expect(payload2.type).toBe('confirm_required')
+    expect(payload2.commands[0].command).toContain('display version')
+    expect(payload2.commands[0].deviceName).toBe('dev1')
+
+    // 确认命令后循环收尾：最终回复零标记原文
+    const final = await confirmCommand(payload2.execId, true)
+    expect(final).toBe('命令执行后总结')
     expect(final).not.toContain('[CMD')
     expect(final).not.toContain('[/CMD]')
-    // 命令体保留可读 + 显式提示「未执行的命令请求」
-    expect(final).toContain('display version')
-    expect(final).toContain('未执行的命令请求')
-    expect(fetchMock.mock.calls.length).toBe(2) // 工具回注一次 + 收尾一次，无多余调用
+    expect(fetchMock.mock.calls.length).toBe(3) // 工具回注 + 命令回注 + 收尾
   })
 
   it('stripCmdMarkersWithNotice 纯函数：闭合段保留命令体 / 未闭合开标签移除 / 无标记原样返回', async () => {
