@@ -269,7 +269,10 @@ describe('CMD 白名单防御 + 能力声明注入（Phase 23 23-03）', () => {
     )
     expect(promptMsg).toBeTruthy()
     expect(promptMsg.content).toContain('仅问答机') // 点名设备 + 原因
-    expect(out).toBe('该设备无命令执行通道，无法执行，仅可基于知识库作答。')
+    // 28-06 R3 兜底防线：未执行 [CMD] 附显式系统提示（防 AI 脑补已发起）
+    expect(out).toContain('该设备无命令执行通道，无法执行，仅可基于知识库作答。')
+    expect(out).toContain('未执行')
+    expect(out).toContain('display version')
     expect(out).not.toContain('[CMD')
   })
 
@@ -281,7 +284,10 @@ describe('CMD 白名单防御 + 能力声明注入（Phase 23 23-03）', () => {
     )
     const out = await chat([{ role: 'user', content: '查时间' }], ['q1'], null)
     expect(fetchMock.mock.calls.length).toBe(2) // 只重试一次，不再无限回注
-    expect(out).toBe('再犯') // 标记被 strip，命令未执行
+    // 28-06 R3 兜底防线：strip 收尾同样附「未执行」系统提示（不再静默丢弃）
+    expect(out).toContain('再犯') // 标记被 strip，命令未执行
+    expect(out).toContain('未执行')
+    expect(out).toContain('display clock')
     expect(out).not.toContain('[CMD')
   })
 

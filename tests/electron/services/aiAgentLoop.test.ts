@@ -717,6 +717,80 @@ describe('28-04 Task 2: ai:cancelChat 中断通道', () => {
   })
 })
 
+// ---------- 28-06 第三轮真机复测缺陷修复（混合标记轮 [CMD] 蒸发） ----------
+
+describe('28-06 R3：混合标记轮 [CMD] 不蒸发（首答 [KB_SEARCH]+[CMD] 必进循环）', () => {
+  it('smart 模式首答 [KB_SEARCH]+[CMD:精确设备名]：命令进执行链 + kb 检索同轮执行 + 两类步骤入轨迹', async () => {
+    db.prepare("UPDATE ai_config SET exec_mode = 'smart'").run()
+    allowCmd()
+    FakeClient.output = 'VRP V500'
+    vi.mocked(kbSearch).mockResolvedValue(KB_ROWS as any)
+    const fetchMock = queueReplies(
+      '先查资料 [KB_SEARCH]vlan 原理[/KB_SEARCH] 再查版本 [CMD:dev1]display version[/CMD]',
+      '混合任务总结'
+    )
+    const out = await chat([{ role: 'user', content: '先查版本再查资料' }], ['dev1'], null)
+    const payload = JSON.parse(out)
+    expect(payload.content).toBe('混合任务总结')
+    // RED 分水岭：修复前 KB 二段式消费首答 → 二答无 [CMD] → 循环未进 → 命令静默蒸发（FakeClient 0 连接）
+    expect(FakeClient.count).toBe(1)
+    expect(vi.mocked(kbSearch)).toHaveBeenCalledWith('vlan 原理', ['dev1'], 5)
+    expect(payload.steps.some((s: any) => s.actionType === 'cmd' && s.status === 'done')).toBe(true)
+    expect(payload.steps.some((s: any) => s.actionType === 'kb' && s.status === 'done')).toBe(true)
+    // 第 2 次 callAI 的回注 user 消息同时含命令输出与文档片段（同轮两类动作结果）
+    const userMsg = reqMsgs(fetchMock, 1).filter((m: any) => m.role === 'user').pop()
+    expect(userMsg.content).toContain('display version')
+    expect(userMsg.content).toContain('VRP V500')
+  })
+
+  it('smart 模式首答 [KB_SEARCH]+[CMD 不带设备名]：默认目标设备执行命令', async () => {
+    db.prepare("UPDATE ai_config SET exec_mode = 'smart'").run()
+    allowCmd()
+    FakeClient.output = 'OK'
+    vi.mocked(kbSearch).mockResolvedValue({ rows: [] } as any)
+    queueReplies(
+      '[KB_SEARCH]vlan[/KB_SEARCH] [CMD]display version[/CMD]',
+      '总结'
+    )
+    const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
+    expect(FakeClient.count).toBe(1)
+    const payload = JSON.parse(out)
+    expect(payload.steps.some((s: any) => s.actionType === 'cmd' && s.status === 'done')).toBe(true)
+    // KB 未命中有真实检索轨迹
+    expect(vi.mocked(kbSearch)).toHaveBeenCalledWith('vlan', ['dev1'], 5)
+  })
+
+  it('简写设备名 [CMD:核心交换机] 模糊命中全名「公司服务器核心交换机」→ 进循环执行（不再因精确匹配失败被拒）', async () => {
+    insertDevice('dev2', '公司服务器核心交换机')
+    allowCmd()
+    FakeClient.output = 'VERSION 5.20'
+    queueReplies(
+      '[CMD:核心交换机]display version[/CMD]',
+      '总结'
+    )
+    const out = await chat([{ role: 'user', content: '查版本' }], ['dev2'], null)
+    // 修复前：精确匹配失败 → 旧路径拒绝「未找到指定设备」（0 连接）；修复后模糊命中直接执行
+    expect(FakeClient.count).toBe(1)
+    const payload = JSON.parse(out)
+    expect(payload.steps.some((s: any) => s.actionType === 'cmd' && s.status === 'done')).toBe(true)
+  })
+
+  it('兜底防线：未执行的 [CMD]（点名不存在设备）最终回复必带明确未执行系统提示（AI 不得脑补已发起）', async () => {
+    allowCmd()
+    vi.mocked(kbSearch).mockResolvedValue(KB_ROWS as any)
+    queueReplies(
+      '[KB_SEARCH]vlan[/KB_SEARCH] 同时 [CMD:不存在的设备]display version[/CMD]',
+      '总结'
+    )
+    const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
+    const payload = JSON.parse(out)
+    // RED：修复前二段式消费首答后二答无标记 → 直接返回「总结」，未执行命令零提示
+    expect(payload.content).toContain('未执行')
+    expect(payload.content).toContain('display version')
+    expect(payload.content).toContain('不存在的设备')
+  })
+})
+
 // ---------- 28-06 第二轮真机复测缺陷修复 ----------
 
 describe('28-06 R2 缺陷①：步骤卡内容非空（argsJson=resultJson 数据源修复）', () => {

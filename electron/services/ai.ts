@@ -1340,17 +1340,82 @@ function parseCmdBlocks(reply: string): Array<{ deviceName: string; cmd: string 
  * （有效性由循环内 parseMcpToolCalls fail-closed 分诊，无 mcp 上下文时畸形标记走
  * strip 收尾，不执行任何工具）。
  */
+/**
+ * 28-06 R3 缺陷（设备名模糊匹配）：[CMD:设备名] 目标解析——精确（trim/忽略大小写）优先，
+ * 未中则包含式模糊匹配（AI 常写设备简称如「核心交换机」→ 全名「公司服务器核心交换机」；
+ * 双向包含），多候选取名称最短者（最具体）。仅在本轮已选 targetDevices 范围内解析——
+ * 安全链（guardCheckCommand 的 conversationSet 以 targetDevices 为基准）不受影响。
+ */
+function resolveTargetDevice(deviceName: string, targetDevices: any[]): any {
+  if (!deviceName || !deviceName.trim()) return targetDevices[0]
+  const trimmed = deviceName.trim().toLowerCase()
+  const exact = targetDevices.find((d) => String(d.name).trim().toLowerCase() === trimmed)
+  if (exact) return exact
+  const fuzzy = targetDevices
+    .filter((d) => {
+      const n = String(d.name).trim().toLowerCase()
+      return n.includes(trimmed) || trimmed.includes(n)
+    })
+    .sort((a, b) => String(a.name).length - String(b.name).length)
+  return fuzzy[0]
+}
+
 function replyEntersAgentLoop(
   reply: string,
   targetDevices: any[]
 ): boolean {
   const cmdHit = parseCmdBlocks(reply).some((b) => {
-    const dev = b.deviceName
-      ? targetDevices.find((d) => d.name.trim().toLowerCase() === b.deviceName.trim().toLowerCase())
-      : targetDevices[0]
+    const dev = resolveTargetDevice(b.deviceName, targetDevices)
     return !!dev && isDeviceExecutable(dev)
   })
   return cmdHit || /\[MCP_TOOL_CALL\]/.test(reply)
+}
+
+/**
+ * 28-06 R3（兜底防线）：首答 [CMD] 标记未被任何执行路径消费时，生成显式「未执行」回注
+ * ——杜绝 AI 把「发起意图」脑补成「已执行事实」（用户实测缺陷）。已执行/已尝试的命令
+ * （agentState.steps 有 cmd 轨迹）与 qOnly 拒绝（含拒绝原因）分别排除/如实列出。
+ */
+function buildDroppedCmdNotice(
+  firstCmdBlocks: Array<{ deviceName: string; cmd: string }>,
+  qOnlyRejections: Array<{ deviceName: string; cmd: string; reason: string }>,
+  targetDevices: any[],
+  agentState: AgentLoopState
+): string {
+  if (firstCmdBlocks.length === 0) return ''
+  const attempted = new Set(
+    agentState.steps.filter((s) => s.actionType === 'cmd').map((s) => String(s.command))
+  )
+  const lines: string[] = []
+  const listedCmds = new Set<string>()
+  const pushLine = (deviceName: string, cmd: string, reason: string) => {
+    if (listedCmds.has(cmd)) return
+    listedCmds.add(cmd)
+    lines.push(`命令 [${deviceName || '未指定设备'}] ${cmd} 未执行：${reason}`)
+  }
+  for (const b of firstCmdBlocks) {
+    if (attempted.has(b.cmd)) continue
+    if (targetDevices.length === 0) {
+      pushLine(b.deviceName, b.cmd, '本轮未选择目标设备')
+      continue
+    }
+    const qOnly = qOnlyRejections.find((r) => r.cmd === b.cmd)
+    if (qOnly) {
+      pushLine(qOnly.deviceName, qOnly.cmd, qOnly.reason)
+      continue
+    }
+    const dev = resolveTargetDevice(b.deviceName, targetDevices)
+    if (!dev) pushLine(b.deviceName, b.cmd, '未找到指定设备')
+    else if (!isDeviceExecutable(dev)) pushLine(String(dev.name), b.cmd, '该设备无命令执行通道（仅可问答）')
+  }
+  // qOnly 拒绝中不在首答块的命令（重试轮再犯被 strip 的标记）同样显式回注
+  for (const r of qOnlyRejections) {
+    if (attempted.has(r.cmd)) continue
+    pushLine(r.deviceName, r.cmd, r.reason)
+  }
+  return lines.length
+    ? `\n\n【系统提示】以下命令标记未被系统执行（请勿在回答中声称已发起或已执行该命令）：\n${lines.join('\n')}`
+    : ''
 }
 
 /** KB 检索结果 → 回注上下文文本 + 来源清单（[图片N] 描述替换逻辑自 chat() 原位抽取，行为不变） */
@@ -1469,16 +1534,11 @@ async function runAgentCmdRound(
   const rejectedCommands: Array<{ deviceName: string; cmd: string; reason: string }> = []
 
   for (const { deviceName, cmd } of blocks) {
-    let targetDevice: any
-    if (deviceName) {
-      const trimmed = deviceName.trim().toLowerCase()
-      targetDevice = targetDevices.find((d) => d.name.trim().toLowerCase() === trimmed)
-      if (!targetDevice) {
-        rejectedCommands.push({ deviceName, cmd, reason: `未找到指定设备: ${deviceName}` })
-        continue
-      }
-    } else {
-      targetDevice = targetDevices[0]
+    // 28-06 R3：目标解析改用 resolveTargetDevice（精确优先 + 简写模糊命中，chat() 主链同源）
+    const targetDevice = resolveTargetDevice(deviceName, targetDevices)
+    if (deviceName && !targetDevice) {
+      rejectedCommands.push({ deviceName, cmd, reason: `未找到指定设备: ${deviceName}` })
+      continue
     }
     if (!targetDevice) continue
     if (!isDeviceExecutable(targetDevice)) {
@@ -2595,6 +2655,15 @@ export async function chat(
 
   const aiReply = await callAI(config, fullMessages, signal)
 
+  // 28-06 R3 缺陷（主根因）：首答混合标记判定前置——首答含 [CMD]（命中可执行设备，含
+  // 简写模糊匹配）或 [MCP_TOOL_CALL] 时**跳过**循环外 KB/EXP 二段式，直接进统一 agent
+  // 循环（循环内 KB/EXP 步自会执行检索，D-01/D-03 四类标记统一循环）。此前二段式先消费
+  // [KB_SEARCH] → 二次 LLM 问答通常不再输出 [CMD] → 首答命令标记静默蒸发（AI 把「发起
+  // 意图」脑补成「已执行」）。无 CMD/MCP 的纯 KB/EXP 问答轮保持二段式既有语义不回归。
+  const firstReplyEntersLoop = replyEntersAgentLoop(aiReply, targetDevices)
+  // 28-06 R3（兜底防线数据源）：首答原始 [CMD] 块——二段式/循环未消费时用于未执行回注
+  const firstReplyCmdBlocks = firstReplyEntersLoop ? [] : parseCmdBlocks(aiReply)
+
   // Check for KB_SEARCH tool call
   const kbSearchMatch = aiReply.match(/\[KB_SEARCH\](.*?)\[\/KB_SEARCH\]/s)
   let kbReferences: Array<{ docTitle: string; chunkTitle: string; docId: string }> = []
@@ -2608,7 +2677,7 @@ export async function chat(
   // 模型不再丢失已注入的文档/经验上下文。
   const extraContext: Array<{ role: string; content: string }> = []
 
-  if (kbSearchMatch) {
+  if (!firstReplyEntersLoop && kbSearchMatch) {
     const searchQuery = kbSearchMatch[1].trim()
     try {
       const searchResults = (await kbSearch(searchQuery, deviceIds, 5)).rows
@@ -2644,7 +2713,7 @@ export async function chat(
   // 结果只回注 **user-role** 消息（绝不进 system prompt，T-23-05），回注文本经
   // sanitizeUntrusted 清洗截断（T-23-05）；query 仅作检索关键词（T-23-04）。
   const expSearchMatch = finalAiReply.match(/\[EXP_SEARCH\](.*?)\[\/EXP_SEARCH\]/s)
-  if (expSearchMatch) {
+  if (!firstReplyEntersLoop && expSearchMatch) {
     const expQuery = sanitizeUntrusted(expSearchMatch[1].trim(), 500)
     try {
       const retrieval = await retrieveForAnswer({ userMessage: expQuery, deviceIds })
@@ -2688,7 +2757,10 @@ export async function chat(
 
   // WR-03 fix：二次回复 fail-safe 剥离残留 [EXP_SEARCH]/[KB_SEARCH] 标记（提示词
   // 约束非强制，模型不服从时死标记不得漏进 saveChatMessage/用户气泡）。
-  finalAiReply = stripExpKbSearchMarkers(finalAiReply)
+  // 28-06 R3：首答直进 agent 循环时**不剥离**——[KB_SEARCH]/[EXP_SEARCH] 标记留给
+  // 循环内检索步消费（剥离即静默丢弃检索意图，同轮 [CMD] 蒸发缺陷的同族路径）；
+  // 循环收尾自带 stripAllAgentMarkers 兜底，死标记不会漏进气泡。
+  if (!firstReplyEntersLoop) finalAiReply = stripExpKbSearchMarkers(finalAiReply)
 
   // ---- Phase 22（22-03）MCP 工具调用分支（[MCP_TOOL_CALL] 文本标记协议）----
   // 解析 fail-closed（T-22-09）：畸形/未知 server/未知工具不入执行；
@@ -2803,13 +2875,7 @@ export async function chat(
   const qOnlyRejections: Array<{ deviceName: string; cmd: string; reason: string }> = []
   if (targetDevices.length > 0 && commands.length > 0) {
     let qOnlyPrompted = false
-    const resolveTarget = (deviceName: string): any => {
-      if (deviceName) {
-        const trimmed = deviceName.trim().toLowerCase()
-        return targetDevices.find((d) => d.name.trim().toLowerCase() === trimmed)
-      }
-      return targetDevices[0]
-    }
+    const resolveTarget = (deviceName: string): any => resolveTargetDevice(deviceName, targetDevices)
     for (;;) {
       const blocked: Array<{ deviceName: string; cmd: string }> = []
       const pass: Array<{ deviceName: string; cmd: string }> = []
@@ -2866,6 +2932,8 @@ export async function chat(
       evidenceBackfilled = true
       finalAiReply = await runEvidenceBackfill(agentLoopCtx, agentState, tier, finalAiReply)
     }
+    // 28-06 R3（兜底防线）：首答 [CMD] 未被任何路径执行时显式回注未执行提示
+    finalAiReply += buildDroppedCmdNotice(firstReplyCmdBlocks, qOnlyRejections, targetDevices, agentState)
     saveChatMessage('user', messages[messages.length - 1]?.content || '', null, sessionId)
     // 28-04（D-07）：agent 轨迹 meta 加密落 chat_history.meta_enc（encField 红线）
     saveChatMessage('assistant', finalAiReply, null, sessionId, buildAgentMeta(agentState, tier))
@@ -2887,17 +2955,11 @@ export async function chat(
   const guardConversationSet = targetDevices.map((d) => toGuardRef(d))
 
   for (const { deviceName, cmd } of commands) {
-    // 指定设备名必须精确匹配（忽略大小写/trim），未匹配则拒绝而非回退默认设备；未指定时用默认设备
-    let targetDevice: any
-    if (deviceName) {
-      const trimmed = deviceName.trim().toLowerCase()
-      targetDevice = targetDevices.find((d) => d.name.trim().toLowerCase() === trimmed)
-      if (!targetDevice) {
-        rejectedCommands.push({ deviceName, cmd, reason: `未找到指定设备: ${deviceName}` })
-        continue
-      }
-    } else {
-      targetDevice = targetDevices[0]
+    // 28-06 R3：目标解析改用 resolveTargetDevice（精确优先 + 简写模糊命中，与循环内同源）
+    const targetDevice = resolveTargetDevice(deviceName, targetDevices)
+    if (deviceName && !targetDevice) {
+      rejectedCommands.push({ deviceName, cmd, reason: `未找到指定设备: ${deviceName}` })
+      continue
     }
 
     const safety = isCommandAllowed(cmd, whitelist)
