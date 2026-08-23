@@ -807,11 +807,12 @@ describe('28-06 R2 缺陷①：步骤卡内容非空（argsJson=resultJson 数�
     )
     const payloads: any[] = []
     await chat([{ role: 'user', content: '查状态和资料' }], ['dev1'], null, (p) => payloads.push(p))
+    // 28-06 R6 后预取卡也在场（prefetched=true）——循环内步骤卡按 !prefetched 区分
     const cmdP = payloads.find((p) => p.actionType === 'cmd' && p.stepStatus === 'done')
     expect(cmdP).toBeTruthy()
     expect(cmdP.argsJson).toBe('display version')
     expect(cmdP.resultJson).toContain('VRP (R) V500R005C10')
-    const kbP = payloads.find((p) => p.actionType === 'kb' && p.stepStatus === 'done')
+    const kbP = payloads.find((p) => p.actionType === 'kb' && p.stepStatus === 'done' && !p.prefetched)
     expect(kbP).toBeTruthy()
     // 缺陷①修复前：kb 步骤无 command → argsJson=''（renderer 显示「（无参数）」）、
     // settle 不回填 outputSummary → resultJson=''（「（无返回内容）」）
@@ -841,7 +842,7 @@ describe('28-06 R2 缺陷⑥：历史恢复 meta 通道（getSessionMessages 返
     const cmdStep = meta.steps.find((s: any) => s.actionType === 'cmd')
     expect(cmdStep.command).toBe('display version')
     expect(String(cmdStep.outputSummary)).toContain('VRP V500')
-    const kbStep = meta.steps.find((s: any) => s.actionType === 'kb')
+    const kbStep = meta.steps.find((s: any) => s.actionType === 'kb' && !s.prefetched)
     expect(kbStep.query).toBe('vlan 原理')
     expect(String(kbStep.outputSummary)).toContain('网络手册')
     expect(meta.sources.some((s: any) => s.kind === 'device')).toBe(true)
@@ -981,6 +982,106 @@ describe('28-06 R5 缺陷A：中断轨迹持久化（切会话再切回步骤卡
     // chat 直接 throw ChatInterruptedError（main handler 兜底路径）
     await expect(chat([{ role: 'user', content: '你好' }], undefined, 'sess-r5-first', undefined, controller.signal))
       .rejects.toBeInstanceOf(ChatInterruptedError)
+  })
+})
+
+// ---------- 28-06 R6 用户裁决增强：预取步骤卡可见 + AI 引用归因 ----------
+
+import { PromptService } from '../../../electron/services/promptService'
+import { getRegistryEntry } from '../../../electron/services/promptRegistry'
+
+const defaultPromptImpl = PromptService.getPrompt.getMockImplementation()!
+const ATTRIBUTION_TEXT = '来源归因：根据经验库《标题》…／知识库文档《标题》指出…，禁止无来源陈述。'
+
+function withAttributionPrompt() {
+  vi.mocked(PromptService.getPrompt).mockImplementation((id: string) =>
+    id === 'ai.chat.sourceAttribution' ? ATTRIBUTION_TEXT : defaultPromptImpl(id))
+}
+
+describe('28-06 R6 增强 a：分档预取生成步骤卡（过程可见，不占步数硬顶）', () => {
+  it('knowledge 档预取 kb+exp：每源一张 prefetched 步骤卡（status=done、emit 推送、query/outputSummary 非空）', async () => {
+    vi.mocked(kbSearch).mockResolvedValue(KB_ROWS as any)
+    retrieveForAnswerMock.mockResolvedValue(EXP_HIT)
+    const payloads: any[] = []
+    queueReplies('初步分析', '最终回答')
+    await chat([{ role: 'user', content: 'vlan 原理与排查经验' }], ['dev1'], 'sess-r6-a', (p) => payloads.push(p))
+    const preKb = payloads.find((p) => p.actionType === 'kb' && p.prefetched === true && p.stepStatus === 'done')
+    const preExp = payloads.find((p) => p.actionType === 'exp' && p.prefetched === true && p.stepStatus === 'done')
+    expect(preKb).toBeTruthy()
+    expect(preExp).toBeTruthy()
+    expect(preKb.argsJson).toContain('vlan 原理与排查经验')
+    expect(preKb.resultJson).toContain('命中 1 条')
+    expect(preExp.resultJson).toContain('ARP 排查')
+  })
+
+  it('预取步不占步数硬顶：agent_max_rounds=1 下预取卡在场，但收尾仍报「第 1 步」（预取不消耗 N）', async () => {
+    allowCmd()
+    vi.mocked(kbSearch).mockResolvedValue(KB_ROWS as any)
+    retrieveForAnswerMock.mockResolvedValue(EXP_HIT)
+    db.prepare('UPDATE ai_config SET agent_max_rounds = 1').run()
+    const fetchMock = queueReplies(
+      '[CMD:dev1]display version[/CMD]',
+      '[CMD:dev1]display clock[/CMD]',
+      '【执行进度】收尾报告'
+    )
+    const out = await chat([{ role: 'user', content: '查状态和资料' }], ['dev1'], null)
+    const wrapMsg = reqMsgs(fetchMock, 2).filter((m: any) => m.role === 'user').pop()
+    expect(wrapMsg.content).toContain('第 1 步')
+    const payload = JSON.parse(out)
+    // 预取卡在场（kb 命中 + exp 命中各一张）但 rounds 计数不含预取——若预取占步数此处会是「第 3 步」
+    expect(payload.steps.filter((s: any) => s.prefetched === true)).toHaveLength(2)
+  })
+
+  it('meta_enc 持久化 + 历史恢复：预取步骤随轨迹落库，renderer 重建卡片 prefetched 标志透传', async () => {
+    vi.mocked(kbSearch).mockResolvedValue(KB_ROWS as any)
+    retrieveForAnswerMock.mockResolvedValue(EXP_HIT)
+    queueReplies('初步分析', '最终回答')
+    await chat([{ role: 'user', content: 'vlan 原理与排查经验' }], ['dev1'], 'sess-r6-c')
+    const msgs = getSessionMessages('sess-r6-c')
+    const last = msgs[msgs.length - 1]
+    expect(last.meta?.steps.some((s: any) => s.prefetched === true)).toBe(true)
+    const restored = historyMessageToChatMsgs({
+      id: last.id, role: 'assistant', content: last.content, createdAt: last.createdAt, meta: last.meta,
+    })
+    const preCard = restored.find((m) => m.toolResult?.prefetched === true)
+    expect(preCard).toBeTruthy()
+    expect(preCard!.toolResult!.stepStatus).toBe('done')
+  })
+})
+
+describe('28-06 R6 增强 b：来源归因指令（预取注入 + 循环内回注双侧）', () => {
+  it('registry 含 ai.chat.sourceAttribution 可编辑条目（普通行为指令，无 ⚠ 前缀语义）', () => {
+    const entry = getRegistryEntry('ai.chat.sourceAttribution')
+    expect(entry).toBeTruthy()
+    expect(entry!.content).toContain('经验库《')
+    expect(entry!.content).toContain('知识库文档《')
+    expect(entry!.content).not.toContain('⚠')
+  })
+
+  it('预取注入 user 消息头部含归因指令（[系统预取·分档上下文] 段）', async () => {
+    withAttributionPrompt()
+    retrieveForAnswerMock.mockResolvedValue(EXP_HIT)
+    const fetchMock = queueReplies('回答')
+    await chat([{ role: 'user', content: '网络故障排查' }], undefined, null)
+    const preMsg = reqMsgs(fetchMock, 0).find((m: any) => m.role === 'user' && m.content.includes('[系统预取·分档上下文]'))
+    expect(preMsg).toBeTruthy()
+    expect(preMsg.content).toContain(ATTRIBUTION_TEXT)
+    expect(preMsg.content.indexOf(ATTRIBUTION_TEXT)).toBeLessThan(preMsg.content.indexOf('相关运维经验'))
+  })
+
+  it('循环内 [KB_SEARCH] 回注头部含归因指令（复用同一条目）', async () => {
+    withAttributionPrompt()
+    allowCmd()
+    vi.mocked(kbSearch).mockResolvedValue(KB_ROWS as any)
+    const fetchMock = queueReplies(
+      '[CMD:dev1]display version[/CMD]',
+      '查资料 [KB_SEARCH]vlan 原理[/KB_SEARCH]',
+      '总结'
+    )
+    await chat([{ role: 'user', content: '查状态和资料' }], ['dev1'], null)
+    const userMsg = reqMsgs(fetchMock, 2).filter((m: any) => m.role === 'user').pop()
+    expect(userMsg.content).toContain(ATTRIBUTION_TEXT)
+    expect(userMsg.content.indexOf(ATTRIBUTION_TEXT)).toBeLessThan(userMsg.content.indexOf('文档片段'))
   })
 })
 

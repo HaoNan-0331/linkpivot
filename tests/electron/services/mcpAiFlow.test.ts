@@ -299,7 +299,8 @@ describe('标记解析 fail-closed（T-22-09）：畸形/未知不进执行', ()
   it('畸形 JSON → 不执行，回注不可用提示后新回复收尾（Bug 2 语义，标记不漏进气泡）', async () => {
     const fetchMock = queueReplies('分析中 [MCP_TOOL_CALL]not-json-xxx', '好的，直接回答。')
     const emitted: any[] = []
-    const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null, (p) => emitted.push(p))
+    const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null, // 28-06 R6：预取步骤卡（prefetched=true）也在 emit 流中——本套件只断言 MCP tool_result，过滤之
+(p) => { if (!p.prefetched) emitted.push(p) })
     expect(callToolWithTimeout).not.toHaveBeenCalled()
     expect(emitted).toHaveLength(0)
     expect(out).toBe('好的，直接回答。')
@@ -331,7 +332,8 @@ describe('smart 直执链路（双条件免确认，D-04）', () => {
     const fetchMock = queueReplies(CALL_MARKER, '最终总结')
     vi.mocked(callToolWithTimeout).mockResolvedValue({ ok: 1 } as any)
     const emitted: any[] = []
-    const out = await chat([{ role: 'user', content: '查状态' }], ['dev1'], null, (p) => emitted.push(p))
+    const out = await chat([{ role: 'user', content: '查状态' }], ['dev1'], null, // 28-06 R6：预取步骤卡（prefetched=true）也在 emit 流中——本套件只断言 MCP tool_result，过滤之
+(p) => { if (!p.prefetched) emitted.push(p) })
     expect(JSON.parse(out).content).toBe('最终总结')
     // tool_result 契约
     expect(emitted).toHaveLength(1)
@@ -356,7 +358,8 @@ describe('smart 直执链路（双条件免确认，D-04）', () => {
     queueReplies(CALL_MARKER, '超时后的总结')
     vi.mocked(callToolWithTimeout).mockRejectedValue(Object.assign(new Error('工具调用超时'), { timedOut: true }))
     const emitted: any[] = []
-    const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null, (p) => emitted.push(p))
+    const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null, // 28-06 R6：预取步骤卡（prefetched=true）也在 emit 流中——本套件只断言 MCP tool_result，过滤之
+(p) => { if (!p.prefetched) emitted.push(p) })
     expect(emitted[0].status).toBe('timeout')
     expect(emitted[0].errorText).toBeTruthy()
     expect(emitted[0].resultJson).toBe('')
@@ -367,7 +370,8 @@ describe('smart 直执链路（双条件免确认，D-04）', () => {
     queueReplies(CALL_MARKER, '失败后的总结')
     vi.mocked(callToolWithTimeout).mockRejectedValue(new Error('connection refused'))
     const emitted: any[] = []
-    await chat([{ role: 'user', content: '查' }], ['dev1'], null, (p) => emitted.push(p))
+    await chat([{ role: 'user', content: '查' }], ['dev1'], null, // 28-06 R6：预取步骤卡（prefetched=true）也在 emit 流中——本套件只断言 MCP tool_result，过滤之
+(p) => { if (!p.prefetched) emitted.push(p) })
     expect(emitted[0].status).toBe('failed')
     expect(emitted[0].errorText).toContain('connection refused')
   })
@@ -405,7 +409,8 @@ describe('确认流（confirm 档总闸 / smart 未勾免确认）', () => {
     const fetchMock = queueReplies(CALL_MARKER, '确认后的总结')
     vi.mocked(callToolWithTimeout).mockResolvedValue({ done: true } as any)
     const emitted: any[] = []
-    const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null, (p) => emitted.push(p))
+    const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null, // 28-06 R6：预取步骤卡（prefetched=true）也在 emit 流中——本套件只断言 MCP tool_result，过滤之
+(p) => { if (!p.prefetched) emitted.push(p) })
     const execId = JSON.parse(out).execId
     const final = await confirmCommand(execId, true)
     expect(final).toBe('确认后的总结')
@@ -465,7 +470,8 @@ describe('连续调用有界循环（22-05 用户裁决）', () => {
   it('连续两轮标记：两轮工具各执行/下发/审计一次，followUp 结果累积，最终回复无标记残留', async () => {
     const fetchMock = queueReplies(CALL_MARKER, CALL_MARKER_2, '两轮后的最终总结')
     const emitted: any[] = []
-    const out = await chat([{ role: 'user', content: '查状态' }], ['dev1'], null, (p) => emitted.push(p))
+    const out = await chat([{ role: 'user', content: '查状态' }], ['dev1'], null, // 28-06 R6：预取步骤卡（prefetched=true）也在 emit 流中——本套件只断言 MCP tool_result，过滤之
+(p) => { if (!p.prefetched) emitted.push(p) })
     expect(JSON.parse(out).content).toBe('两轮后的最终总结')
     expect(out).not.toContain('[MCP_TOOL_CALL]')
     // 两轮工具各执行 1 次 / tool_result 各下发 1 次 / 审计各 1 条
@@ -489,7 +495,8 @@ describe('连续调用有界循环（22-05 用户裁决）', () => {
       CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, CALL_MARKER, '连续收尾总结'
     )
     const emitted: any[] = []
-    const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null, (p) => emitted.push(p))
+    const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null, // 28-06 R6：预取步骤卡（prefetched=true）也在 emit 流中——本套件只断言 MCP tool_result，过滤之
+(p) => { if (!p.prefetched) emitted.push(p) })
     expect(JSON.parse(out).content).toBe('连续收尾总结')
     expect(callToolWithTimeout).toHaveBeenCalledTimes(6)
     expect(emitted).toHaveLength(6)
@@ -499,7 +506,8 @@ describe('连续调用有界循环（22-05 用户裁决）', () => {
     db.prepare('UPDATE mcp_tools SET skip_confirm = 0').run() // 未勾免确认 → confirm 档
     const fetchMock = queueReplies(CALL_MARKER, CALL_MARKER_2, '确认流两轮总结')
     const emitted: any[] = []
-    const out1 = await chat([{ role: 'user', content: '查' }], ['dev1'], null, (p) => emitted.push(p))
+    const out1 = await chat([{ role: 'user', content: '查' }], ['dev1'], null, // 28-06 R6：预取步骤卡（prefetched=true）也在 emit 流中——本套件只断言 MCP tool_result，过滤之
+(p) => { if (!p.prefetched) emitted.push(p) })
     const execId1 = JSON.parse(out1).execId
     // 第 1 轮确认后：执行 + 回注 → 第 2 轮又含标记 → 再次 confirm_required
     const out2 = await confirmCommand(execId1, true)
@@ -637,7 +645,8 @@ describe('畸形载荷分诊：malformed → 格式纠正回注重试；工具�
       '纠格后的最终总结'
     )
     const emitted: any[] = []
-    const out = await chat([{ role: 'user', content: '重试' }], ['dev1'], null, (p) => emitted.push(p))
+    const out = await chat([{ role: 'user', content: '重试' }], ['dev1'], null, // 28-06 R6：预取步骤卡（prefetched=true）也在 emit 流中——本套件只断言 MCP tool_result，过滤之
+(p) => { if (!p.prefetched) emitted.push(p) })
     // 重试那次 callAI 请求体含格式纠正提示（user-role，含 JSON 格式关键句），且不是管控文案
     const second = JSON.parse((fetchMock.mock.calls[1][1] as any).body)
     const retryMsgs = second.messages.filter(

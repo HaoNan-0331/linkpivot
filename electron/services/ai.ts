@@ -745,6 +745,8 @@ export interface ToolResultPayload {
   stepIndex?: number
   actionType?: AgentStep['actionType']
   stepStatus?: AgentStep['status']
+  /** 28-06 R6 增强 a：预取步骤卡标志（renderer 折叠态动作描述加「[预取]」前缀） */
+  prefetched?: boolean
 }
 
 /** 选中设备的 MCP 上下文（注入 + 执行白名单判定用） */
@@ -1018,6 +1020,11 @@ export interface AgentStep {
   /** 28-06 R2 缺陷①：kb/exp 步骤的检索词（步骤卡 argsJson 数据源） */
   query?: string
   outputSummary?: string
+  /**
+   * 28-06 R6 增强 a：分档预取步骤标志——预取在循环前完成，硬顶计数按 state.rounds
+   * （回注轮数），预取步天然不占 agent_max_rounds 步数 N；renderer 据此加「[预取]」前缀。
+   */
+  prefetched?: boolean
 }
 
 /** 来源轨迹（D-09：由代码层按执行轨迹生成，prompt 文本不参与来源判定） */
@@ -1313,7 +1320,41 @@ function agentStepToToolResultPayload(s: AgentStep): ToolResultPayload {
     stepIndex: s.stepIndex,
     actionType: s.actionType,
     stepStatus: s.status,
+    ...(s.prefetched ? { prefetched: true } : {}),
   }
+}
+
+/**
+ * 28-06 R6 增强 a：预取步骤卡入栈——分档预取每源一张，状态直接 done（预取在首轮
+ * callAI 之前已完成，无 running 过程态）；只 emit 一次终态卡。prefetched 标志标记，
+ * 硬顶按 state.rounds 计数——预取步永不消耗 agent_max_rounds 步数 N。
+ */
+function pushPrefetchedStep(
+  state: AgentLoopState,
+  actionType: 'kb' | 'exp',
+  query: string,
+  outputSummary: string
+): void {
+  const step: AgentStep = {
+    stepIndex: state.steps.length,
+    actionType,
+    status: 'done',
+    query: sanitizeUntrusted(query, 200),
+    outputSummary,
+    prefetched: true,
+  }
+  state.steps.push(step)
+  state.emitStep?.(step)
+}
+
+/**
+ * 28-06 R6 增强 b：来源归因指令（可编辑 registry 条目 ai.chat.sourceAttribution）——
+ * 预取注入段与 KB/EXP 回注文本头部统一附带；条目被用户清空时返回空串（普通行为
+ * 指令，fail-open 不阻断内容注入——与 ⚠ 安全关键条目的 fail-closed 语义区分）。
+ */
+function sourceAttributionNote(): string {
+  const note = PromptService.getPrompt('ai.chat.sourceAttribution').trim()
+  return note ? `${note}\n` : ''
 }
 
 function parseKbQueries(reply: string): string[] {
@@ -1484,7 +1525,8 @@ async function runKbSearchStep(query: string, ctx: McpLoopCtx, state: AgentLoopS
   }
   if (ctx.kbReferences) mergeKbRefs(ctx.kbReferences, references)
   state.sources.push(...references.map((r) => ({ kind: 'kb' as const, title: `${r.docTitle} / ${r.chunkTitle}`, refId: r.docId })))
-  return `以下是知识库检索到的相关文档片段（关键词: "${query}"）：\n\n${contextText}`
+  // 28-06 R6 增强 b：回注头部带来源归因指令（复用 ai.chat.sourceAttribution 条目）
+  return `${sourceAttributionNote()}以下是知识库检索到的相关文档片段（关键词: "${query}"）：\n\n${contextText}`
 }
 
 /** EXP 检索步（WR-05 解除：循环内 [EXP_SEARCH] 直执——只读本地库，无确认） */
@@ -1528,7 +1570,8 @@ async function runExpSearchStep(query: string, ctx: McpLoopCtx, state: AgentLoop
     step.outputSummary = sanitizeUntrusted(`命中 ${newRefs.length} 条：${newRefs.map((e) => e.title).join('；')}`, 200)
   }
   state.sources.push(...newRefs.map((e) => ({ kind: 'exp' as const, title: e.title, refId: e.exp_id })))
-  return `以下是经验库中检索到的相关经验（关键词: "${expQuery}"）：\n\n${expContext}`
+  // 28-06 R6 增强 b：回注头部带来源归因指令（复用 ai.chat.sourceAttribution 条目）
+  return `${sourceAttributionNote()}以下是经验库中检索到的相关经验（关键词: "${expQuery}"）：\n\n${expContext}`
 }
 
 /**
@@ -2685,9 +2728,10 @@ export async function chat(
   // 28-04：分档预取注入段只进 user-role 消息（结果绝不进 system prompt，T-22-08），
   // KB/EXP 命中内容属不可信文本，注入前经 sanitizeUntrusted 截断清洗（T-28-04-03）。
   if (!tierRetrieval.demoMode && tierRetrieval.promptSection) {
+    // 28-06 R6 增强 b：注入头部带来源归因指令（引用库内容必须标注《标题》）
     fullMessages.push({
       role: 'user',
-      content: `[系统预取·分档上下文]\n${sanitizeUntrusted(tierRetrieval.promptSection, 8000)}`,
+      content: `[系统预取·分档上下文]\n${sourceAttributionNote()}${sanitizeUntrusted(tierRetrieval.promptSection, 8000)}`,
     })
   }
 
@@ -2730,7 +2774,8 @@ export async function chat(
         extraContext.push({ role: 'assistant', content: aiReply })
         extraContext.push({
           role: 'user',
-          content: `以下是知识库检索到的相关文档片段（关键词: "${searchQuery}"）：\n\n${kbContext}\n\n请基于以上文档内容回答用户的问题。如果文档中没有相关信息，请说明。回答中不要包含 [KB_SEARCH] 标记。`,
+          // 28-06 R6 增强 b：回注头部带来源归因指令（引用文档内容必须标注《标题》）
+          content: `${sourceAttributionNote()}以下是知识库检索到的相关文档片段（关键词: "${searchQuery}"）：\n\n${kbContext}\n\n请基于以上文档内容回答用户的问题。如果文档中没有相关信息，请说明。回答中不要包含 [KB_SEARCH] 标记。`,
         })
         finalAiReply = await callAI(config, [...fullMessages, ...extraContext], signal)
       } else {
@@ -2773,7 +2818,7 @@ export async function chat(
           { role: 'assistant', content: finalAiReply },
           {
             role: 'user',
-            content: `以下是经验库中检索到的相关经验（关键词: "${expQuery}"）：\n\n${expContext}\n\n请参考以上经验回答用户的问题，回答末尾无需标注来源。如果经验中没有相关信息，请说明。回答中不要包含 [EXP_SEARCH] 标记。`,
+            content: `${sourceAttributionNote()}以下是经验库中检索到的相关经验（关键词: "${expQuery}"）：\n\n${expContext}\n\n请参考以上经验回答用户的问题，回答中引用经验内容时须按开头归因要求标注来源。如果经验中没有相关信息，请说明。回答中不要包含 [EXP_SEARCH] 标记。`,
           },
         ]
         finalAiReply = await callAI(config, followUpMessages, signal)
@@ -2831,6 +2876,23 @@ export async function chat(
   // 28-04：分档预取命中即入 sources 轨迹（代码层溯源，D-09——预取是真实检索而非模型自述）
   for (const inj of tierInjected) {
     agentState.sources.push({ kind: inj.kind, title: inj.title, refId: inj.sourceId ?? undefined })
+  }
+  // 28-06 R6 增强 a：分档预取生成步骤卡（过程可见）——按预取实际发生顺序（exp 先于 kb，
+  // 与 retrieveForTier 执行序一致）每源一张，状态直接 done；硬顶按 state.rounds 计数，
+  // 预取步不占步数 N。目录清单注入（R4）同样给卡（query 标「目录清单」）。
+  if (!tierRetrieval.demoMode) {
+    for (const kind of ['exp', 'kb'] as const) {
+      if (!tierRetrieval.plan.includes(kind)) continue
+      const hits = tierInjected.filter((x) => x.kind === kind)
+      const isCatalog = hits.some((x) => x.title.includes('目录清单'))
+      const libName = kind === 'exp' ? '经验库' : '知识库'
+      const summary = isCatalog
+        ? `${libName}目录清单已注入`
+        : hits.length > 0
+          ? sanitizeUntrusted(`命中 ${hits.length} 条：${hits.map((h) => h.title).join('；')}`, 200)
+          : '未命中'
+      pushPrefetchedStep(agentState, kind, isCatalog ? `${libName}目录清单` : userMessage, summary)
+    }
   }
   // 28-04（AGENT-03）：收尾证据补查一次性标志（多出口只补查一次）
   let evidenceBackfilled = false

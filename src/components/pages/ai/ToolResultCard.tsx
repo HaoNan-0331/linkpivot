@@ -37,17 +37,19 @@ const STEP_STATUS_META: Record<AgentStepStatus, { color: string; label: string; 
 }
 
 // 步骤卡片动作描述模板（UI-SPEC Copywriting：main 生成，renderer 按 actionType 呈现）
+// 28-06 R6 增强 a：prefetched 步骤（分档预取，循环前已完成的检索）加「[预取]」前缀
 function stepActionLabel(data: ToolResultMessage): string {
+  const prefix = data.prefetched ? '[预取] ' : ''
   const firstLine = (data.argsJson || '').split('\n')[0]
   switch (data.actionType) {
     case 'cmd':
-      return data.deviceName ? `在 ${data.deviceName} 执行 ${firstLine}` : `执行 ${firstLine}`
+      return `${prefix}${data.deviceName ? `在 ${data.deviceName} 执行 ${firstLine}` : `执行 ${firstLine}`}`
     case 'kb':
-      return `检索知识库${firstLine ? `：${firstLine}` : ''}`
+      return `${prefix}检索知识库${firstLine ? `：${firstLine}` : ''}`
     case 'exp':
-      return `检索经验库${firstLine ? `：${firstLine}` : ''}`
+      return `${prefix}检索经验库${firstLine ? `：${firstLine}` : ''}`
     case 'mcp':
-      return `调用工具 ${data.tool}`
+      return `${prefix}调用工具 ${data.tool}`
     default:
       return `${data.tool} · ${data.deviceName}`
   }

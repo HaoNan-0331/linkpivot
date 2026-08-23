@@ -90,6 +90,8 @@ export interface ToolResultMessage {
   stepIndex?: number
   actionType?: 'cmd' | 'kb' | 'exp' | 'mcp'
   stepStatus?: AgentStepStatus
+  /** 28-06 R6 增强 a：分档预取步骤卡标志——动作描述加「[预取]」前缀（循环前已完成的检索） */
+  prefetched?: boolean
 }
 
 /**

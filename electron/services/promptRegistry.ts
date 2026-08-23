@@ -335,6 +335,20 @@ export const PROMPT_REGISTRY: PromptRegistryEntry[] = [
     group: 'AI 对话',
     description: 'agent 三源冲突标注指令（D-10：内联 ⚠ + 末尾冲突清单，禁止静默取舍）',
   },
+  {
+    id: 'ai.chat.sourceAttribution',
+    version: 1,
+    // Phase 28（28-06 R6 增强 b，用户裁决）：来源归因指令——预取注入段与 KB/EXP 回注
+    // 头部统一附带。普通行为指令（非 ⚠ 安全关键）：条目可编辑，用户清空即不注入
+    //（fail-open，不阻断内容注入）。
+    content:
+      '来源归因要求：以下注入的知识库/经验库内容，在你的回答中被引用时必须显式标注来源——'
+        + '经验内容用「根据经验库《标题》…」、知识库文档内容用「知识库文档《标题》指出…」的表述；'
+        + '禁止把库内容当作自身知识无来源地陈述。',
+    requiredVars: [],
+    group: 'AI 对话',
+    description: '知识/经验注入来源归因指令（引用必标注库与《标题》）',
+  },
 ]
 
 /** 按 id 查 registry 条目；未命中返回 undefined（service 层 throw 中文 Error，T-20-02）。 */

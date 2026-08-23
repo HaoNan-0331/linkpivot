@@ -233,6 +233,7 @@ function stepToToolResultMessage(s: unknown): ToolResultMessage | undefined {
     stepIndex: o.stepIndex,
     actionType,
     stepStatus: stepStatus as AgentStepStatus,
+    ...(o.prefetched === true ? { prefetched: true } : {}),
   }
   return isValidToolResultPayload(payload) ? payload : undefined
 }
