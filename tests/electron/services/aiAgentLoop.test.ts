@@ -1085,6 +1085,165 @@ describe('28-06 R6 增强 b：来源归因指令（预取注入 + 循环内回�
   })
 })
 
+// ---------- 28-06 R7：循环内检索卡不显示（renderer stepIndex 跨轮覆盖） ----------
+
+import { applyStepCardToMessages } from '../../../src/components/pages/ai/parseAiReply'
+
+describe('28-06 R7 renderer：stepIndex 定位不跨轮（同会话第二轮任务检索卡不被轮 1 卡吞掉）', () => {
+  const card = (stepIndex: number, actionType: string, stepStatus = 'done') => ({
+    type: 'tool_result', server: 'agent', tool: 'x', deviceName: '',
+    argsJson: '', resultJson: '', status: 'success', stepIndex, actionType, stepStatus,
+  })
+
+  it('RED 复现：轮 1 已有 stepIndex 0-3 卡，轮 2 同 index 新卡必须追加而非原地覆盖旧卡', () => {
+    // 轮 1（多步任务）：预取 0/1 + cmd 2 + kb 3 + 最终回答
+    const prev: any[] = [
+      { role: 'user', content: '第一轮任务' },
+      { role: 'assistant', content: '', toolResult: card(0, 'exp') },
+      { role: 'assistant', content: '', toolResult: card(1, 'kb') },
+      { role: 'assistant', content: '', toolResult: card(2, 'cmd') },
+      { role: 'assistant', content: '', toolResult: card(3, 'kb') },
+      { role: 'assistant', content: '第一轮回答' },
+      // 轮 2：用户发第二条消息，agent 开始新任务（新 agentState，stepIndex 从 0 重数）
+      { role: 'user', content: '第二轮任务' },
+    ]
+    // 轮 2 预取卡（stepIndex 0）→ 应追加为本轮新卡
+    let next = applyStepCardToMessages(prev, card(0, 'exp'))
+    expect(next.filter((m: any) => m.toolResult)).toHaveLength(5)
+    expect(next[next.length - 1].toolResult.stepIndex).toBe(0)
+    // 轮 2 循环内 kb 检索卡（stepIndex 2，running）→ 追加；随后 done 更新同一张（本轮内定位）
+    next = applyStepCardToMessages(next, card(2, 'kb', 'running'))
+    expect(next.filter((m: any) => m.toolResult)).toHaveLength(6)
+    next = applyStepCardToMessages(next, card(2, 'kb', 'done'))
+    expect(next.filter((m: any) => m.toolResult)).toHaveLength(6)
+    expect(next[next.length - 1].toolResult.stepStatus).toBe('done')
+    // 轮 1 的 4 张卡内容零改动（不被跨轮覆盖）
+    expect(next[1].toolResult.stepStatus).toBe('done')
+    expect(next[3].toolResult.actionType).toBe('cmd')
+  })
+
+  it('同轮内状态机不变：running→done 定位更新同一张卡（禁一步两卡）', () => {
+    const prev: any[] = [
+      { role: 'user', content: '任务' },
+      { role: 'assistant', content: '', toolResult: card(0, 'kb', 'running') },
+    ]
+    const next = applyStepCardToMessages(prev, card(0, 'kb', 'done'))
+    expect(next).toHaveLength(2)
+    expect(next[1].toolResult.stepStatus).toBe('done')
+  })
+
+  it('无 stepIndex 旧 MCP tool_result 载荷：保持追加兼容', () => {
+    const legacy: any = {
+      type: 'tool_result', server: 'srv', tool: 't', deviceName: 'd',
+      argsJson: '{}', resultJson: 'ok', status: 'success',
+    }
+    const next = applyStepCardToMessages([{ role: 'user', content: 'x' }], legacy)
+    expect(next).toHaveLength(2)
+    expect(next[1].toolResult).toBe(legacy)
+  })
+})
+
+// ---------- 28-06 R7：循环内检索卡不显示（动态复现——emit 序列全可见 + stepIndex 唯一） ----------
+
+/**
+ * renderer onToolResult 消费逻辑同构模拟：stepIndex 定位更新（倒序找匹配）→ 找不到追加。
+ * 返回最终卡片列表（renderer 实际可见形态）——服务层 emit 序列经此函数还原用户所见。
+ */
+function simulateRendererCards(payloads: any[]): any[] {
+  const cards: any[] = []
+  for (const p of payloads) {
+    if (typeof p.stepIndex === 'number') {
+      let hit = false
+      for (let i = cards.length - 1; i >= 0; i--) {
+        if (cards[i].stepIndex === p.stepIndex) { cards[i] = p; hit = true; break }
+      }
+      if (!hit) cards.push(p)
+    } else {
+      cards.push(p)
+    }
+  }
+  return cards
+}
+
+describe('28-06 R7：预取卡 + 循环内检索卡全序列可见且 stepIndex 唯一', () => {
+  it('auto 档混合任务：预取 2 卡 + 循环 kb 检索卡（running→done）全可见、index 零重复', async () => {
+    allowCmd()
+    FakeClient.output = 'VRP V500'
+    vi.mocked(kbSearch).mockResolvedValue(KB_ROWS as any)
+    retrieveForAnswerMock.mockResolvedValue(EXP_HIT)
+    const payloads: any[] = []
+    queueReplies(
+      '[CMD:dev1]display version[/CMD]',
+      '再查资料 [KB_SEARCH]vlan 原理[/KB_SEARCH]',
+      '最终总结'
+    )
+    await chat([{ role: 'user', content: '查状态和资料' }], ['dev1'], null, (p) => payloads.push(p))
+    // 预取 2 卡（kb+exp，prefetched，只 emit 一次终态）
+    const preKb = payloads.filter((p) => p.actionType === 'kb' && p.prefetched)
+    const preExp = payloads.filter((p) => p.actionType === 'exp' && p.prefetched)
+    expect(preKb).toHaveLength(1)
+    expect(preExp).toHaveLength(1)
+    // 循环内 kb 检索卡：running + done 两态 emit，stepIndex 与预取卡不同
+    const loopKb = payloads.filter((p) => p.actionType === 'kb' && !p.prefetched)
+    expect(loopKb.map((p) => p.stepStatus)).toEqual(['running', 'done'])
+    // 全序列 stepIndex 唯一性（每个 index 恰对应一张卡）
+    const cards = simulateRendererCards(payloads)
+    const idxes = cards.map((c) => c.stepIndex)
+    expect(new Set(idxes).size).toBe(idxes.length)
+    // renderer 最终可见：预取 2 张 + 循环 kb 1 张 + cmd 卡
+    expect(cards.filter((c) => c.prefetched)).toHaveLength(2)
+    expect(cards.some((c) => c.actionType === 'kb' && !c.prefetched && c.stepStatus === 'done')).toBe(true)
+    expect(cards.some((c) => c.actionType === 'cmd' && c.stepStatus === 'done')).toBe(true)
+  })
+
+  it('confirm 档续跑：续跑循环 kb 检索卡 stepIndex 接续预取卡（不与预取卡同 index 互覆）', async () => {
+    db.prepare("UPDATE ai_config SET exec_mode = 'confirm'").run()
+    allowCmd()
+    FakeClient.output = 'VRP V500'
+    vi.mocked(kbSearch).mockResolvedValue(KB_ROWS as any)
+    retrieveForAnswerMock.mockResolvedValue(EXP_HIT)
+    const payloads: any[] = []
+    const emit = (p: any) => payloads.push(p)
+    queueReplies(
+      '[CMD:dev1]display version[/CMD]',
+      '再查资料 [KB_SEARCH]vlan 原理[/KB_SEARCH]',
+      '最终总结'
+    )
+    const out1 = await chat([{ role: 'user', content: '查状态和资料' }], ['dev1'], null, emit)
+    expect(JSON.parse(out1).type).toBe('confirm_required')
+    // 续跑步骤卡经 agentState.emitStep（chat() 注入的原 emit 引用）继续推送
+    const final = await confirmCommand(JSON.parse(out1).execId, true)
+    expect(JSON.parse(final).content).toBe('最终总结')
+    // 续跑 state 与 chat() state 同引用：预取步在场 + 循环 kb 卡 index 接续不重置
+    const cards = simulateRendererCards(payloads)
+    const idxes = cards.map((c) => c.stepIndex)
+    expect(new Set(idxes).size).toBe(idxes.length)
+    expect(cards.filter((c) => c.prefetched)).toHaveLength(2)
+    expect(cards.some((c) => c.actionType === 'kb' && !c.prefetched && c.stepStatus === 'done')).toBe(true)
+  })
+
+  it('AI 主动换词检索（预取零命中 → 循环内 [EXP_SEARCH]）：循环卡可见且不被预取卡吞掉', async () => {
+    allowCmd()
+    retrieveForAnswerMock
+      .mockResolvedValueOnce({ injected: [] }) // 预取零命中（触发换词引导）
+      .mockResolvedValue(EXP_HIT) // 循环内换词命中
+    const payloads: any[] = []
+    queueReplies(
+      '先查设备状态 [CMD:dev1]display interface[/CMD]',
+      '换词检索经验 [EXP_SEARCH]接口错误计数[/EXP_SEARCH]',
+      '总结'
+    )
+    await chat([{ role: 'user', content: '查状态和资料' }], ['dev1'], null, (p) => payloads.push(p))
+    const cards = simulateRendererCards(payloads)
+    const idxes = cards.map((c) => c.stepIndex)
+    expect(new Set(idxes).size).toBe(idxes.length)
+    // 预取 exp 卡（未命中）与循环 exp 卡（命中）各一张，互不覆盖
+    expect(cards.filter((c) => c.actionType === 'exp' && c.prefetched)).toHaveLength(1)
+    expect(cards.filter((c) => c.actionType === 'exp' && !c.prefetched)).toHaveLength(1)
+    expect(cards.some((c) => c.actionType === 'exp' && !c.prefetched && c.stepStatus === 'done')).toBe(true)
+  })
+})
+
 describe('28-06 R2 缺陷③：confirm 续跑阶段停止有效（signal 贯穿续跑链）', () => {
   it('确认续跑中 cancelChat 能中断：续跑 callAI 被 abort → ChatInterruptedError → 中断收尾回文', async () => {
     db.prepare("UPDATE ai_config SET exec_mode = 'confirm'").run()

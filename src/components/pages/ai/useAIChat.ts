@@ -3,7 +3,7 @@ import { message } from 'antd'
 import type { ChatSession } from '@/types/ai'
 import type { ConfirmDraftsResult } from '@/types/experience'
 import type { UseAIChatReturn, DeviceOption, ChatMsg, ConfirmData } from './types'
-import { parseAiReply, parsedToMessages, isValidToolResultPayload, historyMessageToChatMsgs } from './parseAiReply'
+import { parseAiReply, parsedToMessages, isValidToolResultPayload, historyMessageToChatMsgs, applyStepCardToMessages } from './parseAiReply'
 
 /**
  * useAIChat —— AIPage page-local 会话态自定义 hook（FE-01 / D-5-1）。
@@ -48,26 +48,15 @@ export function useAIChat(): UseAIChatReturn {
   // 每次 MCP 工具调用完成后推送——含确认后执行分支，故必须走事件而非 chat 响应体）。
   // T-22-16 fail-closed：payload 为 unknown，逐字段校验失败整条丢弃（不降级展示、不入对话流）。
   // Phase 28（28-05，D-08 步骤卡状态机）：payload 携带 stepIndex（agent 步骤推送）时按
-  // stepIndex 倒序定位既有卡片函数式更新（running→done 单卡状态机，禁一步两卡——RESEARCH
+  // stepIndex 定位既有卡片函数式更新（running→done 单卡状态机，禁一步两卡——RESEARCH
   // Pitfall 4）；无 stepIndex（旧 MCP tool_result）保持追加兼容。
+  // 28-06 R7：定位逻辑收敛为 applyStepCardToMessages 纯函数——扫描止于最近一条 user 消息
+  // （本轮边界）。stepIndex 每轮 chat() 从 0 重数，跨轮同 index 是不同卡片；旧「整列表倒序
+  // 找同 index」会把第二轮任务的新卡原地覆盖到第一轮旧卡上（新检索卡从不出现）。
   useEffect(() => {
     const unsubscribe = window.api.ai.onToolResult((payload: unknown) => {
       if (!isValidToolResultPayload(payload)) return
-      if (typeof payload.stepIndex === 'number') {
-        setMessages((prev) => {
-          for (let i = prev.length - 1; i >= 0; i--) {
-            const m = prev[i]
-            if (m.toolResult && m.toolResult.stepIndex === payload.stepIndex) {
-              const next = prev.slice()
-              next[i] = { ...m, toolResult: payload }
-              return next
-            }
-          }
-          return [...prev, { role: 'assistant', content: '', toolResult: payload }]
-        })
-        return
-      }
-      setMessages((prev) => [...prev, { role: 'assistant', content: '', toolResult: payload }])
+      setMessages((prev) => applyStepCardToMessages(prev, payload))
     })
     return unsubscribe
   }, [])

@@ -267,6 +267,35 @@ export function historyMessageToChatMsgs(m: {
   return out
 }
 
+/**
+ * 28-06 R7：ai:toolResult 事件 → 消息列表消费纯函数（自 useAIChat onToolResult 内联段收敛）。
+ *
+ * 缺陷根因：agent stepIndex 每轮 chat() 从 0 重数（每轮新建 agentState），而旧内联逻辑
+ * 在整个消息列表倒序找同 index 卡——同会话第二轮任务的预取/检索卡会**原地覆盖**轮 1
+ * 同 index 旧卡（用户所见：新检索卡从不出现、旧卡被静默替换）。
+ * 修复：stepIndex 定位扫描止于最近一条 user 消息（本轮边界——所有步骤卡都在本轮
+ * user 消息之后推送），跨轮 index 一律追加新卡；无 stepIndex（旧 MCP tool_result）追加兼容。
+ */
+export function applyStepCardToMessages(
+  prev: ChatMsg[],
+  payload: ToolResultMessage
+): ChatMsg[] {
+  if (typeof payload.stepIndex !== 'number') {
+    return [...prev, { role: 'assistant', content: '', toolResult: payload }]
+  }
+  for (let i = prev.length - 1; i >= 0; i--) {
+    const m = prev[i]
+    // 本轮边界：stepIndex 每轮从 0 重数，跨轮同 index 是不同卡片——绝不更新上轮旧卡
+    if (m.role === 'user') break
+    if (m.toolResult && m.toolResult.stepIndex === payload.stepIndex) {
+      const next = prev.slice()
+      next[i] = { ...m, toolResult: payload }
+      return next
+    }
+  }
+  return [...prev, { role: 'assistant', content: '', toolResult: payload }]
+}
+
 export function parseAiReply(raw: string): ParsedAiReply {
   let parsed: unknown
   try {
