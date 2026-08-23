@@ -47,6 +47,8 @@ const api = {
       return () => ipcRenderer.removeListener('ai:toolResult', listener as never)
     },
     discoverTopology: (deviceIds: string[]) => ipcRenderer.invoke('ai:discoverTopology', deviceIds),
+    // Phase 28（28-04，AGENT-05/D-06）：用户停止按钮通道（main 侧 AbortController 断 LLM fetch + 循环中止）
+    cancelChat: () => ipcRenderer.invoke('ai:cancelChat'),
     getConfig: () => ipcRenderer.invoke('ai:getConfig'),
     saveConfig: (config: unknown) => ipcRenderer.invoke('ai:saveConfig', config),
     getCommandWhitelist: () => ipcRenderer.invoke('ai:getCommandWhitelist'),

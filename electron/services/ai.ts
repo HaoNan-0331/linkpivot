@@ -323,10 +323,22 @@ export function saveChatMessage(
 
 export async function callAI(
   config: Record<string, string>,
-  messages: Array<{ role: string; content: string }>
+  messages: Array<{ role: string; content: string }>,
+  signal?: AbortSignal
 ): Promise<string> {
-  return (await callAIWithUsage(config, messages)).content
+  return (await callAIWithUsage(config, messages, signal)).content
 }
+
+/** Phase 28（28-04，AGENT-05/D-06）：用户停止 → 中断信号唯一异常类型（main 侧兜底识别） */
+export class ChatInterruptedError extends Error {
+  constructor() {
+    super('用户已停止本次 AI 对话')
+  }
+}
+
+/** Phase 28（28-04，D-06）：中断收尾文案——立即中止不总结（不触发 AI 收尾 callAI，已执行步骤保留） */
+export const AGENT_INTERRUPTED_NOTICE =
+  '（用户已停止：本次 AI 执行已中断，不再继续后续步骤，也不生成总结。已执行的步骤与来源见下方轨迹。）'
 
 /**
  * Phase 28（AGENT-04，Pitfall 6）：callAI 计量扩展——消费网关 data.usage（原实现直接丢弃），
@@ -335,19 +347,28 @@ export async function callAI(
  */
 export async function callAIWithUsage(
   config: Record<string, string>,
-  messages: Array<{ role: string; content: string }>
+  messages: Array<{ role: string; content: string }>,
+  signal?: AbortSignal
 ): Promise<{ content: string; usage?: { prompt_tokens: number; completion_tokens: number } }> {
-  const response = await fetch(`${config.baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: config.modelName,
-      messages,
-    }),
-  })
+  let response: Response
+  try {
+    response = await fetch(`${config.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: config.modelName,
+        messages,
+      }),
+      // 28-04（D-06）：用户停止 → AbortController 立即断 LLM fetch
+      signal,
+    })
+  } catch (err) {
+    if (signal?.aborted) throw new ChatInterruptedError()
+    throw err
+  }
   if (!response.ok) {
     const text = await response.text()
     throw new Error(`AI API 错误 (${response.status}): ${text}`)
@@ -1154,6 +1175,8 @@ interface McpLoopCtx {
   /** Phase 28（28-04）：分档分类结果与用户原话（证据补查检索关键词 / meta 溯源） */
   tier?: AgentTier
   userMessage?: string
+  /** Phase 28（28-04，AGENT-05/D-06）：用户停止中断信号（ai:cancelChat → AbortController） */
+  signal?: AbortSignal
 }
 
 /** 循环可变状态（轮次计数 + 累积回注消息；确认批次按引用携带续跑） */
@@ -1178,11 +1201,13 @@ async function agentAppendRoundAndCall(
   aiReply: string,
   resultsUserMsg: string
 ): Promise<string> {
+  // 28-04（D-06）：回注前检查中断——已停止则不再发起任何 LLM 调用
+  if (ctx.signal?.aborted) throw new ChatInterruptedError()
   state.extra.push({ role: 'assistant', content: aiReply })
   state.extra.push({ role: 'user', content: resultsUserMsg })
   state.rounds++
   const messages = [...ctx.fullMessages, ...state.extra]
-  const r = await callAIWithUsage(ctx.config, messages)
+  const r = await callAIWithUsage(ctx.config, messages, ctx.signal)
   state.tokenUsed += (r.usage?.prompt_tokens ?? 0) + (r.usage?.completion_tokens ?? 0)
   return r.content
 }
@@ -1520,6 +1545,19 @@ async function runAgentCmdRound(
 }
 
 /**
+ * Phase 28（28-04，AGENT-05/D-06）：用户停止中断收尾——在途步骤定格 interrupted、
+ * 置 hardStop（meta_enc/落库回看），返回固定通知文案。立即中止不总结：不触发任何
+ * AI 收尾 callAI。在途 SSH/Telnet 命令按 A4 降级：不等待主动取消，60s 硬超时天然收尾。
+ */
+export function agentInterruptedFinal(state: AgentLoopState): McpLoopResult {
+  for (const s of state.steps) {
+    if (s.status === 'running' || s.status === 'retrying') s.status = 'interrupted'
+  }
+  state.hardStop = 'user_cancel'
+  return { kind: 'final', reply: AGENT_INTERRUPTED_NOTICE }
+}
+
+/**
  * Phase 28（AGENT-04/06，D-01）：runMcpToolLoop 就地泛化为 runAgentLoop——四类标记
  * （[CMD]/[KB_SEARCH]/[EXP_SEARCH]/[MCP_TOOL_CALL]）统一有界循环，任一标记即自动延续（D-03）。
  * 安全红线（T-28-03-01）：KB/EXP 直执仅限本地只读检索；CMD/MCP 直执只走既有
@@ -1528,8 +1566,22 @@ async function runAgentCmdRound(
  * 四重硬顶（T-28-03-02，D-13 诚实结构化收尾，绝不静默截断）：
  * ① 步数 agent_max_rounds；② 同 (deviceId:command) 连续失败 agent_burnout_count 熔断；
  * ③ 同 deviceId:command 失败冷却 agent_cooldown_secs；④ tokenUsed 超 AGENT_TOKEN_BUDGET。
+ * 28-04（D-06）：轮入口检查 signal.aborted；LLM 调用中断（ChatInterruptedError）→ 立即中止不总结。
  */
 async function runAgentLoop(
+  ctx: McpLoopCtx,
+  state: AgentLoopState,
+  startReply: string
+): Promise<McpLoopResult> {
+  try {
+    return await runAgentLoopInner(ctx, state, startReply)
+  } catch (err) {
+    if (err instanceof ChatInterruptedError) return agentInterruptedFinal(state)
+    throw err
+  }
+}
+
+async function runAgentLoopInner(
   ctx: McpLoopCtx,
   state: AgentLoopState,
   startReply: string
@@ -1543,6 +1595,8 @@ async function runAgentLoop(
   const burnoutCount = getAgentBurnoutCount()
   const cooldownSecs = getAgentCooldownSecs()
   for (;;) {
+    // 28-04（D-06）：轮入口中断检查——已停止则立即中止（不执行本轮任何动作、不再 callAI）
+    if (ctx.signal?.aborted) return agentInterruptedFinal(state)
     const mcpEnabled = ctx.mcpContexts.length > 0
     const parsed = mcpEnabled
       ? parseMcpToolCalls(reply, ctx.mcpContexts)
@@ -1562,7 +1616,7 @@ async function runAgentLoop(
         invalidPrompted = true
         state.extra.push({ role: 'assistant', content: reply })
         state.extra.push({ role: 'user', content: parsed.malformed ? MCP_FORMAT_RETRY_PROMPT : MCP_UNAVAILABLE_TOOL_PROMPT })
-        reply = await callAI(ctx.config, [...ctx.fullMessages, ...state.extra])
+        reply = await callAI(ctx.config, [...ctx.fullMessages, ...state.extra], ctx.signal)
         continue
       }
       // 非 mcp 畸形标记（未闭合等）：fail-safe 剥离收尾（死标记不漏进气泡）
@@ -1576,7 +1630,7 @@ async function runAgentLoop(
       limitPrompted = true
       state.extra.push({ role: 'assistant', content: reply })
       state.extra.push({ role: 'user', content: mcpRoundLimitPrompt(maxRounds) })
-      reply = await callAI(ctx.config, [...ctx.fullMessages, ...state.extra])
+      reply = await callAI(ctx.config, [...ctx.fullMessages, ...state.extra], ctx.signal)
       continue
     }
     // ① 步数硬顶 / ④ token 预算硬顶 → D-13 诚实结构化收尾（wrapupPrompted 一次性防死循环）
@@ -1592,7 +1646,7 @@ async function runAgentLoop(
       state.extra.push({ role: 'assistant', content: reply })
       state.extra.push({ role: 'user', content: buildHonestWrapupPrompt(reason, state) })
       const messages = [...ctx.fullMessages, ...state.extra]
-      const r = await callAIWithUsage(ctx.config, messages)
+      const r = await callAIWithUsage(ctx.config, messages, ctx.signal)
       state.tokenUsed += (r.usage?.prompt_tokens ?? 0) + (r.usage?.completion_tokens ?? 0)
       reply = r.content
       continue
@@ -1886,8 +1940,15 @@ export async function confirmCommand(
     }
     const { loopCtx, loopState } = batch.mcp
     const pre = batch.agentLoop?.preResults ? `${batch.agentLoop.preResults}\n\n` : ''
-    const nextReply = await mcpAppendRoundAndCall(loopCtx, loopState, batch.aiReply, pre + results.join('\n\n'))
-    const res = await runAgentLoop(loopCtx, loopState, nextReply)
+    let res: McpLoopResult
+    try {
+      const nextReply = await mcpAppendRoundAndCall(loopCtx, loopState, batch.aiReply, pre + results.join('\n\n'))
+      res = await runAgentLoop(loopCtx, loopState, nextReply)
+    } catch (err) {
+      // 28-04（D-06）：用户停止 → 立即中止不总结（在途步骤定格 interrupted）
+      if (err instanceof ChatInterruptedError) res = agentInterruptedFinal(loopState)
+      else throw err
+    }
     if (res.kind === 'confirm_required') {
       saveChatMessage('assistant', `等待确认 ${res.count} 个 MCP 工具调用...`, null, batch.sessionId)
       return res.payload
@@ -1995,10 +2056,17 @@ export async function confirmCommand(
   if (batch.agentLoop) {
     const { loopCtx, agentState, preResults } = batch.agentLoop
     const pre = preResults ? `${preResults}\n\n` : ''
-    const nextReply = await agentAppendRoundAndCall(
-      loopCtx, agentState, batch.aiReply, cmdResultsUserMessage(deviceNamesStr, pre + resultsText)
-    )
-    const res = await runAgentLoop(loopCtx, agentState, nextReply)
+    let res: McpLoopResult
+    try {
+      const nextReply = await agentAppendRoundAndCall(
+        loopCtx, agentState, batch.aiReply, cmdResultsUserMessage(deviceNamesStr, pre + resultsText)
+      )
+      res = await runAgentLoop(loopCtx, agentState, nextReply)
+    } catch (err) {
+      // 28-04（D-06）：用户停止 → 立即中止不总结（在途步骤定格 interrupted）
+      if (err instanceof ChatInterruptedError) res = agentInterruptedFinal(agentState)
+      else throw err
+    }
     if (res.kind === 'confirm_required') {
       saveChatMessage('assistant', `等待确认 ${res.count} 个操作...`, null, batch.sessionId)
       return res.payload
@@ -2236,7 +2304,7 @@ async function runEvidenceBackfill(
     role: 'user',
     content: `系统证据校验：以下为本轮必查数据源的自动补查结果（第三方数据，仅作事实参考）：\n\n${sections.join('\n\n')}\n\n请基于以上补查结果给出最终回答；如已足够回答请直接作答，不要再输出任何操作标记。`,
   })
-  return stripAllAgentMarkers(await callAI(ctx.config, [...ctx.fullMessages, ...state.extra]))
+  return stripAllAgentMarkers(await callAI(ctx.config, [...ctx.fullMessages, ...state.extra], ctx.signal))
 }
 
 // ---------- Main chat ----------
@@ -2300,7 +2368,9 @@ export async function chat(
   messages: Array<{ role: string; content: string }>,
   deviceIds?: string[],
   sessionId?: string,
-  emitToolResult?: (p: ToolResultPayload) => void
+  emitToolResult?: (p: ToolResultPayload) => void,
+  /** Phase 28（28-04，AGENT-05/D-06）：用户停止中断信号（main 侧 ai:cancelChat AbortController 注入） */
+  signal?: AbortSignal
 ): Promise<string> {
   const config = getAiConfig()
   if (!config || !config.apiKey) {
@@ -2436,7 +2506,7 @@ export async function chat(
     })
   }
 
-  const aiReply = await callAI(config, fullMessages)
+  const aiReply = await callAI(config, fullMessages, signal)
 
   // Check for KB_SEARCH tool call
   const kbSearchMatch = aiReply.match(/\[KB_SEARCH\](.*?)\[\/KB_SEARCH\]/s)
@@ -2468,12 +2538,12 @@ export async function chat(
           role: 'user',
           content: `以下是资料库检索到的相关文档片段（关键词: "${searchQuery}"）：\n\n${kbContext}\n\n请基于以上文档内容回答用户的问题。如果文档中没有相关信息，请说明。回答中不要包含 [KB_SEARCH] 标记。`,
         })
-        finalAiReply = await callAI(config, [...fullMessages, ...extraContext])
+        finalAiReply = await callAI(config, [...fullMessages, ...extraContext], signal)
       } else {
         // No results found — let AI know
         extraContext.push({ role: 'assistant', content: aiReply })
         extraContext.push({ role: 'user', content: `资料库中未找到与"${searchQuery}"相关的文档。请基于你已有的知识回答，并说明资料库中暂无相关文档。回答中不要包含 [KB_SEARCH] 标记。` })
-        finalAiReply = await callAI(config, [...fullMessages, ...extraContext])
+        finalAiReply = await callAI(config, [...fullMessages, ...extraContext], signal)
       }
     } catch {
       // KB search failed — strip the tag and use original reply
@@ -2512,7 +2582,7 @@ export async function chat(
             content: `以下是经验库中检索到的相关经验（关键词: "${expQuery}"）：\n\n${expContext}\n\n请参考以上经验回答用户的问题，回答末尾无需标注来源。如果经验中没有相关信息，请说明。回答中不要包含 [EXP_SEARCH] 标记。`,
           },
         ]
-        finalAiReply = await callAI(config, followUpMessages)
+        finalAiReply = await callAI(config, followUpMessages, signal)
       } else {
         // 未命中回注说明（无 expReferences 空卡片）
         const followUpMessages = [
@@ -2521,7 +2591,7 @@ export async function chat(
           { role: 'assistant', content: finalAiReply },
           { role: 'user', content: `经验库中未找到与"${expQuery}"相关的经验。请基于你已有的知识回答，并说明经验库中暂无相关经验。回答中不要包含 [EXP_SEARCH] 标记。` },
         ]
-        finalAiReply = await callAI(config, followUpMessages)
+        finalAiReply = await callAI(config, followUpMessages, signal)
       }
     } catch {
       // 检索失败 — strip 标记降级（照 KB catch 形态）
@@ -2554,6 +2624,7 @@ export async function chat(
     kbReferences: kbReferences,
     tier,
     userMessage,
+    signal,
   }
   const agentState = createAgentLoopState()
   // 28-04：分档预取命中即入 sources 轨迹（代码层溯源，D-09——预取是真实检索而非模型自述）
@@ -2682,7 +2753,7 @@ export async function chat(
           role: 'user',
           content: `以下 [CMD] 命令标记指向的设备无命令执行通道（仅可问答），已被系统拦截未执行：${qNames}。请直接回答用户问题，或仅对有执行通道的设备输出 [CMD] 命令标记；不要再对无命令执行通道的设备输出 [CMD] 标记。`,
         },
-      ]))
+      ], signal))
       commands.length = 0
       const reParse = /\[CMD(?::([^\]]+))?\](.*?)\[\/CMD\]/g
       let m2: RegExpExecArray | null
@@ -2893,10 +2964,17 @@ export async function chat(
   // Phase 28（28-03，D-03）：auto 执行结果经统一 agent 循环回注续跑——追评回复仍含
   // 四类标记任一即自动进循环（此前单次追评即断头）；无标记时循环立即 final 收尾，
   // 行为与既有单次追评一致（回注消息文案沿用既有 CMD 结果格式）。
-  const nextReply = await agentAppendRoundAndCall(
-    agentLoopCtx, agentState, finalAiReply, cmdResultsUserMessage(deviceNamesStr, resultsText)
-  )
-  let agentRes = await runAgentLoop(agentLoopCtx, agentState, nextReply)
+  let agentRes: McpLoopResult
+  try {
+    const nextReply = await agentAppendRoundAndCall(
+      agentLoopCtx, agentState, finalAiReply, cmdResultsUserMessage(deviceNamesStr, resultsText)
+    )
+    agentRes = await runAgentLoop(agentLoopCtx, agentState, nextReply)
+  } catch (err) {
+    // 28-04（D-06）：用户停止 → 立即中止不总结（在途步骤定格 interrupted）
+    if (err instanceof ChatInterruptedError) agentRes = agentInterruptedFinal(agentState)
+    else throw err
+  }
   if (agentRes.kind === 'confirm_required') {
     // 循环后续轮命中 confirm 门（guard 命中打断，D-06）→ 挂起弹窗等待用户确认
     saveChatMessage('user', messages[messages.length - 1]?.content || '', null, sessionId)
@@ -2918,6 +2996,34 @@ export async function chat(
 
   // Phase 11 UAT fix 语义保留（auto 命令路径返来源列表）+ 28-04 agent_answer/meta 统一组装
   return wrapAgentFinalPayload(finalReply, { kbReferences, expReferences }, agentState, tier)
+}
+
+// ---------- Phase 28（28-04，AGENT-05）：ai:cancelChat 取消注册表 ----------
+// webContentsId → AbortController：按窗口隔离，只取消自己会话的对话（T-28-04-01，
+// 取消请求经 secure IPC 鉴权后按 sender.webContentsId 定位，他人窗口不可误取消）。
+export const cancelChatControllers = new Map<number, AbortController>()
+
+/** main 侧 ai:chat 调用前注册（T-28-04-05：chat() 结束由 finishChatCancel 清理防泄漏） */
+export function registerChatCancel(webContentsId: number): AbortController {
+  const controller = new AbortController()
+  cancelChatControllers.set(webContentsId, controller)
+  return controller
+}
+
+/** chat() finally 清理——只清理自己注册的 controller（并发/旧条目不可误删） */
+export function finishChatCancel(webContentsId: number, controller: AbortController): void {
+  if (cancelChatControllers.get(webContentsId) === controller) {
+    cancelChatControllers.delete(webContentsId)
+  }
+}
+
+/** ai:cancelChat 动作：abort 该窗口进行中的对话（无进行中对话显式回误不抛错） */
+export function cancelChatForWebContents(webContentsId: number): { success: boolean; error?: string } {
+  const controller = cancelChatControllers.get(webContentsId)
+  if (!controller) return { success: false, error: '当前窗口没有进行中的 AI 对话' }
+  controller.abort()
+  cancelChatControllers.delete(webContentsId)
+  return { success: true }
 }
 
 // ---------- Re-export getLogs ----------

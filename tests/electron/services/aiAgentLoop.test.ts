@@ -589,3 +589,89 @@ describe('28-04 Task 1: 分档强制预取 + 后置证据校验 + agent_answer p
     expect(rows[0].meta).toBeUndefined()
   })
 })
+
+// ---------- Phase 28 Plan 28-04 Task 2：ai:cancelChat 中断通道（AGENT-05/D-06） ----------
+
+import {
+  agentInterruptedFinal, AGENT_INTERRUPTED_NOTICE, ChatInterruptedError,
+  cancelChatControllers, registerChatCancel, finishChatCancel, cancelChatForWebContents,
+  createAgentLoopState,
+} from '../../../electron/services/ai'
+
+describe('28-04 Task 2: ai:cancelChat 中断通道', () => {
+  it('agentInterruptedFinal：在途 running/retrying 步骤定格 interrupted + hardStop 置位（D-06）', () => {
+    const state = createAgentLoopState()
+    state.steps.push({ stepIndex: 0, actionType: 'cmd', status: 'running' } as any)
+    state.steps.push({ stepIndex: 1, actionType: 'mcp', status: 'retrying' } as any)
+    state.steps.push({ stepIndex: 2, actionType: 'kb', status: 'done' } as any)
+    const res = agentInterruptedFinal(state)
+    expect(res.kind).toBe('final')
+    expect(res.reply).toBe(AGENT_INTERRUPTED_NOTICE)
+    expect(state.steps[0].status).toBe('interrupted')
+    expect(state.steps[1].status).toBe('interrupted')
+    expect(state.steps[2].status).toBe('done')
+    expect(state.hardStop).toBe('user_cancel')
+  })
+
+  it('runAgentLoop 轮入口中断：零追加 LLM 调用，返回中断通知（hardStop 落 meta）', async () => {
+    allowCmd()
+    const controller = new AbortController()
+    const replies = [
+      '[CMD:dev1]display version[/CMD]',
+      '[CMD:dev1]display clock[/CMD]',
+    ]
+    let callIdx = 0
+    const fetchMock = vi.fn(async () => {
+      const content = replies[callIdx] ?? ''
+      callIdx++
+      // 第 2 笔回复送达后立即停止——runAgentLoop 轮入口应检测到 aborted 不再发起第 3 次调用
+      if (callIdx >= 2) controller.abort()
+      return { ok: true, json: async () => ({ choices: [{ message: { content } }] }) }
+    })
+    global.fetch = fetchMock as unknown as typeof fetch
+    const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null, undefined, controller.signal)
+    expect(fetchMock.mock.calls.length).toBe(2) // 中断后零追加 LLM 调用
+    expect(FakeClient.count).toBe(1) // 第 2 轮命令未执行（display clock 中止）
+    const payload = JSON.parse(out)
+    expect(payload.content).toBe(AGENT_INTERRUPTED_NOTICE)
+    expect(payload.hardStop).toBe('user_cancel')
+    expect(payload.steps.some((s: any) => s.status === 'done')).toBe(true)
+  })
+
+  it('callAIWithUsage fetch 传 signal：中断 → ChatInterruptedError（非裸 AbortError）', async () => {
+    const controller = new AbortController()
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      controller.abort()
+      if (init?.signal?.aborted) throw new DOMException('aborted', 'AbortError')
+      return { ok: true, json: async () => ({ choices: [{ message: { content: 'x' } }] }) }
+    })
+    global.fetch = fetchMock as unknown as typeof fetch
+    await expect(callAIWithUsage(
+      { baseUrl: 'http://x', apiKey: 'k', modelName: 'm' },
+      [{ role: 'user', content: 'hi' }],
+      controller.signal
+    )).rejects.toBeInstanceOf(ChatInterruptedError)
+  })
+
+  it('取消注册表：register → cancelChatForWebContents abort + 清空；finishChatCancel 不误删他人条目（T-28-04-01/05）', () => {
+    cancelChatControllers.clear()
+    const c1 = registerChatCancel(101)
+    const c2 = registerChatCancel(202)
+    expect(cancelChatControllers.size).toBe(2)
+    // 窗口 101 只取消自己的对话（他人窗口不可误取消）
+    expect(cancelChatForWebContents(101)).toEqual({ success: true })
+    expect(c1.signal.aborted).toBe(true)
+    expect(c2.signal.aborted).toBe(false)
+    expect(cancelChatControllers.has(101)).toBe(false)
+    // 无进行中对话：显式回误不抛错
+    expect(cancelChatForWebContents(101).success).toBe(false)
+    // finish 只清理自己注册的 controller（旧条目不可被后注册者误删）
+    const stale = registerChatCancel(303)
+    const fresh = registerChatCancel(303)
+    finishChatCancel(303, stale)
+    expect(cancelChatControllers.get(303)).toBe(fresh)
+    finishChatCancel(303, fresh)
+    expect(cancelChatControllers.size).toBe(1) // 仅剩 202
+    cancelChatControllers.clear()
+  })
+})

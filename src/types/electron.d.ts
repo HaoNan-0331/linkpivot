@@ -118,6 +118,8 @@ export interface ElectronAPI {
     // Phase 22（22-03/22-05，D-03）：main→renderer 工具结果推送订阅（返回解绑函数）
     onToolResult: (cb: (payload: unknown) => void) => () => void
     discoverTopology: (deviceIds: string[]) => Promise<DiscoverResult>
+    /** Phase 28（28-04，AGENT-05/D-06）：停止 AI 对话（main 侧 AbortController 断 LLM fetch + 循环中止） */
+    cancelChat: () => Promise<{ success: boolean; error?: string }>
     getConfig: () => Promise<AIConfig | null>
     saveConfig: (config: AIConfig) => Promise<void>
     getCommandWhitelist: () => Promise<string[]>

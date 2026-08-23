@@ -10,7 +10,7 @@ import { generateCaptcha, login, isFirstRun, initAdmin } from './services/auth'
 import { setDeviceMasterKey, listDevices, createDevice, updateDevice, deleteDevice, getDeviceById, maskDeviceSecrets, checkDeviceName, listDuplicateGroups, backfillNameHash, ensureNameUniqueIndex } from './services/device'
 import { setTopologyMasterKey, listTopologies, getTopologyById, createTopology, updateTopology, deleteTopology, exportTopology, importTopology } from './services/topology'
 import { setConnectionMasterKey, openTerminal, openWebSafe, writeToSession, writeByWebContentsId, disconnectSession, testDeviceConnection } from './services/connection'
-import { setAiMasterKey, chat, getAiConfigMasked, saveAiConfig, getCommandWhitelist, saveCommandWhitelist, getExecMode, setExecMode, getMcpMaxRounds, setMcpMaxRounds, confirmCommand, getAgentMaxRounds, setAgentMaxRounds, getAgentBurnoutCount, setAgentBurnoutCount, getAgentCooldownSecs, setAgentCooldownSecs, getAiLogs, getChatHistory, saveChatMessage as aiSaveChatMessage, createSession, listSessions, getSessionMessages, deleteSession, updateSessionTitle, reconcileGuardLogs } from './services/ai'
+import { setAiMasterKey, chat, getAiConfigMasked, saveAiConfig, getCommandWhitelist, saveCommandWhitelist, getExecMode, setExecMode, getMcpMaxRounds, setMcpMaxRounds, confirmCommand, getAgentMaxRounds, setAgentMaxRounds, getAgentBurnoutCount, setAgentBurnoutCount, getAgentCooldownSecs, setAgentCooldownSecs, getAiLogs, getChatHistory, saveChatMessage as aiSaveChatMessage, createSession, listSessions, getSessionMessages, deleteSession, updateSessionTitle, reconcileGuardLogs, ChatInterruptedError, registerChatCancel, finishChatCancel, cancelChatForWebContents } from './services/ai'
 import { discoverTopology } from './services/discovery'
 import { getSystemLogs, createSystemLog, setSystemLogMasterKey, backfillSystemLogEnc } from './services/systemLog'
 import { backfillAiExecLogEnc } from './services/aiExecLogger'
@@ -279,13 +279,30 @@ app.whenReady().then(() => {
   ipcMain.handle('terminal:write', secure((e, data) => writeByWebContentsId(e.sender.id, data)))
 
   // AI IPC
-  ipcMain.handle('ai:chat', secure((e, messages, deviceIds, sessionId) =>
+  ipcMain.handle('ai:chat', secure(async (e, messages, deviceIds, sessionId) =>
     // Phase 22（22-03，D-03）：每次 MCP 工具调用完成后经 ai:toolResult 推送结构化载荷
     // （22-05 ToolResultCard 唯一数据来源）。renderer 失活时 send 抛错不阻塞对话流。
-    chat(messages, deviceIds, sessionId, (p) => {
-      try { e.sender.send('ai:toolResult', p) } catch { /* window closed */ }
-    })
+    // Phase 28（28-04，AGENT-05/D-06）：注册 AbortController（ai:cancelChat 消费），
+    // finally 清理防泄漏（T-28-04-05）；首答阶段中断（尚无轨迹）优雅回文不抛错。
+    {
+      const controller = registerChatCancel(e.sender.id)
+      try {
+        return await chat(messages, deviceIds, sessionId, (p) => {
+          try { e.sender.send('ai:toolResult', p) } catch { /* window closed */ }
+        }, controller.signal)
+      } catch (err) {
+        if (err instanceof ChatInterruptedError) {
+          return '（用户已停止：本次 AI 对话已中断，未执行的部分不再继续。）'
+        }
+        throw err
+      } finally {
+        finishChatCancel(e.sender.id, controller)
+      }
+    }
   ))
+  // Phase 28（28-04，AGENT-05）：用户停止通道——secure 鉴权（T-28-04-01）+ 按
+  // sender.webContentsId 定位（只取消自己窗口的对话，他人窗口不可误取消）。
+  ipcMain.handle('ai:cancelChat', secure((e) => cancelChatForWebContents(e.sender.id)))
   ipcMain.handle('ai:getConfig', secure(() => getAiConfigMasked()))
   ipcMain.handle('ai:saveConfig', secure((_e, config) => saveAiConfig(config)))
   ipcMain.handle('ai:getCommandWhitelist', secure(() => getCommandWhitelist()))
