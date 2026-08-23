@@ -325,7 +325,22 @@ app.whenReady().then(() => {
   ipcMain.handle('ai:setAgentBurnoutCount', secure((_e, count) => setAgentBurnoutCount(count)))
   ipcMain.handle('ai:getAgentCooldownSecs', secure(() => getAgentCooldownSecs()))
   ipcMain.handle('ai:setAgentCooldownSecs', secure((_e, secs) => setAgentCooldownSecs(secs)))
-  ipcMain.handle('ai:confirmCommand', secure((_e, execId, approved) => confirmCommand(execId, approved)))
+  // 28-06 R2 缺陷③：confirm 续跑阶段注册 AbortController（与 ai:chat 同构）——chat 弹
+  // 确认框返回时原控制器已 finally 注销，本 handler 续跑期间不注册则 ai:cancelChat 查
+  // 注册表为空报「当前窗口没有进行中的 AI 对话」，用户无法停止确认后的续跑。
+  ipcMain.handle('ai:confirmCommand', secure(async (e, execId, approved) => {
+    const controller = registerChatCancel(e.sender.id)
+    try {
+      return await confirmCommand(execId, approved, controller.signal)
+    } catch (err) {
+      if (err instanceof ChatInterruptedError || (err as { name?: string })?.name === 'AbortError') {
+        return '（用户已停止：本次 AI 对话已中断，未执行的部分不再继续。）'
+      }
+      throw err
+    } finally {
+      finishChatCancel(e.sender.id, controller)
+    }
+  }))
   // Phase 27 checkpoint：getLogs 前对账孤儿批次（TTL 过期/renderer 刷新丢失的弹窗批次），
   // 未点「确认执行」的越权记录订正取消——审计视图永不出现「未决」终态。
   ipcMain.handle('ai:getLogs', secure((_e, limit) => { reconcileGuardLogs(); return getAiLogs(limit) }))

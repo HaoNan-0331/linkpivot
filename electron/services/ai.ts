@@ -1934,7 +1934,10 @@ export function reconcileGuardLogs(): number {
 
 export async function confirmCommand(
   batchId: string,
-  approved: boolean
+  approved: boolean,
+  /** 28-06 R2 缺陷③：confirm 续跑阶段的中断信号（main 侧 ai:confirmCommand handler 注册，
+   * 与 ai:chat 同构——chat 弹确认框返回时原控制器已注销，续跑必须换新控制器才能被停止） */
+  signal?: AbortSignal
 ): Promise<string> {
   const batch = pendingBatches.get(batchId)
   if (!batch) throw new Error('未找到待确认命令')
@@ -1969,6 +1972,8 @@ export async function confirmCommand(
   // 再含标记则再次弹窗（返回 confirm_required），无标记则收尾返回最终回答。
   if (batch.mcp) {
     const results: string[] = []
+    // 28-06 R2 缺陷③：续跑前把新 signal 装载到循环上下文（chat 阶段的旧控制器已注销）
+    if (signal) batch.mcp.loopCtx.signal = signal
     for (const logId of batch.mcp.guardLogIds ?? []) updateLogGuardOutcome(logId, 'user_confirmed')
     for (let i = 0; i < batch.mcp.calls.length; i++) {
       updateLogStatus(batch.mcp.logIds[i], 'approved')
@@ -2058,6 +2063,9 @@ export async function confirmCommand(
             settleAgentStep(step, 'done', batch.agentLoop!.agentState)
           }
           if (batch.agentLoop) batch.agentLoop.agentState.sources.push({ kind: 'device', title: cmds[i].deviceName, refId: deviceId })
+          // 28-06 R2 缺陷⑤：成功但零输出必须落显式 ground 文本——空「输出:\n」会让 LLM
+          // 自行脑补「未获得设备返回的实时输出」并放弃后续多步任务（服务级回注链复现
+          // 测试已锁死非空输出必达；此为空输出分支的兜底加固）
           cmdResults.push({ deviceName: cmds[i].deviceName, cmd: r.command, output: r.output, status: 'executed' })
         } else {
           updateLogStatus(cmds[i].logId, 'failed')
@@ -2092,6 +2100,8 @@ export async function confirmCommand(
   let auditMessages: Array<{ role: string; content: string }>
   if (batch.agentLoop) {
     const { loopCtx, agentState, preResults } = batch.agentLoop
+    // 28-06 R2 缺陷③：续跑前把新 signal 装载到循环上下文（chat 阶段的旧控制器已注销）
+    if (signal) loopCtx.signal = signal
     const pre = preResults ? `${preResults}\n\n` : ''
     let res: McpLoopResult
     try {

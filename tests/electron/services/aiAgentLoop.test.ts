@@ -19,6 +19,8 @@ const { FakeClient } = vi.hoisted(() => {
     static count = 0
     /** true = exec 阶段失败（execOne 捕获 → success:false 不 reject 整批） */
     static fail = false
+    /** exec stream data 事件下发的命令输出（空 = 无输出只有 close） */
+    static output = ''
     constructor() {
       FakeClient.count++
     }
@@ -37,6 +39,7 @@ const { FakeClient } = vi.hoisted(() => {
         }
         cb(null, {
           on(ev: string, c: (...a: any[]) => void) {
+            if (ev === 'data' && FakeClient.output) setTimeout(() => c(Buffer.from(FakeClient.output)), 0)
             if (ev === 'close') setTimeout(c, 0)
           },
           close() { /* no-op */ },
@@ -258,6 +261,7 @@ beforeEach(() => {
   setAiMasterKey(MK)
   FakeClient.count = 0
   FakeClient.fail = false
+  FakeClient.output = ''
   vi.mocked(kbSearch).mockReset()
   vi.mocked(kbSearch).mockResolvedValue({ rows: [] } as any)
   retrieveForAnswerMock.mockReset()
@@ -710,5 +714,39 @@ describe('28-04 Task 2: ai:cancelChat 中断通道', () => {
     finishChatCancel(303, fresh)
     expect(cancelChatControllers.size).toBe(1) // 仅剩 202
     cancelChatControllers.clear()
+  })
+})
+
+// ---------- 28-06 第二轮真机复测缺陷修复 ----------
+
+describe('28-06 R2 缺陷③：confirm 续跑阶段停止有效（signal 贯穿续跑链）', () => {
+  it('确认续跑中 cancelChat 能中断：续跑 callAI 被 abort → ChatInterruptedError → 中断收尾回文', async () => {
+    db.prepare("UPDATE ai_config SET exec_mode = 'confirm'").run()
+    allowCmd()
+    let calls = 0
+    const controller = new AbortController()
+    const fetchMock = vi.fn(async (_u: string, init?: RequestInit) => {
+      calls++
+      if (calls === 1) {
+        return { ok: true, json: async () => ({ choices: [{ message: { content: '[CMD:dev1]display version[/CMD]' } }] }) }
+      }
+      // 续跑 callAI：挂起至 abort（模拟流式/长请求中被用户停止）
+      return new Promise((_res, rej) => {
+        init?.signal?.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError')))
+      })
+    })
+    global.fetch = fetchMock as unknown as typeof fetch
+    const out1 = await chat([{ role: 'user', content: '查版本' }], ['dev1'], null)
+    expect(JSON.parse(out1).type).toBe('confirm_required')
+    // 模拟 main handler：注册本窗口控制器后续跑（缺陷③修复前 confirmCommand 不接收 signal）
+    cancelChatControllers.clear()
+    registerChatCancel(101)
+    const c = cancelChatControllers.get(101)!
+    const p = confirmCommand(JSON.parse(out1).execId, true, c.signal)
+    await vi.waitFor(() => expect(fetchMock.mock.calls.length).toBe(2))
+    expect(cancelChatForWebContents(101)).toEqual({ success: true })
+    const out2 = await p
+    const payload = JSON.parse(out2)
+    expect(payload.hardStop).toBe('user_cancel')
   })
 })
