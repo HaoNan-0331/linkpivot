@@ -670,6 +670,26 @@ describe('28-04 Task 2: ai:cancelChat 中断通道', () => {
     )).rejects.toBeInstanceOf(ChatInterruptedError)
   })
 
+  it('28-06 缺陷②：停止落在响应体 json 消费中 → 同样归一 ChatInterruptedError（非裸 AbortError）', async () => {
+    const controller = new AbortController()
+    const fetchMock = vi.fn(async () => {
+      // fetch 已成功返回（headers 到达），body 下载中被用户停止
+      return {
+        ok: true,
+        json: async () => {
+          controller.abort()
+          throw new DOMException('This operation was aborted', 'AbortError')
+        },
+      }
+    })
+    global.fetch = fetchMock as unknown as typeof fetch
+    await expect(callAIWithUsage(
+      { baseUrl: 'http://x', apiKey: 'k', modelName: 'm' },
+      [{ role: 'user', content: 'hi' }],
+      controller.signal
+    )).rejects.toBeInstanceOf(ChatInterruptedError)
+  })
+
   it('取消注册表：register → cancelChatForWebContents abort + 清空；finishChatCancel 不误删他人条目（T-28-04-01/05）', () => {
     cancelChatControllers.clear()
     const c1 = registerChatCancel(101)

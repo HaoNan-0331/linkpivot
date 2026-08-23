@@ -294,6 +294,12 @@ app.whenReady().then(() => {
         if (err instanceof ChatInterruptedError) {
           return '（用户已停止：本次 AI 对话已中断，未执行的部分不再继续。）'
         }
+        // 28-06 缺陷②：AbortError 兜底——中止落在非 callAI 路径（如流式 body 消费后的
+        // 异步回调）时原生 AbortError 逃逸，renderer 误报「发送失败」。signal 已 abort
+        // 即用户停止意图，按中断优雅回文不向上 throw（与 ChatInterruptedError 同构）。
+        if ((err as { name?: string })?.name === 'AbortError') {
+          return '（用户已停止：本次 AI 对话已中断，未执行的部分不再继续。）'
+        }
         throw err
       } finally {
         finishChatCancel(e.sender.id, controller)

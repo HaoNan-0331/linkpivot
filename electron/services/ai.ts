@@ -369,11 +369,22 @@ export async function callAIWithUsage(
     if (signal?.aborted) throw new ChatInterruptedError()
     throw err
   }
-  if (!response.ok) {
-    const text = await response.text()
-    throw new Error(`AI API 错误 (${response.status}): ${text}`)
+  // 28-06 缺陷②：停止若落在响应体下载中（fetch 已返回、text/json 未完成），原生
+  // AbortError 会绕过上方 catch 逃逸——body 消费同样按 aborted 归一为
+  // ChatInterruptedError（用户停止是既定意图，非错误）。
+  let data: any
+  try {
+    if (!response.ok) {
+      const text = await response.text()
+      throw new Error(`AI API 错误 (${response.status}): ${text}`)
+    }
+    data = await response.json()
+  } catch (err) {
+    if (signal?.aborted && !(err instanceof Error && err.message.startsWith('AI API 错误'))) {
+      throw new ChatInterruptedError()
+    }
+    throw err
   }
-  const data = await response.json()
   const content: string = data.choices?.[0]?.message?.content || ''
   const usage = normalizeUsage(data.usage, messages, content)
   return { content, usage }

@@ -233,8 +233,18 @@ export function useAIChat(): UseAIChatReturn {
         return
       }
     } catch (e: unknown) {
-      const errMsg = `错误: ${e instanceof Error ? e.message : String(e)}`
-      setMessages((prev) => [...prev, { role: 'assistant', content: errMsg }])
+      // 28-06 缺陷②：用户停止（AbortError）不是发送失败——main 侧已兜底回文中断通知，
+      // 双保险：万一 AbortError 仍逃逸到 renderer，不弹「错误: ...aborted」误导条
+      const isAbort = e instanceof DOMException && e.name === 'AbortError'
+        || /aborted|用户已停止/i.test(e instanceof Error ? e.message : String(e))
+      if (isAbort) {
+        setMessages((prev) => prev.some((m) => m.content.includes('已停止——任务中断'))
+          ? prev
+          : [...prev, { role: 'assistant', content: '已停止——任务中断，不生成总结；已执行步骤保留在上方' }])
+      } else {
+        const errMsg = `错误: ${e instanceof Error ? e.message : String(e)}`
+        setMessages((prev) => [...prev, { role: 'assistant', content: errMsg }])
+      }
     }
     setLoading(false)
   }, [input, loading, currentSessionId, messages, selectedDevices])
