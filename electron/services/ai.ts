@@ -1334,6 +1334,30 @@ function parseCmdBlocks(reply: string): Array<{ deviceName: string; cmd: string 
     .filter((c) => c.cmd)
 }
 
+/**
+ * 28-06 真机验收缺陷 ①：首答是否应进统一 agent 循环——判定复用循环内既有解析函数
+ * （parseCmdBlocks + [MCP_TOOL_CALL] 开标记正则，与 runAgentLoop L1654 hasOpenMarker
+ * 同源口径），不新写解析逻辑（CONTEXT D-01/D-03：与 MCP 绑定无关）。
+ * [CMD] 仅当至少一个块解析到**在场且可执行**（isDeviceExecutable）的设备时才触发循环
+ * ——仅问答设备/点名不存在设备的标记留给 chat() 既有 23-03 白名单防御路径（回注重试
+ * + strip 收尾语义不回归）。[KB_SEARCH]/[EXP_SEARCH] 已被 chat() 循环外单次二段式
+ * 消费（标记剥离后不再到场），入口无需重复判定。[MCP_TOOL_CALL] 只认开标记存在
+ * （有效性由循环内 parseMcpToolCalls fail-closed 分诊，无 mcp 上下文时畸形标记走
+ * strip 收尾，不执行任何工具）。
+ */
+function replyEntersAgentLoop(
+  reply: string,
+  targetDevices: any[]
+): boolean {
+  const cmdHit = parseCmdBlocks(reply).some((b) => {
+    const dev = b.deviceName
+      ? targetDevices.find((d) => d.name.trim().toLowerCase() === b.deviceName.trim().toLowerCase())
+      : targetDevices[0]
+    return !!dev && isDeviceExecutable(dev)
+  })
+  return cmdHit || /\[MCP_TOOL_CALL\]/.test(reply)
+}
+
 /** KB 检索结果 → 回注上下文文本 + 来源清单（[图片N] 描述替换逻辑自 chat() 原位抽取，行为不变） */
 function buildKbRoundContext(rows: any[]): {
   contextText: string
@@ -2684,14 +2708,19 @@ export async function chat(
   // 28-04（AGENT-03）：收尾证据补查一次性标志（多出口只补查一次）
   let evidenceBackfilled = false
 
-  if (mcpContexts.length > 0) {
-    // Phase 28（28-03）：runMcpToolLoop 已泛化为 runAgentLoop——mcp 上下文在场时首答
-    // 即进统一循环（[CMD]/[KB_SEARCH]/[EXP_SEARCH]/[MCP_TOOL_CALL] 任一标记自动延续，D-03）；
-    // MCP 专属轮次上限/确认/守卫语义不变（mcp 分支一行不改）。
+  // 28-06 真机验收缺陷 ①（根因修复）：循环入口不再挂死在 MCP 绑定上——首答 [CMD]
+  // 命中可执行设备或含 [MCP_TOOL_CALL] 标记即进统一循环（CONTEXT D-01/D-03），未绑
+  // MCP 的设备同样获得步骤卡/硬顶/重试/循环续跑；无 mcp 上下文时 [MCP_TOOL_CALL]
+  // 标记由循环内 parseMcpToolCalls fail-closed 分诊（无有效调用 → strip 收尾，不执行
+  // 任何工具，零 NPE）。仅问答/不存在设备的 [CMD] 留给下方旧单轮路径（23-03 白名单
+  // 防御语义不回归），首答无标记时旧路径保持兜底不变。
+  if (mcpContexts.length > 0 || replyEntersAgentLoop(finalAiReply, targetDevices)) {
+    // Phase 28（28-03）：runMcpToolLoop 已泛化为 runAgentLoop——四类标记统一有界循环
+    // （任一标记自动延续，D-03）；MCP 分类/确认/守卫语义不变（mcp 分支一行不改）。
     const res = await runAgentLoop(agentLoopCtx, agentState, finalAiReply)
     if (res.kind === 'confirm_required') {
       saveChatMessage('user', messages[messages.length - 1]?.content || '', null, sessionId)
-      saveChatMessage('assistant', `等待确认 ${res.count} 个 MCP 工具调用...`, null, sessionId)
+      saveChatMessage('assistant', `等待确认 ${res.count} 个操作...`, null, sessionId)
       return res.payload
     }
     finalAiReply = res.reply

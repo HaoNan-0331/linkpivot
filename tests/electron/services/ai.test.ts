@@ -444,15 +444,17 @@ describe('Phase 23 code-review 回归（WR-02 ~ WR-06）', () => {
     retrieveForAnswerMock.mockResolvedValue(EXP_HIT)
     insertDevice('a1', '可执行A', 'ssh')
     // 默认 isCommandAllowed mock = 拒绝
+    // 28-06 缺陷①：可执行设备的 [CMD] 首答即进 runAgentLoop——安全拒绝结果回注循环
+    // 追评一次（既有断流修复语义保留：最终回复 + expReferences 包装不丢）
     queueReplies(
       '先查经验 [EXP_SEARCH]ARP 异常[/EXP_SEARCH]',
-      '根据经验分析如下 [CMD:可执行A] display version[/CMD]'
+      '根据经验分析如下 [CMD:可执行A] display version[/CMD]',
+      '命令被白名单拒绝，无法执行，已基于经验作答。'
     )
     const out = await chat([{ role: 'user', content: '查版本' }], ['a1'], null)
     const payload = JSON.parse(out)
     expect(payload.type).toBe('exp_answer')
-    expect(payload.content).toContain('根据经验分析如下')
-    expect(payload.content).toContain('被拒绝')
+    expect(payload.content).toContain('命令被白名单拒绝')
     expect(payload.content).not.toContain('[EXP_SEARCH]')
     expect(payload.references).toHaveLength(1)
   })

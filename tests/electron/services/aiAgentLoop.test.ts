@@ -359,8 +359,23 @@ describe('Task 2: 硬顶②熔断 + 硬顶③冷却 + 重试降级（Pitfall 10 
       '重试轮总结'
     )
     await chat([{ role: 'user', content: '查' }], ['dev1'], null)
-    // inline 轮 1 次 + loop 轮 1+2 重试 = 4 次 ssh 连接
-    expect(FakeClient.count).toBe(4)
+    // 28-06 缺陷①：无 MCP 绑定 + 首答含 [CMD] 也进 runAgentLoop——两轮都在循环内：
+    // r1 直执 1+2 重试（3 连接）失败计 fc=1 + 写冷却；r2 同 key 命中冷却跳过（0 连接）
+    expect(FakeClient.count).toBe(3)
+  })
+
+  it('28-06 缺陷①：无 MCP 上下文 + 首答含 [CMD] → 进 runAgentLoop（首轮直执带 D-14 重试）', async () => {
+    allowCmd()
+    FakeClient.fail = true
+    // 旧代码（mcpContexts 空不进循环）退回单轮 [CMD] 路径：直执仅 1 次连接、无重试；
+    // 循环路径首轮 1+2 重试 = 3 连接（RED=1 / GREEN=3，行为分水岭即循环入口）
+    const fetchMock = queueReplies(
+      '[CMD:dev1]display version[/CMD]',
+      '收尾'
+    )
+    await chat([{ role: 'user', content: '查' }], ['dev1'], null)
+    expect(FakeClient.count).toBe(3)
+    expect(fetchMock.mock.calls.length).toBe(2)
   })
 
   it('熔断：连续第 burnout_count 轮失败后，同命令不再执行并回注 AGENT_BURNOUT_GUARD', async () => {
@@ -376,8 +391,9 @@ describe('Task 2: 硬顶②熔断 + 硬顶③冷却 + 重试降级（Pitfall 10 
     )
     const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
     expect(JSON.parse(out).content).toBe('熔断收尾')
-    // inline 1 + r2（重试预算内 3 次全失败，fc=1）+ r3 冷却跳过（fc=2）+ r4 熔断 0 次 = 4
-    expect(FakeClient.count).toBe(4)
+    // 28-06 缺陷①后全循环内：r1 直执 1+2 重试（3 次全失败，fc=1 + 写冷却）+
+    // r2 冷却跳过（fc=2）+ r3/r4 熔断 0 次 = 3
+    expect(FakeClient.count).toBe(3)
     const r4Msg = reqMsgs(fetchMock, 4).filter((m: any) => m.role === 'user').pop()
     expect(r4Msg.content).toContain('熔断')
     expect(r4Msg.content).toContain(AGENT_BURNOUT_GUARD)
@@ -395,9 +411,10 @@ describe('Task 2: 硬顶②熔断 + 硬顶③冷却 + 重试降级（Pitfall 10 
       '冷却收尾'
     )
     await chat([{ role: 'user', content: '查' }], ['dev1'], null)
-    // r3 命中冷却跳过：inline 1 + r2 3次(重试) + r3 0 + r4 3次(新 key 自有预算) = 7
-    expect(FakeClient.count).toBe(7)
-    const r4Req = reqMsgs(fetchMock, 3).filter((m: any) => m.role === 'user').pop()
+    // 28-06 缺陷①后全循环内：r1 3次(重试全失败写冷却) + r2 冷却跳过(fc=2) +
+    // r3 熔断跳过 + r4 display clock 3次(新 key 自有预算) = 6
+    expect(FakeClient.count).toBe(6)
+    const r4Req = reqMsgs(fetchMock, 2).filter((m: any) => m.role === 'user').pop()
     expect(r4Req.content).toContain('冷却中')
   })
 
