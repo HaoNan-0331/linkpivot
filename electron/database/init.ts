@@ -400,7 +400,8 @@ export function createTables() {
       last_test_status TEXT,
       last_test_tool_count INTEGER,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      package_id INTEGER REFERENCES mcp_packages(id)
     );
 
     CREATE TABLE IF NOT EXISTS mcp_device_rel (
@@ -408,11 +409,35 @@ export function createTables() {
       mcp_config_id INTEGER NOT NULL,
       device_id TEXT NOT NULL UNIQUE,
       created_at TEXT DEFAULT (datetime('now','localtime')),
+      env_json_enc TEXT,
       FOREIGN KEY (mcp_config_id) REFERENCES mcp_configs(id) ON DELETE CASCADE,
       FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_mcp_device_rel_mcp ON mcp_device_rel(mcp_config_id);
     CREATE INDEX IF NOT EXISTS idx_mcp_device_rel_device ON mcp_device_rel(device_id);
+
+    -- Phase 29（29-02 v27）：MCP 包导入登记表。DDL 必须与 migrations.ts v27 迁移 DDL
+    -- 逐字一致（双路径一致红线，v7/v8/v13-v17 注释同款要求）。
+    -- manifest_json/fingerprint/fingerprint_json 存明文元数据（红线裁决：DB 只存明文
+    -- 元数据非凭证）；name UNIQUE——D-05 同名即同包；disabled 为 D-26 禁用态；
+    -- last_test 存自动测结果 JSON（29-03 testPackage 写入）。
+
+    CREATE TABLE IF NOT EXISTS mcp_packages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      version TEXT,
+      runtime TEXT NOT NULL CHECK(runtime IN ('node','python')),
+      entry TEXT NOT NULL,
+      manifest_json TEXT NOT NULL,
+      fingerprint TEXT NOT NULL,
+      fingerprint_json TEXT NOT NULL,
+      dir_path TEXT NOT NULL,
+      size_bytes INTEGER NOT NULL,
+      disabled INTEGER NOT NULL DEFAULT 0,
+      last_test TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
 
     -- Phase 22（22-01 v17）：MCP 工具级策略表。DDL 必须与 migrations.ts v17 迁移 DDL
     -- 逐字一致（双路径一致红线，v7/v8/v13-v16 注释同款要求）。

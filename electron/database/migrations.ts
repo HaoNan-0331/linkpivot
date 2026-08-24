@@ -13,7 +13,7 @@ import { createSystemLog } from '../services/systemLog'
  *      在 createTables() 建好基线表之后、premigration 备份之后执行（D-06）。
  *      init.ts 不直接调用 runMigrations（单一调用点原则）。
  */
-export const MIGRATION_HEAD = 26
+export const MIGRATION_HEAD = 27
 
 interface MigrationStep {
   version: number
@@ -857,6 +857,54 @@ export const v26 = (db: Database.Database): void => {
   step()
 }
 
+/**
+ * v27：Phase 29（29-02，PKG-02/PKG-05）—— mcp_packages 新表 + mcp_configs.package_id +
+ * mcp_device_rel.env_json_enc（设备级 env 模型 D-15 的存储形态）。
+ *
+ * - mcp_packages：导入包登记表（导入登记制）。manifest_json/fingerprint/fingerprint_json
+ *   存明文元数据（红线裁决：DB 只存明文元数据，非凭证；敏感值只在 env_json_enc 密文列）。
+ *   name UNIQUE——D-05 同名即同包。runtime CHECK 双轨 node/python。last_test 列本迁移必建
+ *   （29-03 testPackage 写入），dir_path/size_bytes 由 29-03 落库。
+ * - mcp_configs.package_id：从包创建的配置可回溯包。
+ * - mcp_device_rel.env_json_enc：设备级 env 覆盖（密文，只走 encField/decField）。
+ *   存量共享 env 复制回填是加密写 → 必须在 MK 注入后执行，不能进迁移步骤（25-05 教训），
+ *   归 mcpDeviceEnvMigration.backfillDeviceEnv post-MK 钩子（D-17）。
+ *
+ * 幂等守卫：CREATE TABLE IF NOT EXISTS 天然幂等（v15 先例）+ 两处 hasColumn（v1 同构），
+ * 不靠 user_version 判定（文件头红线）。执行体包 db.transaction（throw 即 ROLLBACK）。
+ * DDL 与 init.ts fresh-install DDL 逐字一致（双路径一致红线，v7/v8/v13-v16 注释同款要求）。
+ */
+export const v27 = (db: Database.Database): void => {
+  const step = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS mcp_packages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        version TEXT,
+        runtime TEXT NOT NULL CHECK(runtime IN ('node','python')),
+        entry TEXT NOT NULL,
+        manifest_json TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        fingerprint_json TEXT NOT NULL,
+        dir_path TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        disabled INTEGER NOT NULL DEFAULT 0,
+        last_test TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `)
+    if (!hasColumn(db, 'mcp_configs', 'package_id')) {
+      db.exec('ALTER TABLE mcp_configs ADD COLUMN package_id INTEGER REFERENCES mcp_packages(id)')
+    }
+    if (!hasColumn(db, 'mcp_device_rel', 'env_json_enc')) {
+      db.exec('ALTER TABLE mcp_device_rel ADD COLUMN env_json_enc TEXT')
+    }
+    db.pragma('user_version = 27')
+  })
+  step()
+}
+
 export const MIGRATIONS: MigrationStep[] = [
   { version: 1, name: 'chat_history.session_id', run: v1 },
   { version: 2, name: 'ai_exec_logs.prompt_text+ai_response', run: v2 },
@@ -884,6 +932,7 @@ export const MIGRATIONS: MigrationStep[] = [
   { version: 24, name: 'idx_devices_name_hash UNIQUE 清零门控（三段式第三段，D-10 运行时可复用）', run: v24MigrationStep },
   { version: 25, name: 'ai_exec_logs.guard_hits+guard_outcome 越权审计列（GUARD-05/D-07）', run: v25 },
   { version: 26, name: 'agent loop limits + chat meta（ai_config 三列 + chat_history.meta_enc，AGENT-04）', run: v26 },
+  { version: 27, name: 'mcp_packages + 设备级 env 列（PKG-02/PKG-05/D-15）', run: v27 },
 ]
 
 /**

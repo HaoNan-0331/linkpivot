@@ -130,7 +130,7 @@ describe('aiExecLogger guard 审计列（27-02）', () => {
     const cols = (db.prepare('PRAGMA table_info(ai_exec_logs)').all() as Array<{ name: string }>).map((r) => r.name)
     expect(cols).toContain('guard_hits')
     expect(cols).toContain('guard_outcome')
-    expect(MIGRATION_HEAD).toBe(26) // 28-01 v26 推进（v25 自身 user_version 断言不变）
+    expect(MIGRATION_HEAD).toBe(27) // 29-02 v27 推进（v25 自身 user_version 断言不变）
     db.close()
   })
 
@@ -147,7 +147,7 @@ describe('aiExecLogger guard 审计列（27-02）', () => {
 
     const migrationsSrc = fs.readFileSync(path.join(root, 'electron/database/migrations.ts'), 'utf-8')
     const v25Idx = migrationsSrc.indexOf('export const v25')
-    const v25Src = migrationsSrc.slice(v25Idx, migrationsSrc.indexOf('export const MIGRATIONS'))
+    const v25Src = migrationsSrc.slice(v25Idx, migrationsSrc.indexOf('export const v26'))
     expect(v25Src).not.toContain('CHECK')
   })
 })

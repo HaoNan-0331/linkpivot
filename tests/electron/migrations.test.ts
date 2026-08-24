@@ -125,8 +125,12 @@ describe('v16 mcp_configs_v16_rebuild', () => {
       return m![1].replace(/\s+/g, ' ').trim()
     }
 
+    // 29-02 v27 后 init.ts 新增 package_id/env_json_enc 两列（迁移路径 ALTER 追加）——
+    // 剔除后再比对，v16 逐字一致语义保持
     for (const table of ['mcp_configs', 'mcp_device_rel']) {
-      expect(extract(v16Src, table)).toBe(extract(initSrc, table))
+      const extra = table === 'mcp_configs' ? 'package_id INTEGER REFERENCES mcp_packages(id)' : 'env_json_enc TEXT'
+      const stripped = extract(initSrc, table).replace(`, ${extra}`, '').replace(`${extra}, `, '').replace(extra, '')
+      expect(extract(v16Src, table)).toBe(stripped)
     }
   })
 
@@ -662,9 +666,7 @@ describe('v27 mcp_packages + 设备级 env 列', () => {
     v27(mig)
     // fresh 路径：从 init.ts 源码执行 mcp_* 三表 DDL（其它表与比对无关，不建）
     const fresh = new Database(':memory:')
-    const ddlMatch = initSrc.match(/CREATE TABLE IF NOT EXISTS mcp_packages \(([\s\S]*?)\);\s*CREATE TABLE IF NOT EXISTS mcp_configs/)
     const tables = initSrc.match(/CREATE TABLE IF NOT EXISTS (mcp_packages|mcp_configs|mcp_device_rel) \(([\s\S]*?)\);/g)
-    expect(ddlMatch).toBeTruthy()
     expect(tables).toBeTruthy()
     expect(tables!.length).toBe(3)
     for (const stmt of tables!) fresh.exec(stmt)
