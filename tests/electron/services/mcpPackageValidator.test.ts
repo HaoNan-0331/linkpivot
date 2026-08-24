@@ -117,6 +117,25 @@ describe('向量一 manifest-schema', () => {
     const r = validateMcpb(makeMcpb({ 'manifest.json': manifestFile(m), 'nf_mcp/server.py': entryContent(m) }))
     expect(vec(r, 'manifest-schema').ok).toBe(true)
   })
+
+  // CR-01（Phase 29 code-review）：包名白名单——name 参与目录构造与 rmSync(recursive)，
+  // 必须在 manifest-schema 向量拒绝路径逃逸/破坏性删除形态（包名维度 zip-slip）
+  it('CR-01：name 为 ".." / 含路径分隔符 / 盘符 / 以点开头 → manifest-schema fail', () => {
+    for (const evil of ['..', '.', 'a/../../b', 'a\\b', '/abs', 'C:\\x', '.hidden', '']) {
+      const m = validNodeManifest()
+      m.name = evil
+      const r = validateMcpb(makeMcpb({ 'manifest.json': manifestFile(m), 'main.js': entryContent(m) }))
+      expect(vec(r, 'manifest-schema').ok, `name=${evil}`).toBe(false)
+      expect(r.passed).toBe(false)
+    }
+  })
+
+  it('CR-01：合法字符集包名（字母数字._- 混合）→ pass', () => {
+    const m = validNodeManifest()
+    m.name = 'Pkg.v2_beta-01'
+    const r = validateMcpb(makeMcpb({ 'manifest.json': manifestFile(m), 'main.js': entryContent(m) }))
+    expect(vec(r, 'manifest-schema').ok).toBe(true)
+  })
 })
 
 describe('向量二 entry-whitelist（D-01 双轨）', () => {

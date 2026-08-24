@@ -67,6 +67,13 @@ const DOUBLE_EXT_RE = /\.(js|mjs|cjs|py)\.(exe|bat|cmd|ps1|scr|com|pif|vbs)$/i
 /** 工具名合法字符（manifest-lie 向量：防名字注入） */
 const TOOL_NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/
 
+/**
+ * CR-01：包名白名单（manifest-schema 向量）。name 直接参与目录构造与 rmSync(recursive)，
+ * 必须字符集白名单——首字符限字母数字（天然拒绝 `.`/`..`/路径分隔符/盘符/NTFS ADS `:`），
+ * 其后仅字母数字/点/下划线/连字符。防「包名维度 zip-slip」路径逃逸 + 破坏性删除。
+ */
+export const PKG_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/
+
 const VECTOR_ORDER: VectorResult['id'][] = [
   'manifest-schema',
   'entry-whitelist',
@@ -97,6 +104,9 @@ export function parseMcpbManifest(raw: string): McpManifest {
   if (typeof obj !== 'object' || obj === null) bad('manifest 不是 JSON 对象')
   for (const k of ['name', 'version', 'entry']) {
     if (typeof obj[k] !== 'string' || (obj[k] as string).length === 0) bad(`manifest.${k} 缺失或不是非空字符串`)
+  }
+  if (!PKG_NAME_RE.test(obj.name as string)) {
+    bad('manifest.name 只允许字母数字开头，且仅含字母数字/点/下划线/连字符（1-100 字符，不得为 . / .. / 含路径分隔符）')
   }
   if (obj.runtime !== 'node' && obj.runtime !== 'python') bad('manifest.runtime 必须是 node 或 python')
   if (!Array.isArray(obj.models) || obj.models.some((x) => typeof x !== 'string')) bad('manifest.models 必须是字符串数组')
