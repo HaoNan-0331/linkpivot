@@ -49,6 +49,7 @@ const DDL = `
     last_test_at TEXT,
     last_test_status TEXT,
     last_test_tool_count INTEGER,
+    package_id INTEGER,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );

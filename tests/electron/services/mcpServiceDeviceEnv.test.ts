@@ -14,11 +14,22 @@ import Database from 'better-sqlite3'
  */
 
 const h = vi.hoisted(() => ({
-  db: null as Database.Database | null
+  db: null as Database.Database | null,
+  registryMock: {
+    listActive: vi.fn().mockReturnValue([]),
+    killTree: vi.fn().mockReturnValue(true),
+    register: vi.fn(),
+    unregister: vi.fn(),
+  },
 }))
 
 vi.mock('../../../electron/database/connection', () => ({
   getDatabase: () => h.db
+}))
+
+// WR-03：deleteConfig 杀实例路径——registry mock（不真 taskkill）
+vi.mock('../../../electron/services/mcpProcessRegistry', () => ({
+  McpProcessRegistry: h.registryMock,
 }))
 
 import { McpService, UNCHANGED_ENV_SENTINEL } from '../../../electron/services/mcpService'
@@ -88,6 +99,8 @@ beforeEach(() => {
   h.db = makeDb()
   McpService._setDbGetter(() => h.db!)
   McpService.setMcpMasterKey(TEST_MK)
+  h.registryMock.listActive.mockReset().mockReturnValue([])
+  h.registryMock.killTree.mockReset().mockReturnValue(true)
 })
 
 describe('29-06：saveConfig deviceEnvs（D-16 手工 stdio 编辑态）', () => {
@@ -134,5 +147,75 @@ describe('29-06：saveConfig deviceEnvs（D-16 手工 stdio 编辑态）', () =>
     expect(list).toHaveLength(1)
     expect(list[0].deviceEnvMasked['d1']).toEqual(['TOKEN=****0001'])
     expect(JSON.stringify(list)).not.toContain('tok-secret-0001')
+  })
+
+  // WR-05（Phase 29 code-review）：deviceIds 缺省（契约=不动绑定）时 deviceEnvs 不得静默丢弃——
+  // 以 DB 现绑定设备集合为 boundSet 逐设备合并
+  it('WR-05：只传 deviceEnvs 不传 deviceIds → 以 DB 现绑定设备为 boundSet 生效', () => {
+    const cfgId = seed(h.db!, { d1: { TOKEN: 'old-1' }, d2: { TOKEN: 'old-2' } })
+    const res = McpService.saveConfig({
+      id: cfgId,
+      name: 'manual-cfg',
+      type: 'stdio',
+      commandOrUrl: 'node x.js',
+      deviceEnvs: [{ deviceId: 'd2', env: { TOKEN: 'new-2' } }],
+    })
+    expect(res.ok).toBe(true)
+    expect(relEnv(h.db!, 'd1')).toEqual({ TOKEN: 'old-1' }) // 未提及设备原值不动
+    expect(relEnv(h.db!, 'd2')).toEqual({ TOKEN: 'new-2' }) // 不再被静默丢弃
+    // 绑定关系未被改动（缺省=不动绑定）
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_device_rel WHERE mcp_config_id = ?').get(cfgId)).toEqual({ c: 2 })
+  })
+})
+
+describe('Phase 29 code-review：deleteConfig（WR-03 杀实例 / WR-06 包根配置保护）', () => {
+  function seedPackageConfigs(db: Database.Database, packageId: number, count: number): number[] {
+    const ids: number[] = []
+    for (let i = 0; i < count; i++) {
+      const r = db.prepare(
+        "INSERT INTO mcp_configs (name, type, command_or_url, package_id, source) VALUES (?, 'stdio', 'node', ?, 'package')"
+      ).run(`pkg-cfg-${i}`, packageId)
+      ids.push(Number(r.lastInsertRowid))
+    }
+    return ids
+  }
+
+  it('WR-03：删配置先杀该 configId 全部运行中 stdio 实例（含复合键，对齐 deletePackage）', () => {
+    const ins = h.db!.prepare(
+      "INSERT INTO mcp_configs (name, type, command_or_url) VALUES (?, 'stdio', 'node')"
+    )
+    const cfgA = Number(ins.run('cfg-a').lastInsertRowid)
+    const cfgB = Number(ins.run('cfg-b').lastInsertRowid)
+    h.registryMock.listActive.mockReturnValue([
+      { pid: 501, configId: `${cfgA}:dev1`, startedAt: 0 },
+      { pid: 502, configId: `${cfgA}:dev2`, startedAt: 0 },
+      { pid: 503, configId: `${cfgB}:dev1`, startedAt: 0 },
+      { pid: 504, configId: '999:dev1', startedAt: 0 },
+    ])
+    const res = McpService.deleteConfig(cfgA)
+    expect(res.ok).toBe(true)
+    // 只杀 cfgA 对应的 501/502，不误杀他配置（503/504）
+    expect(h.registryMock.killTree).toHaveBeenCalledTimes(2)
+    expect(h.registryMock.killTree).toHaveBeenCalledWith(501)
+    expect(h.registryMock.killTree).toHaveBeenCalledWith(502)
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_configs').get()).toEqual({ c: 1 })
+  })
+
+  it('WR-06：删包根配置（同包 MIN(id) 策略模板载体）→ 拒绝并提示影响面', () => {
+    const ids = seedPackageConfigs(h.db!, 7, 2)
+    const res = McpService.deleteConfig(ids[0])
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.error).toContain('策略模板载体')
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_configs').get()).toEqual({ c: 2 })
+    // 非根配置（兄弟）可正常删除
+    expect(McpService.deleteConfig(ids[1]).ok).toBe(true)
+  })
+
+  it('手工配置删除不受 WR-06 影响；行不存在幂等 ok', () => {
+    const r = h.db!.prepare(
+      "INSERT INTO mcp_configs (name, type, command_or_url, source) VALUES ('m', 'stdio', 'node', 'manual')"
+    ).run()
+    expect(McpService.deleteConfig(Number(r.lastInsertRowid)).ok).toBe(true)
+    expect(McpService.deleteConfig(99999)).toEqual({ ok: true })
   })
 })

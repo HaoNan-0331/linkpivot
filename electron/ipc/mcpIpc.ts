@@ -126,10 +126,10 @@ export function registerMcpIpc() {
   }))
 
   // 删除（Popconfirm；mcp_device_rel 随 FK CASCADE 级联）
+  // WR-06：包根配置（策略模板载体）删除保护 → { ok:false, error } 业务拒绝（不 throw）
   ipcMain.handle('mcp:delete', secure((_e, id: number) => {
     if (typeof id !== 'number' || !Number.isInteger(id)) throw new Error('参数无效：id')
-    McpService.deleteConfig(id)
-    return { ok: true }
+    return McpService.deleteConfig(id)
   }))
 
   // 启用/停用

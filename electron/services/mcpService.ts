@@ -20,6 +20,7 @@ import type Database from 'better-sqlite3'
 import { getDatabase } from '../database/connection'
 import { encField, decField } from '../utils/crypto'
 import { getDeviceById } from './device'
+import { McpProcessRegistry } from './mcpProcessRegistry'
 
 export const MAX_BATCH = 1000
 
@@ -274,11 +275,18 @@ export class McpService {
       }
 
       // ---- 29-06（D-16）：设备级 env 回写（encField 红线；哨兵/空串逐设备合并）----
-      if (deviceEnvs && dto.deviceIds !== undefined) {
+      // WR-05：deviceIds 缺省（契约=不动绑定）时以 DB 现绑定设备集合为 boundSet，
+      // 不再静默丢弃 deviceEnvs（防「只传 deviceEnvs 不传 deviceIds」的逐设备编辑丢失）
+      if (deviceEnvs) {
         const stmtUpdRel = conn.prepare(
           'UPDATE mcp_device_rel SET env_json_enc = ? WHERE mcp_config_id = ? AND device_id = ?'
         )
-        const boundSet = new Set(dto.deviceIds)
+        const boundSet = new Set(
+          dto.deviceIds !== undefined
+            ? dto.deviceIds
+            : (conn.prepare('SELECT device_id FROM mcp_device_rel WHERE mcp_config_id = ?')
+              .all(finalId) as Array<{ device_id: string }>).map((r) => r.device_id)
+        )
         for (const item of deviceEnvs) {
           if (!boundSet.has(item.deviceId)) continue // 未绑定设备忽略（防越行写）
           const existing = priorEnvByDevice?.get(item.deviceId) ?? {}
@@ -304,9 +312,33 @@ export class McpService {
     return result!
   }
 
-  /** 主表 DELETE，mcp_device_rel 随 FK CASCADE 消失（Popconfirm 数据层级联） */
-  static deleteConfig(id: number): void {
-    McpService.db().prepare('DELETE FROM mcp_configs WHERE id = ?').run(id)
+  /**
+   * 主表 DELETE，mcp_device_rel 随 FK CASCADE 消失（Popconfirm 数据层级联）。
+   * WR-03：先杀该 configId 全部运行中 stdio 实例（对齐 deletePackage 语义——防子进程
+   * 持用户 env 明文残留至 10 分钟空闲回收）。
+   * WR-06：包根配置（同包 MIN(id) 策略模板载体）删除保护——mcp_tools 随 FK CASCADE 清空
+   * 会连带兄弟配置的工具启用/免确认策略瞬时归零，拒绝并提示改走删包入口。
+   */
+  static deleteConfig(id: number): { ok: true } | { ok: false; error: string } {
+    const conn = McpService.db()
+    const row = conn.prepare('SELECT id, source, package_id FROM mcp_configs WHERE id = ?')
+      .get(id) as { id: number; source: string; package_id: number | null } | undefined
+    if (!row) return { ok: true } // 幂等：行已不在即视为删净
+    if (row.source === 'package' && row.package_id != null) {
+      const root = conn.prepare('SELECT MIN(id) AS rootId FROM mcp_configs WHERE package_id = ?')
+        .get(row.package_id) as { rootId: number | null } | undefined
+      if (root?.rootId === id) {
+        return {
+          ok: false,
+          error: '该配置是所在包的工具策略模板载体（首条包配置），删除会导致同包全部配置的工具启用/免确认策略一并丢失——如需移除请删除整个包',
+        }
+      }
+    }
+    for (const rec of McpProcessRegistry.listActive()) {
+      if (String(rec.configId).split(':')[0] === String(id)) McpProcessRegistry.killTree(rec.pid)
+    }
+    conn.prepare('DELETE FROM mcp_configs WHERE id = ?').run(id)
+    return { ok: true }
   }
 
   static setEnabled(id: number, enabled: boolean): void {

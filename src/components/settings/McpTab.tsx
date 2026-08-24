@@ -692,9 +692,13 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
 
   const handleDelete = async (id: number) => {
     try {
-      await window.api.mcp.delete(id)
-      message.success('已删除')
-      load()
+      const r = await window.api.mcp.delete(id)
+      if (r.ok) {
+        message.success('已删除')
+        load()
+      } else {
+        message.error(r.error)
+      }
     } catch (e: unknown) {
       message.error(ipcErrMsg(e))
     }

@@ -255,7 +255,7 @@ export interface ElectronAPI {
   mcp: {
     list: () => Promise<McpConfigDto[]>
     save: (dto: McpSaveDto) => Promise<{ ok: true; config: McpConfigDto } | { ok: false; error: string }>
-    delete: (id: number) => Promise<{ ok: true }>
+    delete: (id: number) => Promise<{ ok: true } | { ok: false; error: string }>
     setEnabled: (id: number, enabled: boolean) => Promise<{ ok: true }>
     testConnection: (payload: McpTestRequestDto) => Promise<McpTestResultDto>
     cancelTest: (testId: string) => Promise<{ ok: boolean }>

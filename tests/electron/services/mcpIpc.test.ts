@@ -29,7 +29,7 @@ vi.mock('../../../electron/services/mcpService', () => ({
   McpService: {
     listConfigs: vi.fn().mockReturnValue([]),
     saveConfig: vi.fn().mockReturnValue({ ok: true, id: 1 }),
-    deleteConfig: vi.fn(),
+    deleteConfig: vi.fn().mockReturnValue({ ok: true }),
     setEnabled: vi.fn(),
     decodeForTest: vi.fn().mockReturnValue({
       type: 'http', commandOrUrl: 'http://base', args: [], env: {}, credential: null,
