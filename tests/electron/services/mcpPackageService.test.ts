@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { zipSync, strToU8, strFromU8 } from 'fflate'
 
 /**
@@ -21,7 +21,11 @@ import { zipSync, strToU8, strFromU8 } from 'fflate'
  */
 
 const h = vi.hoisted(() => {
-  const clientMock = { testConnection: vi.fn() }
+  const clientMock = {
+    testConnection: vi.fn(),
+    verifyPackageFingerprint: vi.fn(), // 默认 no-op（通过）；WR-01 用例 mock 抛 package_integrity_failed
+    reportPackageIntegrityFailure: vi.fn(),
+  }
   const registryMock = { listActive: vi.fn(), killTree: vi.fn(), register: vi.fn(), unregister: vi.fn() }
   return { db: null as Database.Database | null, clientMock, registryMock }
 })
@@ -31,7 +35,9 @@ vi.mock('../../../electron/database/connection', () => ({
 }))
 
 vi.mock('../../../electron/services/mcpClient', () => ({
-  testConnection: h.clientMock.testConnection
+  testConnection: h.clientMock.testConnection,
+  verifyPackageFingerprint: h.clientMock.verifyPackageFingerprint,
+  reportPackageIntegrityFailure: h.clientMock.reportPackageIntegrityFailure,
 }))
 
 vi.mock('../../../electron/services/mcpProcessRegistry', () => ({
@@ -87,6 +93,15 @@ function makeDb(): Database.Database {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE mcp_tools (
+      config_id INTEGER NOT NULL,
+      tool_name TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      skip_confirm INTEGER NOT NULL DEFAULT 0,
+      tool_meta TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (config_id, tool_name)
+    );
   `)
   return db
 }
@@ -141,6 +156,8 @@ beforeEach(() => {
   McpPackageService._setRootGetter(() => rootDir)
   McpPackageService.setMcpPackageMasterKey(TEST_MK)
   h.clientMock.testConnection.mockReset()
+  h.clientMock.verifyPackageFingerprint.mockReset() // 默认 no-op = 指纹通过
+  h.clientMock.reportPackageIntegrityFailure.mockReset()
   h.registryMock.listActive.mockReset().mockReturnValue([])
   h.registryMock.killTree.mockReset().mockReturnValue(true)
 })
@@ -481,5 +498,110 @@ describe('Task 1 (29-06): listMatchedDevices / createConfigsFromPackage', () => 
     ]).ok).toBe(false)
     expect(McpPackageService.createConfigsFromPackage(9999, []).ok).toBe(false)
     expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_configs').get()).toEqual({ c: 0 })
+  })
+
+  it('WR-02：createConfigsFromPackage 即预填包根配置工具缓存（manifest.tools，AI 开箱可用）', () => {
+    const pkgId = importPkgWithModels(['S5735'], ['NF_TOKEN'])
+    seedDevice(h.db!, 'c1', 'C1', 'S5735')
+    const res = McpPackageService.createConfigsFromPackage(pkgId, [{ deviceId: 'c1', env: { NF_TOKEN: 't' } }])
+    expect(res.ok).toBe(true)
+    const rootId = (h.db!.prepare('SELECT MIN(id) AS id FROM mcp_configs WHERE package_id = ?').get(pkgId) as any).id
+    const rows = h.db!.prepare('SELECT tool_name, enabled, skip_confirm FROM mcp_tools WHERE config_id = ?').all(rootId) as any[]
+    expect(rows.map((r) => r.tool_name)).toEqual(['t1'])
+    expect(rows[0].enabled).toBe(1)
+    expect(rows[0].skip_confirm).toBe(0) // annotations 缺省 → 不给免确认资格
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Phase 29 code-review 回归：CR-01 包名路径逃逸 / WR-01 testPackage 守卫 / WR-04 一致性
+// ---------------------------------------------------------------------------
+describe('Code-review fix: CR-01 / WR-01 / WR-02 / WR-04', () => {
+  function importOne(opts: ZipOpts = {}): number {
+    const res = McpPackageService.importPackage(mkMcpb(opts))
+    if (!res.ok) throw new Error('import failed')
+    return res.package.id
+  }
+
+  it('CR-01 攻击回归：name=".." 导入被拒且零副作用（包根/userData 不被 rmSync）', () => {
+    // 包根同级放哨兵文件——若 dir 解析到包根上级并 rmSync，哨兵会被连带删除
+    const sentinel = join(rootDir, '..', 'sentinel-cr01-a.txt')
+    writeFileSync(sentinel, 'keep')
+    const res = McpPackageService.importPackage(mkMcpb({ name: '..' }))
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.error).toContain('manifest.name')
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_packages').get()).toEqual({ c: 0 })
+    expect(existsSync(sentinel)).toBe(true) // 零副作用：上级目录未被触碰
+    expect(existsSync(rootDir)).toBe(true)
+    rmSync(sentinel, { force: true })
+  })
+
+  it('CR-01 攻击回归：name 含路径分隔符（a/../../b）与反斜杠形态导入被拒', () => {
+    for (const evil of ['a/../../b', 'a\\..\\b', '/abs/path', 'C:\\evil', '.hidden', '.']) {
+      const res = McpPackageService.importPackage(mkMcpb({ name: evil }))
+      expect(res.ok).toBe(false)
+    }
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_packages').get()).toEqual({ c: 0 })
+    // 包根下零新增目录
+    expect(readdirSync(rootDir)).toEqual([])
+  })
+
+  it('CR-01 纵深防御：deletePackage 遇 dir_path 逃逸包根的 DB 行 → 整体拒绝不 rmSync', () => {
+    const pkgId = importOne()
+    const sentinel = join(rootDir, '..', 'sentinel-cr01-b.txt')
+    writeFileSync(sentinel, 'keep')
+    h.db!.prepare('UPDATE mcp_packages SET dir_path = ? WHERE id = ?').run(resolve(rootDir, '..'), pkgId)
+    const res = McpPackageService.deletePackage(pkgId)
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.error).toContain('不安全')
+    expect(existsSync(sentinel)).toBe(true) // 逃逸目标未被删除
+    rmSync(sentinel, { force: true })
+  })
+
+  it('WR-01：disabled 包 testPackage 直接拒绝（不 spawn）', async () => {
+    const pkgId = importOne()
+    h.db!.prepare('UPDATE mcp_packages SET disabled = 1 WHERE id = ?').run(pkgId)
+    const res = await McpPackageService.testPackage(pkgId)
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.error).toContain('已被禁用')
+    expect(h.clientMock.testConnection).not.toHaveBeenCalled()
+  })
+
+  it('WR-01：TOCTOU 指纹重验失败 → 不 spawn + disabled=1 + last_test 落败因', async () => {
+    const pkgId = importOne()
+    h.clientMock.verifyPackageFingerprint.mockImplementation(() => {
+      throw { code: 'package_integrity_failed', reason: '包指纹重验失败（TOCTOU 检出）：内容变化 main.js' }
+    })
+    const res = await McpPackageService.testPackage(pkgId)
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.error).toContain('TOCTOU')
+    expect(h.clientMock.testConnection).not.toHaveBeenCalled()
+    const row = h.db!.prepare('SELECT disabled, last_test FROM mcp_packages WHERE id = ?').get(pkgId) as any
+    expect(row.disabled).toBe(1)
+    expect(JSON.parse(row.last_test).ok).toBe(false)
+    expect(h.clientMock.reportPackageIntegrityFailure).toHaveBeenCalledTimes(1)
+  })
+
+  it('WR-02：testPackage 实测成功 → 工具缓存写入包根配置（MIN(id) 策略模板载体）', async () => {
+    const pkgId = importOne({ tools: ['tool_a'] })
+    const cfg = h.db!.prepare(
+      "INSERT INTO mcp_configs (name, type, command_or_url, package_id, source) VALUES ('pkg-cfg', 'stdio', 'node', ?, 'package')"
+    ).run(pkgId)
+    h.clientMock.testConnection.mockResolvedValue({
+      ok: true, protocolVersion: '1.0',
+      tools: [{ name: 'tool_a', description: 'd', inputSchema: {}, annotations: { readOnlyHint: true } }],
+    })
+    const res = await McpPackageService.testPackage(pkgId)
+    expect(res.ok).toBe(true)
+    const rows = h.db!.prepare('SELECT tool_name FROM mcp_tools WHERE config_id = ?').all(cfg.lastInsertRowid) as any[]
+    expect(rows).toEqual([{ tool_name: 'tool_a' }])
+  })
+
+  it('WR-04：importPackage INSERT 失败 → 抛错且补偿删除孤儿目录（磁盘/DB 一致）', () => {
+    // DROP 掉 fingerprint_json 列令 INSERT 报错（列不存在），模拟 DB 落库失败路径
+    h.db!.exec('ALTER TABLE mcp_packages DROP COLUMN fingerprint_json')
+    expect(() => McpPackageService.importPackage(mkMcpb())).toThrow()
+    expect(existsSync(join(rootDir, 'demo-pkg'))).toBe(false) // 孤儿目录被补偿删除
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_packages').get()).toEqual({ c: 0 })
   })
 })

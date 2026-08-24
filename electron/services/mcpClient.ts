@@ -114,6 +114,16 @@ export function setIntegrityHandler(fn: IntegrityHandler | null): void {
   integrityHandler = fn
 }
 
+/**
+ * WR-01：供 service 侧（mcpPackageService.testPackage 等 spawn 前重验路径）触发与
+ * getConnection 同款的 TOCTOU 副作用（disabled=1 + security 日志，由 main.ts 注入落库）。
+ */
+export function reportPackageIntegrityFailure(info: { packageId: number, dirPath: string, detail: string }): void {
+  try {
+    integrityHandler?.(info)
+  } catch { /* handler 故障不吞主线错误（安全语义不降级） */ }
+}
+
 /** 递归收集目录全树（posix 相对路径，D-27 全树——含新增文件） */
 function collectDirFiles(dirPath: string, rel = ''): Array<{ path: string, content: Buffer }> {
   const out: Array<{ path: string, content: Buffer }> = []

@@ -17,9 +17,9 @@
  *  - T-29-03-05 deletePackage 先 McpProcessRegistry 杀该包全部运行实例再级联删
  */
 
-import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs'
+import { mkdirSync, writeFileSync, rmSync, existsSync, renameSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, dirname } from 'node:path'
+import { join, dirname, resolve, sep } from 'node:path'
 import { v4 as uuidv4 } from 'uuid'
 import { app } from 'electron'
 import type Database from 'better-sqlite3'
@@ -27,7 +27,9 @@ import { getDatabase } from '../database/connection'
 import { encField, decField } from '../utils/crypto'
 import { validateMcpb, buildFingerprintTree, MAX_PACKAGE_BYTES } from './mcpPackageValidator'
 import type { McpManifest, FileEntry, VectorResult } from './mcpPackageValidator'
-import { testConnection } from './mcpClient'
+import { testConnection, verifyPackageFingerprint, reportPackageIntegrityFailure } from './mcpClient'
+import { McpToolPolicy } from './mcpToolPolicy'
+import type { McpToolAnnotations } from './mcpToolPolicy'
 import { McpProcessRegistry } from './mcpProcessRegistry'
 
 /** manifest.name 长度上限（网关与 service 同源，D-05 包身份健壮性） */
@@ -209,6 +211,20 @@ export class McpPackageService {
     }
   }
 
+  /**
+   * CR-01 纵深防御（第二道闸，独立于校验器）：所有 rmSync/join(root, name) 落点前置校验——
+   * 目录 resolve 后必须严格位于包根目录之下（等于根也拒绝），否则拒绝操作。
+   * 覆盖 importPackage / confirmOverwrite / deletePackage 全部破坏性路径，防校验器回归。
+   */
+  private static unsafePackageDirError(dir: string): string | null {
+    const root = resolve(McpPackageService.rootGetter())
+    const abs = resolve(dir)
+    if (abs === root || !abs.startsWith(root + sep)) {
+      return `包目录路径不安全（逃逸包根目录），拒绝操作：${dir}`
+    }
+    return null
+  }
+
   // -------------------------------------------------------------------
   // 导入 / 覆盖族（Task 1）
   // -------------------------------------------------------------------
@@ -244,12 +260,21 @@ export class McpPackageService {
       return { ok: true, status: 'changed', package: McpPackageService.rowToView(existing), diff }
     }
     const dir = join(McpPackageService.rootGetter(), manifest.name)
+    // CR-01 纵深防御：落盘前 resolve 前缀守卫（校验器白名单之外的第二道闸）
+    const unsafe = McpPackageService.unsafePackageDirError(dir)
+    if (unsafe) return { ok: false, error: unsafe }
     McpPackageService.writePackageFiles(dir, v.fileTree)
-    conn.prepare(
-      `INSERT INTO mcp_packages (name, version, runtime, entry, manifest_json, fingerprint, fingerprint_json, dir_path, size_bytes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(manifest.name, manifest.version, manifest.runtime, manifest.entry,
-      JSON.stringify(manifest), fp.treeSha256, JSON.stringify(fp), dir, v.totalBytes)
+    try {
+      conn.prepare(
+        `INSERT INTO mcp_packages (name, version, runtime, entry, manifest_json, fingerprint, fingerprint_json, dir_path, size_bytes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(manifest.name, manifest.version, manifest.runtime, manifest.entry,
+        JSON.stringify(manifest), fp.treeSha256, JSON.stringify(fp), dir, v.totalBytes)
+    } catch (e) {
+      // WR-04：DB 落库失败（如并发同名 UNIQUE 兜底触发）补偿删除孤儿目录，防磁盘/DB 不一致
+      rmSync(dir, { recursive: true, force: true })
+      throw e
+    }
     const row = conn.prepare('SELECT * FROM mcp_packages WHERE name = ?').get(manifest.name) as any
     return { ok: true, status: 'imported', package: McpPackageService.rowToView(row) }
   }
@@ -309,11 +334,18 @@ export class McpPackageService {
       manifest, fp.treeSha256
     )
 
-    // 1) 替换包目录文件（fs 先行；若中途崩溃，DB 旧指纹与磁盘不一致由 29-04 spawn 前重验兜底检出）
-    McpPackageService.writePackageFiles(existing.dir_path, v.fileTree)
+    // CR-01 纵深防御：换目录前 resolve 前缀守卫（dir_path 来自 DB 行，防持久化二次触发）
+    const unsafe = McpPackageService.unsafePackageDirError(existing.dir_path)
+    if (unsafe) return { ok: false, error: unsafe }
+
+    // 1) WR-04：新内容先写包根下临时目录，DB 事务成功后再原子换入——
+    //    事务失败时磁盘零变动（旧内容原样），不再出现「磁盘已新、DB 旧指纹」的不一致窗口
+    const tmpDir = join(McpPackageService.rootGetter(), `.overwrite-${packageId}-${Date.now()}`)
+    McpPackageService.writePackageFiles(tmpDir, v.fileTree)
 
     // 2) DB 事务：rel 行 env 键剔除 + 主表更新
-    conn.transaction((): void => {
+    try {
+      conn.transaction((): void => {
       const removedKeys = diff.env.removed
       if (removedKeys.length > 0) {
         const stmtRel = conn.prepare(
@@ -347,7 +379,16 @@ export class McpPackageService {
          WHERE id = ?`
       ).run(manifest.version, manifest.runtime, manifest.entry, JSON.stringify(manifest),
         fp.treeSha256, JSON.stringify(fp), v.totalBytes, packageId)
-    })()
+      })()
+    } catch (e) {
+      // WR-04：事务失败补偿——清临时目录，磁盘保持旧内容（DB 已随事务 ROLLBACK）
+      rmSync(tmpDir, { recursive: true, force: true })
+      throw e
+    }
+
+    // 3) 换入：删旧目录 → 临时目录同卷 rename 到位（旧内容 → 新内容近原子替换）
+    rmSync(existing.dir_path, { recursive: true, force: true })
+    renameSync(tmpDir, existing.dir_path)
     const row = conn.prepare('SELECT * FROM mcp_packages WHERE id = ?').get(packageId) as any
     return { ok: true, status: 'overwritten', package: McpPackageService.rowToView(row), diff }
   }
@@ -396,6 +437,10 @@ export class McpPackageService {
     const conn = McpPackageService.db()
     const row = conn.prepare('SELECT * FROM mcp_packages WHERE id = ?').get(packageId) as any
     if (!row) return { ok: false, error: '包不存在或已被删除' }
+    // CR-01 纵深防御：rmSync 前置 resolve 前缀守卫——dir_path 逃逸包根即整体拒绝
+    // （DB 行被篡改的形态；不执行任何破坏性动作，由用户人工核查）
+    const unsafe = McpPackageService.unsafePackageDirError(row.dir_path)
+    if (unsafe) return { ok: false, error: unsafe }
 
     // 1) 杀该包全部运行实例（登记键=复合键 `${configId}:${deviceId}`（29-04 D-18）——取 ':' 前
     //    configId 段比对，设备级多实例一并树杀；只杀本包配置对应的 pid）
@@ -447,6 +492,30 @@ export class McpPackageService {
       ).run(JSON.stringify(t), packageId)
     }
 
+    // WR-01：与 getConnection spawn 路径同源守卫——disabled 门 + TOCTOU 指纹重验，
+    // 防「重测」按钮成为绕过 29-04 红线的包内代码执行入口
+    if (row.disabled) {
+      return { ok: false, error: '包已被禁用（TOCTOU 检出后需重新导入校验），不能自动测试' }
+    }
+    try {
+      verifyPackageFingerprint(row.dir_path, row.fingerprint_json)
+    } catch (e) {
+      const reason = (e as { reason?: string }).reason ?? '包指纹重验失败（TOCTOU 检出）'
+      if ((e as { code?: string })?.code === 'package_integrity_failed') {
+        // 同款副作用：禁用包（重新导入走完整校验链才能恢复）+ 经注入 handler 留 security 日志
+        try {
+          conn.prepare(
+            "UPDATE mcp_packages SET disabled = 1, updated_at = datetime('now','localtime') WHERE id = ?"
+          ).run(packageId)
+        } catch { /* 禁用失败不吞主线错误 */ }
+        try {
+          reportPackageIntegrityFailure({ packageId, dirPath: row.dir_path, detail: reason })
+        } catch { /* handler 故障不吞主线错误 */ }
+      }
+      writeLastTest({ stage: 'starting', ok: false, reason, extraTools: [], missingTools: [], testedAt })
+      return { ok: false, error: reason }
+    }
+
     const entryAbs = join(row.dir_path, ...manifest.entry.replace(/\\/g, '/').split('/'))
     let commandOrUrl: string
     let args: string[]
@@ -481,6 +550,14 @@ export class McpPackageService {
       const extraTools = actual.filter((n) => !declared.includes(n))
       const missingTools = declared.filter((n) => !actual.includes(n))
       writeLastTest({ stage: 'listing', ok: true, extraTools, missingTools, testedAt })
+      // WR-02：实测成功 → 工具缓存写入包根配置（同包 MIN(id) 策略模板载体），
+      // AI buildMcpContexts 开箱可用（annotations 实测值透传，免确认资格由策略层判定）
+      McpPackageService.saveRootConfigToolCache(packageId, result.tools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        inputSchema: t.inputSchema,
+        annotations: t.annotations as McpToolAnnotations | undefined,
+      })))
       return { ok: true, extraTools, missingTools }
     }
     writeLastTest({
@@ -497,6 +574,22 @@ export class McpPackageService {
   // -------------------------------------------------------------------
   // 从包创建配置（29-06，PKG-05：D-20/D-21/D-22）
   // -------------------------------------------------------------------
+
+  /**
+   * WR-02：工具缓存写入包根配置（同包 MIN(id)——D-22 策略模板载体）。
+   * fail-soft：mcp_tools 表缺失（最小 schema 测试）或写失败时跳过——缓存冷启动为空
+   * 仍是可用降级（用户手动行级测试可重建），不阻断导入/创建主线。
+   */
+  private static saveRootConfigToolCache(packageId: number, tools: Array<{ name: string; description?: string; annotations?: McpToolAnnotations; inputSchema?: unknown }>): void {
+    try {
+      const rootCfg = McpPackageService.db().prepare(
+        'SELECT MIN(id) AS id FROM mcp_configs WHERE package_id = ?'
+      ).get(packageId) as { id: number | null } | undefined
+      if (rootCfg?.id != null) McpToolPolicy.saveToolCache(rootCfg.id, tools)
+    } catch {
+      // fail-soft：见方法注
+    }
+  }
 
   /**
    * 型号匹配设备清单（D-07）：manifest.models 对 device.model 做
@@ -607,6 +700,15 @@ export class McpPackageService {
       }
       result = { ok: true, created }
     })()
+    // CFA 不跟踪事务闭包赋值——显式宽类型还原后判定（同 mcpClient.ts recordingFetch 惯例）
+    if ((result as { ok?: boolean } | null)?.ok === true) {
+      // WR-02：创建即从 manifest.tools 预填包根配置工具缓存（新 MIN(id) 即首条配置），
+      // AI 开箱可用；annotations 缺省——实测前不给任何工具免确认资格（安全方向保守）
+      McpPackageService.saveRootConfigToolCache(packageId, manifest.tools.map((t) => ({
+        name: t.name,
+        description: t.description,
+      })))
+    }
     return result!
   }
 }
