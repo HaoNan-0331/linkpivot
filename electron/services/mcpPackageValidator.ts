@@ -1,0 +1,248 @@
+import { createHash } from 'node:crypto'
+import { unzipSync, strFromU8 } from 'fflate'
+
+/**
+ * .mcpb 五向量校验器 + SHA-256 全树指纹（Phase 29 PKG-02 安全核心）。
+ *
+ * 纯函数层：无 DB、无 IPC、无子进程——D-11 明确只做结构检查，
+ * 不做静态内容扫描，也绝不执行任何包内代码。
+ * 下游消费方：29-03 导入登记 / 29-04 spawn 前重验（防 TOCTOU）。
+ */
+
+export interface McpTool {
+  name: string
+  description: string
+  readOnlyHint?: boolean
+}
+
+export interface McpManifest {
+  name: string
+  version: string
+  runtime: 'node' | 'python'
+  entry: string
+  models: string[]
+  tools: McpTool[]
+  envKeys?: string[]
+}
+
+export interface FileEntry {
+  path: string
+  content: Uint8Array
+}
+
+export interface VectorResult {
+  id: 'manifest-schema' | 'entry-whitelist' | 'zip-slip' | 'double-extension' | 'manifest-lie'
+  ok: boolean
+  reason?: string
+}
+
+export interface SizeOverride {
+  /** 注入的压缩字节数（测试用，D-04 上限触发不真造 200MB） */
+  compressedBytes?: number
+  /** 注入的解压累计字节数（测试用） */
+  uncompressedBytes?: number
+}
+
+export interface ValidateResult {
+  passed: boolean
+  vectors: VectorResult[]
+  manifest?: McpManifest
+  fileTree?: FileEntry[]
+  totalBytes: number
+}
+
+/** D-04 双重体积上限：包文件 ≤200MB 且解压后 ≤1GB（防解压炸弹） */
+export const MAX_PACKAGE_BYTES = 200 * 1024 * 1024
+export const MAX_EXTRACTED_BYTES = 1024 * 1024 * 1024
+
+/** D-01 双轨入口白名单 */
+const ENTRY_EXT: Record<'node' | 'python', string[]> = {
+  node: ['.js', '.mjs', '.cjs'],
+  python: ['.py'],
+}
+
+/** 双扩展伪装：代码扩展名后跟可执行扩展名（全树扫描，不只 entry） */
+const DOUBLE_EXT_RE = /\.(js|mjs|cjs|py)\.(exe|bat|cmd|ps1|scr|com|pif|vbs)$/i
+
+/** 工具名合法字符（manifest-lie 向量：防名字注入） */
+const TOOL_NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/
+
+const VECTOR_ORDER: VectorResult['id'][] = [
+  'manifest-schema',
+  'entry-whitelist',
+  'zip-slip',
+  'double-extension',
+  'manifest-lie',
+]
+
+function extOf(p: string): string {
+  const i = p.lastIndexOf('.')
+  return i === -1 ? '' : p.slice(i).toLowerCase()
+}
+
+function isSafeRelPath(p: string): boolean {
+  if (p === '' || p.includes('\\') || p.includes(':')) return false
+  if (p.startsWith('/') || p.startsWith('.')) return false
+  const segs = p.split('/')
+  return segs.every((s) => s !== '' && s !== '.' && s !== '..')
+}
+
+/** 解析 manifest.json（畸形 throw，供调用方转人话错误） */
+export function parseMcpbManifest(raw: string): McpManifest {
+  const obj = JSON.parse(raw) as Record<string, unknown>
+  const bad = (msg: string): never => {
+    throw new Error(msg)
+  }
+  if (typeof obj !== 'object' || obj === null) bad('manifest 不是 JSON 对象')
+  for (const k of ['name', 'version', 'entry']) {
+    if (typeof obj[k] !== 'string' || (obj[k] as string).length === 0) bad(`manifest.${k} 缺失或不是非空字符串`)
+  }
+  if (obj.runtime !== 'node' && obj.runtime !== 'python') bad('manifest.runtime 必须是 node 或 python')
+  if (!Array.isArray(obj.models) || obj.models.some((x) => typeof x !== 'string')) bad('manifest.models 必须是字符串数组')
+  if (!Array.isArray(obj.tools) || obj.tools.length === 0) bad('manifest.tools 必须是非空数组')
+  for (const t of obj.tools) {
+    if (typeof t !== 'object' || t === null) bad('manifest.tools 项必须是对象')
+    const tt = t as Record<string, unknown>
+    if (typeof tt.name !== 'string' || tt.name.length === 0) bad('manifest.tools 项缺少 name')
+    if (typeof tt.description !== 'string' || tt.description.length === 0) bad(`工具 ${String(tt.name)} 缺少 description`)
+    if (tt.readOnlyHint !== undefined && typeof tt.readOnlyHint !== 'boolean') bad(`工具 ${String(tt.name)} 的 readOnlyHint 必须是布尔`)
+  }
+  if (obj.envKeys !== undefined) {
+    if (!Array.isArray(obj.envKeys) || obj.envKeys.some((x) => typeof x !== 'string')) bad('manifest.envKeys 必须是字符串数组')
+  }
+  const manifest: McpManifest = {
+    name: obj.name as string,
+    version: obj.version as string,
+    runtime: obj.runtime as 'node' | 'python',
+    entry: obj.entry as string,
+    models: obj.models as string[],
+    tools: (obj.tools as McpTool[]).map((t) => ({
+      name: t.name,
+      description: t.description,
+      ...(t.readOnlyHint !== undefined ? { readOnlyHint: t.readOnlyHint } : {}),
+    })),
+    ...(Array.isArray(obj.envKeys) ? { envKeys: obj.envKeys as string[] } : {}),
+  }
+  return manifest
+}
+
+/**
+ * .mcpb 五向量校验。buffer 为 zip 字节；sizeOverride 仅供测试注入 D-04 上限。
+ * 前序 fail 可短路后续，但 vectors 数组仍逐项给出已检结果（未检项 ok=true 无 reason
+ * 约定不可取——未检项标记 ok=true 且无 reason，UI 只展示 fail 项）。
+ */
+export function validateMcpb(buffer: Buffer | Uint8Array, sizeOverride?: SizeOverride): ValidateResult {
+  const vectors: VectorResult[] = []
+  const push = (id: VectorResult['id'], ok: boolean, reason?: string) => vectors.push({ id, ok, ...(ok || !reason ? {} : { reason }) })
+  const compressedBytes = sizeOverride?.compressedBytes ?? buffer.byteLength
+  let totalBytes = 0
+  let manifest: McpManifest | undefined
+  let fileTree: FileEntry[] | undefined
+
+  // 尺寸前置（D-04）：超限直接逐项短路（解压都不做，防炸弹从源头拒绝）
+  if (compressedBytes > MAX_PACKAGE_BYTES) {
+    const reason = `包文件体积 ${(compressedBytes / 1024 / 1024).toFixed(0)}MB 超过 200MB 上限`
+    for (const id of VECTOR_ORDER) push(id, false, id === 'manifest-schema' ? reason : `${reason}，后续校验未执行`)
+    return { passed: false, vectors, totalBytes: compressedBytes }
+  }
+
+  let entries: Record<string, Uint8Array>
+  try {
+    entries = unzipSync(buffer, {
+      filter: () => true,
+    })
+  } catch {
+    const reason = '不是有效的 zip 格式（无法解压）'
+    for (const id of VECTOR_ORDER) push(id, false, id === 'manifest-schema' ? reason : `${reason}，后续校验未执行`)
+    return { passed: false, vectors, totalBytes: compressedBytes }
+  }
+
+  fileTree = Object.entries(entries).map(([path, content]) => ({ path, content }))
+  totalBytes = sizeOverride?.uncompressedBytes ?? fileTree.reduce((s, f) => s + f.content.byteLength, 0)
+  if (totalBytes > MAX_EXTRACTED_BYTES) {
+    const reason = `解压后总尺寸 ${(totalBytes / 1024 / 1024 / 1024).toFixed(1)}GB 超过 1GB 上限（疑似解压炸弹）`
+    for (const id of VECTOR_ORDER) push(id, false, id === 'manifest-schema' ? reason : `${reason}，后续校验未执行`)
+    return { passed: false, vectors, fileTree, totalBytes }
+  }
+
+  // 向量一：manifest-schema
+  let schemaOk = false
+  const mfEntry = fileTree.find((f) => f.path === 'manifest.json')
+  if (!mfEntry) {
+    push('manifest-schema', false, '缺少 manifest.json（包内未找到该文件）')
+  } else {
+    try {
+      manifest = parseMcpbManifest(strFromU8(mfEntry.content))
+      schemaOk = true
+      push('manifest-schema', true)
+    } catch (e) {
+      push('manifest-schema', false, e instanceof Error ? e.message : 'manifest.json 解析失败')
+    }
+  }
+
+  // 向量二：entry-whitelist（D-01 双轨）
+  let entryOk = false
+  if (!manifest) {
+    push('entry-whitelist', false, 'manifest 无效，入口类型无法校验')
+  } else {
+    const allowed = ENTRY_EXT[manifest.runtime]
+    if (!allowed.includes(extOf(manifest.entry))) {
+      push('entry-whitelist', false, `runtime=${manifest.runtime} 的入口只接受 ${allowed.join('/')}，实际为 ${manifest.entry}`)
+    } else {
+      entryOk = true
+      push('entry-whitelist', true)
+    }
+  }
+
+  // 向量三：zip-slip（逐条目路径检查：绝对路径/盘符/反斜杠/../.. 段全拒）
+  const unsafePaths = fileTree.map((f) => f.path).filter((p) => !isSafeRelPath(p))
+  if (unsafePaths.length > 0) {
+    push('zip-slip', false, `包内存在逃逸路径（绝对路径/反斜杠/.. 逃逸）：${unsafePaths.slice(0, 3).join('、')}`)
+  } else {
+    push('zip-slip', true)
+  }
+
+  // 向量四：double-extension（全树扫描，不只 entry）
+  const disguised = fileTree.map((f) => f.path).filter((p) => DOUBLE_EXT_RE.test(p.split('/').pop() ?? ''))
+  if (disguised.length > 0) {
+    push('double-extension', false, `包内存在双扩展伪装可执行文件：${disguised.slice(0, 3).join('、')}`)
+  } else {
+    push('double-extension', true)
+  }
+
+  // 向量五：manifest-lie（声明必须命中实际内容）
+  if (!manifest || !schemaOk || !entryOk) {
+    push('manifest-lie', false, '前序校验未通过，manifest 与实际内容的一致性无法校验')
+  } else {
+    const entryPath = manifest.entry.replace(/\\/g, '/')
+    const entryExists = fileTree.some((f) => f.path === entryPath)
+    const badTools = manifest.tools.filter((t) => !TOOL_NAME_RE.test(t.name)).map((t) => t.name)
+    if (!entryExists) {
+      push('manifest-lie', false, `manifest 声明的入口 ${manifest.entry} 在包内不存在`)
+    } else if (badTools.length > 0) {
+      push('manifest-lie', false, `工具名含非法字符（只允许字母数字下划线连字符，最长 64）：${badTools.join('、')}`)
+    } else {
+      push('manifest-lie', true)
+    }
+  }
+
+  return {
+    passed: vectors.every((v) => v.ok),
+    vectors,
+    ...(manifest && schemaOk ? { manifest } : {}),
+    ...(fileTree ? { fileTree } : {}),
+    totalBytes,
+  }
+}
+
+/**
+ * 全树 SHA-256 指纹（D-27）：文件按 posix 相对路径字典序排序，逐文件哈希，
+ * 再对「path+sha256」清单整体哈希得 treeSha256。同树同哈希、异树必异（排序保确定性）。
+ */
+export function buildFingerprintTree(fileTree: FileEntry[]): { files: Array<{ path: string; sha256: string }>; treeSha256: string } {
+  const files = [...fileTree]
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+    .map((f) => ({ path: f.path, sha256: createHash('sha256').update(f.content).digest('hex') }))
+  const manifestText = files.map((f) => `${f.path}${f.sha256}`).join('\n')
+  return { files, treeSha256: createHash('sha256').update(manifestText).digest('hex') }
+}
