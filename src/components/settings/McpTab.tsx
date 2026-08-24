@@ -11,7 +11,6 @@ import type {
 import type { Device } from '../../types/device'
 import McpToolManageDrawer from './McpToolManageDrawer'
 import McpPackageTab from './McpPackageTab'
-import DeviceEnvTable from './DeviceEnvTable'
 import DeviceEnvCards from './DeviceEnvCards'
 
 const { Text } = Typography
@@ -49,16 +48,6 @@ function relativeTime(at: string | null): string {
 
 function genTestId(): string {
   return (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`).replace(/[^a-zA-Z0-9]/g, '').slice(0, 16)
-}
-
-// ---------------------------------------------------------------------------
-// 环境变量编辑器行：fromSaved=true 表示回显脱敏值（未修改 → 哨兵；置空 → 删除）
-// ---------------------------------------------------------------------------
-interface EnvRow {
-  key: string
-  value: string
-  /** true = 值为脱敏回显（****尾4），未改动；用户一旦输入即转 false（新明文） */
-  masked: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -175,20 +164,18 @@ interface FormState {
   type: 'stdio' | 'http' | 'package'
   commandOrUrl: string
   args: string[]
-  envRows: EnvRow[]
   credential: string // http 令牌；''=未修改（编辑时）/空（新建）
   credentialMasked: string | null
   deviceIds: string[]
   /** 29-09：package 分支选中的包 id */
   pkgId: number | null
-  /** 29-06（D-16）：stdio 设备级 env（deviceId → 键 → 值，值存 ****尾4 哨兵形态） */
-  deviceEnvKeys: string[]
+  /** 29-06（D-16）/29-09 Gap-4：stdio 设备级 env（deviceId → 键 → 值，键集合行驱动，值存 ****尾4 哨兵形态） */
   deviceEnvValues: Record<string, Record<string, string>>
 }
 
 const emptyForm: FormState = {
-  id: null, name: '', type: 'stdio', commandOrUrl: '', args: [], envRows: [],
-  credential: '', credentialMasked: null, deviceIds: [], pkgId: null, deviceEnvKeys: [], deviceEnvValues: {},
+  id: null, name: '', type: 'stdio', commandOrUrl: '', args: [],
+  credential: '', credentialMasked: null, deviceIds: [], pkgId: null, deviceEnvValues: {},
 }
 
 /** "KEY=****尾4" 脱敏条目 → 键（无 = 的畸形条目整条当键） */
@@ -232,9 +219,6 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
 
   // 29-06：stdio 编辑态设备级 env 未修改哨兵基线（openEdit 时快照，保存时比对）
   const editMaskedRef = useRef<Record<string, Record<string, string>>>({})
-  // 29-06（D-16）：编辑态新增 env 键列
-  const [newEnvKey, setNewEnvKey] = useState('')
-
   // 29-09（Gap-2）：package 分支——已导入包清单 + 型号预筛（已绑定设备过滤后再进弹窗）
   const [pkgs, setPkgs] = useState<McpPackageViewDto[]>([])
   const [matched, setMatched] = useState<McpMatchedDeviceDto[] | null>(null)
@@ -291,13 +275,6 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
       .finally(() => setMatchedLoading(false))
   }, [formOpen, form.type, form.pkgId, matchedForId])
 
-  const addEnvKeyColumn = useCallback(() => {
-    const k = newEnvKey.trim()
-    if (k === '') return
-    setForm((f) => f.deviceEnvKeys.includes(k) ? f : { ...f, deviceEnvKeys: [...f.deviceEnvKeys, k] })
-    setNewEnvKey('')
-  }, [newEnvKey])
-
   const load = useCallback(async () => {
     setLoading(true)
     setLoadError(null)
@@ -349,14 +326,8 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
   }
 
   const openEdit = (cfg: McpConfigDto) => {
-    // env 回显：envKeysMasked（"KEY=****尾4"）→ 键 + 脱敏值（masked=true 未修改哨兵）
-    const envRows: EnvRow[] = cfg.envKeysMasked.map((entry) => {
-      const idx = entry.indexOf('=')
-      return idx > 0
-        ? { key: entry.slice(0, idx), value: entry.slice(idx + 1), masked: true }
-        : { key: entry, value: '****', masked: true }
-    })
-    // 29-06（D-16/D-17）：stdio 编辑态设备级 env 回显——逐设备 "KEY=****尾4"（存量迁移后每台各一组）
+    // 29-06（D-16/D-17）/29-09：stdio 编辑态设备级 env 回显——逐设备 "KEY=****尾4"
+    // （存量迁移后每台各一组；键集合行驱动，卡内每台独立展示）
     const deviceEnvValues: Record<string, Record<string, string>> = {}
     const maskedSnap: Record<string, Record<string, string>> = {}
     for (const id of cfg.deviceIds) {
@@ -366,22 +337,16 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
       maskedSnap[id] = { ...m }
     }
     editMaskedRef.current = maskedSnap
-    const deviceEnvKeys = Array.from(new Set([
-      ...envRows.map((r) => r.key),
-      ...Object.values(maskedSnap).flatMap((m) => Object.keys(m)),
-    ])).filter((k) => k !== '')
     setForm({
       id: cfg.id,
       name: cfg.name,
       type: cfg.type,
       commandOrUrl: cfg.commandOrUrl,
       args: [...cfg.args],
-      envRows,
       credential: '', // 未输入新令牌 = 不修改（credentialMasked 回显）
       credentialMasked: cfg.credentialMasked,
       pkgId: null,
       deviceIds: [...cfg.deviceIds],
-      deviceEnvKeys,
       deviceEnvValues,
     })
     setFormError(null)
@@ -401,21 +366,11 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
       const crossPackage = type === 'package' || f.type === 'package'
       return {
         ...f, type,
-        commandOrUrl: '', args: [], envRows: [], credential: '', credentialMasked: null,
+        commandOrUrl: '', args: [], credential: '', credentialMasked: null,
         ...(crossPackage ? { pkgId: null, deviceIds: [], deviceEnvValues: {} } : {}),
       }
     })
     if (type === 'package') { setMatched(null); setMatchedForId(null) }
-  }
-
-  /** 组装 temp 测试入参 / save 入参共用的 env 抽取 */
-  const collectEnv = (): Record<string, string> => {
-    const env: Record<string, string> = {}
-    for (const row of form.envRows) {
-      if (!row.key) continue
-      env[row.key] = row.masked ? UNCHANGED_ENV_SENTINEL : row.value
-    }
-    return env
   }
 
   /** 表单内「测试连接」：允许未保存值（含刚输入明文）单向即抛即用 */
@@ -427,7 +382,8 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
         type: form.type as 'stdio' | 'http',
         commandOrUrl: form.commandOrUrl || undefined,
         args: form.type === 'stdio' ? form.args : [],
-        env: form.type === 'stdio' && form.id == null ? collectEnv() : undefined,
+        // 29-09 Gap-4：stdio env 已设备级化，temp 测试不含设备级 env（沿用已存形态）
+        env: undefined,
         // credential：未输入=undefined（沿用已存）；http 输入新值=明文；显式清除=空串（WR-05 统一语义）
         credential: form.type === 'http'
           ? (clearCred ? '' : form.credential !== '' ? form.credential : undefined)
@@ -545,15 +501,14 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
         type: form.type as 'stdio' | 'http',
         commandOrUrl: form.commandOrUrl.trim(),
         args: form.type === 'stdio' ? form.args : [],
-        // 29-06（D-16）：stdio 编辑态走设备级 env（配置级共享 env 不动=undefined）；
-        // 新建仍走配置级 envRows（collectEnv）
-        env: form.type === 'stdio' ? (form.id != null ? undefined : collectEnv()) : null,
-        deviceEnvs: form.type === 'stdio' && form.id != null
+        // 29-09 Gap-4：stdio env 全面设备级化——新建与编辑均组装 deviceEnvs，
+        // 配置级共享 env 恒为 undefined（main 侧不动共享 env）
+        env: form.type === 'stdio' ? undefined : null,
+        deviceEnvs: form.type === 'stdio'
           ? form.deviceIds.map((id) => {
               const env: Record<string, string> = {}
-              for (const k of form.deviceEnvKeys) {
-                const v = form.deviceEnvValues[id]?.[k]
-                if (v === undefined) continue
+              for (const [k, v] of Object.entries(form.deviceEnvValues[id] ?? {})) {
+                if (k === '' || v === '') continue
                 const snap = editMaskedRef.current[id]?.[k]
                 // 值与脱敏回显快照一致 = 未修改 → 哨兵（main 侧沿用该设备已存明文）
                 env[k] = snap != null && v === snap ? UNCHANGED_ENV_SENTINEL : v
@@ -691,6 +646,15 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
       boundConfigName: d.boundConfigName,
     }))
 
+  // 29-09 Gap-4：stdio 分支（新建/编辑统一）——卡片 + 弹窗候选（已绑定设备不进弹窗）
+  const stdioCards = form.deviceIds.map((id) => {
+    const d = devices.find((x) => x.id === id)
+    return { deviceId: id, name: d?.name ?? id, model: d?.model || null }
+  })
+  const stdioSelectOptions = devices
+    .filter((d) => deviceIdOwner(d.id, form.id) == null)
+    .map((d) => ({ deviceId: d.id, name: d.name, model: d.model || null }))
+
   const successResult = test && !test.running && !test.cancelled && test.result?.ok ? test.result : null
 
   const testPanels = test && (
@@ -795,48 +759,6 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
                   placeholder="如 -y、@modelcontextprotocol/server-everything"
                 />
               </div>
-              {form.id == null && (
-              <div>
-                <Text strong>环境变量</Text>
-                <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 2 }}>
-                  环境变量 = 随程序启动一起传入的隐藏配置（如 API 密钥、功能开关），不显示在命令行里、更安全。仅当 MCP 程序的文档要求设置时才填，一般留空。
-                </div>
-                <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 2 }}>凭证性质值只回显末 4 位，未修改不会重新保存</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
-                  {form.envRows.map((row, i) => (
-                    <Space key={i} align="center">
-                      <Input
-                        style={{ width: 180 }}
-                        value={row.key}
-                        onChange={(e) => setForm((f) => {
-                          const rows = [...f.envRows]; rows[i] = { ...row, key: e.target.value }; return { ...f, envRows: rows }
-                        })}
-                        placeholder="变量名"
-                      />
-                      <Input.Password
-                        style={{ width: 260 }}
-                        value={row.value}
-                        onChange={(e) => setForm((f) => {
-                          const rows = [...f.envRows]; rows[i] = { key: row.key, value: e.target.value, masked: false }; return { ...f, envRows: rows }
-                        })}
-                        placeholder="值"
-                      />
-                      <Button
-                        type="link" size="small" danger
-                        onClick={() => setForm((f) => ({ ...f, envRows: f.envRows.filter((_, j) => j !== i) }))}
-                      >
-                        删除
-                      </Button>
-                    </Space>
-                  ))}
-                  <div>
-                    <Button size="small" onClick={() => setForm((f) => ({ ...f, envRows: [...f.envRows, { key: '', value: '', masked: false }] }))}>
-                      添加变量
-                    </Button>
-                  </div>
-                </div>
-              </div>
-              )}
             </>
           ) : (
             <>
@@ -880,38 +802,21 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
               </div>
             </>
           )}
-          {form.type === 'stdio' && form.id != null ? (
-            // 29-06（D-16/契约 10）：编辑「本地程序」配置——绑定设备 + 逐台 env 共用 DeviceEnvTable
+          {form.type === 'stdio' ? (
+            // 29-06（D-16）/29-09 Gap-4：新建与编辑统一——逐台设备卡片 + 卡内独立 env（行驱动键集合）
             <div>
               <Text strong>绑定设备与环境变量</Text>
               <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 2 }}>
                 每台绑定设备各一组环境变量（互不影响）；一台设备只能绑定一个 MCP 配置。凭证性质值只回显末 4 位，未修改不会重新保存。
               </div>
               <div style={{ marginTop: 8 }}>
-                <DeviceEnvTable
-                  rows={devices.map((d) => ({
-                    deviceId: d.id,
-                    name: d.name,
-                    model: d.model || null,
-                    boundConfigName: deviceIdOwner(d.id, form.id),
-                  }))}
-                  envKeys={form.deviceEnvKeys}
-                  value={form.deviceEnvValues}
-                  onChange={setDeviceEnvValue}
-                  selected={form.deviceIds}
-                  onSelectedChange={(ids) => setForm((f) => ({ ...f, deviceIds: ids }))}
-                  addKeySlot={
-                    <Space style={{ marginTop: 8 }}>
-                      <Input
-                        style={{ width: 180 }}
-                        value={newEnvKey}
-                        onChange={(e) => setNewEnvKey(e.target.value)}
-                        onPressEnter={addEnvKeyColumn}
-                        placeholder="新增变量名"
-                      />
-                      <Button size="small" onClick={addEnvKeyColumn}>添加变量列</Button>
-                    </Space>
-                  }
+                <DeviceEnvCards
+                  cards={stdioCards}
+                  envValues={form.deviceEnvValues}
+                  onValueChange={setDeviceEnvValue}
+                  onAddDevice={addFormDevice}
+                  onRemoveDevice={removeFormDevice}
+                  selectOptions={stdioSelectOptions}
                 />
               </div>
             </div>
