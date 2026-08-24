@@ -137,6 +137,35 @@ export function registerMcpPackageIpc() {
     return McpPackageService.createConfigsFromPackage(pkgId, deviceEnvs as Array<{ deviceId: string; name?: string; env: Record<string, string> }>)
   }))
 
+  /**
+   * 单条配置绑定 N 台设备（29-07 Gap-2 语义：1 config + N rel 各自独立 env）。
+   * 网关 schema 校验同批量通道风格；env 键不再比对 manifest.envKeys（Gap-5），
+   * 冲突事务拦截在 service 层（T-29-07-02）。
+   */
+  ipcMain.handle('mcp:createConfigFromPackage', secure((_e, packageId: unknown, name: unknown, deviceEnvs: unknown) => {
+    const pkgId = assertId(packageId)
+    if (typeof name !== 'string' || name.trim() === '') throw new Error('参数无效：name 不能为空')
+    if (name.trim().length > MAX_PKG_NAME_LENGTH) throw new Error(`参数无效：name（长度上限 ${MAX_PKG_NAME_LENGTH}）`)
+    if (!Array.isArray(deviceEnvs) || deviceEnvs.length === 0) throw new Error('参数无效：deviceEnvs 不能为空')
+    if (deviceEnvs.length > MAX_BATCH) throw new Error(`deviceEnvs 超过批量上限 ${MAX_BATCH}`)
+    for (const item of deviceEnvs as Array<{ deviceId?: unknown; env?: unknown }>) {
+      if (!item || typeof item !== 'object') throw new Error('参数无效：deviceEnvs 元素')
+      if (typeof item.deviceId !== 'string' || item.deviceId === '') throw new Error('参数无效：deviceId')
+      if (item.env === undefined || item.env === null || typeof item.env !== 'object' || Array.isArray(item.env)) {
+        throw new Error('参数无效：env 必须为键值对对象')
+      }
+      const entries = Object.entries(item.env as Record<string, unknown>)
+      if (entries.length > MAX_ENV_PAIRS_PER_DEVICE) throw new Error(`env 键值对超过上限 ${MAX_ENV_PAIRS_PER_DEVICE}`)
+      for (const [k, v] of entries) {
+        if (k.length > 100) throw new Error('参数无效：env 键超过长度上限 100')
+        if (typeof v !== 'string' || v.length > MAX_ENV_VALUE_LENGTH) {
+          throw new Error(`参数无效：env 值必须为 string 且不超过 ${MAX_ENV_VALUE_LENGTH} 字符`)
+        }
+      }
+    }
+    return McpPackageService.createConfigFromPackage(pkgId, name.trim(), deviceEnvs as Array<{ deviceId: string; env: Record<string, string> }>)
+  }))
+
   // D-10：导出 .mcpb 格式说明静态资源（extraResources 只读分发，T-29-05-03 accept——路径固定不可注入）
   ipcMain.handle('mcp:exportFormatSpec', secure(async () => {
     const src = app.isPackaged

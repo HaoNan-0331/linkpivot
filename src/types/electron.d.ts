@@ -283,6 +283,12 @@ export interface ElectronAPI {
       packageId: number,
       deviceEnvs: Array<{ deviceId: string; name?: string; env: Record<string, string> }>
     ) => Promise<{ ok: true; created: number } | { ok: false; error: string }>
+    /** 29-07（Gap-2）：单条配置绑定 N 台设备（每台独立 env，Gap-5 键名放开） */
+    createConfigFromPackage: (
+      packageId: number,
+      name: string,
+      deviceEnvs: Array<{ deviceId: string; env: Record<string, string> }>
+    ) => Promise<{ ok: true; configId: number } | { ok: false; error: string }>
     /** D-10：导出 .mcpb 格式说明到用户选择路径 */
     exportFormatSpec: () => Promise<{ ok: true; canceled: boolean; path?: string } | { ok: false; error: string }>
     /** 订阅包自动测阶段进度，返回清理函数 */

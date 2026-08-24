@@ -155,6 +155,12 @@ const api = {
       packageId: number,
       deviceEnvs: Array<{ deviceId: string; name?: string; env: Record<string, string> }>
     ) => ipcRenderer.invoke('mcp:createConfigsFromPackage', packageId, deviceEnvs),
+    // 29-07（Gap-2）：单条配置绑定 N 台设备（每台独立 env，Gap-5 键名放开）
+    createConfigFromPackage: (
+      packageId: number,
+      name: string,
+      deviceEnvs: Array<{ deviceId: string; env: Record<string, string> }>
+    ) => ipcRenderer.invoke('mcp:createConfigFromPackage', packageId, name, deviceEnvs),
     // D-10：导出应用内 .mcpb 格式说明静态资源
     exportFormatSpec: () => ipcRenderer.invoke('mcp:exportFormatSpec'),
     // 订阅包自动测阶段进度（与 onTestProgress 同形态），返回清理函数
