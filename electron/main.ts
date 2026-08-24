@@ -33,8 +33,10 @@ import { registerExperienceIpc } from './ipc/experienceIpc'
 import { registerExperienceDraftingIpc } from './ipc/experienceDraftingIpc'
 import { McpService } from './services/mcpService'
 import { McpDeviceEnvMigration } from './services/mcpDeviceEnvMigration'
+import { McpPackageService } from './services/mcpPackageService'
 import { McpProcessRegistry } from './services/mcpProcessRegistry'
 import { registerMcpIpc } from './ipc/mcpIpc'
+import { registerMcpPackageIpc } from './ipc/mcpPackageIpc'
 
 let mainWindow: BrowserWindow | null = null
 let masterKey: string
@@ -107,6 +109,9 @@ app.whenReady().then(() => {
   McpService.setMcpMasterKey(masterKey)
   // 第 10 直接注入器（Phase 29）：设备级 env 回填 service 持 private static MK（29-02）。
   McpDeviceEnvMigration.setMcpDeviceEnvMasterKey(masterKey)
+  // 第 11 直接注入器（Phase 29）：包生命周期 service 持 private static MK
+  // （confirmOverwrite 的 rel 行 env_json_enc 键剔除，29-03）。
+  McpPackageService.setMcpPackageMasterKey(masterKey)
   // R2: decField 解密失败可观测——masterKey 不匹配 / safeStorage 翻转时写 system_log 告警，避免无声数据丢失。
   // handler 在此注入（解耦：crypto.ts 不依赖 services/DB，保持纯函数可单测）。
   setDecryptFailureHandler(() => {
@@ -238,6 +243,7 @@ app.whenReady().then(() => {
   registerExperienceIpc()
   registerExperienceDraftingIpc()
   registerMcpIpc()
+  registerMcpPackageIpc()
   SchedulerService.start()
   BackupScheduler.start()
 
