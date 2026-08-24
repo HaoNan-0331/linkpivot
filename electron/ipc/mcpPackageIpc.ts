@@ -18,6 +18,7 @@ import { ipcMain, dialog, app } from 'electron'
 import { copyFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { McpPackageService, MAX_PKG_NAME_LENGTH } from '../services/mcpPackageService'
+import { MAX_BATCH } from '../services/mcpService'
 import { MAX_PACKAGE_BYTES } from '../services/mcpPackageValidator'
 import { secure } from '../utils/authGuard'
 
@@ -92,6 +93,48 @@ export function registerMcpPackageIpc() {
         } catch { /* webContents 已销毁，忽略 */ }
       },
     })
+  }))
+
+  // ---- 29-06（PKG-05）：从包创建配置批量通道 ----
+
+  /** 型号匹配预筛（匹配只影响 UI 预勾选，非硬拦截——T-29-06-03） */
+  ipcMain.handle('mcp:listMatchedDevices', secure((_e, id: unknown) => {
+    const list = McpPackageService.listMatchedDevices(assertId(id))
+    if (!list) return { ok: false, error: '包不存在或已被删除' }
+    return { ok: true, devices: list }
+  }))
+
+  const MAX_ENV_PAIRS_PER_DEVICE = 50
+  const MAX_ENV_VALUE_LENGTH = 2000
+
+  /**
+   * 批量生成配置绑定（单事务整体拒绝，T-29-06-01）。
+   * deviceEnvs 数组 MAX_BATCH=1000 上限 + 逐项 schema 校验（deviceId/name/env 键值形态）；
+   * env 键子集校验（manifest 声明清单）与冲突事务拦截在 service 层。
+   */
+  ipcMain.handle('mcp:createConfigsFromPackage', secure((_e, packageId: unknown, deviceEnvs: unknown) => {
+    const pkgId = assertId(packageId)
+    if (!Array.isArray(deviceEnvs) || deviceEnvs.length === 0) throw new Error('参数无效：deviceEnvs 不能为空')
+    if (deviceEnvs.length > MAX_BATCH) throw new Error(`deviceEnvs 超过批量上限 ${MAX_BATCH}`)
+    for (const item of deviceEnvs as Array<{ deviceId?: unknown; name?: unknown; env?: unknown }>) {
+      if (!item || typeof item !== 'object') throw new Error('参数无效：deviceEnvs 元素')
+      if (typeof item.deviceId !== 'string' || item.deviceId === '') throw new Error('参数无效：deviceId')
+      if (item.name !== undefined && (typeof item.name !== 'string' || item.name.length > MAX_PKG_NAME_LENGTH)) {
+        throw new Error(`参数无效：name（长度上限 ${MAX_PKG_NAME_LENGTH}）`)
+      }
+      if (item.env === undefined || item.env === null || typeof item.env !== 'object' || Array.isArray(item.env)) {
+        throw new Error('参数无效：env 必须为键值对对象')
+      }
+      const entries = Object.entries(item.env as Record<string, unknown>)
+      if (entries.length > MAX_ENV_PAIRS_PER_DEVICE) throw new Error(`env 键值对超过上限 ${MAX_ENV_PAIRS_PER_DEVICE}`)
+      for (const [k, v] of entries) {
+        if (k.length > 100) throw new Error('参数无效：env 键超过长度上限 100')
+        if (typeof v !== 'string' || v.length > MAX_ENV_VALUE_LENGTH) {
+          throw new Error(`参数无效：env 值必须为 string 且不超过 ${MAX_ENV_VALUE_LENGTH} 字符`)
+        }
+      }
+    }
+    return McpPackageService.createConfigsFromPackage(pkgId, deviceEnvs as Array<{ deviceId: string; name?: string; env: Record<string, string> }>)
   }))
 
   // D-10：导出 .mcpb 格式说明静态资源（extraResources 只读分发，T-29-05-03 accept——路径固定不可注入）

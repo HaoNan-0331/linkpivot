@@ -149,6 +149,12 @@ const api = {
     getPackageDeleteImpact: (id: number) => ipcRenderer.invoke('mcp:getPackageDeleteImpact', id),
     deletePackage: (id: number) => ipcRenderer.invoke('mcp:deletePackage', id),
     testPackage: (payload: { packageId: number, testId?: string }) => ipcRenderer.invoke('mcp:testPackage', payload),
+    // 29-06（PKG-05）：从包创建配置（型号预筛 + 批量绑定，出口无凭证字段）
+    listMatchedDevices: (packageId: number) => ipcRenderer.invoke('mcp:listMatchedDevices', packageId),
+    createConfigsFromPackage: (
+      packageId: number,
+      deviceEnvs: Array<{ deviceId: string; name?: string; env: Record<string, string> }>
+    ) => ipcRenderer.invoke('mcp:createConfigsFromPackage', packageId, deviceEnvs),
     // D-10：导出应用内 .mcpb 格式说明静态资源
     exportFormatSpec: () => ipcRenderer.invoke('mcp:exportFormatSpec'),
     // 订阅包自动测阶段进度（与 onTestProgress 同形态），返回清理函数

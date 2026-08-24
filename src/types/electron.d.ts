@@ -276,6 +276,13 @@ export interface ElectronAPI {
     deletePackage: (id: number) => Promise<{ ok: true } | { ok: false; error: string }>
     testPackage: (payload: { packageId: number, testId?: string }) =>
       Promise<{ ok: boolean; error?: string; extraTools?: string[]; missingTools?: string[] }>
+    // 29-06（PKG-05）：从包创建配置通道（型号预筛 + 批量绑定）
+    listMatchedDevices: (packageId: number) =>
+      Promise<{ ok: true; devices: McpMatchedDeviceDto[] } | { ok: false; error: string }>
+    createConfigsFromPackage: (
+      packageId: number,
+      deviceEnvs: Array<{ deviceId: string; name?: string; env: Record<string, string> }>
+    ) => Promise<{ ok: true; created: number } | { ok: false; error: string }>
     /** D-10：导出 .mcpb 格式说明到用户选择路径 */
     exportFormatSpec: () => Promise<{ ok: true; canceled: boolean; path?: string } | { ok: false; error: string }>
     /** 订阅包自动测阶段进度，返回清理函数 */
@@ -359,6 +366,15 @@ export interface McpSaveDto {
   credential?: string | null
   deviceIds?: string[]
   enabled?: boolean
+}
+
+/** 29-06：型号预筛设备行（无凭证字段；matchedModel/boundConfigName 仅 UI 预勾选/灰显标注） */
+export interface McpMatchedDeviceDto {
+  deviceId: string
+  name: string
+  model: string | null
+  matchedModel: string | null
+  boundConfigName: string | null
 }
 
 // Phase 29：MCP 包视图（mcpPackageService.McpPackageView 的 renderer 镜像——仅 env 键名，无明文值）
