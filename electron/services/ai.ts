@@ -18,6 +18,7 @@ import { sanitizeUntrusted } from './untrustedText'
 import { McpToolPolicy, type McpToolCacheRow } from './mcpToolPolicy'
 import { McpService } from './mcpService'
 import { callToolWithTimeout } from './mcpClient'
+import type { PackageSpawnInfo } from './mcpClient'
 import { classifyTier, type AgentTier } from './agentRouter'
 import {
   retrieveForTier, verifySourcesEvidence, listExpCatalog, listKbCatalog,
@@ -758,6 +759,10 @@ interface McpCallContext {
   skipConfirmSet: Set<string>
   /** 被禁工具名清单（22-05 裁决：注入提示词让 AI 知情 + 禁止令，无禁用为空数组） */
   disabledTools: string[]
+  /** 29-04（D-15）：该设备 rel 行解密出的设备级 env 组（spawn 时注入子进程，互不串线） */
+  deviceEnv: Record<string, string>
+  /** 29-04：包创建配置的包 id（非包配置 null——spawn 走 TOCTOU 重验 + 包轨道） */
+  packageId: number | null
 }
 
 /** 解析后的合法工具调用（server/tool 已对照注入清单白名单校验） */
@@ -778,11 +783,26 @@ function buildMcpContexts(targetDevices: any[]): McpCallContext[] {
     try {
       const rel = getDatabase()
         .prepare(
-          `SELECT r.mcp_config_id AS id, c.name AS name, c.enabled AS enabled
-           FROM mcp_device_rel r JOIN mcp_configs c ON c.id = r.mcp_config_id WHERE r.device_id = ?`
+          `SELECT r.mcp_config_id AS id, c.name AS name, c.enabled AS enabled,
+                  r.env_json_enc AS envEnc, c.package_id AS packageId, p.disabled AS pkgDisabled
+           FROM mcp_device_rel r
+           JOIN mcp_configs c ON c.id = r.mcp_config_id
+           LEFT JOIN mcp_packages p ON p.id = c.package_id
+           WHERE r.device_id = ?`
         )
-        .get(dev.id) as { id: number; name: string; enabled: number } | undefined
+        .get(dev.id) as { id: number; name: string; enabled: number; envEnc: string | null; packageId: number | null; pkgDisabled: number | null } | undefined
       if (!rel || !rel.enabled) continue
+      // D-26：TOCTOU 检出/管理侧禁用的包整体 fail-closed 跳过（重新导入校验后恢复）
+      if (rel.pkgDisabled) continue
+      // 29-04（D-15）：设备级 env 解密（只从该设备 rel 行，互不串线；坏密文降级空组）
+      let deviceEnv: Record<string, string> = {}
+      const decEnv = decField(rel.envEnc, MK)
+      if (decEnv) {
+        try {
+          const parsed = JSON.parse(decEnv)
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) deviceEnv = parsed as Record<string, string>
+        } catch { /* 坏 JSON 降级空 env */ }
+      }
       const tools = McpToolPolicy.getEnabledTools(rel.id)
       if (tools.length === 0) continue
       contexts.push({
@@ -792,12 +812,36 @@ function buildMcpContexts(targetDevices: any[]): McpCallContext[] {
         tools,
         skipConfirmSet: McpToolPolicy.getSkipConfirmTools(rel.id),
         disabledTools: McpToolPolicy.getDisabledToolNames(rel.id),
+        deviceEnv,
+        packageId: rel.packageId ?? null,
       })
     } catch (err) {
       console.warn('[ai.chat] MCP context build failed, skip device:', (err as Error).message)
     }
   }
   return contexts
+}
+
+/**
+ * 29-04：装配包轨道 spawn 信息（TOCTOU 重验 + python/node 双轨的 mcpClient 入参）。
+ * 包不存在/disabled/查询异常 → null（调用方 fail-closed 拒绝执行，不给旧 spawn 路径）。
+ */
+function loadPackageSpawnInfo(packageId: number): PackageSpawnInfo | null {
+  try {
+    const row = getDatabase().prepare(
+      'SELECT dir_path, runtime, entry, fingerprint_json, disabled FROM mcp_packages WHERE id = ?'
+    ).get(packageId) as { dir_path: string; runtime: 'node' | 'python'; entry: string; fingerprint_json: string | null; disabled: number } | undefined
+    if (!row || row.disabled) return null
+    return {
+      packageId,
+      dirPath: row.dir_path,
+      runtime: row.runtime,
+      entry: row.entry,
+      fingerprintJson: row.fingerprint_json ?? '',
+    }
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -874,8 +918,18 @@ async function runMcpCall(
   let errorText: string | undefined
   try {
     if (!config) throw new Error('MCP 配置不存在或已被删除')
+    // 29-04（D-15）：设备级 env 组覆盖进 spawn env（只从该设备 rel 行解密注入）+
+    // 复合键 configId:deviceId（同配置多设备多实例互不串线，D-18）。
+    config.env = { ...config.env, ...call.context.deviceEnv }
+    let pkgInfo: PackageSpawnInfo | undefined
+    if (call.context.packageId != null) {
+      const info = loadPackageSpawnInfo(call.context.packageId)
+      if (!info) throw new Error('MCP 包已被禁用或已删除（TOCTOU 检出后需重新导入校验）')
+      pkgInfo = info
+    }
     const result: unknown = await callToolWithTimeout(
-      String(call.context.configId), config, call.tool.name, call.args
+      String(call.context.configId), config, call.tool.name, call.args,
+      { deviceId: String(call.context.device?.id ?? ''), package: pkgInfo }
     )
     resultJson = sanitizeUntrusted(JSON.stringify(result ?? null), 4000)
     updateLogStatus(logId, 'executed')

@@ -94,6 +94,47 @@ export class McpToolPolicy {
     return McpToolPolicy.dbGetter()
   }
 
+  // -----------------------------------------------------------------
+  // Phase 29（29-04，D-22）：包级策略模板作用域路由
+  // -----------------------------------------------------------------
+
+  /**
+   * 策略作用域路由（零表结构迁移，plan 定死）：config 的 package_id 非空 → 包维度聚合，
+   * 全部读写路由到该包「根配置」（同包 MIN(id)——首建配置即模板载体）；package_id NULL →
+   * config 维度旧路径原样。表缺失/查询异常 fail-safe 回退原 configId（旧库/测试最小 schema 不断）。
+   */
+  static resolvePolicyConfigId(configId: number): number {
+    try {
+      const row = McpToolPolicy.db().prepare(
+        'SELECT package_id FROM mcp_configs WHERE id = ?'
+      ).get(configId) as { package_id: number | null } | undefined
+      if (!row || row.package_id == null) return configId
+      const root = McpToolPolicy.db().prepare(
+        'SELECT MIN(id) AS rootId FROM mcp_configs WHERE package_id = ?'
+      ).get(row.package_id) as { rootId: number | null } | undefined
+      return root?.rootId ?? configId
+    } catch {
+      return configId
+    }
+  }
+
+  /**
+   * PKG-04/D-25 消费端二次过滤清单：包 last_test.extraTools（实测多出 = 默认禁用）。
+   * 手工配置 / last_test 缺失 / 坏 JSON / extraTools 非数组 → 空 Set（fail-safe 不过滤）。
+   */
+  static getExtraToolNames(configId: number): Set<string> {
+    try {
+      const row = McpToolPolicy.db().prepare(
+        'SELECT p.last_test AS lastTest FROM mcp_configs c JOIN mcp_packages p ON p.id = c.package_id WHERE c.id = ?'
+      ).get(configId) as { lastTest: string | null } | undefined
+      if (!row?.lastTest) return new Set()
+      const parsed = JSON.parse(row.lastTest) as { extraTools?: unknown }
+      return new Set(Array.isArray(parsed?.extraTools) ? parsed.extraTools.filter((x): x is string => typeof x === 'string') : [])
+    } catch {
+      return new Set()
+    }
+  }
+
   /**
    * 单条件只读判定（22-04 用户裁决）：readOnlyHint === true 即可免确认（信任 server 自称）。
    * 无 hint / hint=false 一律 false。名字正则不再参与（降级为展示层标记）。
@@ -108,7 +149,8 @@ export class McpToolPolicy {
    * 批量 INSERT 新清单并回填旧策略值（旧行不存在的用默认 enabled=1/skip_confirm=0）。
    * 已消失工具随 DELETE 自然清除。工具数 >MAX_TOOLS_PER_CONFIG 截断（T-22-04）。
    */
-  static saveToolCache(configId: number, tools: McpToolCacheInput[]): void {
+  static saveToolCache(configIdIn: number, tools: McpToolCacheInput[]): void {
+    const configId = McpToolPolicy.resolvePolicyConfigId(configIdIn)
     const conn = McpToolPolicy.db()
     const capped = tools.slice(0, MAX_TOOLS_PER_CONFIG)
     const tx = conn.transaction((): void => {
@@ -138,7 +180,8 @@ export class McpToolPolicy {
   }
 
   /** 全量清单（含禁用行——UI 抽屉展示需要；enabled 过滤用 getEnabledTools） */
-  static getToolCache(configId: number): McpToolCacheRow[] {
+  static getToolCache(configIdIn: number): McpToolCacheRow[] {
+    const configId = McpToolPolicy.resolvePolicyConfigId(configIdIn)
     const conn = McpToolPolicy.db()
     const rows = conn.prepare(
       'SELECT tool_name, tool_meta, enabled, skip_confirm FROM mcp_tools WHERE config_id = ? ORDER BY tool_name'
@@ -162,7 +205,8 @@ export class McpToolPolicy {
   }
 
   /** 工具级启用开关（22-03 注入过滤数据源） */
-  static setEnabled(configId: number, toolName: string, enabled: boolean): void {
+  static setEnabled(configIdIn: number, toolName: string, enabled: boolean): void {
+    const configId = McpToolPolicy.resolvePolicyConfigId(configIdIn)
     McpToolPolicy.db().prepare(
       "UPDATE mcp_tools SET enabled = ?, updated_at = datetime('now','localtime') WHERE config_id = ? AND tool_name = ?"
     ).run(enabled ? 1 : 0, configId, toolName)
@@ -172,7 +216,8 @@ export class McpToolPolicy {
    * 免确认开关（T-22-01 提权防线）：写 1 前调 isReadOnlyEligible 守卫，
    * 不满足单条件（readOnlyHint!==true）返回 false 拒绝写入；关 0（撤回免确认）不受限。
    */
-  static setSkipConfirm(configId: number, toolName: string, skip: boolean): boolean {
+  static setSkipConfirm(configIdIn: number, toolName: string, skip: boolean): boolean {
+    const configId = McpToolPolicy.resolvePolicyConfigId(configIdIn)
     const conn = McpToolPolicy.db()
     if (skip) {
       const row = conn.prepare(
@@ -193,16 +238,22 @@ export class McpToolPolicy {
     return info.changes > 0
   }
 
-  /** 只返回 enabled=1 行（22-03 AI 注入过滤数据源） */
+  /**
+   * 只返回 enabled=1 行（22-03 AI 注入过滤数据源）。
+   * 29-04（PKG-04/D-25，T-29-04-03）：包 extraTools（实测多出的未声明工具）在可用集
+   * 计算前被排除——消费端第二道（第一道在 29-03 缓存侧）；手工配置无此过滤。
+   */
   static getEnabledTools(configId: number): McpToolCacheRow[] {
-    return McpToolPolicy.getToolCache(configId).filter((t) => t.enabled === 1)
+    const extra = McpToolPolicy.getExtraToolNames(configId)
+    return McpToolPolicy.getToolCache(configId).filter((t) => t.enabled === 1 && !extra.has(t.name))
   }
 
   /**
    * 被禁工具名清单（22-05 用户裁决：禁用清单注入 AI 提示词 + 禁止令，让 AI 知情并
    * 拒绝用其它工具变通实现被禁功能——纯被动拦截挡不住 evaluate 类万能工具变通）。
    */
-  static getDisabledToolNames(configId: number): string[] {
+  static getDisabledToolNames(configIdIn: number): string[] {
+    const configId = McpToolPolicy.resolvePolicyConfigId(configIdIn)
     const rows = McpToolPolicy.db().prepare(
       'SELECT tool_name FROM mcp_tools WHERE config_id = ? AND enabled = 0 ORDER BY tool_name'
     ).all(configId) as Array<{ tool_name: string }>
@@ -210,7 +261,8 @@ export class McpToolPolicy {
   }
 
   /** 已开免确认的工具名集合（22-03 exec 决策数据源） */
-  static getSkipConfirmTools(configId: number): Set<string> {
+  static getSkipConfirmTools(configIdIn: number): Set<string> {
+    const configId = McpToolPolicy.resolvePolicyConfigId(configIdIn)
     const rows = McpToolPolicy.db().prepare(
       'SELECT tool_name FROM mcp_tools WHERE config_id = ? AND skip_confirm = 1'
     ).all(configId) as Array<{ tool_name: string }>
