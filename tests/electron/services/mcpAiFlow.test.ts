@@ -105,9 +105,12 @@ function makeDb(execMode: string): Database.Database {
       command_or_url TEXT NOT NULL, args_json TEXT, env_json_enc TEXT, credential_enc TEXT,
       enabled INTEGER DEFAULT 1, source TEXT DEFAULT 'manual',
       last_test_at TEXT, last_test_status TEXT, last_test_tool_count INTEGER,
+      package_id INTEGER,
       created_at TEXT DEFAULT (datetime('now','localtime')), updated_at TEXT DEFAULT (datetime('now','localtime'))
     );
-    CREATE TABLE mcp_device_rel (id TEXT PRIMARY KEY, mcp_config_id INTEGER NOT NULL, device_id TEXT NOT NULL UNIQUE, created_at TEXT DEFAULT (datetime('now','localtime')));
+    CREATE TABLE mcp_packages (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, disabled INTEGER DEFAULT 0,
+      last_test TEXT, fingerprint_json TEXT);
+    CREATE TABLE mcp_device_rel (id TEXT PRIMARY KEY, mcp_config_id INTEGER NOT NULL, device_id TEXT NOT NULL UNIQUE, env_json_enc TEXT, created_at TEXT DEFAULT (datetime('now','localtime')));
     CREATE TABLE mcp_tools (
       id INTEGER PRIMARY KEY AUTOINCREMENT, config_id INTEGER NOT NULL, tool_name TEXT NOT NULL,
       enabled INTEGER DEFAULT 1, skip_confirm INTEGER DEFAULT 0, tool_meta TEXT,
@@ -840,5 +843,41 @@ describe('WR-06：混合协议收尾回复的 [CMD] 标记不漏进气泡', () =
     expect(out).toContain('display version')
     expect(out).toContain('未执行的命令请求')
     expect(out).not.toContain('未闭合')
+  })
+})
+
+// ---------- Phase 29（29-04）：设备级 env 解密注入 + 复合键传参 ----------
+
+describe('29-04 设备级 env + 复合键接线（D-15/D-18）', () => {
+  it('设备 env_json_enc 解密注入子进程 env + callToolWithTimeout 收到 deviceId 复合键', async () => {
+    db = makeDb('smart')
+    seedDevice('dev1')
+    seedMcp('dev1', { skipConfirm: 1 })
+    db.prepare('UPDATE mcp_device_rel SET env_json_enc = ? WHERE device_id = ?').run(
+      encField(JSON.stringify({ NF_TOKEN: 'tok-dev1' }), MK), 'dev1'
+    )
+    vi.mocked(callToolWithTimeout).mockResolvedValue({ ok: 1 } as any)
+    queueReplies(CALL_MARKER, '收尾')
+    await chat([{ role: 'user', content: '查' }], ['dev1'], null)
+    expect(callToolWithTimeout).toHaveBeenCalledWith(
+      '1',
+      expect.objectContaining({ env: expect.objectContaining({ NF_TOKEN: 'tok-dev1' }) }),
+      'get_status',
+      { x: 1 },
+      { deviceId: 'dev1' }
+    )
+  })
+
+  it('包 disabled=1 → 设备跳过注入（D-26 禁用语义，fail-closed）', async () => {
+    db = makeDb('smart')
+    seedDevice('dev1')
+    seedMcp('dev1')
+    db.prepare('INSERT INTO mcp_packages (id, name, disabled) VALUES (9, ?, 1)').run('pkg-x')
+    db.prepare('UPDATE mcp_configs SET package_id = 9 WHERE id = 1').run()
+    const fetchMock = queueReplies('好的')
+    await chat([{ role: 'user', content: '查' }], ['dev1'], null)
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as any).body)
+    expect(body.messages[0].content).not.toContain('srv-a')
+    expect(callToolWithTimeout).not.toHaveBeenCalled()
   })
 })

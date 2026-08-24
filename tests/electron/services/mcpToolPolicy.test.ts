@@ -26,8 +26,23 @@ function freshDb(): Database.Database {
       updated_at TEXT,
       UNIQUE(config_id, tool_name)
     );
+    CREATE TABLE mcp_configs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, package_id INTEGER
+    );
+    CREATE TABLE mcp_packages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, last_test TEXT
+    );
   `)
   return db
+}
+
+/** 登记两配置同属一包（D-22 包级策略共享形态） */
+function seedPackageConfigs(): { pkgId: number, cfgA: number, cfgB: number } {
+  const d = (McpToolPolicy as unknown as { db(): Database.Database }).db()
+  d.prepare('INSERT INTO mcp_packages (id, name) VALUES (7, ?)').run('demo-pkg')
+  d.prepare('INSERT INTO mcp_configs (id, name, package_id) VALUES (1, ?, 7)').run('cfg-a')
+  d.prepare('INSERT INTO mcp_configs (id, name, package_id) VALUES (2, ?, 7)').run('cfg-b')
+  return { pkgId: 7, cfgA: 1, cfgB: 2 }
 }
 
 beforeEach(() => {
@@ -183,5 +198,88 @@ describe('saveToolCache 单条 tool_meta 尺寸上限（WR-07）', () => {
     expect(row.description).toBe('正常描述')
     expect(row.inputSchema).toEqual({ type: 'object' })
     expect(row.annotations?.readOnlyHint).toBe(false)
+  })
+})
+
+// ---------- Phase 29（29-04，D-22/D-25）：包级策略模板 + extraTools 消费端二次过滤 ----------
+
+describe('包级策略共享（D-22：同包全部配置共享一份策略）', () => {
+  beforeEach(() => {
+    seedPackageConfigs()
+  })
+
+  it('经任一包配置 saveToolCache → 另一包配置读取到同一份清单（聚合到包根配置）', () => {
+    McpToolPolicy.saveToolCache(2, [
+      { name: 'get_status', annotations: { readOnlyHint: true } },
+      { name: 'reboot_device' },
+    ])
+    expect(McpToolPolicy.getToolCache(1).map((t) => t.name)).toEqual(['get_status', 'reboot_device'])
+  })
+
+  it('同包两配置改一处策略，另一处读取结果同步', () => {
+    McpToolPolicy.saveToolCache(2, [
+      { name: 'get_status', annotations: { readOnlyHint: true } },
+      { name: 'reboot_device' },
+    ])
+    // 经配置 B 改策略
+    expect(McpToolPolicy.setEnabled(2, 'reboot_device', false)).toBe(undefined)
+    expect(McpToolPolicy.setSkipConfirm(2, 'get_status', true)).toBe(true)
+    // 配置 A 读取同步
+    const fromA = McpToolPolicy.getToolCache(1)
+    expect(fromA.find((t) => t.name === 'reboot_device')!.enabled).toBe(0)
+    expect(fromA.find((t) => t.name === 'get_status')!.skipConfirm).toBe(1)
+    expect(McpToolPolicy.getSkipConfirmTools(1).has('get_status')).toBe(true)
+    expect(McpToolPolicy.getDisabledToolNames(1)).toEqual(['reboot_device'])
+  })
+
+  it('手工配置（package_id NULL）维持 config 维度旧路径：不与包配置串线', () => {
+    const d = (McpToolPolicy as unknown as { db(): Database.Database }).db()
+    d.prepare('INSERT INTO mcp_configs (id, name, package_id) VALUES (3, ?, NULL)').run('cfg-manual')
+    McpToolPolicy.saveToolCache(1, [{ name: 'pkg_tool', annotations: { readOnlyHint: true } }])
+    McpToolPolicy.saveToolCache(3, [{ name: 'manual_tool' }])
+    expect(McpToolPolicy.getToolCache(3).map((t) => t.name)).toEqual(['manual_tool'])
+    expect(McpToolPolicy.getToolCache(2).map((t) => t.name)).toEqual(['pkg_tool'])
+  })
+})
+
+describe('extraTools 消费端二次过滤（PKG-04/D-25，T-29-04-03）', () => {
+  beforeEach(() => {
+    seedPackageConfigs()
+  })
+
+  it('last_test.extraTools 工具名不出现在策略可用集（即使 mcp_tools 行 enabled=1）', () => {
+    const d = (McpToolPolicy as unknown as { db(): Database.Database }).db()
+    d.prepare('UPDATE mcp_packages SET last_test = ? WHERE id = 7').run(
+      JSON.stringify({ stage: 'listing', ok: true, extraTools: ['undeclared_evil'], missingTools: [], testedAt: '2026-08-24T00:00:00Z' })
+    )
+    McpToolPolicy.saveToolCache(1, [
+      { name: 'get_status', annotations: { readOnlyHint: true } },
+      { name: 'undeclared_evil', annotations: { readOnlyHint: true } },
+    ])
+    // 缓存行两工具都在（UI 抽屉可见）；可用集排除 extraTools
+    expect(McpToolPolicy.getToolCache(1).map((t) => t.name)).toContain('undeclared_evil')
+    expect(McpToolPolicy.getEnabledTools(1).map((t) => t.name)).toEqual(['get_status'])
+  })
+
+  it('同包另一配置同样被过滤（包维度路由）+ 手工配置不受 extraTools 影响', () => {
+    const d = (McpToolPolicy as unknown as { db(): Database.Database }).db()
+    d.prepare('UPDATE mcp_packages SET last_test = ? WHERE id = 7').run(
+      JSON.stringify({ stage: 'listing', ok: true, extraTools: ['undeclared_evil'], missingTools: [], testedAt: '2026-08-24T00:00:00Z' })
+    )
+    d.prepare('INSERT INTO mcp_configs (id, name, package_id) VALUES (3, ?, NULL)').run('cfg-manual')
+    McpToolPolicy.saveToolCache(2, [
+      { name: 'get_status' },
+      { name: 'undeclared_evil' },
+    ])
+    McpToolPolicy.saveToolCache(3, [{ name: 'undeclared_evil' }])
+    expect(McpToolPolicy.getEnabledTools(1).map((t) => t.name)).toEqual(['get_status'])
+    expect(McpToolPolicy.getEnabledTools(3).map((t) => t.name)).toEqual(['undeclared_evil'])
+  })
+
+  it('last_test 缺失/坏 JSON/extraTools 非数组 → 不过滤（fail-safe 回退旧行为）', () => {
+    const d = (McpToolPolicy as unknown as { db(): Database.Database }).db()
+    d.prepare('UPDATE mcp_packages SET last_test = ? WHERE id = 7').run('not-json')
+    McpToolPolicy.saveToolCache(1, [{ name: 'get_status' }])
+    expect(McpToolPolicy.getEnabledTools(1).map((t) => t.name)).toEqual(['get_status'])
   })
 })

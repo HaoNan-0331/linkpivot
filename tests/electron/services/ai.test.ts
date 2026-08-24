@@ -108,9 +108,12 @@ function makeDb(): Database.Database {
       command_or_url TEXT NOT NULL, args_json TEXT, env_json_enc TEXT, credential_enc TEXT,
       enabled INTEGER DEFAULT 1, source TEXT DEFAULT 'manual',
       last_test_at TEXT, last_test_status TEXT, last_test_tool_count INTEGER,
+      package_id INTEGER,
       created_at TEXT DEFAULT (datetime('now','localtime')), updated_at TEXT DEFAULT (datetime('now','localtime'))
     );
-    CREATE TABLE mcp_device_rel (id TEXT PRIMARY KEY, mcp_config_id INTEGER NOT NULL, device_id TEXT NOT NULL UNIQUE, created_at TEXT DEFAULT (datetime('now','localtime')));
+    CREATE TABLE mcp_packages (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, disabled INTEGER DEFAULT 0,
+      last_test TEXT, fingerprint_json TEXT);
+    CREATE TABLE mcp_device_rel (id TEXT PRIMARY KEY, mcp_config_id INTEGER NOT NULL, device_id TEXT NOT NULL UNIQUE, env_json_enc TEXT, created_at TEXT DEFAULT (datetime('now','localtime')));
     CREATE TABLE mcp_tools (
       id INTEGER PRIMARY KEY AUTOINCREMENT, config_id INTEGER NOT NULL, tool_name TEXT NOT NULL,
       enabled INTEGER DEFAULT 1, skip_confirm INTEGER DEFAULT 0, tool_meta TEXT,
