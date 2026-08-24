@@ -17,7 +17,7 @@
  *  - T-29-03-05 deletePackage 先 McpProcessRegistry 杀该包全部运行实例再级联删
  */
 
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { app } from 'electron'
@@ -26,6 +26,8 @@ import { getDatabase } from '../database/connection'
 import { encField, decField } from '../utils/crypto'
 import { validateMcpb, buildFingerprintTree, MAX_PACKAGE_BYTES } from './mcpPackageValidator'
 import type { McpManifest, FileEntry, VectorResult } from './mcpPackageValidator'
+import { testConnection } from './mcpClient'
+import { McpProcessRegistry } from './mcpProcessRegistry'
 
 /** manifest.name 长度上限（网关与 service 同源，D-05 包身份健壮性） */
 export const MAX_PKG_NAME_LENGTH = 100
@@ -358,4 +360,140 @@ export class McpPackageService {
     const row = McpPackageService.db().prepare('SELECT * FROM mcp_packages WHERE id = ?').get(id) as any
     return row ? McpPackageService.rowToDetail(row) : null
   }
+
+  // -------------------------------------------------------------------
+  // 删包 / 影响面 / 自动测族（Task 1b）
+  // -------------------------------------------------------------------
+
+  /** D-30 删除确认清单数据：将删配置（含各绑定设备数）/ 将解绑设备数 / 包目录路径 */
+  static getPackageDeleteImpact(packageId: number): {
+    configs: Array<{ id: number; name: string; deviceCount: number }>
+    totalDevices: number
+    dirPath: string
+  } | null {
+    const conn = McpPackageService.db()
+    const row = conn.prepare('SELECT dir_path FROM mcp_packages WHERE id = ?').get(packageId) as any
+    if (!row) return null
+    const cfgs = conn.prepare(
+      `SELECT c.id AS id, c.name AS name, COUNT(rel.device_id) AS deviceCount
+       FROM mcp_configs c LEFT JOIN mcp_device_rel rel ON rel.mcp_config_id = c.id
+       WHERE c.package_id = ? GROUP BY c.id ORDER BY c.id`
+    ).all(packageId) as Array<{ id: number; name: string; deviceCount: number }>
+    return {
+      configs: cfgs,
+      totalDevices: cfgs.reduce((s, c) => s + c.deviceCount, 0),
+      dirPath: row.dir_path,
+    }
+  }
+
+  /**
+   * 删包（D-30，T-29-03-05）：先 McpProcessRegistry 杀该包全部运行实例
+   * （按 包→配置→实例反查，只杀本包 configId 对应 pid）→ 事务级联删
+   * rel/configs/packages → 事务外 fs.rm 包目录。
+   */
+  static deletePackage(packageId: number): { ok: true } | { ok: false; error: string } {
+    const conn = McpPackageService.db()
+    const row = conn.prepare('SELECT * FROM mcp_packages WHERE id = ?').get(packageId) as any
+    if (!row) return { ok: false, error: '包不存在或已被删除' }
+
+    // 1) 杀该包全部运行实例（登记键=configId 字符串形态；只杀本包配置对应的 pid）
+    const stmtCfgIds = conn.prepare('SELECT id FROM mcp_configs WHERE package_id = ?')
+    const ownConfigIds = new Set((stmtCfgIds.all(packageId) as Array<{ id: number }>).map((r) => String(r.id)))
+    for (const rec of McpProcessRegistry.listActive()) {
+      if (ownConfigIds.has(String(rec.configId))) McpProcessRegistry.killTree(rec.pid)
+    }
+
+    // 2) 事务级联三表清净（mcp_device_rel 经 mcp_configs FK CASCADE，显式删防 FK 关闭路径）
+    conn.transaction((): void => {
+      conn.prepare(
+        'DELETE FROM mcp_device_rel WHERE mcp_config_id IN (SELECT id FROM mcp_configs WHERE package_id = ?)'
+      ).run(packageId)
+      conn.prepare('DELETE FROM mcp_configs WHERE package_id = ?').run(packageId)
+      conn.prepare('DELETE FROM mcp_packages WHERE id = ?').run(packageId)
+    })()
+
+    // 3) 事务外删文件目录
+    rmSync(row.dir_path, { recursive: true, force: true })
+    return { ok: true }
+  }
+
+  /**
+   * 自动测（D-14）：spawn + 握手 + listTools 与 manifest.tools 名字集合比对。
+   *  - node 轨道：command='node' args=[entry 绝对路径]——resolveStdioCommand 三路径分流
+   *    自带 process.execPath + ELECTRON_RUN_AS_NODE 兜底（D-03 现场无需装 node）
+   *  - python 轨道：包内嵌 python.exe（python/python.exe 或 python.exe）；未内嵌时
+   *    结构化失败落 last_test（spawn 细化归 29-04）
+   *  - PKG-04/D-25：多出工具 = extraTools 落 last_test（默认禁用清单，29-04 消费端
+   *    二次过滤不入工具缓存可用集）；少了仅提示 missingTools。
+   * env：包级无 env 值（设备级才有，29-06），自动测以空 env 起——依赖 env 的 server
+   * 可能握手失败，失败 reason 落 last_test 供诊断。
+   */
+  static async testPackage(packageId: number, opts?: {
+    testId?: string
+    onStage?: (stage: 'starting' | 'handshake' | 'listing', elapsedMs: number) => void
+  }): Promise<{ ok: boolean; error?: string; extraTools?: string[]; missingTools?: string[] }> {
+    const conn = McpPackageService.db()
+    const row = conn.prepare('SELECT * FROM mcp_packages WHERE id = ?').get(packageId) as any
+    if (!row) return { ok: false, error: '包不存在或已被删除' }
+    const manifest = McpPackageService.parseManifestSafe(row.manifest_json)
+    if (!manifest) return { ok: false, error: '包 manifest 元数据损坏' }
+
+    const testedAt = new Date().toISOString()
+    const writeLastTest = (t: PackageLastTest): void => {
+      conn.prepare(
+        "UPDATE mcp_packages SET last_test = ?, updated_at = datetime('now','localtime') WHERE id = ?"
+      ).run(JSON.stringify(t), packageId)
+    }
+
+    const entryAbs = join(row.dir_path, ...manifest.entry.replace(/\\/g, '/').split('/'))
+    let commandOrUrl: string
+    let args: string[]
+    if (manifest.runtime === 'python') {
+      const pyCandidates = ['python/python.exe', 'python.exe']
+        .map((rel) => join(row.dir_path, ...rel.split('/')))
+      const py = pyCandidates.find((p) => existsSyncSafe(p))
+      if (!py) {
+        const reason = '包内未找到内嵌嵌入式 Python（python/python.exe）——python 轨道 spawn 将在后续版本落地，当前仅支持 node 轨道自动测'
+        writeLastTest({ stage: 'starting', ok: false, reason, extraTools: [], missingTools: [], testedAt })
+        return { ok: false, error: reason }
+      }
+      commandOrUrl = py
+      args = [entryAbs]
+    } else {
+      commandOrUrl = 'node'
+      args = [entryAbs]
+    }
+
+    const testId = opts?.testId ?? `pkgtest-${packageId}-${Date.now()}`
+    const result = await testConnection(testId, {
+      type: 'stdio',
+      commandOrUrl,
+      args,
+      env: {},
+      credential: null,
+    }, opts?.onStage)
+
+    if (result.ok) {
+      const declared = manifest.tools.map((t) => t.name)
+      const actual = result.tools.map((t) => t.name)
+      const extraTools = actual.filter((n) => !declared.includes(n))
+      const missingTools = declared.filter((n) => !actual.includes(n))
+      writeLastTest({ stage: 'listing', ok: true, extraTools, missingTools, testedAt })
+      return { ok: true, extraTools, missingTools }
+    }
+    writeLastTest({
+      stage: 'listing',
+      ok: false,
+      reason: result.error.reason,
+      extraTools: [],
+      missingTools: [],
+      testedAt,
+    })
+    return { ok: false, error: result.error.reason }
+  }
+}
+
+/** existsSync 包装（单一 import 面便于阅读） */
+function existsSyncSafe(p: string): boolean {
+  return existsSync(p)
 }
