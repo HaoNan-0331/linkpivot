@@ -514,6 +514,133 @@ describe('Task 1 (29-06): listMatchedDevices / createConfigsFromPackage', () => 
 })
 
 // ---------------------------------------------------------------------------
+// Phase 29 Plan 29-07（Gap-2/Gap-5）：createConfigFromPackage 单条配置语义
+// ---------------------------------------------------------------------------
+describe('Task 1 (29-07): createConfigFromPackage 单条配置 + N 设备独立 env', () => {
+  function seedDevice2(db: Database.Database, id: string, name: string): void {
+    db.prepare('INSERT INTO devices (id, name_enc) VALUES (?, ?)').run(id, encField(name, TEST_MK))
+  }
+
+  function importPkg(envKeys: string[]): number {
+    const manifest = {
+      name: 's-pkg', version: '1.0.0', runtime: 'node', entry: 'main.js',
+      models: ['S5735'], tools: [{ name: 't1', description: 'd' }], envKeys,
+    }
+    const buf = zipSync({
+      'manifest.json': strToU8(JSON.stringify(manifest)),
+      'main.js': strToU8('console.log(1)'),
+    }) as unknown as Buffer
+    const res = McpPackageService.importPackage(buf)
+    if (!res.ok) throw new Error('import failed')
+    return res.package.id
+  }
+
+  beforeEach(() => {
+    h.db!.exec(`
+      CREATE TABLE devices (
+        id TEXT PRIMARY KEY,
+        name_enc TEXT NOT NULL,
+        model_enc TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `)
+  })
+
+  it('成功：1 条 mcp_configs + N 行 rel 各自独立 env，返回 configId（Gap-2）', () => {
+    const pkgId = importPkg(['NF_TOKEN'])
+    seedDevice2(h.db!, 'x1', 'X1')
+    seedDevice2(h.db!, 'x2', 'X2')
+    seedDevice2(h.db!, 'x3', 'X3')
+    const res = McpPackageService.createConfigFromPackage(pkgId, 'my-cfg', [
+      { deviceId: 'x1', env: { NF_TOKEN: 't1' } },
+      { deviceId: 'x2', env: { NF_TOKEN: 't2' } },
+      { deviceId: 'x3', env: {} },
+    ])
+    expect(res.ok).toBe(true)
+    if (!res.ok) return
+    expect(typeof res.configId).toBe('number')
+    // configs 恰好 +1（非 +N）
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_configs').get()).toEqual({ c: 1 })
+    const cfg = h.db!.prepare('SELECT * FROM mcp_configs').get() as any
+    expect(cfg.id).toBe(res.configId)
+    expect(cfg.name).toBe('my-cfg')
+    expect(cfg.type).toBe('stdio')
+    expect(cfg.source).toBe('package')
+    expect(cfg.package_id).toBe(pkgId)
+    expect(cfg.command_or_url).toBe('s-pkg') // 沿用包入口形态（与批量通道一致）
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_device_rel').get()).toEqual({ c: 3 })
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_device_rel WHERE mcp_config_id = ?').get(res.configId)).toEqual({ c: 3 })
+    expect(relEnv(h.db!, 'x1')).toEqual({ NF_TOKEN: 't1' })
+    expect(relEnv(h.db!, 'x2')).toEqual({ NF_TOKEN: 't2' })
+    expect(relEnv(h.db!, 'x3')).toBeNull() // 空 env → NULL
+  })
+
+  it('冲突：任一 deviceId 已绑其它配置 → 整体拒绝零部分写入（事务回滚，D-19）', () => {
+    const pkgId = importPkg(['NF_TOKEN'])
+    seedDevice2(h.db!, 'y1', 'Y1')
+    seedDevice2(h.db!, 'y2', 'Y2')
+    const other = h.db!.prepare(
+      "INSERT INTO mcp_configs (name, type, command_or_url) VALUES ('taken', 'stdio', 'node')"
+    ).run()
+    h.db!.prepare('INSERT INTO mcp_device_rel (id, mcp_config_id, device_id) VALUES (?, ?, ?)')
+      .run('rel-z', other.lastInsertRowid as number, 'y2')
+
+    const res = McpPackageService.createConfigFromPackage(pkgId, 'cfg-y', [
+      { deviceId: 'y1', env: { NF_TOKEN: 'a' } },
+      { deviceId: 'y2', env: { NF_TOKEN: 'b' } },
+    ])
+    expect(res.ok).toBe(false)
+    if (res.ok) return
+    expect(res.error).toContain('Y2')
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_configs').get()).toEqual({ c: 1 }) // 仅既有 other
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_device_rel').get()).toEqual({ c: 1 })
+    expect(relEnv(h.db!, 'y1')).toBeNull()
+  })
+
+  it('Gap-5：env 键超出 manifest.envKeys（自定义键 MY_EXTRA_TOKEN）→ 创建成功且落库', () => {
+    const pkgId = importPkg(['NF_TOKEN'])
+    seedDevice2(h.db!, 'g1', 'G1')
+    const res = McpPackageService.createConfigFromPackage(pkgId, 'cfg-gap5', [
+      { deviceId: 'g1', env: { MY_EXTRA_TOKEN: 'extra-val' } },
+    ])
+    expect(res.ok).toBe(true)
+    expect(relEnv(h.db!, 'g1')).toEqual({ MY_EXTRA_TOKEN: 'extra-val' })
+  })
+
+  it('包 disabled 拒绝；deviceEnvs 重复 deviceId 拒绝；空 deviceEnvs 拒绝', () => {
+    const pkgId = importPkg(['NF_TOKEN'])
+    seedDevice2(h.db!, 'w1', 'W1')
+    seedDevice2(h.db!, 'w2', 'W2')
+    h.db!.prepare('UPDATE mcp_packages SET disabled = 1 WHERE id = ?').run(pkgId)
+    expect(McpPackageService.createConfigFromPackage(pkgId, 'n', [
+      { deviceId: 'w1', env: {} },
+    ]).ok).toBe(false)
+    h.db!.prepare('UPDATE mcp_packages SET disabled = 0 WHERE id = ?').run(pkgId)
+    expect(McpPackageService.createConfigFromPackage(pkgId, 'n', [
+      { deviceId: 'w1', env: {} }, { deviceId: 'w1', env: {} },
+    ]).ok).toBe(false)
+    expect(McpPackageService.createConfigFromPackage(pkgId, 'n', []).ok).toBe(false)
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_configs').get()).toEqual({ c: 0 })
+  })
+
+  it('名称守卫：空/超长拒绝；未知设备拒绝；env 键格式/值长/对数上限拒绝', () => {
+    const pkgId = importPkg(['NF_TOKEN'])
+    seedDevice2(h.db!, 'v1', 'V1')
+    const MAX_NAME = 100
+    expect(McpPackageService.createConfigFromPackage(pkgId, '   ', [{ deviceId: 'v1', env: {} }]).ok).toBe(false)
+    expect(McpPackageService.createConfigFromPackage(pkgId, 'x'.repeat(MAX_NAME + 1), [{ deviceId: 'v1', env: {} }]).ok).toBe(false)
+    expect(McpPackageService.createConfigFromPackage(pkgId, 'n', [{ deviceId: 'ghost', env: {} }]).ok).toBe(false)
+    expect(McpPackageService.createConfigFromPackage(pkgId, 'n', [{ deviceId: 'v1', env: { '9bad-key': 'x' } }]).ok).toBe(false)
+    expect(McpPackageService.createConfigFromPackage(pkgId, 'n', [{ deviceId: 'v1', env: { K: 'x'.repeat(2001) } }]).ok).toBe(false)
+    const bigEnv: Record<string, string> = {}
+    for (let i = 0; i < 51; i++) bigEnv[`K${i}`] = 'v'
+    expect(McpPackageService.createConfigFromPackage(pkgId, 'n', [{ deviceId: 'v1', env: bigEnv }]).ok).toBe(false)
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_configs').get()).toEqual({ c: 0 })
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Phase 29 code-review 回归：CR-01 包名路径逃逸 / WR-01 testPackage 守卫 / WR-04 一致性
 // ---------------------------------------------------------------------------
 describe('Code-review fix: CR-01 / WR-01 / WR-02 / WR-04', () => {
