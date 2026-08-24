@@ -396,11 +396,12 @@ export class McpPackageService {
     const row = conn.prepare('SELECT * FROM mcp_packages WHERE id = ?').get(packageId) as any
     if (!row) return { ok: false, error: '包不存在或已被删除' }
 
-    // 1) 杀该包全部运行实例（登记键=configId 字符串形态；只杀本包配置对应的 pid）
+    // 1) 杀该包全部运行实例（登记键=复合键 `${configId}:${deviceId}`（29-04 D-18）——取 ':' 前
+    //    configId 段比对，设备级多实例一并树杀；只杀本包配置对应的 pid）
     const stmtCfgIds = conn.prepare('SELECT id FROM mcp_configs WHERE package_id = ?')
     const ownConfigIds = new Set((stmtCfgIds.all(packageId) as Array<{ id: number }>).map((r) => String(r.id)))
     for (const rec of McpProcessRegistry.listActive()) {
-      if (ownConfigIds.has(String(rec.configId))) McpProcessRegistry.killTree(rec.pid)
+      if (ownConfigIds.has(String(rec.configId).split(':')[0])) McpProcessRegistry.killTree(rec.pid)
     }
 
     // 2) 事务级联三表清净（mcp_device_rel 经 mcp_configs FK CASCADE，显式删防 FK 关闭路径）

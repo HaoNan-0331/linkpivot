@@ -49,6 +49,12 @@ function makePackageDir(files: Array<{ path: string; content: string }>): { dir:
   return { dir, fileTree }
 }
 
+/** 断言 fn 抛出结构化错误且 code 匹配（plain object 非 Error——toThrow 匹配器不适用） */
+function expectStructThrow(fn: () => void, code: string): any {
+  try { fn() } catch (e) { expect((e as any)?.code).toBe(code); return e }
+  throw new Error(`expected throw ${code}, but no throw`)
+}
+
 function sha(content: string): string {
   return createHash('sha256').update(Buffer.from(content, 'utf8')).digest('hex')
 }
@@ -90,10 +96,8 @@ describe('verifyPackageFingerprint（D-27 全树重验）', () => {
     cleanupDirs.push(dir)
     const fp = buildFingerprintTree(fileTree)
     fs.writeFileSync(path.join(dir, 'lib/util.js'), 'export const x = 2 // tampered')
-    expect(() => verifyPackageFingerprint(dir, JSON.stringify(fp))).toThrowError((e: any) => {
-      expect(e.code).toBe('package_integrity_failed')
-      expect(e.reason).toContain('lib/util.js')
-    })
+    const e = expectStructThrow(() => verifyPackageFingerprint(dir, JSON.stringify(fp)), 'package_integrity_failed')
+    expect(e.reason).toContain('lib/util.js')
   })
 
   it('新增文件（指纹清单外）→ 拒绝（全树语义，不只清单内文件）', () => {
@@ -101,9 +105,7 @@ describe('verifyPackageFingerprint（D-27 全树重验）', () => {
     cleanupDirs.push(dir)
     const fp = buildFingerprintTree(fileTree)
     fs.writeFileSync(path.join(dir, 'evil.dll'), 'malicious')
-    expect(() => verifyPackageFingerprint(dir, JSON.stringify(fp))).toThrowError((e: any) => {
-      expect(e.code).toBe('package_integrity_failed')
-    })
+    expectStructThrow(() => verifyPackageFingerprint(dir, JSON.stringify(fp)), 'package_integrity_failed')
   })
 
   it('删除文件 → 拒绝', () => {
@@ -111,17 +113,13 @@ describe('verifyPackageFingerprint（D-27 全树重验）', () => {
     cleanupDirs.push(dir)
     const fp = buildFingerprintTree(fileTree)
     fs.unlinkSync(path.join(dir, 'server.js'))
-    expect(() => verifyPackageFingerprint(dir, JSON.stringify(fp))).toThrowError((e: any) => {
-      expect(e.code).toBe('package_integrity_failed')
-    })
+    expectStructThrow(() => verifyPackageFingerprint(dir, JSON.stringify(fp)), 'package_integrity_failed')
   })
 
   it('落盘指纹清单坏 JSON → 拒绝（fail-closed）', () => {
     const { dir } = makePackageDir(PKG_FILES)
     cleanupDirs.push(dir)
-    expect(() => verifyPackageFingerprint(dir, 'not-json')).toThrowError((e: any) => {
-      expect(e.code).toBe('package_integrity_failed')
-    })
+    expectStructThrow(() => verifyPackageFingerprint(dir, 'not-json'), 'package_integrity_failed')
   })
 })
 
@@ -225,9 +223,7 @@ describe('resolvePackageSpawn 双轨（D-02/D-03，T-29-04-06）', () => {
   it('runtime=python 未内嵌 python.exe → 结构化拒绝（路径伪造不可行）', () => {
     const { dir, fileTree } = makePackageDir([{ path: 'server.py', content: 'print("py")' }])
     cleanupDirs.push(dir)
-    expect(() => resolvePackageSpawn(pkgInfo(dir, '', 'python'))).toThrowError((e: any) => {
-      expect(e.code).toBe('MCP_PYTHON_MISSING')
-    })
+    expectStructThrow(() => resolvePackageSpawn(pkgInfo(dir, '', 'python')), 'MCP_PYTHON_MISSING')
   })
 
   it('runtime=node：command=node + entry 绝对 args（ELECTRON_RUN_AS_NODE 兜底沿用 D-03）', () => {
@@ -247,8 +243,10 @@ describe('指纹一致的 node 包正常连接（真路径不回归）', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nt-mcpb-ok-'))
     cleanupDirs.push(dir)
     const helperSrc = fs.readFileSync(helperPath, 'utf8')
-    fs.writeFileSync(path.join(dir, 'server.mjs'), helperSrc)
-    const fileTree: FileEntry[] = [{ path: 'server.mjs', content: Buffer.from(helperSrc, 'utf8') }]
+    // 无 --child flag 的包轨道 spawn 形态：复制体尾部直接进入 stdio child 入口（等价 --child）
+    const serverSrc = helperSrc + '\nrunStdioChild()\n'
+    fs.writeFileSync(path.join(dir, 'server.mjs'), serverSrc)
+    const fileTree: FileEntry[] = [{ path: 'server.mjs', content: Buffer.from(serverSrc, 'utf8') }]
     const fp = buildFingerprintTree(fileTree)
     const pkg = pkgInfo(dir, JSON.stringify(fp))
     pkg.entry = 'server.mjs'

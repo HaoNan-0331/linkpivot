@@ -24,8 +24,10 @@
 import { Client, StreamableHTTPClientTransport, SSEClientTransport } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import type { Transport } from '@modelcontextprotocol/client'
-import { existsSync } from 'fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
+import { join } from 'path'
 import { McpProcessRegistry } from './mcpProcessRegistry'
+import { buildFingerprintTree } from './mcpPackageValidator'
 import type { McpDecodedConfig } from './mcpService'
 
 /** env 白名单（21-RESEARCH Pattern 3）——显式拷贝，禁止 spread process.env */
@@ -74,8 +76,121 @@ interface ActiveConnection {
   lastUsedAt: number
 }
 
-/** 连接级 Map：key = configId 或 tempKey（连接测试临时键）——不进 sessions/windowSessionMap */
+/** 连接级 Map：key = `${configId}:${deviceId}` 复合键（29-04 D-15/D-18）或 tempKey——不进 sessions/windowSessionMap */
 const connections = new Map<string, ActiveConnection>()
+
+// ---------------------------------------------------------------------------
+// Phase 29（29-04）：包 spawn 信息 + TOCTOU 全树重验 + integrity 副作用注入
+// ---------------------------------------------------------------------------
+
+/** 从包创建的配置 spawn 前所需包元数据（ai.ts 从 mcp_packages 行装配） */
+export interface PackageSpawnInfo {
+  packageId: number
+  dirPath: string
+  runtime: 'node' | 'python'
+  /** manifest.entry（posix 相对路径） */
+  entry: string
+  /** 落盘 fingerprint_json（mcp_packages.fingerprint_json 原文） */
+  fingerprintJson: string
+}
+
+/** 设备级连接选项：deviceId 参与复合键；package 在场时 spawn 前做 TOCTOU 全树重验 */
+export interface McpConnectionOpts {
+  deviceId?: string
+  package?: PackageSpawnInfo
+}
+
+/** 连接复合键（D-18）：deviceId 缺省 '0' 保持手工 stdio 配置旧语义不断 */
+export function connectionKey(configId: string, deviceId?: string): string {
+  return `${configId}:${deviceId ?? '0'}`
+}
+
+/** TOCTOU 检出回调（D-26 副作用链路）：main.ts 接 service 写包 disabled=1 + ai_system_logs security 行 */
+type IntegrityHandler = (info: { packageId: number, dirPath: string, detail: string }) => void
+let integrityHandler: IntegrityHandler | null = null
+
+/** 注入/清除 TOCTOU 副作用处理器（mcpClient 自身零 DB 依赖，service 侧落库） */
+export function setIntegrityHandler(fn: IntegrityHandler | null): void {
+  integrityHandler = fn
+}
+
+/** 递归收集目录全树（posix 相对路径，D-27 全树——含新增文件） */
+function collectDirFiles(dirPath: string, rel = ''): Array<{ path: string, content: Buffer }> {
+  const out: Array<{ path: string, content: Buffer }> = []
+  for (const name of readdirSync(join(dirPath, rel))) {
+    const relPath = rel ? `${rel}/${name}` : name
+    const abs = join(dirPath, ...relPath.split('/'))
+    if (statSync(abs).isDirectory()) out.push(...collectDirFiles(dirPath, relPath))
+    else out.push({ path: relPath, content: readFileSync(abs) })
+  }
+  return out
+}
+
+function integrityError(reason: string): { code: string, reason: string } {
+  return { code: 'package_integrity_failed', reason }
+}
+
+/**
+ * spawn 前全树指纹重验（T-29-04-01 / D-27）：目录全树重算 buildFingerprintTree 与
+ * 落盘 fingerprint_json 比对——treeSha 或逐文件清单任一不一致（含新增/删除文件）即
+ * 抛结构化 package_integrity_failed（调用方拒绝启动）。坏 JSON / 目录不可读同样 fail-closed。
+ */
+export function verifyPackageFingerprint(dirPath: string, expectedJson: string): void {
+  let expected: { files?: Array<{ path: string, sha256: string }>, treeSha256?: string }
+  try {
+    expected = JSON.parse(expectedJson)
+  } catch {
+    throw integrityError(`包指纹清单损坏（fingerprint_json 不可解析），拒绝启动：${dirPath}`)
+  }
+  let actual: ReturnType<typeof buildFingerprintTree>
+  try {
+    actual = buildFingerprintTree(collectDirFiles(dirPath))
+  } catch (e) {
+    throw integrityError(`包目录不可读，拒绝启动：${dirPath}（${e instanceof Error ? e.message : String(e)}）`)
+  }
+  if (actual.treeSha256 !== expected.treeSha256) {
+    // 逐文件差异定位（前 3 条人话细节；新增/删除/篡改均覆盖）
+    const expMap = new Map((expected.files ?? []).map((f) => [f.path, f.sha256]))
+    const actMap = new Map(actual.files.map((f) => [f.path, f.sha256]))
+    const diffs: string[] = []
+    for (const [p, h] of actMap) {
+      if (!expMap.has(p)) diffs.push(`新增文件 ${p}`)
+      else if (expMap.get(p) !== h) diffs.push(`内容变化 ${p}`)
+      if (diffs.length >= 3) break
+    }
+    for (const p of expMap.keys()) {
+      if (!actMap.has(p)) diffs.push(`文件缺失 ${p}`)
+      if (diffs.length >= 3) break
+    }
+    throw integrityError(`包指纹重验失败（TOCTOU 检出），拒绝启动：${diffs.length > 0 ? diffs.join('；') : '全树哈希不一致'}`)
+  }
+}
+
+/**
+ * 包轨道 spawn 分流（D-02/D-03，T-29-04-06）：
+ *  - runtime=python：包内嵌嵌入式 python.exe 绝对路径（python/python.exe → python.exe 双候选）
+ *    + args=[entry 绝对路径]，envMode='plain'（env 仍走 buildChildEnv 白名单注入）；
+ *    未内嵌即结构化拒绝（不静默换 PATH python——换运行时就不是校验过的包了）
+ *  - runtime=node：command='node' + entry 绝对路径——沿用 resolveStdioCommand 的
+ *    process.execPath + ELECTRON_RUN_AS_NODE 兜底（D-03 应用自带 node 运行时）
+ */
+export function resolvePackageSpawn(pkg: PackageSpawnInfo): StdioSpawnPlan {
+  const entryAbs = join(pkg.dirPath, ...pkg.entry.replace(/\\/g, '/').split('/'))
+  if (pkg.runtime === 'python') {
+    const pyCandidates = ['python/python.exe', 'python.exe']
+      .map((rel) => join(pkg.dirPath, ...rel.split('/')))
+    const py = pyCandidates.find((p) => existsSync(p))
+    if (!py) {
+      throw {
+        code: 'MCP_PYTHON_MISSING',
+        reason: `python 轨道包内未找到内嵌嵌入式 Python（python/python.exe），拒绝启动：${pkg.dirPath}`
+      }
+    }
+    return { command: py, args: [entryAbs], envMode: 'plain', fallback: null }
+  }
+  return resolveStdioCommand('node', [entryAbs])
+}
+
 
 /**
  * 握手期孤儿清理入口（CR-01）：connectStdio 从 spawn 到 connect 成败落定期间登记，
@@ -217,7 +332,7 @@ async function connectStdio(
 ): Promise<{ client: Client, transport: StdioClientTransport }> {
   const transport = new StdioClientTransport({
     command: plan.command,
-    args: config.args,
+    args: plan.args, // 29-04：包轨道 args 由 resolvePackageSpawn 装配（entry 绝对路径）；手工轨道与 config.args 同源
     env: buildChildEnv(config.env, plan.envMode),
     stderr: 'pipe'
   })
@@ -533,32 +648,56 @@ export function cancelTest(testId: string): boolean {
 // 长连接（懒建 + 空闲回收，Phase 22 消费）
 // ---------------------------------------------------------------------------
 
-/** 懒建/复用长连接（key=configId）；不存在则按 config 建立 */
-export async function getConnection(configId: string, config: McpDecodedConfig): Promise<Client> {
-  const existing = connections.get(configId)
+/** 懒建/复用长连接（key=`${configId}:${deviceId}` 复合键，D-15/D-18）；不存在则按 config 建立 */
+export async function getConnection(configId: string, config: McpDecodedConfig, opts?: McpConnectionOpts): Promise<Client> {
+  const key = connectionKey(configId, opts?.deviceId)
+  const existing = connections.get(key)
   if (existing) {
     existing.lastUsedAt = Date.now()
     if (existing.pid !== null) McpProcessRegistry.markUsed(existing.pid)
     return existing.client
   }
   if (config.type === 'stdio') {
-    const plan = resolveStdioCommand(config.commandOrUrl, config.args)
-    const { client } = await connectStdio(configId, config, plan)
+    let plan: StdioSpawnPlan
+    if (opts?.package) {
+      // TOCTOU 全树重验（D-26/D-27）：不一致拒绝启动 + integrityHandler 副作用（包 disabled + security 日志，
+      // 由 main.ts 注入 service 落库——mcpClient 零 DB 依赖）；handler 故障不吞主线错误（安全语义不降级）
+      try {
+        verifyPackageFingerprint(opts.package.dirPath, opts.package.fingerprintJson)
+      } catch (e) {
+        if ((e as { code?: string })?.code === 'package_integrity_failed') {
+          try {
+            integrityHandler?.({
+              packageId: opts.package.packageId,
+              dirPath: opts.package.dirPath,
+              detail: (e as { reason?: string }).reason ?? 'package_integrity_failed'
+            })
+          } catch { /* handler 故障不吞 TOCTOU 主错误 */ }
+        }
+        throw e
+      }
+      plan = resolvePackageSpawn(opts.package)
+    } else {
+      plan = resolveStdioCommand(config.commandOrUrl, config.args)
+    }
+    const { client } = await connectStdio(key, config, plan)
     return client
   }
-  const { client } = await connectHttp(configId, config)
+  const { client } = await connectHttp(key, config)
   return client
 }
 
-/** callTool 硬超时包装（Phase 22 主消费；结果双兼容解析归 22 落） */
+/** callTool 硬超时包装（Phase 22 主消费；29-04 复合键 + 设备级实例透传） */
 export async function callToolWithTimeout(
   configId: string,
   config: McpDecodedConfig,
   name: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  opts?: McpConnectionOpts
 ): Promise<unknown> {
-  const client = await getConnection(configId, config)
-  const conn = connections.get(configId)
+  const key = connectionKey(configId, opts?.deviceId)
+  const client = await getConnection(configId, config, opts)
+  const conn = connections.get(key)
   if (conn) {
     conn.lastUsedAt = Date.now()
     if (conn.pid !== null) McpProcessRegistry.markUsed(conn.pid)
@@ -568,14 +707,14 @@ export async function callToolWithTimeout(
   } catch (e) {
     if ((e as { timedOut?: boolean })?.timedOut) {
       // 超时硬清理：destroy + 树杀，不留半死连接
-      await closeConnection(configId)
+      await closeConnection(key)
     }
     throw e
   }
 }
 
-export async function closeMcpConnection(configId: string): Promise<void> {
-  await closeConnection(configId)
+export async function closeMcpConnection(configId: string, deviceId?: string): Promise<void> {
+  await closeConnection(connectionKey(configId, deviceId))
 }
 
 // 空闲回收 sweep：Registry 自持登记表，定时器归连接器（裁决见文件头注）。

@@ -2,7 +2,10 @@
  * McpProcessRegistry —— MCP stdio 子进程登记与树杀（21-03，MCP-04/MCP-05，T-21-03-04/T-21-03-07）。
  *
  * 职责（只管登记与杀，spawn 在 SDK transport 内）：
- *  - register(pid, configId)：pid 全量登记，killTree 只接受登记表内 pid（防滥杀任意进程）
+ *  - register(pid, key)：pid 全量登记，killTree 只接受登记表内 pid（防滥杀任意进程）。
+ *    Phase 29（29-04，D-18）：key 为 opaque 字符串——设备级实例化后由调用方传
+ *    `${configId}:${deviceId}` 复合键（同配置 3 设备 = 3 进程 3 键独立空闲核算），
+ *    本表不感知键结构（deletePackage 反查按 configId 前缀命中同属本包配置的键）。
  *  - killTree(pid)：Windows `taskkill /pid X /T /F` 树杀（npx→cmd→node 孙进程链不存活）；
  *    execSync 失败（进程已退）吞错并 unregister；不使用 node child 的 kill（无句柄、不树杀）
  *  - cleanupAll(timeoutMs=3000)：before-quit 同步快路径，逐个 taskkill，总耗时超时即停止继续等待

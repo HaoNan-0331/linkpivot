@@ -33,6 +33,7 @@ import { registerExperienceIpc } from './ipc/experienceIpc'
 import { registerExperienceDraftingIpc } from './ipc/experienceDraftingIpc'
 import { McpService } from './services/mcpService'
 import { McpDeviceEnvMigration } from './services/mcpDeviceEnvMigration'
+import { setIntegrityHandler } from './services/mcpClient'
 import { McpPackageService } from './services/mcpPackageService'
 import { McpProcessRegistry } from './services/mcpProcessRegistry'
 import { registerMcpIpc } from './ipc/mcpIpc'
@@ -244,6 +245,25 @@ app.whenReady().then(() => {
   registerExperienceDraftingIpc()
   registerMcpIpc()
   registerMcpPackageIpc()
+  // Phase 29（29-04，D-26）：TOCTOU 检出副作用链路——spawn 前指纹重验失败时 mcpClient 经
+  // 注入回调触发：包 disabled=1（直到重新导入走完整校验链）+ ai_system_logs security 行。
+  // mcpClient 零 DB 依赖，service 侧落库在此接线；两步各自 try/catch 隔离（禁用失败仍尝试留痕）。
+  setIntegrityHandler(({ packageId, dirPath, detail }) => {
+    try {
+      getDatabase().prepare(
+        "UPDATE mcp_packages SET disabled = 1, updated_at = datetime('now','localtime') WHERE id = ?"
+      ).run(packageId)
+    } catch (e) {
+      console.error('[startup] TOCTOU disable package failed:', (e as Error).message)
+    }
+    try {
+      createSystemLog({
+        type: 'security',
+        status: 'warning',
+        errorMessage: `MCP 包 TOCTOU 指纹重验失败，已禁用包 #${packageId}（${dirPath}）：${detail}——请重新导入校验后再使用`
+      })
+    } catch { /* 日志失败非致命 */ }
+  })
   SchedulerService.start()
   BackupScheduler.start()
 
