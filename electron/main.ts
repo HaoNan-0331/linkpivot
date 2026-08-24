@@ -32,6 +32,7 @@ import { setExperienceMasterKey, backfillSeverityFromHistory } from './services/
 import { registerExperienceIpc } from './ipc/experienceIpc'
 import { registerExperienceDraftingIpc } from './ipc/experienceDraftingIpc'
 import { McpService } from './services/mcpService'
+import { McpDeviceEnvMigration } from './services/mcpDeviceEnvMigration'
 import { McpProcessRegistry } from './services/mcpProcessRegistry'
 import { registerMcpIpc } from './ipc/mcpIpc'
 
@@ -104,6 +105,8 @@ app.whenReady().then(() => {
   setSystemLogMasterKey(masterKey)
   // 第 9 直接注入器（Phase 21）：mcpService 持 private static MK 加密 env_json_enc/credential_enc。
   McpService.setMcpMasterKey(masterKey)
+  // 第 10 直接注入器（Phase 29）：设备级 env 回填 service 持 private static MK（29-02）。
+  McpDeviceEnvMigration.setMcpDeviceEnvMasterKey(masterKey)
   // R2: decField 解密失败可观测——masterKey 不匹配 / safeStorage 翻转时写 system_log 告警，避免无声数据丢失。
   // handler 在此注入（解耦：crypto.ts 不依赖 services/DB，保持纯函数可单测）。
   setDecryptFailureHandler(() => {
@@ -142,6 +145,16 @@ app.whenReady().then(() => {
     if (ensureNameUniqueIndex()) console.log('[startup] devices.name_hash 唯一索引已启用')
   } catch (e) {
     console.warn('[startup] ensureNameUniqueIndex failed (non-blocking):', (e as Error).message)
+  }
+  // Phase 29（29-02，D-17）：post-MK 存量共享 env 复制到每台绑定设备行（设备级 env 模型）。
+  // v27 迁移只加列；加密回填必须在 MK 注入后（25-05 教训）。幂等（env_json_enc IS NULL 守卫），
+  // 坏密文/空 env 行跳过保持 NULL（T-29-02-02），失败仅 warn 不阻塞启动（name_hash 回填同范式）。
+  try {
+    const r = McpDeviceEnvMigration.backfillDeviceEnv()
+    if (r.backfilled > 0) console.log('[startup] backfill mcp device env:', r.backfilled)
+    if (r.skipped > 0) console.warn('[startup] mcp device env 回填跳过（空/坏密文）:', r.skipped)
+  } catch (e) {
+    console.warn('[startup] backfillDeviceEnv failed (non-blocking):', (e as Error).message)
   }
   // Phase 17 SEC-06（D-01）：日志加密列启动即同步回填——明文存量行加密落 _enc + 旧列置 NULL（净化备份）。
   // 双钩子独立 try/catch 隔离故障（一个失败不挡另一个）；幂等可重试（中断后下次启动续跑），失败仅 warn 不阻塞启动。
