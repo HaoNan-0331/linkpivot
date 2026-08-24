@@ -38,6 +38,11 @@ files:
   - "!src/**"
   - "!electron/**"
 
+# === 静态资源：格式说明等文档打进安装包 resources/docs（Phase 29 D-10，只读分发） ===
+extraResources:
+  - from: resources/docs
+    to: docs
+
 # === native 模块：自动重建 ===
 buildDependenciesFromSource: false
 npmRebuild: true

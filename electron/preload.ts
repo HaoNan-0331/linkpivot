@@ -140,6 +140,23 @@ const api = {
       ipcRenderer.on('mcp:testProgress', listener)
       return () => ipcRenderer.removeListener('mcp:testProgress', listener)
     },
+    // Phase 29（29-03/29-05，PKG-01/03）：包生命周期通道（renderer 调用暴露唯一落点）
+    importPackage: (buffer: ArrayBuffer) => ipcRenderer.invoke('mcp:importPackage', buffer),
+    reimportPackage: (buffer: ArrayBuffer) => ipcRenderer.invoke('mcp:reimportPackage', buffer),
+    confirmOverwrite: (packageId: number, buffer: ArrayBuffer) => ipcRenderer.invoke('mcp:confirmOverwrite', packageId, buffer),
+    listPackages: () => ipcRenderer.invoke('mcp:listPackages'),
+    getPackage: (id: number) => ipcRenderer.invoke('mcp:getPackage', id),
+    getPackageDeleteImpact: (id: number) => ipcRenderer.invoke('mcp:getPackageDeleteImpact', id),
+    deletePackage: (id: number) => ipcRenderer.invoke('mcp:deletePackage', id),
+    testPackage: (payload: { packageId: number, testId?: string }) => ipcRenderer.invoke('mcp:testPackage', payload),
+    // D-10：导出应用内 .mcpb 格式说明静态资源
+    exportFormatSpec: () => ipcRenderer.invoke('mcp:exportFormatSpec'),
+    // 订阅包自动测阶段进度（与 onTestProgress 同形态），返回清理函数
+    onPackageTestProgress: (cb: (data: { testId: string; stage: string; elapsedMs: number }) => void) => {
+      const listener = (_e: unknown, data: { testId: string; stage: string; elapsedMs: number }) => cb(data)
+      ipcRenderer.on('mcp:packageTestProgress', listener)
+      return () => ipcRenderer.removeListener('mcp:packageTestProgress', listener)
+    },
   },
   export: {
     arpTable: () => ipcRenderer.invoke('export:arpTable'),

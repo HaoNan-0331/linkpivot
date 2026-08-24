@@ -266,6 +266,20 @@ export interface ElectronAPI {
     setToolEnabled: (configId: number, toolName: string, enabled: boolean) => Promise<{ ok: true }>
     setToolSkipConfirm: (configId: number, toolName: string, skip: boolean) =>
       Promise<{ ok: true } | { ok: false; reason: string }>
+    // Phase 29（29-03/29-05，PKG-01/03）：包生命周期通道（出口投影无明文凭证，T-29-05-02）
+    importPackage: (buffer: ArrayBuffer) => Promise<McpImportOutcomeDto>
+    reimportPackage: (buffer: ArrayBuffer) => Promise<McpImportOutcomeDto>
+    confirmOverwrite: (packageId: number, buffer: ArrayBuffer) => Promise<McpOverwriteOutcomeDto>
+    listPackages: () => Promise<McpPackageViewDto[]>
+    getPackage: (id: number) => Promise<{ ok: true; package: McpPackageDetailDto } | { ok: false; error: string }>
+    getPackageDeleteImpact: (id: number) => Promise<{ ok: true; impact: McpPackageDeleteImpactDto } | { ok: false; error: string }>
+    deletePackage: (id: number) => Promise<{ ok: true } | { ok: false; error: string }>
+    testPackage: (payload: { packageId: number, testId?: string }) =>
+      Promise<{ ok: boolean; error?: string; extraTools?: string[]; missingTools?: string[] }>
+    /** D-10：导出 .mcpb 格式说明到用户选择路径 */
+    exportFormatSpec: () => Promise<{ ok: true; canceled: boolean; path?: string } | { ok: false; error: string }>
+    /** 订阅包自动测阶段进度，返回清理函数 */
+    onPackageTestProgress: (cb: (data: McpPackageTestProgressDto) => void) => () => void
   }
 }
 
@@ -345,6 +359,94 @@ export interface McpSaveDto {
   credential?: string | null
   deviceIds?: string[]
   enabled?: boolean
+}
+
+// Phase 29：MCP 包视图（mcpPackageService.McpPackageView 的 renderer 镜像——仅 env 键名，无明文值）
+export interface McpPackageViewDto {
+  id: number
+  name: string
+  version: string | null
+  runtime: 'node' | 'python'
+  entry: string
+  models: string[]
+  toolCount: number
+  envKeys: string[]
+  dirPath: string
+  sizeBytes: number
+  disabled: boolean
+  lastTest: McpPackageLastTestDto | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface McpPackageLastTestDto {
+  stage: string
+  ok: boolean
+  reason?: string
+  /** PKG-04/D-25：实测多出的未声明工具（默认禁用清单） */
+  extraTools: string[]
+  missingTools: string[]
+  testedAt: string
+}
+
+export interface McpPackageToolDto {
+  name: string
+  description: string
+  readOnlyHint?: boolean
+}
+
+export interface McpPackageDetailDto extends McpPackageViewDto {
+  manifest: {
+    name: string
+    version: string
+    runtime: 'node' | 'python'
+    entry: string
+    models: string[]
+    tools: McpPackageToolDto[]
+    envKeys?: string[]
+  }
+  fingerprintTreeSha256: string
+  fingerprintFiles: Array<{ path: string; sha256: string }>
+}
+
+/** 五向量校验结果（renderer 直渲染 ✓/✗） */
+export interface McpVectorResultDto {
+  id: 'manifest-schema' | 'entry-whitelist' | 'zip-slip' | 'double-extension' | 'manifest-lie'
+  ok: boolean
+  reason?: string
+}
+
+export interface McpPackageReimportDiffDto {
+  oldVersion: string
+  newVersion: string
+  oldTreeSha256: string
+  newTreeSha256: string
+  toolsAdded: string[]
+  toolsRemoved: string[]
+  env: { kept: string[]; added: string[]; removed: string[] }
+}
+
+export type McpImportOutcomeDto =
+  | { ok: false; error: string; vectors?: McpVectorResultDto[] }
+  | { ok: true; status: 'imported'; package: McpPackageViewDto }
+  | { ok: true; status: 'exists'; package: McpPackageViewDto }
+  | { ok: true; status: 'changed'; package: McpPackageViewDto; diff: McpPackageReimportDiffDto }
+
+export type McpOverwriteOutcomeDto =
+  | { ok: false; error: string; vectors?: McpVectorResultDto[] }
+  | { ok: true; status: 'overwritten'; package: McpPackageViewDto; diff: McpPackageReimportDiffDto }
+  | { ok: true; status: 'exists'; package: McpPackageViewDto }
+
+export interface McpPackageDeleteImpactDto {
+  configs: Array<{ id: number; name: string; deviceCount: number }>
+  totalDevices: number
+  dirPath: string
+}
+
+export interface McpPackageTestProgressDto {
+  testId: string
+  stage: string
+  elapsedMs: number
 }
 
 // Phase 20：提示词注册表条目视图（20-01 PromptService.listEntries 返回形态的 renderer 镜像）

@@ -1,7 +1,7 @@
 /**
  * MCP 包生命周期 IPC 通道（Phase 29 29-03，PKG-01/02/03/04/06）。
  *
- * 红线：8 个 channel 全部经 secure 包装（鉴权 + 异常脱敏），登录前不可达。
+ * 红线：channel 全部经 secure 包装（鉴权 + 异常脱敏），登录前不可达（29-05 起含 exportFormatSpec 共 9 个）。
  * channel 命名 <domain>:<action>（mcp: 域）。
  *
  * 网关校验：
@@ -14,7 +14,9 @@
  * （照 mcpIpc testConnection 先例，webContents 销毁 try/catch 吞错，WR-04 同款）。
  */
 
-import { ipcMain } from 'electron'
+import { ipcMain, dialog, app } from 'electron'
+import { copyFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { McpPackageService, MAX_PKG_NAME_LENGTH } from '../services/mcpPackageService'
 import { MAX_PACKAGE_BYTES } from '../services/mcpPackageValidator'
 import { secure } from '../utils/authGuard'
@@ -90,5 +92,24 @@ export function registerMcpPackageIpc() {
         } catch { /* webContents 已销毁，忽略 */ }
       },
     })
+  }))
+
+  // D-10：导出 .mcpb 格式说明静态资源（extraResources 只读分发，T-29-05-03 accept——路径固定不可注入）
+  ipcMain.handle('mcp:exportFormatSpec', secure(async () => {
+    const src = app.isPackaged
+      ? join(process.resourcesPath, 'docs', 'mcpb-format-spec.md')
+      : join(app.getAppPath(), 'resources', 'docs', 'mcpb-format-spec.md')
+    const result = await dialog.showSaveDialog({
+      title: '保存 .mcpb 格式说明',
+      defaultPath: 'mcpb-format-spec.md',
+      filters: [{ name: 'Markdown 文件', extensions: ['md'] }, { name: '所有文件', extensions: ['*'] }],
+    })
+    if (result.canceled || !result.filePath) return { ok: true, canceled: true }
+    try {
+      await copyFile(src, result.filePath)
+      return { ok: true, canceled: false, path: result.filePath }
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
   }))
 }
