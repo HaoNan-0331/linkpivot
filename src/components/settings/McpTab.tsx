@@ -1,14 +1,17 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
-  Alert, Button, Card, Drawer, Empty, Input, Modal, Popconfirm, Select, Space,
+  Alert, Button, Card, Drawer, Empty, Input, Modal, Popconfirm, Select, Space, Steps,
   Spin, Switch, Table, Tag, Tooltip, Typography, message,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { WarningOutlined } from '@ant-design/icons'
-import type { McpConfigDto, McpTestRequestDto, McpTestResultDto, McpToolInfoDto } from '../../types/electron'
+import type {
+  McpConfigDto, McpMatchedDeviceDto, McpPackageViewDto, McpTestRequestDto, McpTestResultDto, McpToolInfoDto,
+} from '../../types/electron'
 import type { Device } from '../../types/device'
 import McpToolManageDrawer from './McpToolManageDrawer'
 import McpPackageTab from './McpPackageTab'
+import DeviceEnvTable from './DeviceEnvTable'
 
 const { Text } = Typography
 
@@ -173,11 +176,233 @@ interface FormState {
   credential: string // http 令牌；''=未修改（编辑时）/空（新建）
   credentialMasked: string | null
   deviceIds: string[]
+  /** 29-06（D-16）：stdio 编辑态设备级 env 表格（env 键列 + 逐设备值，值存 ****尾4 哨兵形态） */
+  deviceEnvKeys: string[]
+  deviceEnvValues: Record<string, Record<string, string>>
 }
 
 const emptyForm: FormState = {
   id: null, name: '', type: 'stdio', commandOrUrl: '', args: [], envRows: [],
-  credential: '', credentialMasked: null, deviceIds: [],
+  credential: '', credentialMasked: null, deviceIds: [], deviceEnvKeys: [], deviceEnvValues: {},
+}
+
+/** "KEY=****尾4" 脱敏条目 → 键（无 = 的畸形条目整条当键） */
+function maskedEntryKey(entry: string): string {
+  const i = entry.indexOf('=')
+  return i > 0 ? entry.slice(0, i) : entry
+}
+
+/** "KEY=****尾4" 脱敏条目 → 值（****尾4 形态；畸形条目 '****'） */
+function maskedEntryValue(entry: string): string {
+  const i = entry.indexOf('=')
+  return i > 0 ? entry.slice(i + 1) : '****'
+}
+
+// ---------------------------------------------------------------------------
+// 29-06（D-20/D-21/D-22）：从 MCP 包创建配置向导（选包 → 设备预筛 → 逐台 env → 确认）
+// ---------------------------------------------------------------------------
+function PackageCreateWizard({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: () => void }) {
+  const [step, setStep] = useState(0)
+  const [packages, setPackages] = useState<McpPackageViewDto[]>([])
+  const [pkgId, setPkgId] = useState<number | null>(null)
+  const [matched, setMatched] = useState<McpMatchedDeviceDto[] | null>(null)
+  const [matchedLoading, setMatchedLoading] = useState(false)
+  const [selected, setSelected] = useState<string[]>([])
+  const [envValues, setEnvValues] = useState<Record<string, Record<string, string>>>({})
+  const [namePrefix, setNamePrefix] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const pkg = packages.find((p) => p.id === pkgId) ?? null
+
+  useEffect(() => {
+    if (!open) return
+    setStep(0); setPkgId(null); setMatched(null); setSelected([]); setEnvValues({})
+    setNamePrefix(''); setError(null)
+    window.api.mcp.listPackages().then((list) => setPackages(list.filter((p) => !p.disabled)))
+      .catch((e: unknown) => setError(ipcErrMsg(e)))
+  }, [open])
+
+  // 进入第 2 步时拉取型号预筛（预勾选匹配且无冲突的设备，D-21）
+  useEffect(() => {
+    if (!open || step !== 1 || pkgId == null || matched != null) return
+    setMatchedLoading(true)
+    window.api.mcp.listMatchedDevices(pkgId)
+      .then((res) => {
+        if (!res.ok) { setError(res.error); return }
+        setMatched(res.devices)
+        setSelected(res.devices.filter((d) => d.matchedModel != null && d.boundConfigName == null).map((d) => d.deviceId))
+      })
+      .catch((e: unknown) => setError(ipcErrMsg(e)))
+      .finally(() => setMatchedLoading(false))
+  }, [open, step, pkgId, matched])
+
+  const setEnvValue = (deviceId: string, key: string, v: string) => {
+    setEnvValues((prev) => ({ ...prev, [deviceId]: { ...(prev[deviceId] ?? {}), [key]: v } }))
+  }
+
+  const nextDisabled =
+    (step === 0 && pkgId == null) ||
+    (step === 1 && selected.length === 0)
+
+  const doCreate = async () => {
+    if (pkgId == null || pkg == null) return
+    setCreating(true)
+    setError(null)
+    try {
+      const deviceName = new Map((matched ?? []).map((d) => [d.deviceId, d.name]))
+      const deviceEnvs = selected.map((id) => {
+        const env: Record<string, string> = {}
+        for (const [k, v] of Object.entries(envValues[id] ?? {})) {
+          if (v !== '') env[k] = v
+        }
+        return {
+          deviceId: id,
+          // 名称前缀与包名不同才显式下发（缺省走 service「{包名}-{设备名}」派生）
+          ...(namePrefix.trim() !== '' && namePrefix.trim() !== pkg.name
+            ? { name: `${namePrefix.trim()}-${deviceName.get(id) ?? id}` }
+            : {}),
+          env,
+        }
+      })
+      const res = await window.api.mcp.createConfigsFromPackage(pkgId, deviceEnvs)
+      if (res.ok) {
+        message.success(`已批量创建 ${res.created} 台设备绑定`)
+        onCreated()
+        onClose()
+      } else {
+        setError(res.error)
+      }
+    } catch (e: unknown) {
+      setError(ipcErrMsg(e))
+    }
+    setCreating(false)
+  }
+
+  const matchedRows: McpMatchedDeviceDto[] = matched ?? []
+  const anyMatched = matchedRows.some((d) => d.matchedModel != null && d.boundConfigName == null)
+
+  const footer = (
+    <Space>
+      {step > 0 && <Button onClick={() => setStep((s) => s - 1)}>上一步</Button>}
+      {step < 3
+        ? <Button type="primary" disabled={nextDisabled} onClick={() => setStep((s) => s + 1)}>下一步</Button>
+        : (
+          <Button type="primary" loading={creating} disabled={selected.length === 0} onClick={doCreate}>
+            批量创建 {selected.length} 台绑定
+          </Button>
+        )}
+    </Space>
+  )
+
+  return (
+    <Modal
+      open={open}
+      title="从 MCP 包创建配置"
+      footer={footer}
+      onCancel={onClose}
+      width={880}
+      destroyOnClose
+    >
+      <Steps
+        size="small"
+        current={step}
+        items={['选择包', '预筛设备', '填写环境变量', '确认创建'].map((t) => ({ title: t }))}
+      />
+      {error != null && <Alert type="error" showIcon style={{ marginTop: 16 }} message={error} />}
+      <div style={{ marginTop: 16 }}>
+        {step === 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {packages.length === 0 ? (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="还没有导入 MCP 包——先在上方「导入包」完成登记，再从这里创建配置"
+              />
+            ) : (
+              <>
+                <Select
+                  value={pkgId}
+                  onChange={(id) => { setPkgId(id); setMatched(null) }}
+                  style={{ width: 360 }}
+                  placeholder="选择已登记的 MCP 包"
+                  options={packages.map((p) => ({
+                    value: p.id,
+                    label: `${p.name}${p.version ? ` v${p.version}` : ''} · ${p.runtime} · ${p.toolCount} 个工具`,
+                  }))}
+                />
+                {pkg && (
+                  <Card size="small">
+                    <Space direction="vertical" size={4}>
+                      <div>适用型号：{pkg.models.length > 0 ? pkg.models.map((m) => <Tag key={m}>{m}</Tag>) : <Text type="secondary">未声明（全部设备需手动勾选）</Text>}</div>
+                      <div>环境变量：{pkg.envKeys.length > 0
+                        ? pkg.envKeys.map((k) => <code key={k} style={{ fontFamily: 'monospace', fontSize: 13 }}>{k}</code>)
+                        : <Text type="secondary">该包未声明环境变量，无需填写</Text>}</div>
+                      <div style={{ fontSize: 12, color: '#8c8c8c' }}>入口：<code style={{ fontFamily: 'monospace', fontSize: 13 }}>{pkg.entry}</code>（{pkg.runtime}）</div>
+                    </Space>
+                  </Card>
+                )}
+              </>
+            )}
+          </div>
+        )}
+        {step === 1 && (
+          matchedLoading ? <Spin /> : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {!anyMatched && pkg && (
+                <Alert
+                  type="info" showIcon
+                  message={`没有型号匹配「${pkg.models.join('、')}」的设备。可手动勾选任意设备继续。`}
+                />
+              )}
+              <DeviceEnvTable
+                rows={matchedRows}
+                envKeys={pkg?.envKeys ?? []}
+                value={envValues}
+                onChange={setEnvValue}
+                selected={selected}
+                onSelectedChange={setSelected}
+              />
+            </div>
+          )
+        )}
+        {step === 2 && (
+          <DeviceEnvTable
+            rows={matchedRows.filter((d) => selected.includes(d.deviceId))}
+            envKeys={pkg?.envKeys ?? []}
+            value={envValues}
+            onChange={setEnvValue}
+            emptyKeysHint="该包未声明环境变量，无需填写"
+          />
+        )}
+        {step === 3 && pkg && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <Alert
+              type="info" showIcon
+              message={`将为 ${selected.length} 台设备各创建 1 条配置并绑定（一台设备一组环境变量，互不影响）。`}
+            />
+            <div>
+              <Text strong>配置名前缀</Text>
+              <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 2 }}>每条配置名 = 前缀-设备名（默认用包名）</div>
+              <Input
+                value={namePrefix}
+                onChange={(e) => setNamePrefix(e.target.value)}
+                placeholder={pkg.name}
+                style={{ width: 360, marginTop: 4 }}
+              />
+            </div>
+            <Card size="small" title="将创建的绑定">
+              {matchedRows.filter((d) => selected.includes(d.deviceId)).map((d) => (
+                <div key={d.deviceId}>
+                  {namePrefix.trim() !== '' ? `${namePrefix.trim()}-${d.name}` : `${pkg.name}-${d.name}`}
+                  {d.matchedModel != null && <Tag style={{ marginLeft: 8 }}>匹配：{d.matchedModel}</Tag>}
+                </div>
+              ))}
+            </Card>
+          </div>
+        )}
+      </div>
+    </Modal>
+  )
 }
 
 export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
@@ -206,6 +431,30 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
 
   // D-02 工具管理抽屉（数据源 = mcp:getToolCache 测试缓存）
   const [toolDrawerConfig, setToolDrawerConfig] = useState<McpConfigDto | null>(null)
+
+  // 29-06：stdio 编辑态设备级 env 未修改哨兵基线（openEdit 时快照，保存时比对）
+  const editMaskedRef = useRef<Record<string, Record<string, string>>>({})
+  // 29-06（D-20）：从 MCP 包创建向导
+  const [wizardOpen, setWizardOpen] = useState(false)
+  // 29-06（D-16）：编辑态新增 env 键列
+  const [newEnvKey, setNewEnvKey] = useState('')
+
+  const setDeviceEnvValue = useCallback((deviceId: string, key: string, v: string) => {
+    setForm((f) => ({
+      ...f,
+      deviceEnvValues: {
+        ...f.deviceEnvValues,
+        [deviceId]: { ...(f.deviceEnvValues[deviceId] ?? {}), [key]: v },
+      },
+    }))
+  }, [])
+
+  const addEnvKeyColumn = useCallback(() => {
+    const k = newEnvKey.trim()
+    if (k === '') return
+    setForm((f) => f.deviceEnvKeys.includes(k) ? f : { ...f, deviceEnvKeys: [...f.deviceEnvKeys, k] })
+    setNewEnvKey('')
+  }, [newEnvKey])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -263,6 +512,20 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
         ? { key: entry.slice(0, idx), value: entry.slice(idx + 1), masked: true }
         : { key: entry, value: '****', masked: true }
     })
+    // 29-06（D-16/D-17）：stdio 编辑态设备级 env 回显——逐设备 "KEY=****尾4"（存量迁移后每台各一组）
+    const deviceEnvValues: Record<string, Record<string, string>> = {}
+    const maskedSnap: Record<string, Record<string, string>> = {}
+    for (const id of cfg.deviceIds) {
+      const m: Record<string, string> = {}
+      for (const entry of cfg.deviceEnvMasked[id] ?? []) m[maskedEntryKey(entry)] = maskedEntryValue(entry)
+      deviceEnvValues[id] = { ...m }
+      maskedSnap[id] = { ...m }
+    }
+    editMaskedRef.current = maskedSnap
+    const deviceEnvKeys = Array.from(new Set([
+      ...envRows.map((r) => r.key),
+      ...Object.values(maskedSnap).flatMap((m) => Object.keys(m)),
+    ])).filter((k) => k !== '')
     setForm({
       id: cfg.id,
       name: cfg.name,
@@ -273,6 +536,8 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
       credential: '', // 未输入新令牌 = 不修改（credentialMasked 回显）
       credentialMasked: cfg.credentialMasked,
       deviceIds: [...cfg.deviceIds],
+      deviceEnvKeys,
+      deviceEnvValues,
     })
     setFormError(null)
     setTest(null)
@@ -307,7 +572,7 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
         type: form.type,
         commandOrUrl: form.commandOrUrl || undefined,
         args: form.type === 'stdio' ? form.args : [],
-        env: form.type === 'stdio' ? collectEnv() : undefined,
+        env: form.type === 'stdio' && form.id == null ? collectEnv() : undefined,
         // credential：未输入=undefined（沿用已存）；http 输入新值=明文；显式清除=空串（WR-05 统一语义）
         credential: form.type === 'http'
           ? (clearCred ? '' : form.credential !== '' ? form.credential : undefined)
@@ -388,7 +653,22 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
         type: form.type,
         commandOrUrl: form.commandOrUrl.trim(),
         args: form.type === 'stdio' ? form.args : [],
-        env: form.type === 'stdio' ? collectEnv() : null,
+        // 29-06（D-16）：stdio 编辑态走设备级 env（配置级共享 env 不动=undefined）；
+        // 新建仍走配置级 envRows（collectEnv）
+        env: form.type === 'stdio' ? (form.id != null ? undefined : collectEnv()) : null,
+        deviceEnvs: form.type === 'stdio' && form.id != null
+          ? form.deviceIds.map((id) => {
+              const env: Record<string, string> = {}
+              for (const k of form.deviceEnvKeys) {
+                const v = form.deviceEnvValues[id]?.[k]
+                if (v === undefined) continue
+                const snap = editMaskedRef.current[id]?.[k]
+                // 值与脱敏回显快照一致 = 未修改 → 哨兵（main 侧沿用该设备已存明文）
+                env[k] = snap != null && v === snap ? UNCHANGED_ENV_SENTINEL : v
+              }
+              return { deviceId: id, env }
+            })
+          : undefined,
         // WR-05：clearCred → null（清空已存令牌）；留空=undefined（沿用）；非空=重设
         credential: form.type === 'http'
           ? (clearCred ? null : form.credential === '' ? undefined : form.credential)
@@ -516,7 +796,12 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
       <Card
         title="MCP 配置"
         size="small"
-        extra={<Button type="primary" onClick={openCreate}>新建配置</Button>}
+        extra={(
+          <Space>
+            <Button onClick={() => setWizardOpen(true)}>从 MCP 包创建</Button>
+            <Button type="primary" onClick={openCreate}>新建配置</Button>
+          </Space>
+        )}
       >
         {empty ? (
           <Empty
@@ -597,6 +882,7 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
                   placeholder="如 -y、@modelcontextprotocol/server-everything"
                 />
               </div>
+              {form.id == null && (
               <div>
                 <Text strong>环境变量</Text>
                 <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 2 }}>
@@ -637,6 +923,7 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
                   </div>
                 </div>
               </div>
+              )}
             </>
           ) : (
             <>
@@ -680,6 +967,42 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
               </div>
             </>
           )}
+          {form.type === 'stdio' && form.id != null ? (
+            // 29-06（D-16/契约 10）：编辑「本地程序」配置——绑定设备 + 逐台 env 共用 DeviceEnvTable
+            <div>
+              <Text strong>绑定设备与环境变量</Text>
+              <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 2 }}>
+                每台绑定设备各一组环境变量（互不影响）；一台设备只能绑定一个 MCP 配置。凭证性质值只回显末 4 位，未修改不会重新保存。
+              </div>
+              <div style={{ marginTop: 8 }}>
+                <DeviceEnvTable
+                  rows={devices.map((d) => ({
+                    deviceId: d.id,
+                    name: d.name,
+                    model: d.model || null,
+                    boundConfigName: deviceIdOwner(d.id, form.id),
+                  }))}
+                  envKeys={form.deviceEnvKeys}
+                  value={form.deviceEnvValues}
+                  onChange={setDeviceEnvValue}
+                  selected={form.deviceIds}
+                  onSelectedChange={(ids) => setForm((f) => ({ ...f, deviceIds: ids }))}
+                  addKeySlot={
+                    <Space style={{ marginTop: 8 }}>
+                      <Input
+                        style={{ width: 180 }}
+                        value={newEnvKey}
+                        onChange={(e) => setNewEnvKey(e.target.value)}
+                        onPressEnter={addEnvKeyColumn}
+                        placeholder="新增变量名"
+                      />
+                      <Button size="small" onClick={addEnvKeyColumn}>添加变量列</Button>
+                    </Space>
+                  }
+                />
+              </div>
+            </div>
+          ) : (
           <div>
             <Text strong>绑定设备</Text>
             <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 2 }}>一台设备只能绑定一个 MCP 配置</div>
@@ -706,6 +1029,7 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
               }}
             />
           </div>
+          )}
           <div>
             <Button onClick={runFormTest} disabled={test?.running ?? false}>
               测试连接
@@ -748,6 +1072,9 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
       </Modal>
 
       <ToolDrawer tool={drawerTool} onClose={() => setDrawerTool(null)} />
+
+      {/* 29-06（D-20）：从 MCP 包创建向导 */}
+      <PackageCreateWizard open={wizardOpen} onClose={() => setWizardOpen(false)} onCreated={load} />
 
       {/* D-02 工具级管理抽屉（启用/免确认，数据源 getToolCache） */}
       <McpToolManageDrawer

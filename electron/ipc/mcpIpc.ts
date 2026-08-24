@@ -97,6 +97,26 @@ export function registerMcpIpc() {
       if (dto.deviceIds.length > MAX_BATCH) throw new Error(`deviceIds 超过批量上限 ${MAX_BATCH}`)
       if (dto.deviceIds.some((d) => typeof d !== 'string' || !d)) throw new Error('参数无效：deviceIds 元素')
     }
+    // 29-06（D-16）：设备级 env（手工 stdio 编辑态 DeviceEnvTable 提交，逐项 schema 校验）
+    if (dto.deviceEnvs !== undefined && dto.deviceEnvs !== null) {
+      if (!Array.isArray(dto.deviceEnvs)) throw new Error('参数无效：deviceEnvs 必须为数组')
+      if (dto.deviceEnvs.length > MAX_BATCH) throw new Error(`deviceEnvs 超过批量上限 ${MAX_BATCH}`)
+      for (const item of dto.deviceEnvs) {
+        if (!item || typeof item !== 'object') throw new Error('参数无效：deviceEnvs 元素')
+        if (typeof item.deviceId !== 'string' || !item.deviceId) throw new Error('参数无效：deviceEnvs.deviceId')
+        if (item.env === undefined || item.env === null || typeof item.env !== 'object' || Array.isArray(item.env)) {
+          throw new Error('参数无效：deviceEnvs.env 必须为键值对对象')
+        }
+        const keys = Object.keys(item.env)
+        if (keys.length > MAX_ENV_PAIRS) throw new Error(`env 键值对超过上限 ${MAX_ENV_PAIRS}`)
+        if (keys.some((k) => k.length > MAX_ENV_KEY_LENGTH)) throw new Error(`env 键超过长度上限 ${MAX_ENV_KEY_LENGTH}`)
+        for (const v of Object.values(item.env)) {
+          if (typeof v !== 'string' || v.length > MAX_ENV_VALUE_LENGTH) {
+            throw new Error(`参数无效：env 值必须为 string 且不超过 ${MAX_ENV_VALUE_LENGTH} 字符`)
+          }
+        }
+      }
+    }
     // 业务拒绝（D-04 绑定冲突等）走 { ok:false, error }，不以异常形式抛给 renderer
     // Bug A（生产实测）：粘贴引入的 \t/\n 前后缀致 http Authorization 非法 header——
     // 保存入口 trim（新数据干净）；全空白 credential 归一为 null（清空）

@@ -354,6 +354,8 @@ export interface McpConfigDto {
   lastTestAt: string | null
   lastTestStatus: string | null
   lastTestToolCount: number | null
+  /** 29-06（D-16）：每台绑定设备 env 键值脱敏回显（"KEY=****尾4"，永无明文） */
+  deviceEnvMasked: Record<string, string[]>
 }
 
 export interface McpSaveDto {
@@ -365,6 +367,8 @@ export interface McpSaveDto {
   env?: Record<string, string> | null
   credential?: string | null
   deviceIds?: string[]
+  /** 29-06（D-16）：设备级 env（哨兵 '****__unchanged__' 沿用该设备已存明文；'' 删除该键） */
+  deviceEnvs?: Array<{ deviceId: string; env: Record<string, string> }> | null
   enabled?: boolean
 }
 

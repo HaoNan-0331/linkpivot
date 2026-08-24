@@ -43,6 +43,12 @@ export interface McpSaveInput {
   credential?: string | null
   /** 全量期望绑定设备（覆盖式 diff） */
   deviceIds?: string[]
+  /**
+   * 29-06（D-16）：设备级 env（手工「本地程序」编辑态 DeviceEnvTable 提交）。
+   * 仅覆盖列出的设备；env 值支持 UNCHANGED_ENV_SENTINEL 哨兵（沿用该设备已存明文）
+   * 与 ''（删除该键）——与配置级 env 同一套哨兵语义，逐设备独立合并。
+   */
+  deviceEnvs?: Array<{ deviceId: string; env: Record<string, string> }> | null
   enabled?: boolean
 }
 
@@ -62,6 +68,11 @@ export interface McpConfigView {
   lastTestAt: string | null
   lastTestStatus: string | null
   lastTestToolCount: number | null
+  /**
+   * 29-06（D-16）：每台绑定设备的 env 键值脱敏回显（"KEY=****尾4" 列表）。
+   * 值只显尾 4 位哨兵形态，renderer 永不接收明文（T-29-06-02）。
+   */
+  deviceEnvMasked: Record<string, string[]>
 }
 
 /** main 进程内部用（21-03 mcpClient 连接测试）——绝不进 IPC 出口 */
@@ -98,23 +109,32 @@ export class McpService {
     return `****${v.slice(-4)}`
   }
 
+  /** rel 行 env_json_enc → "KEY=****尾4" 脱敏列表（坏密文/坏 JSON 降级空列表） */
+  private static maskedEnvList(enc: string | null | undefined): string[] {
+    if (!enc) return []
+    const dec = decField(enc, McpService.MK)
+    try {
+      const env = dec ? JSON.parse(dec) : {}
+      if (env && typeof env === 'object') {
+        return Object.entries(env as Record<string, string>)
+          .filter(([, v]) => typeof v === 'string')
+          .map(([k, v]) => `${k}=${McpService.mask(v) ?? '****'}`)
+      }
+    } catch {
+      // 坏 JSON 降级空列表
+    }
+    return []
+  }
+
   /** 行 → 出口投影：解密 env/credential 仅用于脱敏投影，密文列不外泄 */
-  private static rowToView(row: any, relRows: Array<{ device_id: string }>): McpConfigView {
+  private static rowToView(row: any, relRows: Array<{ device_id: string; env_json_enc?: string | null }>): McpConfigView {
     let envKeysMasked: string[] = []
     if (row.env_json_enc) {
-      const dec = decField(row.env_json_enc, McpService.MK)
-      try {
-        const env = dec ? JSON.parse(dec) : {}
-        if (env && typeof env === 'object') {
-          envKeysMasked = Object.entries(env as Record<string, string>)
-            .filter(([, v]) => typeof v === 'string')
-            .map(([k, v]) => `${k}=${McpService.mask(v) ?? '****'}`)
-        }
-      } catch {
-        // 坏 JSON 降级空列表（decField 失败已走 setDecryptFailureHandler）
-      }
+      envKeysMasked = McpService.maskedEnvList(row.env_json_enc)
     }
     const deviceIds = relRows.map((r) => r.device_id)
+    const deviceEnvMasked: Record<string, string[]> = {}
+    for (const r of relRows) deviceEnvMasked[r.device_id] = McpService.maskedEnvList(r.env_json_enc)
     const deviceNames = deviceIds
       .map((id) => {
         const d = getDeviceById(id) as any
@@ -135,13 +155,14 @@ export class McpService {
       lastTestAt: row.last_test_at ?? null,
       lastTestStatus: row.last_test_status ?? null,
       lastTestToolCount: row.last_test_tool_count ?? null,
+      deviceEnvMasked,
     }
   }
 
   static listConfigs(): McpConfigView[] {
     const conn = McpService.db()
     const rows = conn.prepare('SELECT * FROM mcp_configs ORDER BY id').all() as any[]
-    const stmtRel = conn.prepare('SELECT device_id FROM mcp_device_rel WHERE mcp_config_id = ? ORDER BY created_at, device_id')
+    const stmtRel = conn.prepare('SELECT device_id, env_json_enc FROM mcp_device_rel WHERE mcp_config_id = ? ORDER BY created_at, device_id')
     return rows.map((r) => McpService.rowToView(r, stmtRel.all(r.id) as Array<{ device_id: string }>))
   }
 
@@ -227,6 +248,20 @@ export class McpService {
       }
 
       // ---- 绑定覆盖式 diff：删旧 rel + 插新 rel ----
+      // 29-06（D-16）：删行前捕获各设备已存 env 明文（哨兵合并基线；覆盖式 diff 后回写）
+      const deviceEnvs = dto.deviceEnvs ?? null
+      let priorEnvByDevice: Map<string, Record<string, string>> | null = null
+      if (deviceEnvs) {
+        priorEnvByDevice = new Map()
+        const stmtOldEnv = conn.prepare('SELECT device_id, env_json_enc FROM mcp_device_rel WHERE mcp_config_id = ?')
+        for (const r of stmtOldEnv.all(dto.id ?? -1) as Array<{ device_id: string; env_json_enc: string | null }>) {
+          const dec = r.env_json_enc ? decField(r.env_json_enc, McpService.MK) : null
+          try {
+            const parsed = dec ? JSON.parse(dec) : {}
+            if (parsed && typeof parsed === 'object') priorEnvByDevice.set(r.device_id, parsed as Record<string, string>)
+          } catch { /* 坏 JSON：该设备基线为空 */ }
+        }
+      }
       const finalId: number = configId != null
         ? configId
         : (conn.prepare('SELECT last_insert_rowid() AS id').get() as { id: number }).id
@@ -238,8 +273,30 @@ export class McpService {
         }
       }
 
+      // ---- 29-06（D-16）：设备级 env 回写（encField 红线；哨兵/空串逐设备合并）----
+      if (deviceEnvs && dto.deviceIds !== undefined) {
+        const stmtUpdRel = conn.prepare(
+          'UPDATE mcp_device_rel SET env_json_enc = ? WHERE mcp_config_id = ? AND device_id = ?'
+        )
+        const boundSet = new Set(dto.deviceIds)
+        for (const item of deviceEnvs) {
+          if (!boundSet.has(item.deviceId)) continue // 未绑定设备忽略（防越行写）
+          const existing = priorEnvByDevice?.get(item.deviceId) ?? {}
+          const merged: Record<string, string> = {}
+          for (const [k, v] of Object.entries(item.env ?? {})) {
+            if (v === UNCHANGED_ENV_SENTINEL) {
+              if (existing[k] !== undefined) merged[k] = existing[k]
+            } else if (v !== '') {
+              merged[k] = v
+            }
+          }
+          const envStr = Object.keys(merged).length > 0 ? JSON.stringify(merged) : null
+          stmtUpdRel.run(envStr ? encField(envStr, McpService.MK) : null, finalId, item.deviceId)
+        }
+      }
+
       const row = conn.prepare('SELECT * FROM mcp_configs WHERE id = ?').get(finalId) as any
-      const relRows = conn.prepare('SELECT device_id FROM mcp_device_rel WHERE mcp_config_id = ? ORDER BY created_at, device_id')
+      const relRows = conn.prepare('SELECT device_id, env_json_enc FROM mcp_device_rel WHERE mcp_config_id = ? ORDER BY created_at, device_id')
         .all(finalId) as Array<{ device_id: string }>
       result = { ok: true, config: McpService.rowToView(row, relRows) }
     })

@@ -57,6 +57,7 @@ const DDL = `
     mcp_config_id INTEGER NOT NULL,
     device_id TEXT NOT NULL UNIQUE,
     created_at TEXT DEFAULT (datetime('now','localtime')),
+    env_json_enc TEXT,
     FOREIGN KEY (mcp_config_id) REFERENCES mcp_configs(id) ON DELETE CASCADE,
     FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
   );
