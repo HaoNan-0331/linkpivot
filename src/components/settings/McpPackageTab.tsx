@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  Alert, Button, Drawer, Empty, Input, Modal, Space, Spin, Steps, Table, Tag, Typography, Upload, message,
+  Alert, Button, Card, Drawer, Empty, Input, Modal, Space, Spin, Steps, Table, Tag, Typography, Upload, message,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import {
@@ -61,7 +61,7 @@ interface PkgTestState {
 }
 
 // ---------------------------------------------------------------------------
-// 主组件：导入包（主 CTA）+ 包管理（次级）双入口，宿主为 MCP 管理页 Card 头部（D-29）
+// 主组件（Gap-1）：「MCP 包」独立平级列表区块（Card），右上【导入】= 唯一 accent CTA（契约 11）
 // ---------------------------------------------------------------------------
 export default function McpPackageTab({ onPackagesChanged }: { onPackagesChanged?: () => void }) {
   // ---- 导入向导 ----
@@ -80,8 +80,7 @@ export default function McpPackageTab({ onPackagesChanged }: { onPackagesChanged
   const [pkgTest, setPkgTest] = useState<PkgTestState | null>(null)
   const pkgTestIdRef = useRef<string | null>(null)
 
-  // ---- 包管理 Drawer ----
-  const [drawerOpen, setDrawerOpen] = useState(false)
+  // ---- 包列表（平铺区块）----
   const [packages, setPackages] = useState<McpPackageViewDto[]>([])
   const [pkgLoading, setPkgLoading] = useState(false)
   const [fpDetail, setFpDetail] = useState<McpPackageDetailDto | null>(null)
@@ -90,7 +89,7 @@ export default function McpPackageTab({ onPackagesChanged }: { onPackagesChanged
   const [deleteImpact, setDeleteImpact] = useState<McpPackageDeleteImpactDto | null>(null)
   const [deleteInput, setDeleteInput] = useState('')
   const [deleting, setDeleting] = useState(false)
-  // 行重测（Drawer 内）
+  // 行重测
   const [rowTest, setRowTest] = useState<PkgTestState | null>(null)
   const rowTestIdRef = useRef<string | null>(null)
 
@@ -178,6 +177,7 @@ export default function McpPackageTab({ onPackagesChanged }: { onPackagesChanged
         }
         setStep(1)
         onPackagesChanged?.()
+        loadPackages()
       } else {
         setStep(1)
       }
@@ -213,6 +213,7 @@ export default function McpPackageTab({ onPackagesChanged }: { onPackagesChanged
         setOverwriteOpen(false)
         message.success('已用新内容覆盖包文件')
         onPackagesChanged?.()
+        loadPackages()
       } else {
         message.error(r.error)
         if (r.vectors) setOutcome({ ok: false, error: r.error, vectors: r.vectors })
@@ -223,7 +224,7 @@ export default function McpPackageTab({ onPackagesChanged }: { onPackagesChanged
     setOverwriting(false)
   }
 
-  // ---- 包管理 Drawer ----
+  // ---- 包列表加载（组件挂载即加载；导入/删除后刷新）----
   const loadPackages = useCallback(async () => {
     setPkgLoading(true)
     try {
@@ -234,12 +235,9 @@ export default function McpPackageTab({ onPackagesChanged }: { onPackagesChanged
     setPkgLoading(false)
   }, [])
 
-  const openDrawer = () => {
-    setDrawerOpen(true)
-    setRowTest(null)
-    setFpDetail(null)
+  useEffect(() => {
     loadPackages()
-  }
+  }, [loadPackages])
 
   const showFingerprint = async (id: number) => {
     try {
@@ -388,11 +386,47 @@ export default function McpPackageTab({ onPackagesChanged }: { onPackagesChanged
 
   return (
     <>
-      <Space size={8}>
-        {/* 契约 11：导入包 = 本页唯一 accent 实心 CTA */}
-        <Button type="primary" onClick={openWizard}>导入包</Button>
-        <Button onClick={openDrawer}>包管理</Button>
-      </Space>
+      {/* Gap-1：包是与配置平级的一等列表区块；右上【导入】= 本页唯一 accent CTA（契约 11） */}
+      <Card
+        title="MCP 包"
+        size="small"
+        extra={<Button type="primary" onClick={openWizard}>导入</Button>}
+      >
+        {pkgLoading ? <Spin /> : packages.length === 0 ? (
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description={
+              <div>
+                <div style={{ fontWeight: 600 }}>还没有导入 MCP 包</div>
+                <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 4 }}>
+                  MCP 包（.mcpb）是打包好的设备操控工具集，一个产品一个包。
+                  <Button type="link" size="small" style={{ padding: 0 }} onClick={openWizard}>导入包</Button>
+                  校验通过后即可在新建配置时选用。
+                </div>
+              </div>
+            }
+          />
+        ) : (
+          <Table
+            size="small" rowKey="id" columns={pkgColumns} dataSource={packages}
+            pagination={false} expandable={{ expandedRowRender: pkgRowDetail }}
+          />
+        )}
+        {rowTest?.running && (
+          <Alert style={{ marginTop: 16 }} type="info" showIcon icon={<Spin size="small" />} message={`${STAGE_TEXT[rowTest.stage] ?? STAGE_TEXT.starting}（已耗时 ${rowTest.elapsedSec} 秒）`} />
+        )}
+        {rowTest && !rowTest.running && (
+          <Alert
+            style={{ marginTop: 16 }}
+            type={rowTest.failReason == null ? 'success' : 'error'}
+            showIcon
+            message={rowTest.failReason == null ? '自动测试通过' : `自动测试失败：${rowTest.failReason}`}
+            description={rowTest.failReason == null && rowTest.extraTools.length > 0
+              ? `实测多出 ${rowTest.extraTools.length} 个未声明工具，已默认禁用不暴露给 AI。请包作者修正 manifest 重新发布后重新导入。`
+              : undefined}
+          />
+        )}
+      </Card>
 
       {/* 四步导入向导（宽 720，严格线性不可跳步，契约 1） */}
       <Modal
@@ -528,7 +562,7 @@ export default function McpPackageTab({ onPackagesChanged }: { onPackagesChanged
             <Button type="primary" onClick={() => runTest(detail.id, 'wizard')}>确认登记入库</Button>
           )}
           {step === 3 && pkgTest && (
-            <Button type="primary" onClick={() => { setWizardOpen(false); onPackagesChanged?.() }}>完成</Button>
+            <Button type="primary" onClick={() => { setWizardOpen(false); onPackagesChanged?.(); loadPackages() }}>完成</Button>
           )}
         </div>
       </Modal>
@@ -581,47 +615,6 @@ export default function McpPackageTab({ onPackagesChanged }: { onPackagesChanged
           </div>
         )}
       </Modal>
-
-      {/* 包管理 Drawer（宽 720，独立于配置列表，D-29 契约 8） */}
-      <Drawer
-        open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        title="包管理"
-        width={720}
-      >
-        {pkgLoading ? <Spin /> : packages.length === 0 ? (
-          <Empty
-            image={Empty.PRESENTED_IMAGE_SIMPLE}
-            description={
-              <div>
-                <div style={{ fontWeight: 600 }}>还没有导入 MCP 包</div>
-                <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 4 }}>
-                  MCP 包（.mcpb）是打包好的设备操控工具集，一个产品一个包。点击「导入包」，校验通过后即可在新建配置时选用。
-                </div>
-              </div>
-            }
-          />
-        ) : (
-          <Table
-            size="small" rowKey="id" columns={pkgColumns} dataSource={packages}
-            pagination={false} expandable={{ expandedRowRender: pkgRowDetail }}
-          />
-        )}
-        {rowTest?.running && (
-          <Alert style={{ marginTop: 16 }} type="info" showIcon icon={<Spin size="small" />} message={`${STAGE_TEXT[rowTest.stage] ?? STAGE_TEXT.starting}（已耗时 ${rowTest.elapsedSec} 秒）`} />
-        )}
-        {rowTest && !rowTest.running && (
-          <Alert
-            style={{ marginTop: 16 }}
-            type={rowTest.failReason == null ? 'success' : 'error'}
-            showIcon
-            message={rowTest.failReason == null ? '自动测试通过' : `自动测试失败：${rowTest.failReason}`}
-            description={rowTest.failReason == null && rowTest.extraTools.length > 0
-              ? `实测多出 ${rowTest.extraTools.length} 个未声明工具，已默认禁用不暴露给 AI。请包作者修正 manifest 重新发布后重新导入。`
-              : undefined}
-          />
-        )}
-      </Drawer>
 
       {/* 指纹查看 Drawer（monospace） */}
       <Drawer

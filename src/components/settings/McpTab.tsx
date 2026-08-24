@@ -793,11 +793,10 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
 
   return (
     <div>
-      {/* D-29/契约 8/11：包对象只经「导入包/包管理」入口出现，配置列表零混入；头部主按钮=导入包 */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-        <McpPackageTab onPackagesChanged={load} />
-      </div>
+      {/* Gap-1：MCP 包 = 与 MCP 配置平级的一等列表区块（两 Card 垂直并列，间距 16） */}
+      <McpPackageTab onPackagesChanged={load} />
       <Card
+        style={{ marginTop: 16 }}
         title="MCP 配置"
         size="small"
         extra={(
