@@ -375,9 +375,9 @@ describe('Task 1b: deletePackage / getPackageDeleteImpact / testPackage', () => 
 })
 
 // ---------------------------------------------------------------------------
-// Phase 29 Plan 29-06（PKG-05）：listMatchedDevices + createConfigsFromPackage
+// Phase 29 Plan 29-06（PKG-05）：listMatchedDevices
 // ---------------------------------------------------------------------------
-describe('Task 1 (29-06): listMatchedDevices / createConfigsFromPackage', () => {
+describe('Task 1 (29-06): listMatchedDevices', () => {
   /** 设备种子：name/model 与生产同形（密文列，TEST_MK 加密） */
   function seedDevice(db: Database.Database, id: string, name: string, model: string | null): void {
     db.prepare(
@@ -439,78 +439,6 @@ describe('Task 1 (29-06): listMatchedDevices / createConfigsFromPackage', () => 
     expect(McpPackageService.listMatchedDevices(9999)).toBeNull()
   })
 
-  it('createConfigsFromPackage：10 设备批量生成 10 config + 10 rel 各自独立 env 密文（D-20/D-21）', () => {
-    const pkgId = importPkgWithModels(['S5735'], ['NF_TOKEN', 'NF_PORT'])
-    const deviceEnvs: Array<{ deviceId: string; env: Record<string, string> }> = []
-    for (let i = 0; i < 10; i++) {
-      const id = `fw-${i}`
-      seedDevice(h.db!, id, `FW-${i}`, `S5735-${i}`)
-      deviceEnvs.push({ deviceId: id, env: { NF_TOKEN: `tok-${i}`, NF_PORT: String(8000 + i) } })
-    }
-    const res = McpPackageService.createConfigsFromPackage(pkgId, deviceEnvs)
-    expect(res.ok).toBe(true)
-    if (!res.ok) return
-    expect(res.created).toBe(10)
-    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_configs WHERE package_id = ?').get(pkgId)).toEqual({ c: 10 })
-    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_device_rel').get()).toEqual({ c: 10 })
-    // 各自独立密文：逐台解密互不串线
-    for (let i = 0; i < 10; i++) {
-      const env = relEnv(h.db!, `fw-${i}`)!
-      expect(env).toEqual({ NF_TOKEN: `tok-${i}`, NF_PORT: String(8000 + i) })
-    }
-    const c0 = h.db!.prepare('SELECT * FROM mcp_configs WHERE package_id = ? ORDER BY id').all(pkgId)[0] as any
-    expect(c0.name).toBe('nf-pkg-FW-0')
-    expect(c0.type).toBe('stdio')
-    expect(c0.source).toBe('package')
-  })
-
-  it('createConfigsFromPackage：任一设备已绑其它配置 → 整体拒绝零部分写入（D-19/T-29-06-01）', () => {
-    const pkgId = importPkgWithModels(['S5735'], ['NF_TOKEN'])
-    seedDevice(h.db!, 'a1', 'A1', 'S5735')
-    seedDevice(h.db!, 'a2', 'A2', 'S5735')
-    const other = h.db!.prepare(
-      "INSERT INTO mcp_configs (name, type, command_or_url) VALUES ('existing', 'stdio', 'node')"
-    ).run()
-    h.db!.prepare('INSERT INTO mcp_device_rel (id, mcp_config_id, device_id) VALUES (?, ?, ?)')
-      .run('rel-y', other.lastInsertRowid as number, 'a2')
-
-    const res = McpPackageService.createConfigsFromPackage(pkgId, [
-      { deviceId: 'a1', env: { NF_TOKEN: 't1' } },
-      { deviceId: 'a2', env: { NF_TOKEN: 't2' } },
-    ])
-    expect(res.ok).toBe(false)
-    if (res.ok) return
-    expect(res.error).toContain('A2')
-    // 零部分写入：不新增任何 config / rel / env 密文
-    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_configs').get()).toEqual({ c: 1 })
-    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_device_rel').get()).toEqual({ c: 1 })
-    expect(relEnv(h.db!, 'a1')).toBeNull()
-  })
-
-  it('createConfigsFromPackage：入参守卫（未知 env 键 / 未知设备 / 包不存在）', () => {
-    const pkgId = importPkgWithModels(['S5735'], ['NF_TOKEN'])
-    seedDevice(h.db!, 'b1', 'B1', 'S5735')
-    expect(McpPackageService.createConfigsFromPackage(pkgId, [
-      { deviceId: 'b1', env: { EVIL_KEY: 'x' } },
-    ]).ok).toBe(false)
-    expect(McpPackageService.createConfigsFromPackage(pkgId, [
-      { deviceId: 'ghost', env: { NF_TOKEN: 'x' } },
-    ]).ok).toBe(false)
-    expect(McpPackageService.createConfigsFromPackage(9999, []).ok).toBe(false)
-    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_configs').get()).toEqual({ c: 0 })
-  })
-
-  it('WR-02：createConfigsFromPackage 即预填包根配置工具缓存（manifest.tools，AI 开箱可用）', () => {
-    const pkgId = importPkgWithModels(['S5735'], ['NF_TOKEN'])
-    seedDevice(h.db!, 'c1', 'C1', 'S5735')
-    const res = McpPackageService.createConfigsFromPackage(pkgId, [{ deviceId: 'c1', env: { NF_TOKEN: 't' } }])
-    expect(res.ok).toBe(true)
-    const rootId = (h.db!.prepare('SELECT MIN(id) AS id FROM mcp_configs WHERE package_id = ?').get(pkgId) as any).id
-    const rows = h.db!.prepare('SELECT tool_name, enabled, skip_confirm FROM mcp_tools WHERE config_id = ?').all(rootId) as any[]
-    expect(rows.map((r) => r.tool_name)).toEqual(['t1'])
-    expect(rows[0].enabled).toBe(1)
-    expect(rows[0].skip_confirm).toBe(0) // annotations 缺省 → 不给免确认资格
-  })
 })
 
 // ---------------------------------------------------------------------------

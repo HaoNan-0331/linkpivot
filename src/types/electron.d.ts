@@ -276,13 +276,9 @@ export interface ElectronAPI {
     deletePackage: (id: number) => Promise<{ ok: true } | { ok: false; error: string }>
     testPackage: (payload: { packageId: number, testId?: string }) =>
       Promise<{ ok: boolean; error?: string; extraTools?: string[]; missingTools?: string[] }>
-    // 29-06（PKG-05）：从包创建配置通道（型号预筛 + 批量绑定）
+    // 29-06（PKG-05）：从包创建配置通道（型号预筛 + 单条配置绑定 N 台设备）
     listMatchedDevices: (packageId: number) =>
       Promise<{ ok: true; devices: McpMatchedDeviceDto[] } | { ok: false; error: string }>
-    createConfigsFromPackage: (
-      packageId: number,
-      deviceEnvs: Array<{ deviceId: string; name?: string; env: Record<string, string> }>
-    ) => Promise<{ ok: true; created: number } | { ok: false; error: string }>
     /** 29-07（Gap-2）：单条配置绑定 N 台设备（每台独立 env，Gap-5 键名放开） */
     createConfigFromPackage: (
       packageId: number,

@@ -149,12 +149,8 @@ const api = {
     getPackageDeleteImpact: (id: number) => ipcRenderer.invoke('mcp:getPackageDeleteImpact', id),
     deletePackage: (id: number) => ipcRenderer.invoke('mcp:deletePackage', id),
     testPackage: (payload: { packageId: number, testId?: string }) => ipcRenderer.invoke('mcp:testPackage', payload),
-    // 29-06（PKG-05）：从包创建配置（型号预筛 + 批量绑定，出口无凭证字段）
+    // 29-06（PKG-05）：从包创建配置（型号预筛 + 单条配置绑定 N 台设备，出口无凭证字段）
     listMatchedDevices: (packageId: number) => ipcRenderer.invoke('mcp:listMatchedDevices', packageId),
-    createConfigsFromPackage: (
-      packageId: number,
-      deviceEnvs: Array<{ deviceId: string; name?: string; env: Record<string, string> }>
-    ) => ipcRenderer.invoke('mcp:createConfigsFromPackage', packageId, deviceEnvs),
     // 29-07（Gap-2）：单条配置绑定 N 台设备（每台独立 env，Gap-5 键名放开）
     createConfigFromPackage: (
       packageId: number,

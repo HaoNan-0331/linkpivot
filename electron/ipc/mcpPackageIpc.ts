@@ -108,36 +108,6 @@ export function registerMcpPackageIpc() {
   const MAX_ENV_VALUE_LENGTH = 2000
 
   /**
-   * 批量生成配置绑定（单事务整体拒绝，T-29-06-01）。
-   * deviceEnvs 数组 MAX_BATCH=1000 上限 + 逐项 schema 校验（deviceId/name/env 键值形态）；
-   * env 键子集校验（manifest 声明清单）与冲突事务拦截在 service 层。
-   */
-  ipcMain.handle('mcp:createConfigsFromPackage', secure((_e, packageId: unknown, deviceEnvs: unknown) => {
-    const pkgId = assertId(packageId)
-    if (!Array.isArray(deviceEnvs) || deviceEnvs.length === 0) throw new Error('参数无效：deviceEnvs 不能为空')
-    if (deviceEnvs.length > MAX_BATCH) throw new Error(`deviceEnvs 超过批量上限 ${MAX_BATCH}`)
-    for (const item of deviceEnvs as Array<{ deviceId?: unknown; name?: unknown; env?: unknown }>) {
-      if (!item || typeof item !== 'object') throw new Error('参数无效：deviceEnvs 元素')
-      if (typeof item.deviceId !== 'string' || item.deviceId === '') throw new Error('参数无效：deviceId')
-      if (item.name !== undefined && (typeof item.name !== 'string' || item.name.length > MAX_PKG_NAME_LENGTH)) {
-        throw new Error(`参数无效：name（长度上限 ${MAX_PKG_NAME_LENGTH}）`)
-      }
-      if (item.env === undefined || item.env === null || typeof item.env !== 'object' || Array.isArray(item.env)) {
-        throw new Error('参数无效：env 必须为键值对对象')
-      }
-      const entries = Object.entries(item.env as Record<string, unknown>)
-      if (entries.length > MAX_ENV_PAIRS_PER_DEVICE) throw new Error(`env 键值对超过上限 ${MAX_ENV_PAIRS_PER_DEVICE}`)
-      for (const [k, v] of entries) {
-        if (k.length > 100) throw new Error('参数无效：env 键超过长度上限 100')
-        if (typeof v !== 'string' || v.length > MAX_ENV_VALUE_LENGTH) {
-          throw new Error(`参数无效：env 值必须为 string 且不超过 ${MAX_ENV_VALUE_LENGTH} 字符`)
-        }
-      }
-    }
-    return McpPackageService.createConfigsFromPackage(pkgId, deviceEnvs as Array<{ deviceId: string; name?: string; env: Record<string, string> }>)
-  }))
-
-  /**
    * 单条配置绑定 N 台设备（29-07 Gap-2 语义：1 config + N rel 各自独立 env）。
    * 网关 schema 校验同批量通道风格；env 键不再比对 manifest.envKeys（Gap-5），
    * 冲突事务拦截在 service 层（T-29-07-02）。
