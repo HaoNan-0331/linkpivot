@@ -356,3 +356,130 @@ describe('Task 1b: deletePackage / getPackageDeleteImpact / testPackage', () => 
     expect(h.clientMock.testConnection).not.toHaveBeenCalled()
   })
 })
+
+// ---------------------------------------------------------------------------
+// Phase 29 Plan 29-06（PKG-05）：listMatchedDevices + createConfigsFromPackage
+// ---------------------------------------------------------------------------
+describe('Task 1 (29-06): listMatchedDevices / createConfigsFromPackage', () => {
+  /** 设备种子：name/model 与生产同形（密文列，TEST_MK 加密） */
+  function seedDevice(db: Database.Database, id: string, name: string, model: string | null): void {
+    db.prepare(
+      'INSERT INTO devices (id, name_enc, model_enc) VALUES (?, ?, ?)'
+    ).run(id, encField(name, TEST_MK), model != null ? encField(model, TEST_MK) : null)
+  }
+
+  function importPkgWithModels(models: string[], envKeys: string[]): number {
+    const manifest = {
+      name: 'nf-pkg', version: '1.0.0', runtime: 'node', entry: 'main.js',
+      models, tools: [{ name: 't1', description: 'd' }], envKeys,
+    }
+    const buf = zipSync({
+      'manifest.json': strToU8(JSON.stringify(manifest)),
+      'main.js': strToU8('console.log(1)'),
+    }) as unknown as Buffer
+    const res = McpPackageService.importPackage(buf)
+    if (!res.ok) throw new Error('import failed')
+    return res.package.id
+  }
+
+  beforeEach(() => {
+    h.db!.exec(`
+      CREATE TABLE devices (
+        id TEXT PRIMARY KEY,
+        name_enc TEXT NOT NULL,
+        model_enc TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `)
+  })
+
+  it('listMatchedDevices：型号包含匹配（忽略大小写/首尾空格）+ 冲突标注（D-07/D-21）', () => {
+    const pkgId = importPkgWithModels(['S5735', 'CE6857'], ['NF_TOKEN', 'NF_PORT'])
+    seedDevice(h.db!, 'd1', 'SW-1F', 'Huawei S5735-LI')
+    seedDevice(h.db!, 'd2', 'Core-A', ' ce6857ei ')
+    seedDevice(h.db!, 'd3', 'SRV-X', 'Lenovo ThinkServer')
+    // d1 已被其它（非本包）配置绑定 → 冲突标注
+    const other = h.db!.prepare(
+      "INSERT INTO mcp_configs (name, type, command_or_url) VALUES ('other', 'stdio', 'node')"
+    ).run()
+    h.db!.prepare('INSERT INTO mcp_device_rel (id, mcp_config_id, device_id) VALUES (?, ?, ?)')
+      .run('rel-x', other.lastInsertRowid as number, 'd1')
+
+    const list = McpPackageService.listMatchedDevices(pkgId)
+    expect(list).toHaveLength(3)
+    const d1 = list.find((d) => d.deviceId === 'd1')!
+    const d2 = list.find((d) => d.deviceId === 'd2')!
+    const d3 = list.find((d) => d.deviceId === 'd3')!
+    expect(d1.name).toBe('SW-1F')
+    expect(d1.model).toBe('Huawei S5735-LI')
+    expect(d1.matchedModel).toBe('S5735')
+    expect(d1.boundConfigName).toBe('other')
+    expect(d2.matchedModel).toBe('CE6857') // 首尾空格 + 小写变体命中
+    expect(d2.boundConfigName).toBeNull()
+    expect(d3.matchedModel).toBeNull()
+    // 包不存在拒绝
+    expect(McpPackageService.listMatchedDevices(9999)).toBeNull()
+  })
+
+  it('createConfigsFromPackage：10 设备批量生成 10 config + 10 rel 各自独立 env 密文（D-20/D-21）', () => {
+    const pkgId = importPkgWithModels(['S5735'], ['NF_TOKEN', 'NF_PORT'])
+    const deviceEnvs: Array<{ deviceId: string; env: Record<string, string> }> = []
+    for (let i = 0; i < 10; i++) {
+      const id = `fw-${i}`
+      seedDevice(h.db!, id, `FW-${i}`, `S5735-${i}`)
+      deviceEnvs.push({ deviceId: id, env: { NF_TOKEN: `tok-${i}`, NF_PORT: String(8000 + i) } })
+    }
+    const res = McpPackageService.createConfigsFromPackage(pkgId, deviceEnvs)
+    expect(res.ok).toBe(true)
+    if (!res.ok) return
+    expect(res.created).toBe(10)
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_configs WHERE package_id = ?').get(pkgId)).toEqual({ c: 10 })
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_device_rel').get()).toEqual({ c: 10 })
+    // 各自独立密文：逐台解密互不串线
+    for (let i = 0; i < 10; i++) {
+      const env = relEnv(h.db!, `fw-${i}`)!
+      expect(env).toEqual({ NF_TOKEN: `tok-${i}`, NF_PORT: String(8000 + i) })
+    }
+    const c0 = h.db!.prepare('SELECT * FROM mcp_configs WHERE package_id = ? ORDER BY id').all(pkgId)[0] as any
+    expect(c0.name).toBe('nf-pkg-FW-0')
+    expect(c0.type).toBe('stdio')
+    expect(c0.source).toBe('package')
+  })
+
+  it('createConfigsFromPackage：任一设备已绑其它配置 → 整体拒绝零部分写入（D-19/T-29-06-01）', () => {
+    const pkgId = importPkgWithModels(['S5735'], ['NF_TOKEN'])
+    seedDevice(h.db!, 'a1', 'A1', 'S5735')
+    seedDevice(h.db!, 'a2', 'A2', 'S5735')
+    const other = h.db!.prepare(
+      "INSERT INTO mcp_configs (name, type, command_or_url) VALUES ('existing', 'stdio', 'node')"
+    ).run()
+    h.db!.prepare('INSERT INTO mcp_device_rel (id, mcp_config_id, device_id) VALUES (?, ?, ?)')
+      .run('rel-y', other.lastInsertRowid as number, 'a2')
+
+    const res = McpPackageService.createConfigsFromPackage(pkgId, [
+      { deviceId: 'a1', env: { NF_TOKEN: 't1' } },
+      { deviceId: 'a2', env: { NF_TOKEN: 't2' } },
+    ])
+    expect(res.ok).toBe(false)
+    if (res.ok) return
+    expect(res.error).toContain('A2')
+    // 零部分写入：不新增任何 config / rel / env 密文
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_configs').get()).toEqual({ c: 1 })
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_device_rel').get()).toEqual({ c: 1 })
+    expect(relEnv(h.db!, 'a1')).toBeNull()
+  })
+
+  it('createConfigsFromPackage：入参守卫（未知 env 键 / 未知设备 / 包不存在）', () => {
+    const pkgId = importPkgWithModels(['S5735'], ['NF_TOKEN'])
+    seedDevice(h.db!, 'b1', 'B1', 'S5735')
+    expect(McpPackageService.createConfigsFromPackage(pkgId, [
+      { deviceId: 'b1', env: { EVIL_KEY: 'x' } },
+    ]).ok).toBe(false)
+    expect(McpPackageService.createConfigsFromPackage(pkgId, [
+      { deviceId: 'ghost', env: { NF_TOKEN: 'x' } },
+    ]).ok).toBe(false)
+    expect(McpPackageService.createConfigsFromPackage(9999, []).ok).toBe(false)
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_configs').get()).toEqual({ c: 0 })
+  })
+})
