@@ -8,6 +8,7 @@ import { WarningOutlined } from '@ant-design/icons'
 import type { McpConfigDto, McpTestRequestDto, McpTestResultDto, McpToolInfoDto } from '../../types/electron'
 import type { Device } from '../../types/device'
 import McpToolManageDrawer from './McpToolManageDrawer'
+import McpPackageTab from './McpPackageTab'
 
 const { Text } = Typography
 
@@ -508,6 +509,10 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
 
   return (
     <div>
+      {/* D-29/契约 8/11：包对象只经「导入包/包管理」入口出现，配置列表零混入；头部主按钮=导入包 */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+        <McpPackageTab onPackagesChanged={load} />
+      </div>
       <Card
         title="MCP 配置"
         size="small"
