@@ -26,6 +26,7 @@ import type Database from 'better-sqlite3'
 import { getDatabase } from '../database/connection'
 import { encField, decField } from '../utils/crypto'
 import { validateMcpb, buildFingerprintTree, MAX_PACKAGE_BYTES } from './mcpPackageValidator'
+import { MAX_BATCH } from './mcpService'
 import type { McpManifest, FileEntry, VectorResult } from './mcpPackageValidator'
 import { testConnection, verifyPackageFingerprint, reportPackageIntegrityFailure } from './mcpClient'
 import { McpToolPolicy } from './mcpToolPolicy'
@@ -627,12 +628,104 @@ export class McpPackageService {
   }
 
   /**
+   * 单条配置绑定 N 台设备（29-07 Gap-2 语义修订）：单事务 INSERT 恰好 1 条
+   * mcp_configs（package_id 来源标记 + name 入参）+ N 行 rel（每行独立 env_json_enc）。
+   * 冲突判定事务内 SELECT 先行（防 TOCTOU）：任一设备已绑其它配置 → 整体拒绝
+   * 零部分写入（D-19）。env 变量名不再受 manifest.envKeys 限制（Gap-5），
+   * 仅受格式/长度/数量上限约束。
+   */
+  static createConfigFromPackage(
+    packageId: number,
+    name: string,
+    deviceEnvs: Array<{ deviceId: string; env: Record<string, string> }>
+  ): { ok: true; configId: number } | { ok: false; error: string } {
+    const conn = McpPackageService.db()
+    const row = conn.prepare('SELECT * FROM mcp_packages WHERE id = ?').get(packageId) as any
+    if (!row) return { ok: false, error: '包不存在或已被删除' }
+    if (row.disabled) return { ok: false, error: '包已被禁用（TOCTOU 检出后需重新导入校验），不能创建配置' }
+    const manifest = McpPackageService.parseManifestSafe(row.manifest_json)
+    if (!manifest) return { ok: false, error: '包 manifest 元数据损坏' }
+
+    // ---- 入参守卫（Gap-5：不再比对 manifest.envKeys，仅格式/长度/数量上限）----
+    if (typeof name !== 'string' || name.trim() === '') return { ok: false, error: '配置名称不能为空' }
+    if (name.trim().length > MAX_PKG_NAME_LENGTH) {
+      return { ok: false, error: `配置名称超过 ${MAX_PKG_NAME_LENGTH} 字符上限` }
+    }
+    if (deviceEnvs.length === 0) return { ok: false, error: '未选择任何设备' }
+    if (deviceEnvs.length > MAX_BATCH) return { ok: false, error: `deviceEnvs 超过批量上限 ${MAX_BATCH}` }
+    const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]{0,99}$/
+    const seen = new Set<string>()
+    for (const item of deviceEnvs) {
+      if (!item || typeof item.deviceId !== 'string' || item.deviceId === '') {
+        return { ok: false, error: '参数无效：deviceId' }
+      }
+      if (seen.has(item.deviceId)) return { ok: false, error: `设备 ${item.deviceId} 重复提交` }
+      seen.add(item.deviceId)
+      const entries = Object.entries(item.env ?? {})
+      if (entries.length > 50) return { ok: false, error: '单设备环境变量超过 50 对上限' }
+      for (const [k, v] of entries) {
+        if (!ENV_KEY_RE.test(k)) return { ok: false, error: `环境变量名 ${k} 不合法（字母/下划线开头，仅含字母数字下划线，≤100 字符）` }
+        if (typeof v !== 'string' || v.length > 2000) {
+          return { ok: false, error: `环境变量 ${k} 的值必须为 string 且不超过 2000 字符` }
+        }
+      }
+    }
+
+    let result: { ok: true; configId: number } | { ok: false; error: string } | null = null
+    conn.transaction((): void => {
+      // ---- 冲突判定先行（先于一切 INSERT，防 TOCTOU；DB UNIQUE 兜底并发竞态）----
+      const stmtBound = conn.prepare('SELECT mcp_config_id FROM mcp_device_rel WHERE device_id = ?')
+      const stmtCfgName = conn.prepare('SELECT name FROM mcp_configs WHERE id = ?')
+      const stmtDev = conn.prepare('SELECT id, name_enc FROM devices WHERE id = ?')
+      for (const item of deviceEnvs) {
+        const bound = stmtBound.get(item.deviceId) as { mcp_config_id: number } | undefined
+        if (bound) {
+          const dev = stmtDev.get(item.deviceId) as { name_enc: string } | undefined
+          const devName = dev ? decField(dev.name_enc, McpPackageService.MK) ?? item.deviceId : item.deviceId
+          const otherName = (stmtCfgName.get(bound.mcp_config_id) as { name: string } | undefined)?.name ?? `#${bound.mcp_config_id}`
+          result = { ok: false, error: `设备 ${devName} 已绑在配置 ${otherName}，请先在那边解绑` }
+          return
+        }
+        if (!stmtDev.get(item.deviceId)) {
+          result = { ok: false, error: `设备 ${item.deviceId} 不存在或已被删除，请刷新列表` }
+          return
+        }
+      }
+
+      // ---- 恰好 1 条 config + N 行 rel（各设备独立 env 密文，T-29-07 同款红线）----
+      const stmtInsCfg = conn.prepare(
+        `INSERT INTO mcp_configs (name, type, command_or_url, args_json, package_id, source)
+         VALUES (?, 'stdio', ?, '[]', ?, 'package')`
+      )
+      const stmtInsRel = conn.prepare(
+        'INSERT INTO mcp_device_rel (id, mcp_config_id, device_id, env_json_enc) VALUES (?, ?, ?, ?)'
+      )
+      const info = stmtInsCfg.run(name.trim(), row.name, packageId)
+      for (const item of deviceEnvs) {
+        const envStr = item.env && Object.keys(item.env).length > 0 ? JSON.stringify(item.env) : null
+        stmtInsRel.run(uuidv4(), info.lastInsertRowid as number, item.deviceId, envStr ? encField(envStr, McpPackageService.MK) : null)
+      }
+      result = { ok: true, configId: info.lastInsertRowid as number }
+    })()
+    // CFA 不跟踪事务闭包赋值——显式宽类型还原后判定（同 createConfigsFromPackage 惯例）
+    if ((result as { ok?: boolean } | null)?.ok === true) {
+      // WR-02 同款：创建即预填包根配置工具缓存（MIN(id) 路由模板载体，AI 开箱可用）
+      McpPackageService.saveRootConfigToolCache(packageId, manifest.tools.map((t) => ({
+        name: t.name,
+        description: t.description,
+      })))
+    }
+    return result!
+  }
+
+  /**
    * 批量从包生成配置绑定（D-20/D-21）：单事务为每台设备建 1 条 mcp_configs
    * （package_id 来源标记 + name 自动派生「{包名}-{设备名}」可覆盖）+ 1 行 rel 绑定 +
    * 该设备 env_json_enc（encField 加密，T-29-06-04）。
    * 冲突判定事务内 SELECT 先行（25-02 防 TOCTOU 模式）：任一设备已绑其它配置
    * → 整体拒绝零部分写入（D-19 维持 v1.4 D-04 独占语义，T-29-06-01）。
    * 工具策略不逐配置复制——由包级模板承接（D-22，29-04 读取路由）。
+   * @deprecated 批量语义废弃（29-07 改单条配置 createConfigFromPackage），29-09 Task 1 统一移除。
    */
   static createConfigsFromPackage(
     packageId: number,
