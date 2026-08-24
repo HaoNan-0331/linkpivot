@@ -251,3 +251,108 @@ describe('Task 1: importPackage / confirmOverwrite / list / get', () => {
     expect(one?.lastTest).toBeNull()
   })
 })
+
+describe('Task 1b: deletePackage / getPackageDeleteImpact / testPackage', () => {
+  function importOne(opts: ZipOpts = {}): number {
+    const res = McpPackageService.importPackage(mkMcpb(opts))
+    if (!res.ok) throw new Error('import failed')
+    return res.package.id
+  }
+
+  it('getPackageDeleteImpact：配置列表含绑定设备数 + 包目录路径（D-30 确认清单）', () => {
+    const pkgId = importOne()
+    seedPackageConfig(h.db!, pkgId, { dev1: { A: '1' }, dev2: { A: '2' } })
+    const impact = McpPackageService.getPackageDeleteImpact(pkgId)
+    expect(impact).not.toBeNull()
+    expect(impact!.dirPath).toBe(join(rootDir, 'demo-pkg'))
+    expect(impact!.configs).toHaveLength(1)
+    expect(impact!.configs[0].deviceCount).toBe(2)
+    expect(impact!.totalDevices).toBe(2)
+  })
+
+  it('deletePackage：先杀运行实例 → 三表级联清净 + 目录删除（D-30）', () => {
+    const pkgId = importOne()
+    seedPackageConfig(h.db!, pkgId, { dev1: { A: '1' } })
+    // 该包一条配置对应的运行实例登记（configId 键形态）
+    h.registryMock.listActive.mockReturnValue([
+      { pid: 101, configId: '999', startedAt: 0 },
+      { pid: 202, configId: String((h.db!.prepare('SELECT id FROM mcp_configs').get() as any).id), startedAt: 0 },
+    ])
+    const res = McpPackageService.deletePackage(pkgId)
+    expect(res.ok).toBe(true)
+    // 只杀该包配置对应的 pid=202，不误杀他配置 pid=101（T-29-03-05）
+    expect(h.registryMock.killTree).toHaveBeenCalledTimes(1)
+    expect(h.registryMock.killTree).toHaveBeenCalledWith(202)
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_packages').get()).toEqual({ c: 0 })
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_configs').get()).toEqual({ c: 0 })
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_device_rel').get()).toEqual({ c: 0 })
+    expect(existsSync(join(rootDir, 'demo-pkg'))).toBe(false)
+  })
+
+  it('deletePackage：包不存在拒绝', () => {
+    expect(McpPackageService.deletePackage(9999).ok).toBe(false)
+  })
+
+  it('testPackage：实测多出工具 → extraTools 默认禁用清单落 last_test（PKG-04/D-25）', async () => {
+    const pkgId = importOne({ tools: ['tool_a'] })
+    h.clientMock.testConnection.mockResolvedValue({
+      ok: true,
+      protocolVersion: '1.0',
+      tools: [
+        { name: 'tool_a', description: 'd', inputSchema: {} },
+        { name: 'evil_extra', description: 'd', inputSchema: {} },
+      ],
+    })
+    const res = await McpPackageService.testPackage(pkgId)
+    expect(res.ok).toBe(true)
+    expect(res.extraTools).toEqual(['evil_extra'])
+    expect(res.missingTools).toEqual([])
+    // last_test JSON 落库可读回
+    const detail = McpPackageService.getPackage(pkgId)
+    expect(detail?.lastTest?.ok).toBe(true)
+    expect(detail?.lastTest?.extraTools).toEqual(['evil_extra'])
+    expect(detail?.lastTest?.missingTools).toEqual([])
+    expect(typeof detail?.lastTest?.testedAt).toBe('string')
+    // spawn 契约：node 轨道 entry 绝对路径
+    const call = h.clientMock.testConnection.mock.calls[0]
+    expect(call[1]).toMatchObject({ type: 'stdio', commandOrUrl: 'node' })
+    expect(call[1].args[0]).toBe(join(rootDir, 'demo-pkg', 'main.js'))
+  })
+
+  it('testPackage：实测少了工具仅提示 missingTools；失败写 reason', async () => {
+    const pkgId = importOne({ tools: ['tool_a', 'tool_b'] })
+    h.clientMock.testConnection.mockResolvedValue({
+      ok: true, protocolVersion: '1.0',
+      tools: [{ name: 'tool_a', description: 'd', inputSchema: {} }],
+    })
+    const res = await McpPackageService.testPackage(pkgId)
+    expect(res.ok).toBe(true)
+    expect(res.missingTools).toEqual(['tool_b'])
+    expect(res.extraTools).toEqual([])
+
+    h.clientMock.testConnection.mockResolvedValue({ ok: false, error: { code: 'MCP_TIMEOUT', reason: '超时' } })
+    const fail = await McpPackageService.testPackage(pkgId)
+    expect(fail.ok).toBe(false)
+    const detail = McpPackageService.getPackage(pkgId)
+    expect(detail?.lastTest?.ok).toBe(false)
+    expect(detail?.lastTest?.reason).toContain('超时')
+  })
+
+  it('testPackage：python 轨道无内嵌 python.exe → 结构化失败落 last_test（29-04 预留分支）', async () => {
+    const pyPkg = zipSync({
+      'manifest.json': strToU8(JSON.stringify({
+        name: 'py-pkg', version: '1.0.0', runtime: 'python', entry: 'main.py',
+        models: ['NF'], tools: [{ name: 't1', description: 'd' }],
+      })),
+      'main.py': strToU8('print(1)'),
+    }) as unknown as Buffer
+    const res = McpPackageService.importPackage(pyPkg)
+    expect(res.ok && res.status).toBe('imported')
+    const out = await McpPackageService.testPackage((h.db!.prepare("SELECT id FROM mcp_packages WHERE name='py-pkg'").get() as any).id)
+    expect(out.ok).toBe(false)
+    expect(out.error).toContain('嵌入式 Python')
+    const detail = McpPackageService.getPackage((h.db!.prepare("SELECT id FROM mcp_packages WHERE name='py-pkg'").get() as any).id)
+    expect(detail?.lastTest?.ok).toBe(false)
+    expect(h.clientMock.testConnection).not.toHaveBeenCalled()
+  })
+})
