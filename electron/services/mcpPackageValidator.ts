@@ -90,7 +90,8 @@ function isSafeRelPath(p: string): boolean {
 /** 解析 manifest.json（畸形 throw，供调用方转人话错误） */
 export function parseMcpbManifest(raw: string): McpManifest {
   const obj = JSON.parse(raw) as Record<string, unknown>
-  const bad = (msg: string): never => {
+  // 注意: 必须用 function 声明——TS 6.0 起 const 箭头函数形式的 never-guard 不再触发 CFA assertion 收窄
+  function bad(msg: string): never {
     throw new Error(msg)
   }
   if (typeof obj !== 'object' || obj === null) bad('manifest 不是 JSON 对象')
@@ -99,8 +100,9 @@ export function parseMcpbManifest(raw: string): McpManifest {
   }
   if (obj.runtime !== 'node' && obj.runtime !== 'python') bad('manifest.runtime 必须是 node 或 python')
   if (!Array.isArray(obj.models) || obj.models.some((x) => typeof x !== 'string')) bad('manifest.models 必须是字符串数组')
-  if (!Array.isArray(obj.tools) || obj.tools.length === 0) bad('manifest.tools 必须是非空数组')
-  for (const t of obj.tools) {
+  const tools = obj.tools
+  if (!Array.isArray(tools) || tools.length === 0) bad('manifest.tools 必须是非空数组')
+  for (const t of tools) {
     if (typeof t !== 'object' || t === null) bad('manifest.tools 项必须是对象')
     const tt = t as Record<string, unknown>
     if (typeof tt.name !== 'string' || tt.name.length === 0) bad('manifest.tools 项缺少 name')
