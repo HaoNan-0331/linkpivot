@@ -20,7 +20,7 @@ import Database from 'better-sqlite3'
  * 安全域：内存库（`:memory:`）无落盘；只跑 v16 本体不碰 runMigrations/system log。
  */
 
-import { v16, v17, v19, v20, v21, v22, v23, v24, MIGRATION_HEAD, MIGRATIONS } from '../../electron/database/migrations'
+import { v16, v17, v19, v20, v21, v22, v23, v24, v26, v27, MIGRATION_HEAD, MIGRATIONS } from '../../electron/database/migrations'
 import { encField } from '../../electron/utils/crypto'
 import {
   appendLogAiResponse,
@@ -538,7 +538,7 @@ describe('v22/v23/v24 devices.name_hash 三段式', () => {
   })
 
   it('d) MIGRATION_HEAD=24、注册表含 v22/v23/v24、init.ts fresh DDL 含 name_hash', () => {
-    expect(MIGRATION_HEAD).toBe(26) // 28-01 v26（agent 硬顶三列 + chat_history.meta_enc）推进
+    expect(MIGRATION_HEAD).toBe(27) // 29-02 v27（mcp_packages + 设备级 env 列）推进
     const versions = MIGRATIONS.map((m) => m.version)
     expect(versions).toContain(22)
     expect(versions).toContain(23)
@@ -565,3 +565,140 @@ describe('v22/v23/v24 devices.name_hash 三段式', () => {
     db.close()
   })
 })
+
+/**
+ * Phase 29 Plan 29-02 Task 1 —— v27 迁移（mcp_packages 新表 + mcp_configs.package_id +
+ * mcp_device_rel.env_json_enc 设备级 env 列 D-15 存储形态）真路径验证。
+ *
+ * 用例（plan behavior）：
+ *   a) v26 库跑 v27 → mcp_packages 表存在（含 last_test/fingerprint_json/disabled）、
+ *      mcp_configs.package_id 列存在、mcp_device_rel.env_json_enc 列存在、user_version=27
+ *   b) 已有 mcp_packages 的库重跑 v27 幂等 no-op（不 throw，既有行保活）
+ *   c) init.ts fresh DDL 与迁移路径 PRAGMA table_info 逐列一致（双路径一致红线）
+ *   d) MIGRATION_HEAD=27 且注册表含 v27；init.ts fresh DDL 含三处结构
+ */
+describe('v27 mcp_packages + 设备级 env 列', () => {
+  /** v26 形态基线：mcp_configs（v16 形态）+ mcp_device_rel，无 mcp_packages / package_id / env_json_enc */
+  function createV26McpSchema(db: Database.Database): void {
+    db.exec(`
+      CREATE TABLE mcp_configs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL CHECK(type IN ('stdio','http')),
+        command_or_url TEXT NOT NULL,
+        args_json TEXT,
+        env_json_enc TEXT,
+        credential_enc TEXT,
+        source TEXT NOT NULL DEFAULT 'manual',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        last_test_at TEXT,
+        last_test_status TEXT,
+        last_test_tool_count INTEGER,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE mcp_device_rel (
+        id TEXT PRIMARY KEY,
+        mcp_config_id INTEGER NOT NULL,
+        device_id TEXT NOT NULL UNIQUE,
+        created_at TEXT DEFAULT (datetime('now','localtime')),
+        FOREIGN KEY (mcp_config_id) REFERENCES mcp_configs(id) ON DELETE CASCADE
+      );
+    `)
+    db.pragma('user_version = 26')
+  }
+
+  function columnsOf(db: Database.Database, table: string): string[] {
+    return (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((r) => r.name)
+  }
+
+  it('a) v26 库跑 v27 → 三结构就位 + user_version=27 + runtime CHECK 约束', () => {
+    const db = new Database(':memory:')
+    createV26McpSchema(db)
+    v27(db)
+
+    const pkgSql = getTableSql(db, 'mcp_packages')
+    expect(pkgSql).toContain("runtime TEXT NOT NULL CHECK(runtime IN ('node','python'))")
+    expect(pkgSql).toContain('last_test TEXT')
+    expect(pkgSql).toContain('fingerprint_json TEXT NOT NULL')
+    expect(pkgSql).toContain('disabled INTEGER NOT NULL DEFAULT 0')
+    expect(pkgSql).toContain('name TEXT NOT NULL UNIQUE')
+
+    expect(columnsOf(db, 'mcp_configs')).toContain('package_id')
+    expect(columnsOf(db, 'mcp_device_rel')).toContain('env_json_enc')
+    expect(db.pragma('user_version', { simple: true })).toBe(27)
+    db.close()
+  })
+
+  it('b) v27 重复执行幂等 no-op（不 throw，既有包行保活）', () => {
+    const db = new Database(':memory:')
+    createV26McpSchema(db)
+    v27(db)
+    db.prepare(`
+      INSERT INTO mcp_packages (name, version, runtime, entry, manifest_json, fingerprint, fingerprint_json, dir_path, size_bytes)
+      VALUES ('demo', '1.0.0', 'node', 'main.js', '{}', 'fp', '[]', 'C:/pkg', 123)
+    `).run()
+    expect(() => v27(db)).not.toThrow()
+    const cnt = db.prepare('SELECT COUNT(*) AS c FROM mcp_packages').get() as { c: number }
+    expect(cnt.c).toBe(1)
+    // runtime CHECK 拒绝非法值
+    expect(() =>
+      db.prepare(`
+        INSERT INTO mcp_packages (name, runtime, entry, manifest_json, fingerprint, fingerprint_json, dir_path, size_bytes)
+        VALUES ('bad', 'java', 'x.jar', '{}', 'fp', '[]', 'C:/x', 1)
+      `).run()
+    ).toThrow(/CHECK/i)
+    db.close()
+  })
+
+  it('c) init.ts fresh mcp_* DDL 与迁移路径 PRAGMA table_info 逐列一致', () => {
+    const root = path.resolve(__dirname, '../..')
+    const initSrc = fs.readFileSync(path.join(root, 'electron/database/init.ts'), 'utf-8')
+    expect(initSrc).toContain('CREATE TABLE IF NOT EXISTS mcp_packages')
+
+    // 迁移路径：v26 基线跑 v27
+    const mig = new Database(':memory:')
+    createV26McpSchema(mig)
+    v27(mig)
+    // fresh 路径：从 init.ts 源码执行 mcp_* 三表 DDL（其它表与比对无关，不建）
+    const fresh = new Database(':memory:')
+    const ddlMatch = initSrc.match(/CREATE TABLE IF NOT EXISTS mcp_packages \(([\s\S]*?)\);\s*CREATE TABLE IF NOT EXISTS mcp_configs/)
+    const tables = initSrc.match(/CREATE TABLE IF NOT EXISTS (mcp_packages|mcp_configs|mcp_device_rel) \(([\s\S]*?)\);/g)
+    expect(ddlMatch).toBeTruthy()
+    expect(tables).toBeTruthy()
+    expect(tables!.length).toBe(3)
+    for (const stmt of tables!) fresh.exec(stmt)
+    for (const t of ['mcp_packages', 'mcp_configs', 'mcp_device_rel']) {
+      expect(columnsOf(fresh, t)).toEqual(columnsOf(mig, t))
+    }
+    mig.close()
+    fresh.close()
+  })
+
+  it('d) MIGRATION_HEAD=27、注册表含 v27、init.ts fresh DDL 含三处结构', () => {
+    expect(MIGRATION_HEAD).toBe(27)
+    expect(MIGRATIONS.map((m) => m.version)).toContain(27)
+
+    const root = path.resolve(__dirname, '../..')
+    const initSrc = fs.readFileSync(path.join(root, 'electron/database/init.ts'), 'utf-8')
+    const pkg = initSrc.match(/CREATE TABLE IF NOT EXISTS mcp_packages \(([\s\S]*?)\);/)
+    expect(pkg).toBeTruthy()
+    expect(pkg![1]).toContain('last_test TEXT')
+    expect(pkg![1]).toContain('fingerprint_json TEXT NOT NULL')
+    expect(initSrc.match(/CREATE TABLE IF NOT EXISTS mcp_configs \(([\s\S]*?)\);/)![1]).toContain('package_id')
+    expect(initSrc.match(/CREATE TABLE IF NOT EXISTS mcp_device_rel \(([\s\S]*?)\);/)![1]).toContain('env_json_enc')
+  })
+
+  it('e) v26 老库链路（v26 后接 v27）双跑幂等', () => {
+    const db = new Database(':memory:')
+    createV26McpSchema(db)
+    expect(() => { v26guard(db); v27(db) }).not.toThrow()
+    expect(() => v27(db)).not.toThrow()
+    db.close()
+  })
+})
+
+/** v26 在 mcp 基线上的最小形态守卫（无 ai_config/chat_history 时跳过 v26 本体，仅锚定版本） */
+function v26guard(db: Database.Database): void {
+  db.pragma('user_version = 26')
+}
