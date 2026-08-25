@@ -29,9 +29,11 @@ import {
   getConnection,
   callToolWithTimeout,
   closeMcpConnection,
+  applyEnvMeta,
   _activeConnectionKeys
 } from '../../../electron/services/mcpClient'
 import type { PackageSpawnInfo } from '../../../electron/services/mcpClient'
+import type { EnvMetaEntry } from '../../../electron/services/mcpPackageValidator'
 import { buildFingerprintTree } from '../../../electron/services/mcpPackageValidator'
 import type { FileEntry } from '../../../electron/services/mcpPackageValidator'
 import { startMockHttpMcpServer } from '../_helpers/mockMcpServer'
@@ -287,6 +289,94 @@ describe('指纹一致的 node 包正常连接（真路径不回归）', () => {
     expect(_activeConnectionKeys()).toEqual(['11:dA'])
     await closeMcpConnection('11', 'dA')
     expect(_activeConnectionKeys()).toEqual([])
+  }, 30000)
+})
+
+describe('spawn envMeta（29.1-04：D-01 required 硬拦 + D-02 default 叠加）', () => {
+  const META: Record<string, EnvMetaEntry> = {
+    NF_TOKEN: { label: '防火墙令牌', required: true },
+    NF_PORT: { label: 'API 端口', default: '443' },
+  }
+  const META_REQ_DEFAULT: Record<string, EnvMetaEntry> = {
+    NF_TOKEN: { label: '防火墙令牌', required: true, default: 'tok-default' },
+  }
+
+  it('required 键未填 → throw MCP_ENV_REQUIRED_MISSING，reason 含 label 可定位文案', () => {
+    const e = expectStructThrow(() => applyEnvMeta({}, META), 'MCP_ENV_REQUIRED_MISSING')
+    expect(e.reason).toContain('防火墙令牌')
+    expect(e.reason).toContain('未配置')
+  })
+
+  it('required 键空串/仅空白 → 同判缺（trim 判定，T-29.1-12 fail-open 兜住）', () => {
+    expectStructThrow(() => applyEnvMeta({ NF_TOKEN: '' }, META), 'MCP_ENV_REQUIRED_MISSING')
+    expectStructThrow(() => applyEnvMeta({ NF_TOKEN: '   ' }, META), 'MCP_ENV_REQUIRED_MISSING')
+  })
+
+  it('required 键无 label → reason 回退裸键名（仍可定位）', () => {
+    const e = expectStructThrow(() => applyEnvMeta({}, { NF_TOKEN: { label: 'NF_TOKEN', required: true } }), 'MCP_ENV_REQUIRED_MISSING')
+    expect(e.reason).toContain('NF_TOKEN')
+  })
+
+  it('default 叠加：用户未提供 → 补包默认；用户填过 → 用户值优先（D-02）', () => {
+    expect(applyEnvMeta({}, META)).toEqual({ NF_PORT: '443' })
+    expect(applyEnvMeta({ NF_PORT: '8443' }, META)).toEqual({ NF_PORT: '8443' })
+    // 用户空串 = 留空语义 → 跟随包默认
+    expect(applyEnvMeta({ NF_PORT: '' }, META)).toEqual({ NF_PORT: '443' })
+  })
+
+  it('required + default 并存 → default 补上即通过硬拦', () => {
+    expect(applyEnvMeta({}, META_REQ_DEFAULT)).toEqual({ NF_TOKEN: 'tok-default' })
+  })
+
+  it('纯内存叠加不改入参（不落库语义的前置：无写库路径，无引用污染）', () => {
+    const userEnv = { NF_PORT: '8443' }
+    applyEnvMeta(userEnv, META)
+    expect(userEnv).toEqual({ NF_PORT: '8443' })
+  })
+
+  it('无 envMeta / 空 envMeta → 返回用户原值副本（零回归，行为等同现状）', () => {
+    expect(applyEnvMeta({ A: '1' }, undefined)).toEqual({ A: '1' })
+    expect(applyEnvMeta({ A: '1' }, {})).toEqual({ A: '1' })
+    expect(applyEnvMeta({}, undefined)).toEqual({})
+  })
+
+  it('getConnection 包轨 required 缺值 → connectStdio 前拒绝 + 零连接零 spawn', async () => {
+    const { dir, fileTree } = makePackageDir(PKG_FILES)
+    cleanupDirs.push(dir)
+    const fp = buildFingerprintTree(fileTree)
+    const cfg = { type: 'stdio' as const, commandOrUrl: 'node', args: [], env: { NF_PORT: '8443' }, credential: null }
+    const pkg: PackageSpawnInfo = { ...pkgInfo(dir, JSON.stringify(fp)), envMeta: META }
+    await expect(
+      getConnection('13', cfg, { deviceId: 'd1', package: pkg })
+    ).rejects.toMatchObject({ code: 'MCP_ENV_REQUIRED_MISSING' })
+    expect(_activeConnectionKeys()).toEqual([])
+  }, 30000)
+
+  it('getConnection 包轨 default 叠加实证：真 spawn 子进程收 NF_PORT=用户值 + NF_TOKEN=包默认', async () => {
+    // mock 对端复制入包，模块加载即落 envdump.json（spawn 时刻生效 env 的唯一观测点）
+    const helperPath = path.resolve(__dirname, '../_helpers/mockMcpServer.ts')
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nt-mcpb-env-'))
+    cleanupDirs.push(dir)
+    const prelude = "import { writeFileSync } from 'node:fs'\n" +
+      "writeFileSync(new URL('./envdump.json', import.meta.url), JSON.stringify({ NF_PORT: process.env.NF_PORT ?? null, NF_TOKEN: process.env.NF_TOKEN ?? null }))\n"
+    const serverSrc = prelude + fs.readFileSync(helperPath, 'utf8') + '\nrunStdioChild()\n'
+    fs.writeFileSync(path.join(dir, 'server.mjs'), serverSrc)
+    const fileTree: FileEntry[] = [{ path: 'server.mjs', content: Buffer.from(serverSrc, 'utf8') }]
+    const fp = buildFingerprintTree(fileTree)
+    const pkg: PackageSpawnInfo = {
+      packageId: 43, dirPath: dir, runtime: 'node', entry: 'server.mjs',
+      fingerprintJson: JSON.stringify(fp), envMeta: {
+        NF_TOKEN: { label: '防火墙令牌', required: true, default: 'tok-default' },
+        NF_PORT: { label: 'API 端口', default: '443' },
+      },
+    }
+    const cfg = { type: 'stdio' as const, commandOrUrl: 'node', args: [], env: { NF_PORT: '8443' }, credential: null }
+    const client = await getConnection('14', cfg, { deviceId: 'dB', package: pkg })
+    expect(_activeConnectionKeys()).toEqual(['14:dB'])
+    await closeMcpConnection('14', 'dB')
+    const dump = JSON.parse(fs.readFileSync(path.join(dir, 'envdump.json'), 'utf8'))
+    expect(dump.NF_PORT).toBe('8443') // 用户值优先
+    expect(dump.NF_TOKEN).toBe('tok-default') // 留空即用包默认（spawn 叠加）
   }, 30000)
 })
 
