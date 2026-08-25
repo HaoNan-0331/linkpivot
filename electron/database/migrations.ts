@@ -13,7 +13,7 @@ import { createSystemLog } from '../services/systemLog'
  *      在 createTables() 建好基线表之后、premigration 备份之后执行（D-06）。
  *      init.ts 不直接调用 runMigrations（单一调用点原则）。
  */
-export const MIGRATION_HEAD = 27
+export const MIGRATION_HEAD = 28
 
 interface MigrationStep {
   version: number
@@ -905,6 +905,73 @@ export const v27 = (db: Database.Database): void => {
   step()
 }
 
+/**
+ * v28：Phase 29（29-09 走查二）—— mcp_configs.type CHECK 放开收纳 'package' + 存量包配置转换。
+ *
+ * 根因：v27 落地「从包创建配置」时靠 DDL 硬约束外的暗号（type='stdio' + source='package' +
+ * package_id）标识包配置，导致列表谎报「本地程序 (stdio)」、点【测试】走 stdio 旧通道
+ * spawn 一个叫包名的命令 60s 超时。本迁移把 type 语义真实化：包配置 type='package'。
+ *
+ * - SQLite 不能 ALTER CHECK——表重建（v5/v18 镜像模式）：建新表（CHECK 含 'package'，
+ *   列集与 init.ts fresh DDL 逐字一致，双路径红线）→ INSERT SELECT 全列拷贝（id 值保留）→
+ *   DROP → RENAME → 存量行 UPDATE（source='package' AND package_id IS NOT NULL → type='package'）。
+ * - mcp_device_rel 有指向 mcp_configs 的 FK CASCADE：DROP TABLE 隐式 DELETE 会连带级联子表。
+ *   事务外 PRAGMA foreign_keys=OFF（事务内设置无效），重建后 foreign_key_check 断言再恢复 ON。
+ *
+ * 幂等守卫 D-14 第二形式：sqlite_master 查 mcp_configs.sql——已含 "'package'" 特征则 no-op 早返
+ * （与 v5 查 'rdp'、v18 查 'smart' 同构，不靠 user_version 判定）。
+ * 执行体包 db.transaction（throw 即 ROLLBACK）。
+ */
+export const v28 = (db: Database.Database): void => {
+  const existing = db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='mcp_configs'"
+  ).get() as { sql: string } | undefined
+  if (existing && existing.sql.includes("'package'")) {
+    return // CHECK 已含 package，no-op（幂等重跑 D-14）
+  }
+  // FK 关闭必须在事务外（PRAGMA foreign_keys 在事务内是 no-op）
+  db.pragma('foreign_keys = OFF')
+  try {
+    const step = db.transaction((): void => {
+      db.exec('DROP TABLE IF EXISTS mcp_configs_new')
+      db.exec(`
+        CREATE TABLE mcp_configs_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          type TEXT NOT NULL CHECK(type IN ('stdio','http','package')),
+          command_or_url TEXT NOT NULL,
+          args_json TEXT,
+          env_json_enc TEXT,
+          credential_enc TEXT,
+          source TEXT NOT NULL DEFAULT 'manual',
+          enabled INTEGER NOT NULL DEFAULT 1,
+          last_test_at TEXT,
+          last_test_status TEXT,
+          last_test_tool_count INTEGER,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          package_id INTEGER REFERENCES mcp_packages(id)
+        );
+        INSERT INTO mcp_configs_new
+          SELECT id, name, type, command_or_url, args_json, env_json_enc, credential_enc, source,
+            enabled, last_test_at, last_test_status, last_test_tool_count, created_at, updated_at, package_id
+          FROM mcp_configs;
+        DROP TABLE mcp_configs;
+        ALTER TABLE mcp_configs_new RENAME TO mcp_configs;
+        UPDATE mcp_configs SET type = 'package' WHERE source = 'package' AND package_id IS NOT NULL;
+      `)
+      const fkErrors = db.pragma('foreign_key_check') as unknown[]
+      if (fkErrors.length > 0) {
+        throw new Error('mcp_configs 重建后外键完整性校验失败: ' + JSON.stringify(fkErrors))
+      }
+      db.pragma('user_version = 28')
+    })
+    step()
+  } finally {
+    db.pragma('foreign_keys = ON')
+  }
+}
+
 export const MIGRATIONS: MigrationStep[] = [
   { version: 1, name: 'chat_history.session_id', run: v1 },
   { version: 2, name: 'ai_exec_logs.prompt_text+ai_response', run: v2 },
@@ -933,6 +1000,7 @@ export const MIGRATIONS: MigrationStep[] = [
   { version: 25, name: 'ai_exec_logs.guard_hits+guard_outcome 越权审计列（GUARD-05/D-07）', run: v25 },
   { version: 26, name: 'agent loop limits + chat meta（ai_config 三列 + chat_history.meta_enc，AGENT-04）', run: v26 },
   { version: 27, name: 'mcp_packages + 设备级 env 列（PKG-02/PKG-05/D-15）', run: v27 },
+  { version: 28, name: 'mcp_configs.type CHECK widen package + 存量包配置转换（29-09 走查二）', run: v28 },
 ]
 
 /**

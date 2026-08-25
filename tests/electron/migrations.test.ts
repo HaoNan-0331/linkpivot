@@ -20,7 +20,7 @@ import Database from 'better-sqlite3'
  * 安全域：内存库（`:memory:`）无落盘；只跑 v16 本体不碰 runMigrations/system log。
  */
 
-import { v16, v17, v19, v20, v21, v22, v23, v24, v26, v27, MIGRATION_HEAD, MIGRATIONS } from '../../electron/database/migrations'
+import { v16, v17, v19, v20, v21, v22, v23, v24, v26, v27, v28, MIGRATION_HEAD, MIGRATIONS } from '../../electron/database/migrations'
 import { encField } from '../../electron/utils/crypto'
 import {
   appendLogAiResponse,
@@ -125,11 +125,13 @@ describe('v16 mcp_configs_v16_rebuild', () => {
       return m![1].replace(/\s+/g, ' ').trim()
     }
 
-    // 29-02 v27 后 init.ts 新增 package_id/env_json_enc 两列（迁移路径 ALTER 追加）——
-    // 剔除后再比对，v16 逐字一致语义保持
+    // 29-02 v27 后 init.ts 新增 package_id/env_json_enc 两列（迁移路径 ALTER 追加）、
+    // 29-09 v28 后 init.ts CHECK 放开 'package'——剔除后再比对，v16 逐字一致语义保持
     for (const table of ['mcp_configs', 'mcp_device_rel']) {
       const extra = table === 'mcp_configs' ? 'package_id INTEGER REFERENCES mcp_packages(id)' : 'env_json_enc TEXT'
-      const stripped = extract(initSrc, table).replace(`, ${extra}`, '').replace(`${extra}, `, '').replace(extra, '')
+      const stripped = extract(initSrc, table)
+        .replace(`, ${extra}`, '').replace(`${extra}, `, '').replace(extra, '')
+        .replace("CHECK(type IN ('stdio','http','package'))", "CHECK(type IN ('stdio','http'))")
       expect(extract(v16Src, table)).toBe(stripped)
     }
   })
@@ -542,7 +544,7 @@ describe('v22/v23/v24 devices.name_hash 三段式', () => {
   })
 
   it('d) MIGRATION_HEAD=24、注册表含 v22/v23/v24、init.ts fresh DDL 含 name_hash', () => {
-    expect(MIGRATION_HEAD).toBe(27) // 29-02 v27（mcp_packages + 设备级 env 列）推进
+    expect(MIGRATION_HEAD).toBe(28) // 29-09 v28（type CHECK widen package）推进
     const versions = MIGRATIONS.map((m) => m.version)
     expect(versions).toContain(22)
     expect(versions).toContain(23)
@@ -677,8 +679,8 @@ describe('v27 mcp_packages + 设备级 env 列', () => {
     fresh.close()
   })
 
-  it('d) MIGRATION_HEAD=27、注册表含 v27、init.ts fresh DDL 含三处结构', () => {
-    expect(MIGRATION_HEAD).toBe(27)
+  it('d) MIGRATION_HEAD=28、注册表含 v27、init.ts fresh DDL 含三处结构', () => {
+    expect(MIGRATION_HEAD).toBe(28)
     expect(MIGRATIONS.map((m) => m.version)).toContain(27)
 
     const root = path.resolve(__dirname, '../..')
@@ -704,3 +706,109 @@ describe('v27 mcp_packages + 设备级 env 列', () => {
 function v26guard(db: Database.Database): void {
   db.pragma('user_version = 26')
 }
+
+/**
+ * Phase 29 Plan 29-09 走查二 —— v28 迁移（mcp_configs.type CHECK widen 'package' +
+ * 存量包配置 type 真实化）真路径验证。
+ *
+ * 用例：
+ *   a) v27 形态库跑 v28 → CHECK 含 'package'、id/env 密文等全列数据保活、
+ *      存量 source='package'+package_id 行 type 转换为 'package'，user_version=28
+ *   b) v28 重复执行幂等（sqlite_master 特征串守卫，created_at 保活证明）
+ *   c) 转换后 CHECK 拒绝非法 type；mcp_device_rel 子表行经 FK 重建不丢失
+ *   d) init.ts fresh mcp_configs DDL CHECK 含 'package'（双路径一致红线）
+ */
+describe('v28 mcp_configs.type CHECK widen package', () => {
+  /** v27 形态基线：v16 形态 mcp_configs + mcp_packages + package_id + rel env 列 */
+  function createV27Form(db: Database.Database): void {
+    createV15Schema(db)
+    v16(db)
+    v17(db)
+    db.exec(`
+      CREATE TABLE mcp_packages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        version TEXT,
+        runtime TEXT NOT NULL CHECK(runtime IN ('node','python')),
+        entry TEXT NOT NULL,
+        manifest_json TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        fingerprint_json TEXT NOT NULL,
+        dir_path TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        disabled INTEGER NOT NULL DEFAULT 0,
+        last_test TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `)
+    v27(db)
+    db.pragma('user_version = 27')
+  }
+
+  it('a) v27 库跑 v28 → CHECK 放开 + 存量包配置 type 转换 + 数据保活', () => {
+    const db = new Database(':memory:')
+    createV27Form(db)
+    db.prepare(`
+      INSERT INTO mcp_packages (name, version, runtime, entry, manifest_json, fingerprint, fingerprint_json, dir_path, size_bytes)
+      VALUES ('demo', '1.0.0', 'node', 'main.js', '{}', 'fp', '[]', 'C:/pkg', 1)
+    `).run()
+    const ins = db.prepare(
+      "INSERT INTO mcp_configs (name, type, command_or_url, env_json_enc, package_id, source) VALUES (?, ?, ?, ?, ?, ?)"
+    )
+    ins.run('pkg-cfg', 'stdio', 'demo', 'env-enc-1', 1, 'package') // 29-09 前暗号形态存量行
+    ins.run('manual-cfg', 'stdio', 'node x.js', 'env-enc-2', null, 'manual')
+    db.prepare("INSERT INTO devices (id, name) VALUES ('d1', 'dev-1')").run()
+    db.prepare("INSERT INTO mcp_device_rel (id, mcp_config_id, device_id) VALUES ('r1', 1, 'd1')").run()
+
+    v28(db)
+
+    expect(getTableSql(db, 'mcp_configs')).toContain("'package'")
+    const pkg = db.prepare('SELECT id, type, command_or_url, env_json_enc FROM mcp_configs WHERE id = 1').get() as any
+    expect(pkg.type).toBe('package') // 暗号行转换
+    expect(pkg.id).toBe(1) // id 值保留
+    expect(pkg.command_or_url).toBe('demo') // 原值不动（读取处不再依赖）
+    expect(pkg.env_json_enc).toBe('env-enc-1') // 密文列保活
+    const manual = db.prepare('SELECT type FROM mcp_configs WHERE id = 2').get() as any
+    expect(manual.type).toBe('stdio') // 手工行不动
+    expect(db.pragma('user_version', { simple: true })).toBe(28)
+    // FK 重建不丢子表行
+    expect(db.prepare('SELECT COUNT(*) AS c FROM mcp_device_rel').get()).toEqual({ c: 1 })
+    db.close()
+  })
+
+  it('b) v28 重复执行幂等（特征串守卫，不 throw、created_at 保活）', () => {
+    const db = new Database(':memory:')
+    createV27Form(db)
+    v28(db)
+    db.prepare(
+      "INSERT INTO mcp_configs (name, type, command_or_url) VALUES ('m1', 'stdio', 'node x.js')"
+    ).run()
+    const before = (db.prepare('SELECT created_at FROM mcp_configs WHERE id = 1').get() as any).created_at
+    expect(() => v28(db)).not.toThrow()
+    expect((db.prepare('SELECT created_at FROM mcp_configs WHERE id = 1').get() as any).created_at).toBe(before)
+    db.close()
+  })
+
+  it('c) 转换后 type=package 可写入、非法 type 仍被 CHECK 拒绝', () => {
+    const db = new Database(':memory:')
+    createV27Form(db)
+    v28(db)
+    db.prepare(
+      "INSERT INTO mcp_configs (name, type, command_or_url, package_id, source) VALUES ('p', 'package', 'main.js', NULL, 'package')"
+    ).run()
+    expect(() =>
+      db.prepare("INSERT INTO mcp_configs (name, type, command_or_url) VALUES ('bad', 'ftp', 'x')").run()
+    ).toThrow(/CHECK/i)
+    db.close()
+  })
+
+  it('d) init.ts fresh mcp_configs DDL CHECK 含 package（双路径一致）', () => {
+    const root = path.resolve(__dirname, '../..')
+    const initSrc = fs.readFileSync(path.join(root, 'electron/database/init.ts'), 'utf-8')
+    const ddl = initSrc.match(/CREATE TABLE IF NOT EXISTS mcp_configs \(([\s\S]*?)\);/)!
+    expect(ddl[1]).toContain("CHECK(type IN ('stdio','http','package'))")
+    expect(MIGRATION_HEAD).toBe(28)
+    expect(MIGRATIONS.map((m) => m.version)).toContain(28)
+  })
+})
