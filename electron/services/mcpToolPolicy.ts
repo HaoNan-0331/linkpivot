@@ -95,27 +95,26 @@ export class McpToolPolicy {
   }
 
   // -----------------------------------------------------------------
-  // Phase 29（29-04，D-22）：包级策略模板作用域路由
+  // Phase 29.1（D-05）：策略归属键路由——mcp_tools 真包级存储
   // -----------------------------------------------------------------
 
   /**
-   * 策略作用域路由（零表结构迁移，plan 定死）：config 的 package_id 非空 → 包维度聚合，
-   * 全部读写路由到该包「根配置」（同包 MIN(id)——首建配置即模板载体）；package_id NULL →
-   * config 维度旧路径原样。表缺失/查询异常 fail-safe 回退原 configId（旧库/测试最小 schema 不断）。
+   * 策略归属键（v29，D-05）：包轨（config.package_id 非空）→ mcp_tools.package_id 列
+   * （config_id NULL）；手工轨（package_id NULL）→ config_id 老路径原样。
+   * 表缺失/查询异常 fail-safe 回退 config 维度（旧库/测试最小 schema 不断；读路径降级
+   * 空策略 = fail-closed 全禁用，方向安全）。
+   * 列名来自固定字面量联合，不拼接外部输入（T-29.1-08：WHERE 恒带精确键值）。
    */
-  static resolvePolicyConfigId(configId: number): number {
+  private static resolvePolicyScope(configId: number): { keyCol: 'package_id' | 'config_id'; keyValue: number } {
     try {
       const row = McpToolPolicy.db().prepare(
         'SELECT package_id FROM mcp_configs WHERE id = ?'
       ).get(configId) as { package_id: number | null } | undefined
-      if (!row || row.package_id == null) return configId
-      const root = McpToolPolicy.db().prepare(
-        'SELECT MIN(id) AS rootId FROM mcp_configs WHERE package_id = ?'
-      ).get(row.package_id) as { rootId: number | null } | undefined
-      return root?.rootId ?? configId
+      if (row && row.package_id != null) return { keyCol: 'package_id', keyValue: row.package_id }
     } catch {
-      return configId
+      // fail-safe：回退手工轨
     }
+    return { keyCol: 'config_id', keyValue: configId }
   }
 
   /**
@@ -145,30 +144,45 @@ export class McpToolPolicy {
 
   /**
    * 工具清单缓存落库（testConnection 成功分支调用）。策略保留语义：
-   * 事务内先读回旧 (tool_name, enabled, skip_confirm) → DELETE 该 config_id 旧行 →
+   * 事务内先读回旧 (tool_name, enabled, skip_confirm) → DELETE 归属键旧行 →
    * 批量 INSERT 新清单并回填旧策略值（旧行不存在的用默认 enabled=1/skip_confirm=0）。
    * 已消失工具随 DELETE 自然清除。工具数 >MAX_TOOLS_PER_CONFIG 截断（T-22-04）。
+   * v29 D-05：归属键按 resolvePolicyScope 路由——包轨写 package_id（config_id NULL），
+   * 手工轨原 config_id；行式 enabled/skip_confirm 结构不变。
    */
   static saveToolCache(configIdIn: number, tools: McpToolCacheInput[]): void {
-    const configId = McpToolPolicy.resolvePolicyConfigId(configIdIn)
+    McpToolPolicy.writeToolCache(McpToolPolicy.resolvePolicyScope(configIdIn), tools)
+  }
+
+  /**
+   * 包级直写入口（29.1-03，消除借存链路）：mcpPackageService 实测/创建预填直接按
+   * package_id 落 mcp_tools——不再依赖「同包 MIN(id) 根配置」存在（v29 前借存形态终结）。
+   */
+  static savePackageToolCache(packageId: number, tools: McpToolCacheInput[]): void {
+    McpToolPolicy.writeToolCache({ keyCol: 'package_id', keyValue: packageId }, tools)
+  }
+
+  /** saveToolCache / savePackageToolCache 共享事务体（读旧 → DELETE → 批量 INSERT 回填） */
+  private static writeToolCache(scope: { keyCol: 'package_id' | 'config_id'; keyValue: number }, tools: McpToolCacheInput[]): void {
     const conn = McpToolPolicy.db()
     const capped = tools.slice(0, MAX_TOOLS_PER_CONFIG)
     const tx = conn.transaction((): void => {
       const oldRows = conn.prepare(
-        'SELECT tool_name, enabled, skip_confirm FROM mcp_tools WHERE config_id = ?'
-      ).all(configId) as Array<{ tool_name: string; enabled: number; skip_confirm: number }>
+        `SELECT tool_name, enabled, skip_confirm FROM mcp_tools WHERE ${scope.keyCol} = ?`
+      ).all(scope.keyValue) as Array<{ tool_name: string; enabled: number; skip_confirm: number }>
       const oldMap = new Map(oldRows.map((r) => [r.tool_name, r]))
 
-      conn.prepare('DELETE FROM mcp_tools WHERE config_id = ?').run(configId)
+      conn.prepare(`DELETE FROM mcp_tools WHERE ${scope.keyCol} = ?`).run(scope.keyValue)
 
+      // 包轨行只写 package_id（config_id 落默认 NULL）；手工轨原 config_id 列
       const stmtIns = conn.prepare(
-        `INSERT INTO mcp_tools (config_id, tool_name, enabled, skip_confirm, tool_meta, updated_at)
+        `INSERT INTO mcp_tools (${scope.keyCol}, tool_name, enabled, skip_confirm, tool_meta, updated_at)
          VALUES (?, ?, ?, ?, ?, datetime('now','localtime'))`
       )
       for (const t of capped) {
         const old = oldMap.get(t.name)
         stmtIns.run(
-          configId,
+          scope.keyValue,
           t.name,
           old?.enabled ?? 1,
           old?.skip_confirm ?? 0,
@@ -181,11 +195,11 @@ export class McpToolPolicy {
 
   /** 全量清单（含禁用行——UI 抽屉展示需要；enabled 过滤用 getEnabledTools） */
   static getToolCache(configIdIn: number): McpToolCacheRow[] {
-    const configId = McpToolPolicy.resolvePolicyConfigId(configIdIn)
+    const scope = McpToolPolicy.resolvePolicyScope(configIdIn)
     const conn = McpToolPolicy.db()
     const rows = conn.prepare(
-      'SELECT tool_name, tool_meta, enabled, skip_confirm FROM mcp_tools WHERE config_id = ? ORDER BY tool_name'
-    ).all(configId) as Array<{ tool_name: string; tool_meta: string | null; enabled: number; skip_confirm: number }>
+      `SELECT tool_name, tool_meta, enabled, skip_confirm FROM mcp_tools WHERE ${scope.keyCol} = ? ORDER BY tool_name`
+    ).all(scope.keyValue) as Array<{ tool_name: string; tool_meta: string | null; enabled: number; skip_confirm: number }>
     return rows.map((r) => {
       let meta: { description?: string | null; annotations?: McpToolAnnotations | null; inputSchema?: unknown } = {}
       try {
@@ -206,10 +220,10 @@ export class McpToolPolicy {
 
   /** 工具级启用开关（22-03 注入过滤数据源） */
   static setEnabled(configIdIn: number, toolName: string, enabled: boolean): void {
-    const configId = McpToolPolicy.resolvePolicyConfigId(configIdIn)
+    const scope = McpToolPolicy.resolvePolicyScope(configIdIn)
     McpToolPolicy.db().prepare(
-      "UPDATE mcp_tools SET enabled = ?, updated_at = datetime('now','localtime') WHERE config_id = ? AND tool_name = ?"
-    ).run(enabled ? 1 : 0, configId, toolName)
+      `UPDATE mcp_tools SET enabled = ?, updated_at = datetime('now','localtime') WHERE ${scope.keyCol} = ? AND tool_name = ?`
+    ).run(enabled ? 1 : 0, scope.keyValue, toolName)
   }
 
   /**
@@ -217,12 +231,12 @@ export class McpToolPolicy {
    * 不满足单条件（readOnlyHint!==true）返回 false 拒绝写入；关 0（撤回免确认）不受限。
    */
   static setSkipConfirm(configIdIn: number, toolName: string, skip: boolean): boolean {
-    const configId = McpToolPolicy.resolvePolicyConfigId(configIdIn)
+    const scope = McpToolPolicy.resolvePolicyScope(configIdIn)
     const conn = McpToolPolicy.db()
     if (skip) {
       const row = conn.prepare(
-        'SELECT tool_meta FROM mcp_tools WHERE config_id = ? AND tool_name = ?'
-      ).get(configId, toolName) as { tool_meta: string | null } | undefined
+        `SELECT tool_meta FROM mcp_tools WHERE ${scope.keyCol} = ? AND tool_name = ?`
+      ).get(scope.keyValue, toolName) as { tool_meta: string | null } | undefined
       if (!row) return false
       let annotations: McpToolAnnotations | undefined
       try {
@@ -233,8 +247,8 @@ export class McpToolPolicy {
       if (!McpToolPolicy.isReadOnlyEligible({ name: toolName, annotations })) return false
     }
     const info = conn.prepare(
-      "UPDATE mcp_tools SET skip_confirm = ?, updated_at = datetime('now','localtime') WHERE config_id = ? AND tool_name = ?"
-    ).run(skip ? 1 : 0, configId, toolName)
+      `UPDATE mcp_tools SET skip_confirm = ?, updated_at = datetime('now','localtime') WHERE ${scope.keyCol} = ? AND tool_name = ?`
+    ).run(skip ? 1 : 0, scope.keyValue, toolName)
     return info.changes > 0
   }
 
@@ -253,19 +267,19 @@ export class McpToolPolicy {
    * 拒绝用其它工具变通实现被禁功能——纯被动拦截挡不住 evaluate 类万能工具变通）。
    */
   static getDisabledToolNames(configIdIn: number): string[] {
-    const configId = McpToolPolicy.resolvePolicyConfigId(configIdIn)
+    const scope = McpToolPolicy.resolvePolicyScope(configIdIn)
     const rows = McpToolPolicy.db().prepare(
-      'SELECT tool_name FROM mcp_tools WHERE config_id = ? AND enabled = 0 ORDER BY tool_name'
-    ).all(configId) as Array<{ tool_name: string }>
+      `SELECT tool_name FROM mcp_tools WHERE ${scope.keyCol} = ? AND enabled = 0 ORDER BY tool_name`
+    ).all(scope.keyValue) as Array<{ tool_name: string }>
     return rows.map((r) => r.tool_name)
   }
 
   /** 已开免确认的工具名集合（22-03 exec 决策数据源） */
   static getSkipConfirmTools(configIdIn: number): Set<string> {
-    const configId = McpToolPolicy.resolvePolicyConfigId(configIdIn)
+    const scope = McpToolPolicy.resolvePolicyScope(configIdIn)
     const rows = McpToolPolicy.db().prepare(
-      'SELECT tool_name FROM mcp_tools WHERE config_id = ? AND skip_confirm = 1'
-    ).all(configId) as Array<{ tool_name: string }>
+      `SELECT tool_name FROM mcp_tools WHERE ${scope.keyCol} = ? AND skip_confirm = 1`
+    ).all(scope.keyValue) as Array<{ tool_name: string }>
     return new Set(rows.map((r) => r.tool_name))
   }
 

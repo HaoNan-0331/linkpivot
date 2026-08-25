@@ -529,6 +529,12 @@ describe('Task 1 (29-06): listMatchedDevices', () => {
 // Phase 29 Plan 29-07（Gap-2/Gap-5）：createConfigFromPackage 单条配置语义
 // ---------------------------------------------------------------------------
 describe('Task 1 (29-07): createConfigFromPackage 单条配置 + N 设备独立 env', () => {
+  function importOne(opts: ZipOpts = {}): number {
+    const res = McpPackageService.importPackage(mkMcpb(opts))
+    if (!res.ok) throw new Error('import failed')
+    return res.package.id
+  }
+
   function seedDevice2(db: Database.Database, id: string, name: string): void {
     db.prepare('INSERT INTO devices (id, name_enc) VALUES (?, ?)').run(id, encField(name, TEST_MK))
   }

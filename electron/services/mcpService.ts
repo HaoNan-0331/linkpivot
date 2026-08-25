@@ -369,9 +369,8 @@ export class McpService {
    * 主表 DELETE，mcp_device_rel 随 FK CASCADE 消失（Popconfirm 数据层级联）。
    * WR-03：先杀该 configId 全部运行中 stdio 实例（对齐 deletePackage 语义——防子进程
    * 持用户 env 明文残留至 10 分钟空闲回收）。
-   * 29-09 走查二（原 WR-06 拦截移除，用户心智「包/配置独立」裁决方案一——迁移继承）：
-   * 删包配置时 mcp_tools 策略行不再随配置湮灭——同包还有兄弟配置 → 迁移继承到新根
-   * （重选 MIN(id)，重名工具行先清防 UNIQUE 冲突）；同包无兄弟 → 一并清理（包保留）。
+   * 29.1 D-05：策略行真包级（mcp_tools.package_id）——删包配置（含删光同包全部配置）
+   * 不再触碰 mcp_tools，「包在策略在配置随便删」；策略随包走 deletePackage 级联。
    * 手工配置删除同步清理自身 mcp_tools 缓存行（原路径为孤儿行遗留）。
    */
   static deleteConfig(id: number): { ok: true } | { ok: false; error: string } {
@@ -383,20 +382,8 @@ export class McpService {
       if (String(rec.configId).split(':')[0] === String(id)) McpProcessRegistry.killTree(rec.pid)
     }
     conn.transaction((): void => {
-      if (row.source === 'package' && row.package_id != null) {
-        const sibling = conn.prepare(
-          'SELECT MIN(id) AS rootId FROM mcp_configs WHERE package_id = ? AND id != ?'
-        ).get(row.package_id, id) as { rootId: number | null } | undefined
-        if (sibling?.rootId != null) {
-          // 新根已有同名工具行先清（UNIQUE(config_id, tool_name) 冲突防御），再整体迁移继承
-          conn.prepare(
-            'DELETE FROM mcp_tools WHERE config_id = ? AND tool_name IN (SELECT tool_name FROM mcp_tools WHERE config_id = ?)'
-          ).run(sibling.rootId, id)
-          conn.prepare('UPDATE mcp_tools SET config_id = ? WHERE config_id = ?').run(sibling.rootId, id)
-        } else {
-          conn.prepare('DELETE FROM mcp_tools WHERE config_id = ?').run(id)
-        }
-      } else {
+      if (row.source !== 'package' || row.package_id == null) {
+        // 手工轨：策略行 config_id 归属，随配置删除清理
         conn.prepare('DELETE FROM mcp_tools WHERE config_id = ?').run(id)
       }
       conn.prepare('DELETE FROM mcp_configs WHERE id = ?').run(id)

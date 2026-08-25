@@ -499,11 +499,13 @@ export class McpPackageService {
       if (ownConfigIds.has(String(rec.configId).split(':')[0])) McpProcessRegistry.killTree(rec.pid)
     }
 
-    // 2) 事务级联三表清净（mcp_device_rel 经 mcp_configs FK CASCADE，显式删防 FK 关闭路径）
+    // 2) 事务级联四表清净（mcp_device_rel 经 mcp_configs FK CASCADE，显式删防 FK 关闭路径；
+    //    v29 D-05/D-06：包级策略行 mcp_tools WHERE package_id 随删包清理，T-29.1-09 防孤儿行）
     conn.transaction((): void => {
       conn.prepare(
         'DELETE FROM mcp_device_rel WHERE mcp_config_id IN (SELECT id FROM mcp_configs WHERE package_id = ?)'
       ).run(packageId)
+      conn.prepare('DELETE FROM mcp_tools WHERE package_id = ?').run(packageId)
       conn.prepare('DELETE FROM mcp_configs WHERE package_id = ?').run(packageId)
       conn.prepare('DELETE FROM mcp_packages WHERE id = ?').run(packageId)
     })()
@@ -599,9 +601,9 @@ export class McpPackageService {
       const extraTools = actual.filter((n) => !declared.includes(n))
       const missingTools = declared.filter((n) => !actual.includes(n))
       writeLastTest({ stage: 'listing', ok: true, extraTools, missingTools, testedAt })
-      // WR-02：实测成功 → 工具缓存写入包根配置（同包 MIN(id) 策略模板载体），
+      // WR-02（29.1-03 直写）：实测成功 → 工具缓存按 package_id 直写（v29 D-05 包级策略），
       // AI buildMcpContexts 开箱可用（annotations 实测值透传，免确认资格由策略层判定）
-      McpPackageService.saveRootConfigToolCache(packageId, result.tools.map((t) => ({
+      McpPackageService.savePackageToolCache(packageId, result.tools.map((t) => ({
         name: t.name,
         description: t.description,
         inputSchema: t.inputSchema,
@@ -715,16 +717,14 @@ export class McpPackageService {
   // -------------------------------------------------------------------
 
   /**
-   * WR-02：工具缓存写入包根配置（同包 MIN(id)——D-22 策略模板载体）。
+   * 29.1-03（D-05 直写）：工具缓存按 package_id 直写 mcp_tools——不再借存同包
+   * MIN(id) 根配置（v29 借存链路终结；无配置/删光配置场景均可预填，包在策略在）。
    * fail-soft：mcp_tools 表缺失（最小 schema 测试）或写失败时跳过——缓存冷启动为空
    * 仍是可用降级（用户手动行级测试可重建），不阻断导入/创建主线。
    */
-  private static saveRootConfigToolCache(packageId: number, tools: Array<{ name: string; description?: string; annotations?: McpToolAnnotations; inputSchema?: unknown }>): void {
+  private static savePackageToolCache(packageId: number, tools: Array<{ name: string; description?: string; annotations?: McpToolAnnotations; inputSchema?: unknown }>): void {
     try {
-      const rootCfg = McpPackageService.db().prepare(
-        'SELECT MIN(id) AS id FROM mcp_configs WHERE package_id = ?'
-      ).get(packageId) as { id: number | null } | undefined
-      if (rootCfg?.id != null) McpToolPolicy.saveToolCache(rootCfg.id, tools)
+      McpToolPolicy.savePackageToolCache(packageId, tools)
     } catch {
       // fail-soft：见方法注
     }
@@ -848,8 +848,8 @@ export class McpPackageService {
     })()
     // CFA 不跟踪事务闭包赋值——显式宽类型还原后判定
     if ((result as { ok?: boolean } | null)?.ok === true) {
-      // WR-02 同款：创建即预填包根配置工具缓存（MIN(id) 路由模板载体，AI 开箱可用）
-      McpPackageService.saveRootConfigToolCache(packageId, manifest.tools.map((t) => ({
+      // WR-02 同款（29.1-03 直写）：创建即预填包级工具缓存（package_id 直写，AI 开箱可用）
+      McpPackageService.savePackageToolCache(packageId, manifest.tools.map((t) => ({
         name: t.name,
         description: t.description,
       })))
