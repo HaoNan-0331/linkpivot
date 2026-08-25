@@ -702,6 +702,200 @@ describe('v27 mcp_packages + 设备级 env 列', () => {
   })
 })
 
+/**
+ * Phase 29.1 Plan 29.1-01 —— v29 迁移（mcp_packages.env_meta 明文 JSON 列 D-04 +
+ * mcp_tools 归属从 config_id 借存迁 package_id D-05）真路径验证。
+ *
+ * 用例（plan behavior）：
+ *   a) v28 库跑 v29 → mcp_packages.env_meta 列就位（默认 NULL）、借存行 package_id 回填
+ *      且 config_id 置 NULL（双列并存）、手工轨不动、双 UNIQUE 索引、user_version=29
+ *   b) 搬迁前后策略行计数一致（借存+手工分组，T-29.1-02）
+ *   c) v29 幂等重跑 no-op（hasColumn + sqlite_master 特征串双守卫，数据不变）
+ *   d) MIGRATION_HEAD=29 且注册表含 v29；init.ts fresh DDL 双列并存逐字一致
+ *   e) 双 UNIQUE 语义：同 (package_id, tool_name) 二次 INSERT 抛约束、
+ *      同 (config_id, tool_name) 二次 INSERT 抛约束、NULL 轨互不冲突
+ */
+describe('v29 mcp_packages.env_meta + mcp_tools.package_id 借存迁移', () => {
+  /** v28 形态基线：v27 形态 + mcp_configs CHECK 已含 'package'（自建，不依赖 v28 describe 内部 helper） */
+  function createV28Form(db: Database.Database): void {
+    createV15Schema(db)
+    v16(db)
+    v17(db)
+    db.exec(`
+      CREATE TABLE mcp_packages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        version TEXT,
+        runtime TEXT NOT NULL CHECK(runtime IN ('node','python')),
+        entry TEXT NOT NULL,
+        manifest_json TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        fingerprint_json TEXT NOT NULL,
+        dir_path TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        disabled INTEGER NOT NULL DEFAULT 0,
+        last_test TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `)
+    v27(db)
+    v28(db)
+    db.pragma('user_version = 28')
+  }
+
+  /** 三组夹具：同包 2 配置（策略行借存 MIN(id) 根配置）、手工配置策略行、无策略行的包 */
+  function seedFixtures(db: Database.Database): void {
+    const insPkg = db.prepare(`
+      INSERT INTO mcp_packages (name, version, runtime, entry, manifest_json, fingerprint, fingerprint_json, dir_path, size_bytes)
+      VALUES (?, '1.0.0', 'node', 'main.js', '{}', 'fp', '[]', 'C:/pkg', 1)
+    `)
+    insPkg.run('demo')   // id=1：有策略行
+    insPkg.run('bare')   // id=2：无策略行
+    const insCfg = db.prepare(
+      "INSERT INTO mcp_configs (name, type, command_or_url, package_id, source) VALUES (?, 'package', ?, ?, ?)"
+    )
+    insCfg.run('pkg-root', 'demo', 1, 'package')      // id=1：根配置（MIN(id)，策略借存载体）
+    insCfg.run('pkg-second', 'demo', 1, 'package')    // id=2：同包第二配置
+    db.prepare(
+      "INSERT INTO mcp_configs (name, type, command_or_url, package_id, source) VALUES ('manual-cfg', 'stdio', 'node x.js', NULL, 'manual')"
+    ).run() // id=3：手工轨
+    const insTool = db.prepare(
+      'INSERT INTO mcp_tools (config_id, tool_name, enabled, skip_confirm, tool_meta) VALUES (?, ?, ?, ?, ?)'
+    )
+    insTool.run(1, 'get_status', 0, 1, '{}')  // 借存：挂在根配置
+    insTool.run(1, 'run_scan', 1, 0, '{}')    // 借存：挂在根配置
+    insTool.run(3, 'http_fetch', 1, 0, '{}')  // 手工轨
+  }
+
+  function runV29(db: Database.Database): void {
+    const step = MIGRATIONS.find((m) => m.version === 29)
+    expect(step, 'v29 迁移步骤尚未注册').toBeTruthy()
+    step!.run(db)
+  }
+
+  function columnsOf(db: Database.Database, table: string): string[] {
+    return (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((r) => r.name)
+  }
+
+  it('a) v28 库跑 v29 → env_meta 列 + 借存行迁 package_id + 手工轨不动 + user_version=29', () => {
+    const db = new Database(':memory:')
+    createV28Form(db)
+    seedFixtures(db)
+
+    runV29(db)
+
+    // D-04：env_meta 明文 JSON 列，默认 NULL
+    expect(columnsOf(db, 'mcp_packages')).toContain('env_meta')
+    const pkg = db.prepare('SELECT env_meta FROM mcp_packages WHERE id = 1').get() as any
+    expect(pkg.env_meta).toBeNull()
+
+    // D-05：借存行迁 package_id 且 config_id 置 NULL（双列并存）
+    const borrowed = db.prepare("SELECT package_id, config_id, enabled, skip_confirm FROM mcp_tools WHERE tool_name IN ('get_status','run_scan') ORDER BY tool_name").all() as any[]
+    expect(borrowed).toHaveLength(2)
+    for (const row of borrowed) {
+      expect(row.package_id).toBe(1)
+      expect(row.config_id).toBeNull()
+    }
+    expect(borrowed[0].enabled).toBe(0)      // 策略值保活
+    expect(borrowed[0].skip_confirm).toBe(1)
+
+    // 手工轨不动
+    const manual = db.prepare("SELECT package_id, config_id FROM mcp_tools WHERE tool_name = 'http_fetch'").get() as any
+    expect(manual.config_id).toBe(3)
+    expect(manual.package_id).toBeNull()
+
+    // 双 UNIQUE 索引（表级约束形态）
+    const sql = getTableSql(db, 'mcp_tools')
+    expect(sql).toContain('UNIQUE(package_id, tool_name)')
+    expect(sql).toContain('UNIQUE(config_id, tool_name)')
+    expect(db.pragma('user_version', { simple: true })).toBe(29)
+    db.close()
+  })
+
+  it('b) 搬迁前后策略行计数一致（T-29.1-02）', () => {
+    const db = new Database(':memory:')
+    createV28Form(db)
+    seedFixtures(db)
+    const before = db.prepare('SELECT COUNT(*) AS c FROM mcp_tools').get() as { c: number }
+    expect(before.c).toBe(3)
+
+    runV29(db)
+
+    const after = db.prepare('SELECT COUNT(*) AS c FROM mcp_tools').get() as { c: number }
+    expect(after.c).toBe(before.c)
+    // 分组：包轨 2（demo）+ 手工轨 1
+    const byTrack = db.prepare(
+      'SELECT CASE WHEN package_id IS NOT NULL THEN (SELECT name FROM mcp_packages p WHERE p.id = package_id) ELSE \'manual\' END AS track, COUNT(*) AS c FROM mcp_tools GROUP BY track ORDER BY track'
+    ).all() as Array<{ track: string; c: number }>
+    expect(byTrack).toEqual([{ track: 'demo', c: 2 }, { track: 'manual', c: 1 }])
+    db.close()
+  })
+
+  it('c) v29 幂等重跑 no-op（数据不变、不 throw）', () => {
+    const db = new Database(':memory:')
+    createV28Form(db)
+    seedFixtures(db)
+    runV29(db)
+    db.prepare("UPDATE mcp_tools SET enabled = 0 WHERE tool_name = 'http_fetch'").run()
+
+    expect(() => runV29(db)).not.toThrow()
+
+    const rows = db.prepare('SELECT tool_name, package_id, config_id, enabled FROM mcp_tools ORDER BY tool_name').all() as any[]
+    expect(rows).toEqual([
+      { tool_name: 'get_status', package_id: 1, config_id: null, enabled: 0 },
+      { tool_name: 'http_fetch', package_id: null, config_id: 3, enabled: 0 }, // 幂等重跑不回滚用户改动
+      { tool_name: 'run_scan', package_id: 1, config_id: null, enabled: 1 },
+    ])
+    expect(db.pragma('user_version', { simple: true })).toBe(29)
+    db.close()
+  })
+
+  it('d) MIGRATION_HEAD=29、注册表含 v29、init.ts fresh DDL 双列并存', () => {
+    expect(MIGRATION_HEAD).toBe(29)
+    expect(MIGRATIONS.map((m) => m.version)).toContain(29)
+
+    const root = path.resolve(__dirname, '../..')
+    const initSrc = fs.readFileSync(path.join(root, 'electron/database/init.ts'), 'utf-8')
+    const pkg = initSrc.match(/CREATE TABLE IF NOT EXISTS mcp_packages \(([\s\S]*?)\);/)!
+    expect(pkg[1]).toContain('env_meta TEXT')
+    const tools = initSrc.match(/CREATE TABLE IF NOT EXISTS mcp_tools \(([\s\S]*?)\);/)!
+    expect(tools[1]).toContain('package_id')
+    expect(tools[1]).toContain('config_id')
+    expect(tools[1]).toContain('UNIQUE(package_id, tool_name)')
+    expect(tools[1]).toContain('UNIQUE(config_id, tool_name)')
+
+    // 双路径逐字一致：迁移路径 v28 库跑 v29 后的表结构 vs fresh 路径
+    const mig = new Database(':memory:')
+    createV28Form(mig)
+    runV29(mig)
+    const fresh = new Database(':memory:')
+    for (const stmt of initSrc.match(/CREATE TABLE IF NOT EXISTS mcp_tools \([\s\S]*?\);/g)!) fresh.exec(stmt)
+    expect(columnsOf(fresh, 'mcp_tools')).toEqual(columnsOf(mig, 'mcp_tools'))
+    mig.close()
+    fresh.close()
+  })
+
+  it('e) 双 UNIQUE 语义：各自轨道防重、NULL 轨互不冲突', () => {
+    const db = new Database(':memory:')
+    createV28Form(db)
+    seedFixtures(db)
+    runV29(db)
+
+    // 包轨防重
+    expect(() =>
+      db.prepare("INSERT INTO mcp_tools (package_id, config_id, tool_name) VALUES (1, NULL, 'get_status')").run()
+    ).toThrow(/UNIQUE/i)
+    // 手工轨防重
+    expect(() =>
+      db.prepare("INSERT INTO mcp_tools (package_id, config_id, tool_name) VALUES (NULL, 3, 'http_fetch')").run()
+    ).toThrow(/UNIQUE/i)
+    // NULL 与具体值在 SQLite UNIQUE 中互不相等：同 tool_name 手工新配置合法
+    db.prepare("INSERT INTO mcp_tools (package_id, config_id, tool_name) VALUES (NULL, 999, 'get_status')").run()
+    db.close()
+  })
+})
+
 /** v26 在 mcp 基线上的最小形态守卫（无 ai_config/chat_history 时跳过 v26 本体，仅锚定版本） */
 function v26guard(db: Database.Database): void {
   db.pragma('user_version = 26')
