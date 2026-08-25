@@ -387,7 +387,16 @@ export interface McpMatchedDeviceDto {
   boundConfigName: string | null
 }
 
-// Phase 29：MCP 包视图（mcpPackageService.McpPackageView 的 renderer 镜像——仅 env 键名，无明文值）
+/** 29.1 D-03：envMeta 单键元数据（mcpPackageValidator.EnvMetaEntry 的 renderer 镜像） */
+export interface McpEnvMetaEntryDto {
+  label: string
+  description?: string
+  required?: boolean
+  example?: string
+  default?: string
+}
+
+// Phase 29：MCP 包视图（mcpPackageService.McpPackageView 的 renderer 镜像——仅 env 键名 + 明文元数据，无明文值）
 export interface McpPackageViewDto {
   id: number
   name: string
@@ -397,6 +406,7 @@ export interface McpPackageViewDto {
   models: string[]
   toolCount: number
   envKeys: string[]
+  envMeta: Record<string, McpEnvMetaEntryDto>
   dirPath: string
   sizeBytes: number
   disabled: boolean
@@ -430,14 +440,15 @@ export interface McpPackageDetailDto extends McpPackageViewDto {
     models: string[]
     tools: McpPackageToolDto[]
     envKeys?: string[]
+    envMeta?: Record<string, McpEnvMetaEntryDto>
   }
   fingerprintTreeSha256: string
   fingerprintFiles: Array<{ path: string; sha256: string }>
 }
 
-/** 五向量校验结果（renderer 直渲染 ✓/✗） */
+/** 六向量校验结果（renderer 直渲染 ✓/✗；29.1 增 envmeta-lie） */
 export interface McpVectorResultDto {
-  id: 'manifest-schema' | 'entry-whitelist' | 'zip-slip' | 'double-extension' | 'manifest-lie'
+  id: 'manifest-schema' | 'entry-whitelist' | 'zip-slip' | 'double-extension' | 'manifest-lie' | 'envmeta-lie'
   ok: boolean
   reason?: string
 }

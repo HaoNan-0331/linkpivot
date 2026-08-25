@@ -86,6 +86,7 @@ function makeDb(): Database.Database {
       runtime TEXT NOT NULL CHECK(runtime IN ('node','python')),
       entry TEXT NOT NULL,
       manifest_json TEXT NOT NULL,
+      env_meta TEXT,
       fingerprint TEXT NOT NULL,
       fingerprint_json TEXT NOT NULL,
       dir_path TEXT NOT NULL,
@@ -113,6 +114,7 @@ interface ZipOpts {
   version?: string
   entryContent?: string
   envKeys?: string[]
+  envMeta?: Record<string, { label: string; description?: string; required?: boolean; example?: string; default?: string }>
   tools?: string[]
   entryName?: string
 }
@@ -126,6 +128,7 @@ function mkMcpb(opts: ZipOpts = {}): Buffer {
     models: ['S5735'],
     tools: (opts.tools ?? ['tool_a']).map((n) => ({ name: n, description: `${n} desc` })),
     ...(opts.envKeys ? { envKeys: opts.envKeys } : {}),
+    ...(opts.envMeta ? { envMeta: opts.envMeta } : {}),
   }
   return zipSync({
     'manifest.json': strToU8(JSON.stringify(manifest)),
@@ -294,6 +297,51 @@ describe('Task 1: importPackage / confirmOverwrite / list / get', () => {
     expect(one?.manifest.name).toBe('demo-pkg')
     expect(one?.fingerprintFiles.length).toBeGreaterThan(0)
     expect(one?.lastTest).toBeNull()
+  })
+
+  it('29.1 D-04：带 envMeta 导入 → env_meta 列落库 + 投影 envMeta；缺省导入 → env_meta NULL + 投影 {}', () => {
+    const res = McpPackageService.importPackage(mkMcpb({
+      envKeys: ['NF_HOST', 'NF_PORT'],
+      envMeta: {
+        NF_HOST: { label: '防火墙地址', required: true },
+        NF_PORT: { label: '端口', default: '443' },
+      },
+    }))
+    expect(res.ok).toBe(true)
+    const row = h.db!.prepare('SELECT env_meta FROM mcp_packages WHERE id = ?').get(res.ok ? res.package.id : 0) as { env_meta: string | null }
+    expect(row.env_meta).toBeTruthy()
+    expect(JSON.parse(row.env_meta!)).toEqual({
+      NF_HOST: { label: '防火墙地址', required: true },
+      NF_PORT: { label: '端口', default: '443' },
+    })
+    const view = McpPackageService.listPackages()[0]
+    expect(view.envMeta.NF_HOST).toEqual({ label: '防火墙地址', required: true })
+    expect(view.envMeta.NF_PORT).toEqual({ label: '端口', default: '443' })
+
+    // 缺省 envMeta 旧包：env_meta NULL、投影 {}（向后兼容）
+    McpPackageService.importPackage(mkMcpb({ name: 'old-pkg', envKeys: ['TOKEN'] }))
+    const old = h.db!.prepare('SELECT env_meta FROM mcp_packages WHERE name = ?').get('old-pkg') as { env_meta: string | null }
+    expect(old.env_meta).toBeNull()
+    const oldView = McpPackageService.listPackages().find((p) => p.name === 'old-pkg')!
+    expect(oldView.envMeta).toEqual({})
+  })
+
+  it('29.1 D-24 延伸：confirmOverwrite → envMeta 随 manifest 自动跟随（无合并逻辑）', () => {
+    const imp = McpPackageService.importPackage(mkMcpb({
+      envKeys: ['A', 'B'],
+      envMeta: { A: { label: '旧标签' }, B: { label: 'B 标签' } },
+    }))
+    expect(imp.ok).toBe(true)
+    if (!imp.ok) return
+    const res = McpPackageService.confirmOverwrite(imp.package.id, mkMcpb({
+      envKeys: ['A', 'B'], version: '2.0.0', entryContent: 'console.log(2)',
+      envMeta: { A: { label: '新标签', description: '改了' } },
+    }))
+    expect(res.ok).toBe(true)
+    const row = h.db!.prepare('SELECT env_meta FROM mcp_packages WHERE id = ?').get(imp.package.id) as { env_meta: string | null }
+    expect(JSON.parse(row.env_meta!)).toEqual({ A: { label: '新标签', description: '改了' } })
+    const view = McpPackageService.listPackages().find((p) => p.id === imp.package.id)!
+    expect(view.envMeta).toEqual({ A: { label: '新标签', description: '改了' } })
   })
 })
 

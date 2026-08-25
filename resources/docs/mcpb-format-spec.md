@@ -15,6 +15,7 @@ manifest.json 必须位于包根目录，UTF-8 JSON，字段如下：
 | `models` | string[] | 是 | 适用设备型号清单（用于配置向导预筛设备），如 `["NF", "ADS"]` |
 | `tools` | `{ name, description, readOnlyHint? }[]` | 是 | 声明的工具清单。`name` 只允许字母数字下划线连字符、最长 64；`description` 人话描述；`readOnlyHint: true` 表示只读工具（UI 打「只读」标） |
 | `envKeys` | string[] | 否 | 需要在设备绑定层逐台填写值的环境变量键名清单（如 `["NF_API_TOKEN"]`） |
+| `envMeta` | `Record<string, EnvMetaEntry>` | 否 | 每个环境变量键的人话元数据（29.1 新增），见下文 envMeta 说明 |
 
 ## 2. 目录组织
 
@@ -54,13 +55,50 @@ your-package.mcpb（zip）
 
 超限任一项，导入直接整体拒绝。
 
-## 5. 五向量校验清单（导入时逐项执行）
+## 4a. envMeta（环境变量元数据，可选）
+
+`envMeta` 为每个 `envKeys` 键提供中文人话元数据，导入后在设备环境变量表单中展示（label 替代裸键名、悬浮说明、必填标红、留空默认提示）。schema：
+
+```json
+{
+  "NF_API_TOKEN": {
+    "label": "接口令牌",
+    "description": "防火墙 REST API 认证 Token（系统-用户管理处创建）",
+    "required": true
+  },
+  "NF_API_PORT": {
+    "label": "API 端口",
+    "description": "REST 服务端口",
+    "example": "8443",
+    "default": "443"
+  }
+}
+```
+
+| 字段 | 类型 | 必填 | 语义 |
+|------|------|------|------|
+| `label` | string | 是 | 键的人话名称（非空，≤2000 字符） |
+| `description` | string | 否 | 悬浮说明文案 |
+| `required` | boolean | 否 | `true` = 用户未填值时表单与启动双层拦截（fail-closed） |
+| `example` | string | 否 | 输入示例（仅展示提示） |
+| `default` | string | 否 | 留空即用的默认值——**启动实例时叠加传入，不落库**；包升级改默认后留空键自动跟随新默认 |
+
+约束（导入校验强制）：
+
+- **键集必须 ⊆ `envKeys`**：envMeta 里出现 envKeys 之外的键 = 越界谎报，整个包拒绝导入（envmeta-lie 向量）。
+- 键名与 `envKeys` 同规则：字母/下划线开头，仅字母数字下划线，≤100 字符。
+- 键数 ≤100，单字符串字段 ≤2000 字符，序列化总长 ≤64KB（防投毒超大 payload）。
+- `envKeys` 有而 `envMeta` 缺某键合法（元数据可选，缺省时 UI 回退裸键名展示）。
+- 不含 env 值：明文元数据随包走；真正的值仍由用户在设备绑定层逐台填写并加密存储。
+
+## 5. 六向量校验清单（导入时逐项执行）
 
 1. **manifest-schema**：manifest.json 存在、JSON 可解析、全字段类型/约束合法
 2. **entry-whitelist**：runtime 对应的入口扩展名白名单命中
 3. **zip-slip**：全部条目路径无逃逸（绝对路径/盘符/反斜杠/`..`）
 4. **double-extension**：全树不得出现 `*.js.exe`、`*.py.bat` 等双扩展伪装可执行文件
 5. **manifest-lie**：声明的 entry 真实存在、工具名字符合法（防名字注入）
+6. **envmeta-lie**：`envMeta` 键集 ⊆ `envKeys`（防越界元数据谎报，29.1 新增）
 
 任一向量失败即导入拒绝，并给出人话原因（可反馈包作者修正后重新打包）。
 
@@ -86,7 +124,19 @@ your-package.mcpb（zip）
       "description": "新增一条安全策略"
     }
   ],
-  "envKeys": ["NF_API_BASE_URL", "NF_API_TOKEN"]
+  "envKeys": ["NF_API_BASE_URL", "NF_API_TOKEN"],
+  "envMeta": {
+    "NF_API_BASE_URL": {
+      "label": "API 地址",
+      "description": "防火墙 REST API 基础地址",
+      "example": "https://192.168.1.10:443"
+    },
+    "NF_API_TOKEN": {
+      "label": "接口令牌",
+      "description": "防火墙 REST API 认证 Token",
+      "required": true
+    }
+  }
 }
 ```
 

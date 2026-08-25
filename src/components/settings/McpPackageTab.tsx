@@ -15,17 +15,18 @@ const { Text } = Typography
 
 const ipcErrMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
-// 五向量标签（校验器 VECTOR_ORDER 同序，D-13：逐项 ✓/✗ + 失败人话 reason）
+// 六向量标签（校验器 VECTOR_ORDER 同序，D-13：逐项 ✓/✗ + 失败人话 reason；29.1 增 envmeta-lie）
 const VECTOR_LABELS: Record<McpVectorResultDto['id'], string> = {
   'manifest-schema': 'manifest 结构',
   'entry-whitelist': '入口类型白名单',
   'zip-slip': '路径逃逸防护',
   'double-extension': '双扩展伪装',
   'manifest-lie': 'manifest 与内容一致',
+  'envmeta-lie': 'envMeta 键集一致',
 }
 
 const VECTOR_ORDER: McpVectorResultDto['id'][] = [
-  'manifest-schema', 'entry-whitelist', 'zip-slip', 'double-extension', 'manifest-lie',
+  'manifest-schema', 'entry-whitelist', 'zip-slip', 'double-extension', 'manifest-lie', 'envmeta-lie',
 ]
 
 const STAGE_TEXT: Record<string, string> = {

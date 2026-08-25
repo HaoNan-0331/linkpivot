@@ -27,7 +27,7 @@ import { getDatabase } from '../database/connection'
 import { encField, decField } from '../utils/crypto'
 import { validateMcpb, buildFingerprintTree, isFingerprintExcluded, MAX_PACKAGE_BYTES, ENV_KEY_RE } from './mcpPackageValidator'
 import { MAX_BATCH } from './mcpService'
-import type { McpManifest, FileEntry, VectorResult } from './mcpPackageValidator'
+import type { McpManifest, FileEntry, VectorResult, EnvMetaEntry } from './mcpPackageValidator'
 import { testConnection, verifyPackageFingerprint, reportPackageIntegrityFailure, resolvePackageSpawn } from './mcpClient'
 import type { McpTestResult, StageCallback } from './mcpClient'
 import { McpToolPolicy } from './mcpToolPolicy'
@@ -45,6 +45,8 @@ export const MAX_PKG_NAME_LENGTH = 100
  * 校验通道写入 buildChildEnv 覆盖 PATH）。
  */
 export { ENV_KEY_RE } from './mcpPackageValidator'
+/** 29.1 D-03/D-04：envMeta 单键元数据类型（唯一定义点 validator，此处转发导出） */
+export type { EnvMetaEntry } from './mcpPackageValidator'
 
 export interface EnvKeysDiff {
   kept: string[]
@@ -74,7 +76,7 @@ export interface PackageLastTest {
   testedAt: string
 }
 
-/** IPC 出口投影：包级本无 env 值，仅 envKeys 名单（无明文可泄） */
+/** IPC 出口投影：包级本无 env 值，仅 envKeys 名单 + envMeta 明文元数据（无明文可泄） */
 export interface McpPackageView {
   id: number
   name: string
@@ -84,6 +86,8 @@ export interface McpPackageView {
   models: string[]
   toolCount: number
   envKeys: string[]
+  /** 29.1 D-04：与 envKeys 同源解 manifest_json（杜绝 env_meta 列与 manifest 两处不一致）；坏 JSON 降级 {} */
+  envMeta: Record<string, EnvMetaEntry>
   dirPath: string
   sizeBytes: number
   disabled: boolean
@@ -177,6 +181,7 @@ export class McpPackageService {
       models: manifest?.models ?? [],
       toolCount: manifest?.tools?.length ?? 0,
       envKeys: manifest?.envKeys ?? [],
+      envMeta: manifest?.envMeta ?? {},
       dirPath: row.dir_path,
       sizeBytes: row.size_bytes,
       disabled: !!row.disabled,
@@ -280,10 +285,11 @@ export class McpPackageService {
     McpPackageService.writePackageFiles(dir, v.fileTree)
     try {
       conn.prepare(
-        `INSERT INTO mcp_packages (name, version, runtime, entry, manifest_json, fingerprint, fingerprint_json, dir_path, size_bytes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO mcp_packages (name, version, runtime, entry, manifest_json, env_meta, fingerprint, fingerprint_json, dir_path, size_bytes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(manifest.name, manifest.version, manifest.runtime, manifest.entry,
-        JSON.stringify(manifest), fp.treeSha256, JSON.stringify(fp), dir, v.totalBytes)
+        JSON.stringify(manifest), manifest.envMeta ? JSON.stringify(manifest.envMeta) : null,
+        fp.treeSha256, JSON.stringify(fp), dir, v.totalBytes)
     } catch (e) {
       // WR-04：DB 落库失败（如并发同名 UNIQUE 兜底触发）补偿删除孤儿目录，防磁盘/DB 不一致
       rmSync(dir, { recursive: true, force: true })
@@ -388,10 +394,11 @@ export class McpPackageService {
         }
       }
       conn.prepare(
-        `UPDATE mcp_packages SET version = ?, runtime = ?, entry = ?, manifest_json = ?, fingerprint = ?,
+        `UPDATE mcp_packages SET version = ?, runtime = ?, entry = ?, manifest_json = ?, env_meta = ?, fingerprint = ?,
          fingerprint_json = ?, size_bytes = ?, last_test = NULL, updated_at = datetime('now','localtime')
          WHERE id = ?`
       ).run(manifest.version, manifest.runtime, manifest.entry, JSON.stringify(manifest),
+        manifest.envMeta ? JSON.stringify(manifest.envMeta) : null,
         fp.treeSha256, JSON.stringify(fp), v.totalBytes, packageId)
       })()
     } catch (e) {
