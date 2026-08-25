@@ -72,13 +72,15 @@ function makeDb(): Database.Database {
       FOREIGN KEY (mcp_config_id) REFERENCES mcp_configs(id) ON DELETE CASCADE
     );
     CREATE TABLE mcp_tools (
-      config_id INTEGER NOT NULL,
+      config_id INTEGER,
+      package_id INTEGER,
       tool_name TEXT NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1,
       skip_confirm INTEGER NOT NULL DEFAULT 0,
       tool_meta TEXT,
       updated_at TEXT,
-      PRIMARY KEY (config_id, tool_name)
+      UNIQUE(config_id, tool_name),
+      UNIQUE(package_id, tool_name)
     );
     CREATE TABLE devices (
       id TEXT PRIMARY KEY,
@@ -245,26 +247,26 @@ describe('Phase 29 code-review / 29-09 走查二：deleteConfig（WR-03 杀实�
     expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_configs').get()).toEqual({ c: 1 })
   })
 
-  it('29-09 走查二：删包根配置 → mcp_tools 策略迁移继承到新根（MIN(id) 兄弟），不再拦截', () => {
+  it('29.1 D-05：删包配置不动 mcp_tools（策略真包级，删光重建原样保留）', () => {
     const ids = seedPackageConfigs(h.db!, 7, 2)
     const insTool = h.db!.prepare(
-      'INSERT INTO mcp_tools (config_id, tool_name, enabled, skip_confirm) VALUES (?, ?, 0, 1)'
+      'INSERT INTO mcp_tools (package_id, config_id, tool_name, enabled, skip_confirm) VALUES (7, NULL, ?, 0, 1)'
     )
-    insTool.run(ids[0], 'get_status')
-    insTool.run(ids[0], 'reboot')
+    insTool.run('get_status')
+    insTool.run('reboot')
 
-    const res = McpService.deleteConfig(ids[0])
-    expect(res.ok).toBe(true)
+    // 删第一条包配置：包级策略行不动
+    expect(McpService.deleteConfig(ids[0]).ok).toBe(true)
     expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_configs').get()).toEqual({ c: 1 })
-    // 策略行迁移继承：enabled/skip_confirm 值原样保活，config_id 指向新根（兄弟 MIN(id)）
-    const rows = h.db!.prepare('SELECT config_id, enabled, skip_confirm FROM mcp_tools ORDER BY tool_name').all() as any[]
-    expect(rows).toEqual([
-      { config_id: ids[1], enabled: 0, skip_confirm: 1 },
-      { config_id: ids[1], enabled: 0, skip_confirm: 1 },
-    ])
-    // 删最后一条包配置：工具行一并清理（包保留）
+    expect((h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_tools').get() as any).c).toBe(2)
+
+    // 删光最后一条包配置（包保留）：策略行仍不动——「包在策略在配置随便删」
     expect(McpService.deleteConfig(ids[1]).ok).toBe(true)
-    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_tools').get()).toEqual({ c: 0 })
+    const rows = h.db!.prepare('SELECT package_id, enabled, skip_confirm FROM mcp_tools ORDER BY tool_name').all() as any[]
+    expect(rows).toEqual([
+      { package_id: 7, enabled: 0, skip_confirm: 1 },
+      { package_id: 7, enabled: 0, skip_confirm: 1 },
+    ])
   })
 
   it('手工配置删除清理自身 mcp_tools 缓存行；行不存在幂等 ok', () => {

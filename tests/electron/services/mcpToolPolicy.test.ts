@@ -18,13 +18,15 @@ function freshDb(): Database.Database {
   db.exec(`
     CREATE TABLE mcp_tools (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      config_id INTEGER NOT NULL,
+      config_id INTEGER,
+      package_id INTEGER,
       tool_name TEXT NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1,
       skip_confirm INTEGER NOT NULL DEFAULT 0,
       tool_meta TEXT,
       updated_at TEXT,
-      UNIQUE(config_id, tool_name)
+      UNIQUE(config_id, tool_name),
+      UNIQUE(package_id, tool_name)
     );
     CREATE TABLE mcp_configs (
       id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, package_id INTEGER
@@ -281,5 +283,77 @@ describe('extraTools 消费端二次过滤（PKG-04/D-25，T-29-04-03）', () =>
     d.prepare('UPDATE mcp_packages SET last_test = ? WHERE id = 7').run('not-json')
     McpToolPolicy.saveToolCache(1, [{ name: 'get_status' }])
     expect(McpToolPolicy.getEnabledTools(1).map((t) => t.name)).toEqual(['get_status'])
+  })
+})
+
+// ---------- Phase 29.1（D-05）：策略存储真包级（package_id 归属键） ----------
+
+describe('v29 包级存储路由（D-05：mcp_tools 按 package_id 归属）', () => {
+  beforeEach(() => {
+    seedPackageConfigs()
+  })
+
+  it('包轨写入 → 行落 package_id 键且 config_id NULL；同包任一配置读取同份', () => {
+    McpToolPolicy.saveToolCache(2, [
+      { name: 'get_status', annotations: { readOnlyHint: true } },
+      { name: 'reboot_device' },
+    ])
+    const d = (McpToolPolicy as unknown as { db(): Database.Database }).db()
+    const rows = d.prepare('SELECT package_id, config_id FROM mcp_tools').all() as Array<{ package_id: number | null; config_id: number | null }>
+    expect(rows).toHaveLength(2)
+    expect(rows.every((r) => r.package_id === 7 && r.config_id === null)).toBe(true)
+    expect(McpToolPolicy.getToolCache(1).map((t) => t.name)).toEqual(['get_status', 'reboot_device'])
+    expect(McpToolPolicy.getToolCache(2).map((t) => t.name)).toEqual(['get_status', 'reboot_device'])
+  })
+
+  it('删光同包全部配置再重建 → 策略 enabled/skip_confirm 原样保留（D-05 核心收益）', () => {
+    const d = (McpToolPolicy as unknown as { db(): Database.Database }).db()
+    McpToolPolicy.saveToolCache(1, [
+      { name: 'get_status', annotations: { readOnlyHint: true } },
+      { name: 'reboot_device' },
+    ])
+    McpToolPolicy.setEnabled(1, 'reboot_device', false)
+    expect(McpToolPolicy.setSkipConfirm(1, 'get_status', true)).toBe(true)
+
+    // 删光同包全部配置（v29：包行不动）
+    d.prepare('DELETE FROM mcp_configs WHERE package_id = 7').run()
+    expect((d.prepare('SELECT COUNT(*) AS c FROM mcp_tools').get() as { c: number }).c).toBe(2)
+
+    // 重建同包新配置 → 策略页可见全部工具原 enabled/skip_confirm 值
+    d.prepare('INSERT INTO mcp_configs (id, name, package_id) VALUES (5, ?, 7)').run('cfg-new')
+    const cache = McpToolPolicy.getToolCache(5)
+    expect(cache).toHaveLength(2)
+    expect(cache.find((t) => t.name === 'get_status')!.skipConfirm).toBe(1)
+    expect(cache.find((t) => t.name === 'reboot_device')!.enabled).toBe(0)
+    // 清单重写（再测试）仍保留策略
+    McpToolPolicy.saveToolCache(5, [
+      { name: 'get_status', annotations: { readOnlyHint: true } },
+      { name: 'reboot_device' },
+    ])
+    const after = McpToolPolicy.getToolCache(5)
+    expect(after.find((t) => t.name === 'get_status')!.skipConfirm).toBe(1)
+    expect(after.find((t) => t.name === 'reboot_device')!.enabled).toBe(0)
+  })
+
+  it('savePackageToolCache 直写 package_id（不经配置存在性/根配置选择）', () => {
+    const d = (McpToolPolicy as unknown as { db(): Database.Database }).db()
+    d.prepare('DELETE FROM mcp_configs WHERE package_id = 7').run() // 无任何配置也可直写
+    McpToolPolicy.savePackageToolCache(7, [{ name: 'direct_tool', annotations: { readOnlyHint: true } }])
+    const row = d.prepare('SELECT package_id, config_id FROM mcp_tools WHERE tool_name = ?').get('direct_tool') as { package_id: number | null; config_id: number | null }
+    expect(row).toEqual({ package_id: 7, config_id: null })
+  })
+
+  it('手工轨（package_id NULL）继续 config_id 老路径，行为不变', () => {
+    const d = (McpToolPolicy as unknown as { db(): Database.Database }).db()
+    d.prepare('INSERT INTO mcp_configs (id, name, package_id) VALUES (3, ?, NULL)').run('cfg-manual')
+    McpToolPolicy.saveToolCache(3, [{ name: 'manual_tool', annotations: { readOnlyHint: true } }])
+    const row = d.prepare('SELECT package_id, config_id FROM mcp_tools').get() as { package_id: number | null; config_id: number | null }
+    expect(row).toEqual({ package_id: null, config_id: 3 })
+    expect(McpToolPolicy.setEnabled(3, 'manual_tool', false)).toBe(undefined)
+    expect(McpToolPolicy.setSkipConfirm(3, 'manual_tool', true)).toBe(true)
+    expect(McpToolPolicy.getToolCache(3)[0]).toMatchObject({ enabled: 0, skipConfirm: 1 })
+    // 手工轨不与包轨串线
+    McpToolPolicy.saveToolCache(1, [{ name: 'pkg_tool' }])
+    expect(McpToolPolicy.getToolCache(3).map((t) => t.name)).toEqual(['manual_tool'])
   })
 })

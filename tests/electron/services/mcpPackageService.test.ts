@@ -97,13 +97,15 @@ function makeDb(): Database.Database {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE mcp_tools (
-      config_id INTEGER NOT NULL,
+      config_id INTEGER,
+      package_id INTEGER,
       tool_name TEXT NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1,
       skip_confirm INTEGER NOT NULL DEFAULT 0,
       tool_meta TEXT,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY (config_id, tool_name)
+      UNIQUE(config_id, tool_name),
+      UNIQUE(package_id, tool_name)
     );
   `)
   return db
@@ -363,9 +365,12 @@ describe('Task 1b: deletePackage / getPackageDeleteImpact / testPackage', () => 
     expect(impact!.totalDevices).toBe(2)
   })
 
-  it('deletePackage：先杀运行实例 → 三表级联清净 + 目录删除（D-30）', () => {
+  it('deletePackage：先杀运行实例 → 四表级联清净 + 目录删除（D-30/D-06）', () => {
     const pkgId = importOne()
     seedPackageConfig(h.db!, pkgId, { dev1: { A: '1' } })
+    // v29 D-05/D-06：包级策略行随删包级联清理（T-29.1-09）
+    h.db!.prepare('INSERT INTO mcp_tools (package_id, tool_name) VALUES (?, ?)').run(pkgId, 'tool_a')
+    h.db!.prepare('INSERT INTO mcp_tools (config_id, tool_name) VALUES (?, ?)').run(9999, 'other_cfg_tool')
     // 该包一条配置对应的运行实例登记（configId 键形态）
     h.registryMock.listActive.mockReturnValue([
       { pid: 101, configId: '999', startedAt: 0 },
@@ -379,6 +384,9 @@ describe('Task 1b: deletePackage / getPackageDeleteImpact / testPackage', () => 
     expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_packages').get()).toEqual({ c: 0 })
     expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_configs').get()).toEqual({ c: 0 })
     expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_device_rel').get()).toEqual({ c: 0 })
+    // 该包策略行清零；他配置行不受影响（T-29.1-08 精确 package_id）
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_tools WHERE package_id = ?').get(pkgId)).toEqual({ c: 0 })
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_tools').get()).toEqual({ c: 1 })
     expect(existsSync(join(rootDir, 'demo-pkg'))).toBe(false)
   })
 
@@ -612,6 +620,22 @@ describe('Task 1 (29-07): createConfigFromPackage 单条配置 + N 设备独立 
     expect(relEnv(h.db!, 'g1')).toEqual({ MY_EXTRA_TOKEN: 'extra-val' })
   })
 
+  it('v29 D-05：创建配置即预填包级工具缓存（package_id 直写，AI 开箱可用）', () => {
+    const pkgId = importOne({ tools: ['tool_a', 'tool_b'] })
+    // 空 deviceEnvs 守卫先行拒绝——预填不发生
+    expect(McpPackageService.createConfigFromPackage(pkgId, 'cfg-x', []).ok).toBe(false)
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_tools').get()).toEqual({ c: 0 })
+    // 手工直插设备后走成功路径
+    h.db!.prepare("INSERT INTO devices (id, name_enc) VALUES ('dev-x', '')").run()
+    const ok = McpPackageService.createConfigFromPackage(pkgId, 'cfg-x', [{ deviceId: 'dev-x', env: {} }])
+    expect(ok.ok).toBe(true)
+    const rows = h.db!.prepare('SELECT tool_name, package_id, config_id FROM mcp_tools ORDER BY tool_name').all() as any[]
+    expect(rows).toEqual([
+      { tool_name: 'tool_a', package_id: pkgId, config_id: null },
+      { tool_name: 'tool_b', package_id: pkgId, config_id: null },
+    ])
+  })
+
   it('包 disabled 拒绝；deviceEnvs 重复 deviceId 拒绝；空 deviceEnvs 拒绝', () => {
     const pkgId = importPkg(['NF_TOKEN'])
     seedDevice2(h.db!, 'w1', 'W1')
@@ -713,19 +737,17 @@ describe('Code-review fix: CR-01 / WR-01 / WR-02 / WR-04', () => {
     expect(h.clientMock.reportPackageIntegrityFailure).toHaveBeenCalledTimes(1)
   })
 
-  it('WR-02：testPackage 实测成功 → 工具缓存写入包根配置（MIN(id) 策略模板载体）', async () => {
+  it('WR-02（v29 D-05 改直写）：testPackage 实测成功 → 工具缓存直写 package_id（不依赖配置存在）', async () => {
     const pkgId = importOne({ tools: ['tool_a'] })
-    const cfg = h.db!.prepare(
-      "INSERT INTO mcp_configs (name, type, command_or_url, package_id, source) VALUES ('pkg-cfg', 'package', 'main.js', ?, 'package')"
-    ).run(pkgId)
+    // 不建任何包配置——直写路径不再依赖 MIN(id) 根配置存在
     h.clientMock.testConnection.mockResolvedValue({
       ok: true, protocolVersion: '1.0',
       tools: [{ name: 'tool_a', description: 'd', inputSchema: {}, annotations: { readOnlyHint: true } }],
     })
     const res = await McpPackageService.testPackage(pkgId)
     expect(res.ok).toBe(true)
-    const rows = h.db!.prepare('SELECT tool_name FROM mcp_tools WHERE config_id = ?').all(cfg.lastInsertRowid) as any[]
-    expect(rows).toEqual([{ tool_name: 'tool_a' }])
+    const rows = h.db!.prepare('SELECT tool_name, config_id, package_id FROM mcp_tools').all() as any[]
+    expect(rows).toEqual([{ tool_name: 'tool_a', config_id: null, package_id: pkgId }])
   })
 
   it('WR-04：importPackage INSERT 失败 → 抛错且补偿删除孤儿目录（磁盘/DB 一致）', () => {
