@@ -292,10 +292,24 @@ export class McpService {
         ? configId
         : (conn.prepare('SELECT last_insert_rowid() AS id').get() as { id: number }).id
       if (dto.deviceIds !== undefined) {
+        // WR-01（Phase 29 code-review）：只传 deviceIds 不传 deviceEnvs 时保留既有 rel 行
+        // env_json_enc（纯搬密文列，不解密）——DELETE+重建不再静默抹掉设备级密文，
+        // 与 WR-05（只传 deviceEnvs 不传 deviceIds）合成完整闭环
+        let preservedEnv: Map<string, string | null> | null = null
+        if (deviceEnvs == null) {
+          preservedEnv = new Map()
+          const stmtOldEnc = conn.prepare('SELECT device_id, env_json_enc FROM mcp_device_rel WHERE mcp_config_id = ?')
+          for (const r of stmtOldEnc.all(finalId) as Array<{ device_id: string; env_json_enc: string | null }>) {
+            preservedEnv.set(r.device_id, r.env_json_enc)
+          }
+        }
         conn.prepare('DELETE FROM mcp_device_rel WHERE mcp_config_id = ?').run(finalId)
-        const stmtIns = conn.prepare('INSERT INTO mcp_device_rel (id, mcp_config_id, device_id) VALUES (?, ?, ?)')
+        const stmtIns = preservedEnv
+          ? conn.prepare('INSERT INTO mcp_device_rel (id, mcp_config_id, device_id, env_json_enc) VALUES (?, ?, ?, ?)')
+          : conn.prepare('INSERT INTO mcp_device_rel (id, mcp_config_id, device_id) VALUES (?, ?, ?)')
         for (const deviceId of dto.deviceIds) {
-          stmtIns.run(uuidv4(), finalId, deviceId)
+          if (preservedEnv) stmtIns.run(uuidv4(), finalId, deviceId, preservedEnv.get(deviceId) ?? null)
+          else stmtIns.run(uuidv4(), finalId, deviceId)
         }
       }
 
@@ -323,8 +337,12 @@ export class McpService {
               merged[k] = v
             }
           }
-          const envStr = Object.keys(merged).length > 0 ? JSON.stringify(merged) : null
-          stmtUpdRel.run(envStr ? encField(envStr, McpService.MK) : null, finalId, item.deviceId)
+          // CR-01（Phase 29 code-review）：清空语义写空对象密文（'{}'）而非 NULL——
+          // NULL 单义化为「从未写过」，backfillDeviceEnv 的 IS NULL 幂等守卫不再把
+          // 「用户已清空」误判为「未回填」而复活已删除凭证。读侧（maskedEnvList/
+          // buildMcpContexts/testPackageConfig）对 '{}' 统一解出空组，行为等价
+          const envStr = Object.keys(merged).length > 0 ? JSON.stringify(merged) : '{}'
+          stmtUpdRel.run(encField(envStr, McpService.MK), finalId, item.deviceId)
         }
       }
 

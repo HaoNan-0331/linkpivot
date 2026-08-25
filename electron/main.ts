@@ -153,7 +153,8 @@ app.whenReady().then(() => {
     console.warn('[startup] ensureNameUniqueIndex failed (non-blocking):', (e as Error).message)
   }
   // Phase 29（29-02，D-17）：post-MK 存量共享 env 复制到每台绑定设备行（设备级 env 模型）。
-  // v27 迁移只加列；加密回填必须在 MK 注入后（25-05 教训）。幂等（env_json_enc IS NULL 守卫），
+  // v27 迁移只加列；加密回填必须在 MK 注入后（25-05 教训）。幂等（env_json_enc IS NULL 守卫；
+  // CR-01：NULL 单义=未回填——用户清空写 '{}' 密文，不再被回填复活），
   // 坏密文/空 env 行跳过保持 NULL（T-29-02-02），失败仅 warn 不阻塞启动（name_hash 回填同范式）。
   try {
     const r = McpDeviceEnvMigration.backfillDeviceEnv()

@@ -135,7 +135,11 @@ describe('29-06：saveConfig deviceEnvs（D-16 手工 stdio 编辑态）', () =>
     })
     expect(res.ok).toBe(true)
     expect(relEnv(h.db!, 'd1')).toEqual({ TOKEN: 'tok-secret-0001', PORT: '9000' })
-    expect(relEnv(h.db!, 'd2')).toBeNull() // 全部键删除 → env 清空
+    expect(relEnv(h.db!, 'd2')).toEqual({}) // 全部键删除 → 空对象密文（CR-01：不再写 NULL）
+    // CR-01：清空落 '{}' 密文（非 NULL）——NULL 单义=未回填，backfill 不再复活已删凭证
+    const enc = (h.db!.prepare("SELECT env_json_enc FROM mcp_device_rel WHERE device_id = 'd2'").get() as { env_json_enc: string | null }).env_json_enc
+    expect(enc).toBeTruthy()
+    expect(enc!.startsWith('v2:')).toBe(true)
   })
 
   it('未绑定设备的 deviceEnv 条目忽略（防越行写，T-29-06-04）', () => {
@@ -181,6 +185,30 @@ describe('29-06：saveConfig deviceEnvs（D-16 手工 stdio 编辑态）', () =>
     expect(relEnv(h.db!, 'd2')).toEqual({ TOKEN: 'new-2' }) // 不再被静默丢弃
     // 绑定关系未被改动（缺省=不动绑定）
     expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_device_rel WHERE mcp_config_id = ?').get(cfgId)).toEqual({ c: 2 })
+  })
+
+  // WR-01（Phase 29 code-review）：只传 deviceIds 不传 deviceEnvs 时 DELETE+重建不得
+  // 静默抹掉设备级 env——重建行带回原密文（纯搬密文列）
+  it('WR-01：只传 deviceIds 不传 deviceEnvs → 既有设备级 env 密文原样保留', () => {
+    const cfgId = seed(h.db!, { d1: { TOKEN: 'keep-1' }, d2: { TOKEN: 'keep-2' } })
+    const res = McpService.saveConfig({
+      id: cfgId,
+      name: 'manual-cfg',
+      type: 'stdio',
+      commandOrUrl: 'node x.js',
+      deviceIds: ['d1', 'd2'], // 只改绑定，不传 deviceEnvs
+    })
+    expect(res.ok).toBe(true)
+    expect(relEnv(h.db!, 'd1')).toEqual({ TOKEN: 'keep-1' })
+    expect(relEnv(h.db!, 'd2')).toEqual({ TOKEN: 'keep-2' })
+    // 解绑再同保存重绑的设备（本次 save 前已不在绑定集）不凭空造 env
+    const res2 = McpService.saveConfig({
+      id: cfgId, name: 'manual-cfg', type: 'stdio', commandOrUrl: 'node x.js',
+      deviceIds: ['d1'],
+    })
+    expect(res2.ok).toBe(true)
+    expect(relEnv(h.db!, 'd1')).toEqual({ TOKEN: 'keep-1' })
+    expect(h.db!.prepare("SELECT COUNT(*) AS c FROM mcp_device_rel WHERE mcp_config_id = ?").get(cfgId)).toEqual({ c: 1 })
   })
 })
 

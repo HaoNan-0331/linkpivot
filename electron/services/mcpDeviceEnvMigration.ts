@@ -43,6 +43,10 @@ export class McpDeviceEnvMigration {
   /**
    * 存量共享 env 复制到每台绑定设备（D-17）。
    * 幂等：只处理 rel.env_json_enc IS NULL 的行（重跑零写入）。
+   * CR-01（Phase 29 code-review）：NULL 单义化——saveConfig 清空设备 env 时写空对象
+   * 密文（'{}'）而非 NULL，IS NULL 只剩「pre-v27 存量行尚未回填」一义，用户清除后
+   * 重启不再被配置级共享 env 静默复活。存量自愈：修复前已写 NULL 的清除行，本版本
+   * 首次启动仍会被回填一次（无法与未回填行区分），用户再清一次即落 '{}' 永久生效。
    * 失败不 throw（调用方 main.ts 仅 warn 不阻塞启动，severity/name_hash 回填同范式）。
    */
   static backfillDeviceEnv(): BackfillResult {

@@ -156,4 +156,22 @@ describe('backfillDeviceEnv（D-17 存量共享 env 复制）', () => {
     const bad = h.db!.prepare("SELECT env_json_enc FROM mcp_device_rel WHERE id = 'rel-bad'").get() as { env_json_enc: string | null }
     expect(bad.env_json_enc).toBeNull()
   })
+
+  // CR-01（Phase 29 code-review）：用户清空设备 env 后 saveConfig 写 '{}' 密文（非 NULL）——
+  // 重启 backfill 不得把配置级共享 env 复制回来复活已删除凭证
+  it('g) 清空语义（{} 密文）重启不被回填复活（CR-01 回归）', () => {
+    const envJson = JSON.stringify({ TOKEN: 'x' })
+    const cfgId = insertConfig(h.db!, 'm1', encField(envJson, TEST_MK))
+    bind(h.db!, cfgId, 'rel-cleared')
+    // 用户清空后的落库形态（mcpService CR-01 修复后写 encField('{}')）
+    h.db!.prepare('UPDATE mcp_device_rel SET env_json_enc = ? WHERE id = ?')
+      .run(encField('{}', TEST_MK), 'rel-cleared')
+
+    const cipherBefore = (h.db!.prepare("SELECT env_json_enc FROM mcp_device_rel WHERE id = 'rel-cleared'").get() as { env_json_enc: string }).env_json_enc
+    const r = McpDeviceEnvMigration.backfillDeviceEnv()
+    expect(r.backfilled).toBe(0) // '{}' 密文非 NULL → 不在回填目标集
+    const cipherAfter = (h.db!.prepare("SELECT env_json_enc FROM mcp_device_rel WHERE id = 'rel-cleared'").get() as { env_json_enc: string }).env_json_enc
+    expect(cipherAfter).toBe(cipherBefore) // 已删除凭证未复活
+    expect(decField(cipherAfter, TEST_MK)).toBe('{}') // 清空语义持久
+  })
 })
