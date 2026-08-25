@@ -27,7 +27,7 @@ import type { Transport } from '@modelcontextprotocol/client'
 import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
 import { join } from 'path'
 import { McpProcessRegistry } from './mcpProcessRegistry'
-import { buildFingerprintTree } from './mcpPackageValidator'
+import { buildFingerprintTree, isFingerprintExcluded } from './mcpPackageValidator'
 import type { McpDecodedConfig } from './mcpService'
 
 /** env 白名单（21-RESEARCH Pattern 3）——显式拷贝，禁止 spread process.env */
@@ -124,11 +124,16 @@ export function reportPackageIntegrityFailure(info: { packageId: number, dirPath
   } catch { /* handler 故障不吞主线错误（安全语义不降级） */ }
 }
 
-/** 递归收集目录全树（posix 相对路径，D-27 全树——含新增文件） */
+/**
+ * 递归收集目录全树（posix 相对路径，D-27 全树——含新增文件）。
+ * 指纹排除清单（__pycache__/pyc/pyo 运行时产物）在此侧跳过——与导入侧
+ * buildFingerprintTree 内过滤同源对称，见 isFingerprintExcluded 单源说明。
+ */
 function collectDirFiles(dirPath: string, rel = ''): Array<{ path: string, content: Buffer }> {
   const out: Array<{ path: string, content: Buffer }> = []
   for (const name of readdirSync(join(dirPath, rel))) {
     const relPath = rel ? `${rel}/${name}` : name
+    if (isFingerprintExcluded(relPath)) continue
     const abs = join(dirPath, ...relPath.split('/'))
     if (statSync(abs).isDirectory()) out.push(...collectDirFiles(dirPath, relPath))
     else out.push({ path: relPath, content: readFileSync(abs) })

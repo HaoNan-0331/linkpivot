@@ -3,6 +3,7 @@ import { zipSync, strToU8 } from 'fflate'
 import {
   validateMcpb,
   buildFingerprintTree,
+  isFingerprintExcluded,
   parseMcpbManifest,
 } from '../../../electron/services/mcpPackageValidator'
 
@@ -296,6 +297,27 @@ describe('buildFingerprintTree 确定性', () => {
       { path: 'b.js', content: strToU8('x') },
     ])
     expect(base.treeSha256).not.toBe(grown.treeSha256)
+  })
+})
+
+describe('指纹排除清单（29-09 走查三：__pycache__/pyc 运行时产物单源排除）', () => {
+  it('isFingerprintExcluded：__pycache__ 目录段 / .pyc / .pyo 后缀命中；普通文件不命中', () => {
+    expect(isFingerprintExcluded('__pycache__/x.cpython-310.pyc')).toBe(true)
+    expect(isFingerprintExcluded('nf_mcp/__pycache__/server.pyc')).toBe(true)
+    expect(isFingerprintExcluded('nf_mcp/server.pyo')).toBe(true)
+    expect(isFingerprintExcluded('root.pyc')).toBe(true)
+    expect(isFingerprintExcluded('nf_mcp/server.py')).toBe(false)
+    expect(isFingerprintExcluded('manifest.json')).toBe(false)
+  })
+
+  it('buildFingerprintTree 过滤排除条目：含 pyc 的树与不含的树同指纹', () => {
+    const clean = [{ path: 'server.py', content: strToU8('print(1)') }]
+    const dirty = [
+      ...clean,
+      { path: '__pycache__/server.cpython-310.pyc', content: strToU8('cache') },
+      { path: 'lib/__pycache__/x.pyc', content: strToU8('cache2') },
+    ]
+    expect(buildFingerprintTree(clean).treeSha256).toBe(buildFingerprintTree(dirty).treeSha256)
   })
 })
 

@@ -248,11 +248,29 @@ export function validateMcpb(buffer: Buffer | Uint8Array, sizeOverride?: SizeOve
 }
 
 /**
+ * 指纹排除清单（29-09 走查三，单源规则）：Python 运行时字节码缓存是解释器首跑后
+ * 自动生成的磁盘产物（zip 内可不含、磁盘必然长出），不属于「包内容被篡改」信号。
+ * 导入侧（buildFingerprintTree）与重验侧（mcpClient.collectDirFiles）必须消费同一
+ * 过滤函数——禁止两处各写一份解析（同 commandSafety/privilegeGuard 单源哲学）。
+ */
+export const FINGERPRINT_EXCLUDE: readonly string[] = ['__pycache__/', '*.pyc', '*.pyo']
+
+/** 指纹排除判定：路径任一段为 __pycache__，或后缀 .pyc/.pyo（posix 归一后判定） */
+export function isFingerprintExcluded(relPath: string): boolean {
+  const p = relPath.replace(/\\/g, '/')
+  if (p.split('/').some((s) => s === '__pycache__')) return true
+  return p.endsWith('.pyc') || p.endsWith('.pyo')
+}
+
+/**
  * 全树 SHA-256 指纹（D-27）：文件按 posix 相对路径字典序排序，逐文件哈希，
  * 再对「path+sha256」清单整体哈希得 treeSha256。同树同哈希、异树必异（排序保确定性）。
+ * 排除清单内条目（__pycache__/pyc/pyo）不进指纹——导入与重验双侧同源过滤，
+ * 保证未篡改包首跑后磁盘长出字节码缓存仍重验通过（对称性）。
  */
 export function buildFingerprintTree(fileTree: FileEntry[]): { files: Array<{ path: string; sha256: string }>; treeSha256: string } {
   const files = [...fileTree]
+    .filter((f) => !isFingerprintExcluded(f.path))
     .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
     .map((f) => ({ path: f.path, sha256: createHash('sha256').update(f.content).digest('hex') }))
   const manifestText = files.map((f) => `${f.path}${f.sha256}`).join('\n')

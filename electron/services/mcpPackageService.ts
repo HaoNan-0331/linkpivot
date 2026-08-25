@@ -25,7 +25,7 @@ import { app } from 'electron'
 import type Database from 'better-sqlite3'
 import { getDatabase } from '../database/connection'
 import { encField, decField } from '../utils/crypto'
-import { validateMcpb, buildFingerprintTree, MAX_PACKAGE_BYTES } from './mcpPackageValidator'
+import { validateMcpb, buildFingerprintTree, isFingerprintExcluded, MAX_PACKAGE_BYTES } from './mcpPackageValidator'
 import { MAX_BATCH } from './mcpService'
 import type { McpManifest, FileEntry, VectorResult } from './mcpPackageValidator'
 import { testConnection, verifyPackageFingerprint, reportPackageIntegrityFailure, resolvePackageSpawn } from './mcpClient'
@@ -206,6 +206,9 @@ export class McpPackageService {
   private static writePackageFiles(dir: string, fileTree: FileEntry[]): void {
     rmSync(dir, { recursive: true, force: true })
     for (const f of fileTree) {
+      // 指纹排除条目（__pycache__/pyc/pyo）不落盘——磁盘树与指纹树保持同集，
+      // 且包携带的陈旧字节码缓存不进现场（解释器首跑会自行重建）
+      if (isFingerprintExcluded(f.path)) continue
       McpPackageService.assertSafeEntryPath(f.path)
       const target = join(dir, ...f.path.split('/'))
       mkdirSync(dirname(target), { recursive: true })

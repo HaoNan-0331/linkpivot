@@ -121,6 +121,36 @@ describe('verifyPackageFingerprint（D-27 全树重验）', () => {
     cleanupDirs.push(dir)
     expectStructThrow(() => verifyPackageFingerprint(dir, 'not-json'), 'package_integrity_failed')
   })
+
+  // 29-09 走查三：__pycache__/*.pyc 是 Python 解释器首跑自动生成的磁盘产物，
+  // 双侧（导入指纹 / 磁盘重验）同源排除——防 python 包首跑后永久 TOCTOU 误报
+  it('运行时生成 __pycache__/*.pyc → 排除不触发 TOCTOU（双侧对称排除）', () => {
+    const { dir, fileTree } = makePackageDir([
+      ...PKG_FILES,
+      { path: 'server.py', content: 'print("py")' },
+      { path: '__pycache__/x.cpython-310.pyc', content: 'zip-carried-cache' },
+    ])
+    cleanupDirs.push(dir)
+    const fp = buildFingerprintTree(fileTree)
+    // 模拟解释器首跑后磁盘长出的新字节码缓存（zip 里没有的）
+    fs.mkdirSync(path.join(dir, 'nf_mcp', '__pycache__'), { recursive: true })
+    fs.writeFileSync(path.join(dir, 'nf_mcp/__pycache__/server.cpython-310.pyc'), 'runtime-generated')
+    fs.writeFileSync(path.join(dir, 'root.pyc'), 'runtime-generated-root')
+    expect(() => verifyPackageFingerprint(dir, JSON.stringify(fp))).not.toThrow()
+  })
+
+  it('排除清单只让位运行时产物：真正新增 .py 源文件仍触发 TOCTOU（安全语义不降级）', () => {
+    const { dir, fileTree } = makePackageDir([
+      ...PKG_FILES,
+      { path: 'server.py', content: 'print("py")' },
+      { path: '__pycache__/x.cpython-310.pyc', content: 'zip-carried-cache' },
+    ])
+    cleanupDirs.push(dir)
+    const fp = buildFingerprintTree(fileTree)
+    fs.mkdirSync(path.join(dir, 'nf_mcp'), { recursive: true })
+    fs.writeFileSync(path.join(dir, 'nf_mcp/evil.py'), 'import os # injected source')
+    expectStructThrow(() => verifyPackageFingerprint(dir, JSON.stringify(fp)), 'package_integrity_failed')
+  })
 })
 
 describe('connectionKey 复合键（D-15/D-18）', () => {
