@@ -19,6 +19,7 @@ import { McpToolPolicy, type McpToolCacheRow } from './mcpToolPolicy'
 import { McpService } from './mcpService'
 import { callToolWithTimeout } from './mcpClient'
 import type { PackageSpawnInfo } from './mcpClient'
+import type { EnvMetaEntry } from './mcpPackageValidator'
 import { classifyTier, type AgentTier } from './agentRouter'
 import {
   retrieveForTier, verifySourcesEvidence, listExpCatalog, listKbCatalog,
@@ -829,8 +830,8 @@ function buildMcpContexts(targetDevices: any[]): McpCallContext[] {
 function loadPackageSpawnInfo(packageId: number): PackageSpawnInfo | null {
   try {
     const row = getDatabase().prepare(
-      'SELECT dir_path, runtime, entry, fingerprint_json, disabled FROM mcp_packages WHERE id = ?'
-    ).get(packageId) as { dir_path: string; runtime: 'node' | 'python'; entry: string; fingerprint_json: string | null; disabled: number } | undefined
+      'SELECT dir_path, runtime, entry, fingerprint_json, env_meta, disabled FROM mcp_packages WHERE id = ?'
+    ).get(packageId) as { dir_path: string; runtime: 'node' | 'python'; entry: string; fingerprint_json: string | null; env_meta: string | null; disabled: number } | undefined
     if (!row || row.disabled) return null
     return {
       packageId,
@@ -838,9 +839,26 @@ function loadPackageSpawnInfo(packageId: number): PackageSpawnInfo | null {
       runtime: row.runtime,
       entry: row.entry,
       fingerprintJson: row.fingerprint_json ?? '',
+      envMeta: parseEnvMetaColumn(row.env_meta),
     }
   } catch {
     return null
+  }
+}
+
+/**
+ * 29.1-04：解析 mcp_packages.env_meta 明文 JSON 列为 spawn 侧 envMeta。
+ * 坏 JSON / 非对象 → undefined（元数据降级为「无 envMeta」现状行为——值通道 env_json_enc
+ * 不受影响；required 硬拦由表单层与包导入校验兜住，此处不 fail 整个装配）。
+ */
+function parseEnvMetaColumn(raw: string | null): Record<string, EnvMetaEntry> | undefined {
+  if (!raw) return undefined
+  try {
+    const v = JSON.parse(raw) as unknown
+    if (v && typeof v === 'object' && !Array.isArray(v)) return v as Record<string, EnvMetaEntry>
+    return undefined
+  } catch {
+    return undefined
   }
 }
 
@@ -936,7 +954,10 @@ async function runMcpCall(
   } catch (err: any) {
     const timedOut = !!(err as { timedOut?: boolean })?.timedOut
     status = timedOut ? 'timeout' : 'failed'
-    errorText = timedOut ? `工具调用超时（60s 硬超时，连接已被强制回收）` : `执行失败: ${err?.message ?? String(err)}`
+    // 29.1-04：spawn 侧结构化错误（MCP_ENV_REQUIRED_MISSING / package_integrity_failed 等
+    // plain object 无 message）优先透出 reason——否则 String(err) 产出 "[object Object]"，
+    // 「XX 未配置，请到设备环境变量补填」等可操作文案被丢弃
+    errorText = timedOut ? `工具调用超时（60s 硬超时，连接已被强制回收）` : `执行失败: ${typeof err?.reason === 'string' ? err.reason : (err?.message ?? String(err))}`
     updateLogStatus(logId, 'failed')
   }
   // 审计结果摘要（截断先于加密，createLog/appendLogAiResponse 内部走 encField）

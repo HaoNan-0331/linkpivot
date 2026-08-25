@@ -28,6 +28,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
 import { join } from 'path'
 import { McpProcessRegistry } from './mcpProcessRegistry'
 import { buildFingerprintTree, isFingerprintExcluded } from './mcpPackageValidator'
+import type { EnvMetaEntry } from './mcpPackageValidator'
 import type { McpDecodedConfig } from './mcpService'
 
 /** env 白名单（21-RESEARCH Pattern 3）——显式拷贝，禁止 spread process.env */
@@ -92,6 +93,8 @@ export interface PackageSpawnInfo {
   entry: string
   /** 落盘 fingerprint_json（mcp_packages.fingerprint_json 原文） */
   fingerprintJson: string
+  /** 包 envMeta（mcp_packages.env_meta 解析，29.1-04 D-01/D-02：required 硬拦 + default 叠加） */
+  envMeta?: Record<string, EnvMetaEntry>
 }
 
 /** 设备级连接选项：deviceId 参与复合键；package 在场时 spawn 前做 TOCTOU 全树重验 */
@@ -238,6 +241,44 @@ export function buildChildEnv(userEnvPairs: Record<string, string>, mode: ChildE
   if (mode === 'electron-run-as-node') childEnv.ELECTRON_RUN_AS_NODE = '1'
   else delete childEnv.ELECTRON_RUN_AS_NODE
   return childEnv
+}
+
+// ---------------------------------------------------------------------------
+// envMeta 语义（29.1-04：D-01 required 硬拦 + D-02 default 留空即用）
+// ---------------------------------------------------------------------------
+
+/**
+ * 生效 env = 用户值 ∪ 包默认（用户优先，D-02）+ required 硬拦（D-01 运行时层）。
+ *  - default：用户未提供/空串/仅空白的键补包 default（纯内存叠加，零 DB 写回——
+ *    env_json_enc 只存用户真正填过的值，包升级改默认后留空键自动跟随新默认）
+ *  - required：叠加 default 之后的生效值仍为空（trim 判定）→ throw 结构化
+ *    MCP_ENV_REQUIRED_MISSING（fail-closed，覆盖导入新增 required 键未补填的漏网数据）
+ * 无 envMeta / 空表 → 返回用户原值副本（行为等同现状，零回归）。
+ */
+export function applyEnvMeta(
+  userEnv: Record<string, string>,
+  envMeta?: Record<string, EnvMetaEntry>
+): Record<string, string> {
+  const merged: Record<string, string> = { ...userEnv }
+  if (!envMeta) return merged
+  for (const [k, meta] of Object.entries(envMeta)) {
+    const hasUser = typeof merged[k] === 'string' && merged[k].trim() !== ''
+    if (!hasUser && typeof meta.default === 'string' && meta.default.trim() !== '') {
+      merged[k] = meta.default
+    }
+  }
+  for (const [k, meta] of Object.entries(envMeta)) {
+    if (meta.required) {
+      const v = merged[k]
+      if (typeof v !== 'string' || v.trim() === '') {
+        throw {
+          code: 'MCP_ENV_REQUIRED_MISSING',
+          reason: `${meta.label ?? k} 未配置，请到设备环境变量补填`
+        }
+      }
+    }
+  }
+  return merged
 }
 
 // ---------------------------------------------------------------------------
@@ -683,6 +724,8 @@ export async function getConnection(configId: string, config: McpDecodedConfig, 
   }
   {
     let plan: StdioSpawnPlan
+    /** 29.1-04：包轨 envMeta 叠加产物（required 校验 + default 补齐），纯内存不落库 */
+    let spawnEnv: Record<string, string> | null = null
     if (opts?.package) {
       // TOCTOU 全树重验（D-26/D-27）：不一致拒绝启动 + integrityHandler 副作用（包 disabled + security 日志，
       // 由 main.ts 注入 service 落库——mcpClient 零 DB 依赖）；handler 故障不吞主线错误（安全语义不降级）
@@ -701,10 +744,13 @@ export async function getConnection(configId: string, config: McpDecodedConfig, 
         throw e
       }
       plan = resolvePackageSpawn(opts.package)
+      // 29.1-04（D-01/D-02）：TOCTOU 重验后、connectStdio 前——required 缺值拒绝启动
+      // （fail-closed，空值绝不流向真设备）+ default 留空即用（spawn 叠加，env_json_enc 零写回）
+      spawnEnv = applyEnvMeta(config.env ?? {}, opts.package.envMeta)
     } else {
       plan = resolveStdioCommand(config.commandOrUrl, config.args)
     }
-    const { client } = await connectStdio(key, config, plan)
+    const { client } = await connectStdio(key, spawnEnv !== null ? { ...config, env: spawnEnv } : config, plan)
     return client
   }
 }

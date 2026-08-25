@@ -318,10 +318,11 @@ describe('spawn envMeta（29.1-04：D-01 required 硬拦 + D-02 default 叠加�
   })
 
   it('default 叠加：用户未提供 → 补包默认；用户填过 → 用户值优先（D-02）', () => {
-    expect(applyEnvMeta({}, META)).toEqual({ NF_PORT: '443' })
-    expect(applyEnvMeta({ NF_PORT: '8443' }, META)).toEqual({ NF_PORT: '8443' })
+    const portOnly: Record<string, EnvMetaEntry> = { NF_PORT: META.NF_PORT }
+    expect(applyEnvMeta({}, portOnly)).toEqual({ NF_PORT: '443' })
+    expect(applyEnvMeta({ NF_PORT: '8443' }, portOnly)).toEqual({ NF_PORT: '8443' })
     // 用户空串 = 留空语义 → 跟随包默认
-    expect(applyEnvMeta({ NF_PORT: '' }, META)).toEqual({ NF_PORT: '443' })
+    expect(applyEnvMeta({ NF_PORT: '' }, portOnly)).toEqual({ NF_PORT: '443' })
   })
 
   it('required + default 并存 → default 补上即通过硬拦', () => {
@@ -330,7 +331,7 @@ describe('spawn envMeta（29.1-04：D-01 required 硬拦 + D-02 default 叠加�
 
   it('纯内存叠加不改入参（不落库语义的前置：无写库路径，无引用污染）', () => {
     const userEnv = { NF_PORT: '8443' }
-    applyEnvMeta(userEnv, META)
+    applyEnvMeta(userEnv, META_REQ_DEFAULT)
     expect(userEnv).toEqual({ NF_PORT: '8443' })
   })
 
