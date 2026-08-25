@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Card, Empty, Input, Modal, Select, Space, Tag, Typography } from 'antd'
 
 const { Text } = Typography
@@ -46,9 +46,31 @@ interface DeviceEnvCardsProps {
   emptyHint?: string
 }
 
+interface EnvRow {
+  key: string
+  val: string
+}
+
+const toRows = (value: Record<string, string>): EnvRow[] =>
+  Object.entries(value).map(([key, val]) => ({ key, val }))
+
+/** 比较「意图态」：空值条目视同缺席（父组件约定空值=删除键，删除后键不在 Record 中） */
+const sameEnvMap = (a: Record<string, string>, b: Record<string, string>): boolean => {
+  const na = Object.entries(a).filter(([, v]) => v !== '')
+  if (na.length !== Object.keys(b).filter((k) => b[k] !== '').length) return false
+  for (const [k, v] of na) {
+    if (b[k] !== v) return false
+  }
+  return true
+}
+
 /**
  * env 行编辑器（同文件内不导出）。
- * 变量名编辑 = 旧键删新键加，由内部组装完整 Record 后统一 onChange。
+ * 29-09 走查修复（问题4）：草稿行模型——行列表完全由本地态驱动；键为空的新增行、
+ * 值清空过程中的行停留在草稿态，不再与「空值=删除键」通道直接耦合（旧实现 addRow 发
+ * ('','') 被父组件按约定判删除，行永远进不来，按钮表现为无响应）。
+ * 仅当行同时具备非空键与非空值才提交进父组件 value；行删除/键改名仍按约定发空值删旧键。
+ * 变量名编辑 = 旧键删新键加，由内部 diff 最终态后统一 onChange。
  */
 function EnvRowsEditor({
   deviceId, value, onChange,
@@ -57,46 +79,45 @@ function EnvRowsEditor({
   value: Record<string, string>
   onChange: (deviceId: string, key: string, v: string) => void
 }) {
-  /** 行序保持稳定：以插入序维护 key 列表（Record 本身无序） */
-  const [keyOrder, setKeyOrder] = useState<string[]>(() => Object.keys(value))
+  const [rows, setRows] = useState<EnvRow[]>(() => toRows(value))
+  /** 自己刚发出的目标态：父组件回显与之一致时不重建本地行（避免输入过程行被重置） */
+  const lastEmitted = useRef<Record<string, string> | null>(null)
 
-  /** 以最终态逐键同步：消失的键发空值（约定 = 删除该键），存在/变化的键发新值 */
-  const emit = (next: Record<string, string>) => {
-    setKeyOrder(Object.keys(next))
-    for (const k of Object.keys(value)) {
-      if (!(k in next)) onChange(deviceId, k, '')
+  // 外部变更（编辑回显 / 卡片增删 / 父侧删除）同步进本地行
+  useEffect(() => {
+    if (lastEmitted.current && sameEnvMap(lastEmitted.current, value)) return
+    setRows(toRows(value))
+  }, [value])
+
+  const apply = (next: EnvRow[]) => {
+    setRows(next)
+    const nextMap: Record<string, string> = {}
+    for (const r of next) {
+      if (r.key !== '' && r.val !== '') nextMap[r.key] = r.val
     }
-    for (const [k, v] of Object.entries(next)) {
+    lastEmitted.current = nextMap
+    for (const k of Object.keys(value)) {
+      if (!(k in nextMap)) onChange(deviceId, k, '')
+    }
+    for (const [k, v] of Object.entries(nextMap)) {
       if (value[k] !== v) onChange(deviceId, k, v)
     }
   }
 
-  const addRow = () => {
-    emit({ ...value, '': '' })
+  const addRow = () => apply([...rows, { key: '', val: '' }])
+
+  const removeRow = (idx: number) => apply(rows.filter((_, i) => i !== idx))
+
+  const renameKey = (idx: number, newKey: string) => {
+    if (rows[idx].key === newKey) return
+    apply(rows.map((r, i) => (i === idx ? { ...r, key: newKey } : r)))
   }
 
-  const removeRow = (key: string) => {
-    const next = { ...value }
-    delete next[key]
-    emit(next)
+  const setVal = (idx: number, v: string) => {
+    apply(rows.map((r, i) => (i === idx ? { ...r, val: v } : r)))
   }
 
-  const renameKey = (oldKey: string, newKey: string) => {
-    if (newKey === oldKey) return
-    const next: Record<string, string> = {}
-    for (const k of keyOrder.length > 0 ? keyOrder : Object.keys(value)) {
-      if (k === oldKey) {
-        // 同名目标已存在时后者覆盖（用户自行取舍）
-        next[newKey] = value[oldKey] ?? ''
-      } else if (!(k in next)) {
-        next[k] = value[k] ?? ''
-      }
-    }
-    emit(next)
-  }
-
-  const rows = keyOrder.filter((k) => k in value)
-  if (rows.length === 0 && Object.keys(value).length === 0) {
+  if (rows.length === 0) {
     return (
       <div>
         <Text type="secondary">尚未配置环境变量，点击＋添加变量新增</Text>
@@ -109,21 +130,21 @@ function EnvRowsEditor({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {rows.map((key) => (
-        <Space key={key || '__empty__'} align="center">
+      {rows.map((r, idx) => (
+        <Space key={`row-${idx}`} align="center">
           <Input
             style={{ width: 180 }}
             placeholder="变量名"
-            value={key}
-            onChange={(e) => renameKey(key, e.target.value)}
+            value={r.key}
+            onChange={(e) => renameKey(idx, e.target.value)}
           />
           <Input.Password
             style={{ width: 260 }}
             placeholder="值"
-            value={value[key] ?? ''}
-            onChange={(e) => onChange(deviceId, key, e.target.value)}
+            value={r.val}
+            onChange={(e) => setVal(idx, e.target.value)}
           />
-          <Button type="link" size="small" danger onClick={() => removeRow(key)}>删除</Button>
+          <Button type="link" size="small" danger onClick={() => removeRow(idx)}>删除</Button>
         </Space>
       ))}
       <div>

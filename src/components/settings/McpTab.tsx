@@ -275,8 +275,11 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
       .finally(() => setMatchedLoading(false))
   }, [formOpen, form.type, form.pkgId, matchedForId])
 
+  // 走查修复（问题1 根因）：整屏 Spin 会卸载 McpPackageTab（导入向导状态丢失、弹窗被吞）。
+  // 仅首次加载整屏 Spin；后续刷新（refreshKey/onPackagesChanged 触发）静默更新数据，不卸载子组件。
+  const loadedOnceRef = useRef(false)
   const load = useCallback(async () => {
-    setLoading(true)
+    if (!loadedOnceRef.current) setLoading(true)
     setLoadError(null)
     try {
       const [list, devs] = await Promise.all([window.api.mcp.list(), window.api.device.list()])
@@ -285,6 +288,7 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
     } catch (e: unknown) {
       setLoadError(ipcErrMsg(e))
     }
+    loadedOnceRef.current = true
     setLoading(false)
   }, [])
 
@@ -735,6 +739,7 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
               ]}
             />
           </div>
+          {/* 走查修复（问题3）：三类型严格分支——http 字段块仅在 type==='http' 渲染，package 分支不混入 */}
           {form.type === 'stdio' ? (
             <>
               <div>
@@ -760,7 +765,7 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
                 />
               </div>
             </>
-          ) : (
+          ) : form.type === 'http' ? (
             <>
               <div>
                 <Text strong>服务地址 URL</Text>
@@ -801,7 +806,7 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
                 />
               </div>
             </>
-          )}
+          ) : null}
           {form.type === 'stdio' ? (
             // 29-06（D-16）/29-09 Gap-4：新建与编辑统一——逐台设备卡片 + 卡内独立 env（行驱动键集合）
             <div>
@@ -847,7 +852,7 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
                         <Space direction="vertical" size={4}>
                           <div>适用型号：{pkg.models.length > 0 ? pkg.models.map((m) => <Tag key={m}>{m}</Tag>) : <Text type="secondary">未声明（全部设备需手动添加）</Text>}</div>
                           <div>环境变量：{pkg.envKeys.length > 0
-                            ? pkg.envKeys.map((k) => <code key={k} style={{ fontFamily: 'monospace', fontSize: 13 }}>{k}</code>)
+                            ? <Space size={4} wrap>{pkg.envKeys.map((k) => <code key={k} style={{ fontFamily: 'monospace', fontSize: 13 }}>{k}</code>)}</Space>
                             : <Text type="secondary">该包未声明环境变量，可按需自定义</Text>}</div>
                           <div style={{ fontSize: 12, color: '#8c8c8c' }}>入口：<code style={{ fontFamily: 'monospace', fontSize: 13 }}>{pkg.entry}</code>（{pkg.runtime}）</div>
                         </Space>

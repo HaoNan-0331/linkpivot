@@ -375,6 +375,15 @@ export default function McpPackageTab({ onPackagesChanged }: { onPackagesChanged
       {r.lastTest && !r.lastTest.ok && r.lastTest.reason && (
         <Alert type="error" showIcon message={`上次自动测试失败（${r.lastTest.stage} 阶段）：${r.lastTest.reason}`} />
       )}
+      {/* 走查修复（问题2）：健康包四类告警全空时展开行不能是空白——给出明确「无异常」结论 */}
+      {!r.disabled
+        && (r.lastTest?.extraTools?.length ?? 0) === 0
+        && (r.lastTest?.missingTools?.length ?? 0) === 0
+        && !(r.lastTest && !r.lastTest.ok && r.lastTest.reason) && (
+        <Text type="secondary">
+          无异常：五项安全校验通过，无工具差异{r.lastTest?.ok ? '，上次自动测试通过' : '（尚未执行自动测试，可点「重测」验证）'}。
+        </Text>
+      )}
     </div>
   )
 
@@ -554,7 +563,12 @@ export default function McpPackageTab({ onPackagesChanged }: { onPackagesChanged
           )}
         </div>
         <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          {step > 0 && <Button onClick={() => (step === 1 ? resetWizard() : setStep(step - 1))}>{step === 1 ? '换文件' : '上一步'}</Button>}
+          {/* 走查修复（问题1）：换文件 = 重置向导并显式保持弹窗打开，回到第 1 步重新选文件 */}
+          {step > 0 && (
+            <Button onClick={() => {
+              if (step === 1) { resetWizard(); setWizardOpen(true) } else setStep(step - 1)
+            }}>{step === 1 ? '换文件' : '上一步'}</Button>
+          )}
           {step < 3 && (
             <Button type="primary" disabled={wizardNextDisabled} onClick={() => setStep(step + 1)}>下一步</Button>
           )}
