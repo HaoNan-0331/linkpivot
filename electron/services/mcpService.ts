@@ -21,6 +21,7 @@ import { getDatabase } from '../database/connection'
 import { encField, decField } from '../utils/crypto'
 import { getDeviceById } from './device'
 import { McpProcessRegistry } from './mcpProcessRegistry'
+import { closeConfigConnections } from './mcpClient'
 
 export const MAX_BATCH = 1000
 
@@ -333,6 +334,16 @@ export class McpService {
       result = { ok: true, config: McpService.rowToView(row, relRows) }
     })
     tx()
+    // 29-09 走查四（缺陷2）：env 语义变更后杀该配置全部运行中 stdio 实例（对齐 deleteConfig
+    // WR-03 语义）——MCP 子进程 env 在 spawn 时烧死，连接按 `configId:deviceId` 复用（10 分钟
+    // 空闲回收），不杀则编辑保存的 env 对后续工具调用不生效（用户所见「修改变量值无效」）。
+    if ((result as { ok?: boolean } | null)?.ok === true && (dto.deviceEnvs != null || dto.env !== undefined)) {
+      const savedId = configId != null
+        ? configId
+        : (conn.prepare('SELECT last_insert_rowid() AS id').get() as { id: number }).id
+      // 逐设备级连接整体关闭（destroy + 树杀 + 连接表剔除），下次工具调用懒重建带新 env
+      void closeConfigConnections(savedId).catch(() => { /* 清理失败不阻断保存返回 */ })
+    }
     return result!
   }
 

@@ -416,7 +416,9 @@ describe('确认流（confirm 档总闸 / smart 未勾免确认）', () => {
 (p) => { if (!p.prefetched && !p.backfilled) emitted.push(p) })
     const execId = JSON.parse(out).execId
     const final = await confirmCommand(execId, true)
-    expect(final).toBe('确认后的总结')
+    // 29-09 走查四：确认路径 MCP 步骤入 steps/sources 轨迹 → 有轨迹收尾包装 agent_answer
+    expect(JSON.parse(final)).toMatchObject({ type: 'agent_answer', content: '确认后的总结' })
+    expect(JSON.parse(final).steps.some((s: any) => s.actionType === 'mcp')).toBe(true)
     expect(emitted).toHaveLength(1)
     expect(emitted[0]).toMatchObject({ type: 'tool_result', status: 'success', server: 'srv-a', tool: 'get_status' })
     expect(fetchMock.mock.calls.length).toBe(2)
@@ -519,7 +521,8 @@ describe('连续调用有界循环（22-05 用户裁决）', () => {
     const execId2 = JSON.parse(out2).execId
     // 第 2 轮确认后：执行 + 回注 → 纯文本收尾
     const final = await confirmCommand(execId2, true)
-    expect(final).toBe('确认流两轮总结')
+    // 29-09 走查四：MCP 步骤入轨迹 → agent_answer 包装（content 原文不变）
+    expect(JSON.parse(final)).toMatchObject({ type: 'agent_answer', content: '确认流两轮总结' })
     expect(callToolWithTimeout).toHaveBeenCalledTimes(2)
     expect(emitted).toHaveLength(2)
     expect(fetchMock.mock.calls.length).toBe(3)
@@ -829,9 +832,11 @@ describe('WR-06：混合协议收尾回复的 [CMD] 标记不漏进气泡', () =
 
     // 确认命令后循环收尾：最终回复零标记原文
     const final = await confirmCommand(payload2.execId, true)
-    expect(final).toBe('命令执行后总结')
-    expect(final).not.toContain('[CMD')
-    expect(final).not.toContain('[/CMD]')
+    // 29-09 走查四：MCP 步骤入轨迹 → agent_answer 包装（content 原文、零标记不变）
+    const finalPayload = JSON.parse(final)
+    expect(finalPayload.content).toBe('命令执行后总结')
+    expect(finalPayload.content).not.toContain('[CMD')
+    expect(finalPayload.content).not.toContain('[/CMD]')
     expect(fetchMock.mock.calls.length).toBe(3) // 工具回注 + 命令回注 + 收尾
   })
 

@@ -21,6 +21,7 @@ const h = vi.hoisted(() => ({
     register: vi.fn(),
     unregister: vi.fn(),
   },
+  closeConfigConnections: vi.fn().mockResolvedValue(undefined),
 }))
 
 vi.mock('../../../electron/database/connection', () => ({
@@ -30,6 +31,11 @@ vi.mock('../../../electron/database/connection', () => ({
 // WR-03：deleteConfig 杀实例路径——registry mock（不真 taskkill）
 vi.mock('../../../electron/services/mcpProcessRegistry', () => ({
   McpProcessRegistry: h.registryMock,
+}))
+
+// 29-09 走查四：saveConfig env 变更杀连接路径——mock mcpClient（不真连 SDK）
+vi.mock('../../../electron/services/mcpClient', () => ({
+  closeConfigConnections: h.closeConfigConnections,
 }))
 
 import { McpService, UNCHANGED_ENV_SENTINEL } from '../../../electron/services/mcpService'
@@ -110,6 +116,7 @@ beforeEach(() => {
   McpService.setMcpMasterKey(TEST_MK)
   h.registryMock.listActive.mockReset().mockReturnValue([])
   h.registryMock.killTree.mockReset().mockReturnValue(true)
+  h.closeConfigConnections.mockReset().mockResolvedValue(undefined)
 })
 
 describe('29-06：saveConfig deviceEnvs（D-16 手工 stdio 编辑态）', () => {
@@ -276,6 +283,28 @@ describe('29-09 走查二：saveConfig package 编辑（保留包字段原值）
       "INSERT INTO mcp_configs (name, type, command_or_url, source) VALUES ('m', 'stdio', 'node', 'manual')"
     ).run()
     expect(McpService.saveConfig({ id: Number(r.lastInsertRowid), name: 'm', type: 'package', commandOrUrl: '(package)' }).ok).toBe(false)
+  })
+
+  // 29-09 走查四（缺陷2）：env 语义变更（deviceEnvs/env 在场）→ 保存成功后关闭该配置
+  // 全部设备级长连接（旧子进程 env 烧死，不杀则编辑对新调用不生效）；不涉 env 的保存不杀
+  it('saveConfig 携带 deviceEnvs → 关闭该配置全部连接；无 env 字段保存不触发', async () => {
+    const cfgId = seed(h.db!, { d1: { TOKEN: 'old' } })
+    const r1 = McpService.saveConfig({
+      id: cfgId, name: 'manual-cfg', type: 'stdio', commandOrUrl: 'node x.js',
+      deviceIds: ['d1'],
+      deviceEnvs: [{ deviceId: 'd1', env: { TOKEN: 'new' } }],
+    })
+    expect(r1.ok).toBe(true)
+    await new Promise((r) => setTimeout(r, 0)) // void 异步清理 flush
+    expect(h.closeConfigConnections).toHaveBeenCalledWith(cfgId)
+
+    h.closeConfigConnections.mockClear()
+    const r2 = McpService.saveConfig({
+      id: cfgId, name: 'renamed-only', type: 'stdio', commandOrUrl: 'node x.js',
+    })
+    expect(r2.ok).toBe(true)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(h.closeConfigConnections).not.toHaveBeenCalled()
   })
 })
 

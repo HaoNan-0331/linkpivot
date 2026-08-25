@@ -321,6 +321,9 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
 
   const openCreate = () => {
     setForm({ ...emptyForm })
+    // 29-09 走查四：新建表单必须清空编辑态脱敏快照——ref 跨表单开合存活，
+    // 残留旧快照会让新建流程的哨兵比对命中脏基线（值比对错判未修改）
+    editMaskedRef.current = {}
     setClearCred(false)
     setFormError(null)
     setTest(null)

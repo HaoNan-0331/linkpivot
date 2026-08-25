@@ -739,6 +739,18 @@ export async function closeMcpConnection(configId: string, deviceId?: string): P
   await closeConnection(connectionKey(configId, deviceId))
 }
 
+/**
+ * 29-09 走查四（缺陷2）：关闭某配置全部设备级长连接（含裸 configId 键）。
+ * env 编辑保存后调用——stdio 子进程 env 在 spawn 时烧死，复用旧连接会导致新 env
+ * 不生效；逐键 closeConnection（destroy + 树杀 + 连接表剔除），下次调用懒重建。
+ */
+export async function closeConfigConnections(configId: string | number): Promise<void> {
+  const id = String(configId)
+  for (const key of Array.from(connections.keys())) {
+    if (key === id || key.startsWith(`${id}:`)) await closeConnection(key)
+  }
+}
+
 // 空闲回收 sweep：Registry 自持登记表，定时器归连接器（裁决见文件头注）。
 // unref() 防阻 Electron 退出（退出前另有 before-quit cleanupAll 兜底）。
 const idleSweeper = setInterval(() => {
