@@ -321,8 +321,116 @@ describe('指纹排除清单（29-09 走查三：__pycache__/pyc 运行时产物
   })
 })
 
+describe('向量六 envmeta-lie（29.1 D-03：envMeta 键集 ⊆ envKeys）', () => {
+  it('合法：envMeta 键集 ⊆ envKeys → 全向量 pass', () => {
+    const m = validPythonManifest()
+    m.envMeta = {
+      NF_TOKEN: { label: '接口令牌', required: true },
+      NF_PORT: { label: '端口', default: '443', example: '8443', description: 'REST 端口' },
+    }
+    const r = validateMcpb(makeMcpb({ 'manifest.json': manifestFile(m), 'nf_mcp/server.py': entryContent(m) }))
+    expect(r.passed).toBe(true)
+    expect(vec(r, 'envmeta-lie').ok).toBe(true)
+    expect(r.manifest?.envMeta?.NF_TOKEN).toEqual({ label: '接口令牌', required: true })
+  })
+
+  it('越界：envMeta 含 envKeys 之外的键 → envmeta-lie fail 且 reason 含 envMeta', () => {
+    const m = validPythonManifest()
+    m.envMeta = { EVIL_KEY: { label: '越界' } }
+    const r = validateMcpb(makeMcpb({ 'manifest.json': manifestFile(m), 'nf_mcp/server.py': entryContent(m) }))
+    expect(r.passed).toBe(false)
+    expect(vec(r, 'envmeta-lie').ok).toBe(false)
+    expect(vec(r, 'envmeta-lie').reason).toContain('envMeta')
+    expect(vec(r, 'envmeta-lie').reason).toContain('EVIL_KEY')
+  })
+
+  it('缺省：manifest 无 envMeta → pass（旧包向后兼容）', () => {
+    const m = validPythonManifest()
+    const r = validateMcpb(makeMcpb({ 'manifest.json': manifestFile(m), 'nf_mcp/server.py': entryContent(m) }))
+    expect(r.passed).toBe(true)
+    expect(vec(r, 'envmeta-lie').ok).toBe(true)
+    expect(r.manifest?.envMeta).toBeUndefined()
+  })
+
+  it('envKeys 有而 envMeta 缺某键 → pass（元数据可选）', () => {
+    const m = validPythonManifest()
+    m.envMeta = { NF_HOST: { label: '主机地址' } }
+    const r = validateMcpb(makeMcpb({ 'manifest.json': manifestFile(m), 'nf_mcp/server.py': entryContent(m) }))
+    expect(r.passed).toBe(true)
+  })
+
+  it('畸形：envMeta 非 plain object（数组/字符串/null）→ manifest-schema fail', () => {
+    for (const evil of [[{ label: 'x' }], 'oops', null]) {
+      const m = validPythonManifest()
+      m.envMeta = evil as unknown as Record<string, unknown>
+      const r = validateMcpb(makeMcpb({ 'manifest.json': manifestFile(m), 'nf_mcp/server.py': entryContent(m) }))
+      expect(vec(r, 'manifest-schema').ok, `envMeta=${JSON.stringify(evil)}`).toBe(false)
+      expect(r.passed).toBe(false)
+    }
+  })
+
+  it('畸形：label 非字符串 / required 非布尔 / default 非 / example 非 / description 非 → manifest-schema fail', () => {
+    const evils: Array<Record<string, unknown>> = [
+      { label: 123 },
+      { label: 'ok', required: 'yes' },
+      { label: 'ok', default: 443 },
+      { label: 'ok', example: true },
+      { label: 'ok', description: [] },
+    ]
+    for (const entry of evils) {
+      const m = validPythonManifest()
+      m.envMeta = { NF_HOST: entry } as never
+      const r = validateMcpb(makeMcpb({ 'manifest.json': manifestFile(m), 'nf_mcp/server.py': entryContent(m) }))
+      expect(vec(r, 'manifest-schema').ok, `entry=${JSON.stringify(entry)}`).toBe(false)
+    }
+  })
+
+  it('畸形：envMeta 键名不匹配 ENV_KEY_RE（数字开头/含连字符）→ manifest-schema fail', () => {
+    for (const evilKey of ['1BAD', 'NF-HOST', 'A=B']) {
+      const m = validPythonManifest()
+      m.envKeys = [...(m.envKeys as string[]), evilKey]
+      m.envMeta = { [evilKey]: { label: 'x' } }
+      const r = validateMcpb(makeMcpb({ 'manifest.json': manifestFile(m), 'nf_mcp/server.py': entryContent(m) }))
+      expect(vec(r, 'manifest-schema').ok, `key=${evilKey}`).toBe(false)
+    }
+  })
+
+  it('DoS 防护（T-29.1-06）：键数超 100 → manifest-schema fail', () => {
+    const m = validNodeManifest()
+    m.envKeys = []
+    const meta: Record<string, { label: string }> = {}
+    for (let i = 0; i < 101; i++) {
+      const k = `K${String(i).padStart(3, '0')}`
+      m.envKeys.push(k)
+      meta[k] = { label: `l${i}` }
+    }
+    m.envMeta = meta as never
+    const r = validateMcpb(makeMcpb({ 'manifest.json': manifestFile(m), 'main.js': entryContent(m) }))
+    expect(vec(r, 'manifest-schema').ok).toBe(false)
+  })
+
+  it('DoS 防护（T-29.1-06）：单字符串字段超 2000 字符 → manifest-schema fail', () => {
+    const m = validPythonManifest()
+    m.envMeta = { NF_HOST: { label: 'a'.repeat(2001) } }
+    const r = validateMcpb(makeMcpb({ 'manifest.json': manifestFile(m), 'nf_mcp/server.py': entryContent(m) }))
+    expect(vec(r, 'manifest-schema').ok).toBe(false)
+  })
+
+  it('envMeta 变化 → 全树指纹变化（覆盖导入 diff 可见）', () => {
+    const m1 = validPythonManifest()
+    m1.envMeta = { NF_HOST: { label: '主机' } }
+    const m2 = validPythonManifest()
+    m2.envMeta = { NF_HOST: { label: '防火墙主机' } }
+    const r1 = validateMcpb(makeMcpb({ 'manifest.json': manifestFile(m1), 'nf_mcp/server.py': entryContent(m1) }))
+    const r2 = validateMcpb(makeMcpb({ 'manifest.json': manifestFile(m2), 'nf_mcp/server.py': entryContent(m2) }))
+    expect(r1.fileTree && r2.fileTree ? buildFingerprintTree(r1.fileTree).treeSha256 : '').not.toBe(
+      r2.fileTree ? buildFingerprintTree(r2.fileTree).treeSha256 : ''
+    )
+  })
+})
+
 describe('白例：完整合法包（双轨）', () => {
-  it('合法 node 包 → passed=true 且五向量全 ok', () => {
+  it('合法 node 包 → passed=true 且六向量全 ok', () => {
     const m = validNodeManifest()
     const r = validateMcpb(makeMcpb({
       'manifest.json': manifestFile(m),
@@ -330,7 +438,7 @@ describe('白例：完整合法包（双轨）', () => {
       'lib/util.js': strToU8('module.exports = 1'),
     }))
     expect(r.passed).toBe(true)
-    expect(r.vectors).toHaveLength(5)
+    expect(r.vectors).toHaveLength(6)
     expect(r.vectors.every((v) => v.ok)).toBe(true)
     expect(r.manifest?.name).toBe('net-tools')
     expect(r.fileTree?.length).toBe(3)
