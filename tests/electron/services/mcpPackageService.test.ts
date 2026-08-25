@@ -248,6 +248,28 @@ describe('Task 1: importPackage / confirmOverwrite / list / get', () => {
     expect(same.ok && same.status).toBe('exists')
   })
 
+  // WR-02（Phase 29 code-review）：换盘前先杀该包全部运行实例（Windows 持句柄 rmSync EBUSY
+  // → DB 新指纹/磁盘旧内容不一致 → TOCTOU 自动禁用）——只杀本包 configId，不误杀他包
+  it('WR-02：confirmOverwrite 换盘前树杀该包运行实例（不误杀他配置/他包）', () => {
+    const imp = McpPackageService.importPackage(mkMcpb())
+    const pkgId = (imp as any).package.id
+    seedPackageConfig(h.db!, pkgId, { dev1: { A: 'a1' } })
+    const cfgId = Number((h.db!.prepare('SELECT id FROM mcp_configs WHERE package_id = ?').get(pkgId) as any).id)
+    const otherCfg = Number((h.db!.prepare(
+      "INSERT INTO mcp_configs (name, type, command_or_url) VALUES ('other', 'stdio', 'node')"
+    ).run().lastInsertRowid))
+    h.registryMock.listActive.mockReturnValue([
+      { pid: 601, configId: `${cfgId}:dev1`, startedAt: 0 },
+      { pid: 602, configId: `${otherCfg}:dev1`, startedAt: 0 },
+      { pid: 603, configId: '999:dev1', startedAt: 0 },
+    ])
+    const res = McpPackageService.confirmOverwrite(pkgId, mkMcpb({ version: '2.0.0', entryContent: 'console.log(2)' }))
+    expect(res.ok).toBe(true)
+    expect(h.registryMock.killTree).toHaveBeenCalledTimes(1)
+    expect(h.registryMock.killTree).toHaveBeenCalledWith(601) // 只杀本包实例
+    expect(readFileSync(join(rootDir, 'demo-pkg', 'main.js'), 'utf-8')).toBe('console.log(2)')
+  })
+
   it('非法包（zip-slip）：ok:false + vectors', () => {
     const evil = zipSync({
       'manifest.json': strToU8(JSON.stringify({ name: 'evil', version: '1', runtime: 'node', entry: 'main.js', models: [], tools: [{ name: 't', description: 'd' }] })),

@@ -37,6 +37,13 @@ import { McpProcessRegistry } from './mcpProcessRegistry'
 /** manifest.name 长度上限（网关与 service 同源，D-05 包身份健壮性） */
 export const MAX_PKG_NAME_LENGTH = 100
 
+/**
+ * 设备/配置 env 键名字符集规则（WR-03 单源）：字母/下划线开头，仅字母数字下划线，≤100 字符。
+ * mcp:createConfigFromPackage 与 mcp:save（deviceEnvs）两通道共用同一规则，防 drift
+ * （含 =、控制字符、PATH 覆盖等键名可经宽校验通道写入 buildChildEnv 覆盖 PATH）。
+ */
+export const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]{0,99}$/
+
 export interface EnvKeysDiff {
   kept: string[]
   added: string[]
@@ -391,9 +398,37 @@ export class McpPackageService {
       throw e
     }
 
-    // 3) 换入：删旧目录 → 临时目录同卷 rename 到位（旧内容 → 新内容近原子替换）
-    rmSync(existing.dir_path, { recursive: true, force: true })
-    renameSync(tmpDir, existing.dir_path)
+    // 3) 换盘前先杀该包全部运行实例（WR-02，复用 deletePackage 树杀路径——Windows
+    //    运行中 node.exe/python.exe 持句柄，rmSync 会 EBUSY/EPERM → DB 新指纹/磁盘
+    //    旧内容不一致 → 包被 TOCTOU 重验自动禁用）
+    const ownIds = new Set(
+      (conn.prepare('SELECT id FROM mcp_configs WHERE package_id = ?')
+        .all(packageId) as Array<{ id: number }>).map((r) => String(r.id))
+    )
+    for (const rec of McpProcessRegistry.listActive()) {
+      if (ownIds.has(String(rec.configId).split(':')[0])) McpProcessRegistry.killTree(rec.pid)
+    }
+    // 4) 换入：删旧目录 → 临时目录同卷 rename 到位（旧内容 → 新内容近原子替换）；
+    //    失败补偿：旧目录改名 .stale-<id>-<ts> 隔离后再试换入（rmSync 半删/残留句柄场景），
+    //    仍失败则抛错（DB 指纹已是新值、磁盘未换入——下次 spawn TOCTOU 检出即禁用，fail-closed）
+    try {
+      rmSync(existing.dir_path, { recursive: true, force: true })
+      renameSync(tmpDir, existing.dir_path)
+    } catch {
+      const staleDir = join(McpPackageService.rootGetter(), `.stale-${packageId}-${Date.now()}`)
+      try {
+        renameSync(existing.dir_path, staleDir)
+      } catch { /* 旧目录已删净或同样被占——继续尝试换入新目录 */ }
+      try {
+        renameSync(tmpDir, existing.dir_path)
+      } catch (e2) {
+        console.warn(
+          `[mcpPackage] confirmOverwrite 换盘失败（DB 指纹已更新、磁盘未换入，下次 spawn 将 TOCTOU 检出并禁用包，请重新覆盖导入）：`,
+          (e2 as Error).message
+        )
+        throw e2
+      }
+    }
     const row = conn.prepare('SELECT * FROM mcp_packages WHERE id = ?').get(packageId) as any
     return { ok: true, status: 'overwritten', package: McpPackageService.rowToView(row), diff }
   }
@@ -698,7 +733,6 @@ export class McpPackageService {
     if (!row) return null
     const manifest = McpPackageService.parseManifestSafe(row.manifest_json)
     if (!manifest) return null
-    const models = (manifest.models ?? []).map((m) => m.trim().toLowerCase()).filter((m) => m !== '')
 
     const stmtBound = conn.prepare(
       `SELECT c.name AS name FROM mcp_device_rel r JOIN mcp_configs c ON c.id = r.mcp_config_id WHERE r.device_id = ?`
@@ -747,7 +781,6 @@ export class McpPackageService {
     }
     if (deviceEnvs.length === 0) return { ok: false, error: '未选择任何设备' }
     if (deviceEnvs.length > MAX_BATCH) return { ok: false, error: `deviceEnvs 超过批量上限 ${MAX_BATCH}` }
-    const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]{0,99}$/
     const seen = new Set<string>()
     for (const item of deviceEnvs) {
       if (!item || typeof item.deviceId !== 'string' || item.deviceId === '') {
