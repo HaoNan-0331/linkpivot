@@ -35,7 +35,7 @@ function makeDb(): Database.Database {
     CREATE TABLE mcp_configs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
-      type TEXT NOT NULL CHECK(type IN ('stdio','http')),
+      type TEXT NOT NULL CHECK(type IN ('stdio','http','package')),
       command_or_url TEXT NOT NULL,
       args_json TEXT,
       env_json_enc TEXT,

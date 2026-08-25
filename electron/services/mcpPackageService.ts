@@ -28,7 +28,8 @@ import { encField, decField } from '../utils/crypto'
 import { validateMcpb, buildFingerprintTree, MAX_PACKAGE_BYTES } from './mcpPackageValidator'
 import { MAX_BATCH } from './mcpService'
 import type { McpManifest, FileEntry, VectorResult } from './mcpPackageValidator'
-import { testConnection, verifyPackageFingerprint, reportPackageIntegrityFailure } from './mcpClient'
+import { testConnection, verifyPackageFingerprint, reportPackageIntegrityFailure, resolvePackageSpawn } from './mcpClient'
+import type { McpTestResult, StageCallback } from './mcpClient'
 import { McpToolPolicy } from './mcpToolPolicy'
 import type { McpToolAnnotations } from './mcpToolPolicy'
 import { McpProcessRegistry } from './mcpProcessRegistry'
@@ -573,6 +574,96 @@ export class McpPackageService {
   }
 
   // -------------------------------------------------------------------
+  // 29-09 走查二：包配置行级「测试」包轨路由（缺陷1+3 根因修复）
+  // -------------------------------------------------------------------
+
+  /**
+   * 包配置（type='package'）行级连接测试——mcp:testConnection 识别包配置后路由至此。
+   * 与 stdio/http 旧通道的差异：
+   *  - spawn 前置守卫与 getConnection 包轨同源：disabled 门 + TOCTOU 全树指纹重验
+   *    （检出即 disabled=1 + security 日志副作用，testPackage 同款链路）
+   *  - spawn 计划复用 resolvePackageSpawn（python 内嵌轨道 / node entry——不复制第二份逻辑）
+   *  - env 注入 = 首台绑定设备（MIN(rel.id)）的 env_json_enc 解密合并；无绑定设备空 env
+   *    也可测（只验包能起 + 握手 + tools/list）
+   *  - 进度事件/取消/超时/树杀复用 mcpClient.testConnection 既有基建（testId 透传）
+   */
+  static async testPackageConfig(configId: number, opts?: {
+    testId?: string
+    onStage?: StageCallback
+  }): Promise<McpTestResult> {
+    const conn = McpPackageService.db()
+    const cfg = conn.prepare('SELECT id, source, package_id FROM mcp_configs WHERE id = ?')
+      .get(configId) as { id: number; source: string; package_id: number | null } | undefined
+    if (!cfg) return { ok: false, error: { code: 'MCP_ERROR', reason: '配置不存在或已被删除' } }
+    if (cfg.source !== 'package' || cfg.package_id == null) {
+      return { ok: false, error: { code: 'MCP_ERROR', reason: '该配置不是 MCP 包配置（包轨测试仅适用于 type=package）' } }
+    }
+    const row = conn.prepare('SELECT * FROM mcp_packages WHERE id = ?').get(cfg.package_id) as any
+    if (!row) return { ok: false, error: { code: 'MCP_ERROR', reason: '包不存在或已被删除' } }
+    if (row.disabled) {
+      return { ok: false, error: { code: 'MCP_ERROR', reason: '包已被禁用（TOCTOU 检出后需重新导入校验），不能测试' } }
+    }
+    // WR-01 同款：TOCTOU 指纹重验失败 → disabled=1 + security 日志副作用（不 spawn）
+    try {
+      verifyPackageFingerprint(row.dir_path, row.fingerprint_json)
+    } catch (e) {
+      const reason = (e as { reason?: string }).reason ?? '包指纹重验失败（TOCTOU 检出）'
+      if ((e as { code?: string })?.code === 'package_integrity_failed') {
+        try {
+          conn.prepare(
+            "UPDATE mcp_packages SET disabled = 1, updated_at = datetime('now','localtime') WHERE id = ?"
+          ).run(cfg.package_id)
+        } catch { /* 禁用失败不吞主线错误 */ }
+        try {
+          reportPackageIntegrityFailure({ packageId: cfg.package_id, dirPath: row.dir_path, detail: reason })
+        } catch { /* handler 故障不吞主线错误 */ }
+      }
+      return { ok: false, error: { code: 'package_integrity_failed', reason } }
+    }
+
+    // spawn 计划：复用 29-04 包轨装配（python 内嵌 / node entry）——python 未内嵌结构化失败
+    let plan: { command: string; args: string[] }
+    try {
+      plan = resolvePackageSpawn({
+        packageId: row.id,
+        dirPath: row.dir_path,
+        runtime: row.runtime,
+        entry: row.entry,
+        fingerprintJson: row.fingerprint_json ?? '',
+      })
+    } catch (e) {
+      const err = e as { code?: string; reason?: string }
+      return { ok: false, error: { code: err?.code ?? 'MCP_ERROR', reason: err?.reason ?? '包 spawn 计划装配失败' } }
+    }
+
+    // env：首台绑定设备（MIN(rel.id)）env 解密合并；无绑定设备空 env（坏密文/坏 JSON 降级空组）
+    let env: Record<string, string> = {}
+    const rel = conn.prepare(
+      'SELECT env_json_enc FROM mcp_device_rel WHERE mcp_config_id = ? ORDER BY id LIMIT 1'
+    ).get(configId) as { env_json_enc: string | null } | undefined
+    if (rel?.env_json_enc) {
+      const dec = decField(rel.env_json_enc, McpPackageService.MK)
+      if (dec) {
+        try {
+          const parsed = JSON.parse(dec)
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) env = parsed as Record<string, string>
+        } catch { /* 坏 JSON 降级空 env */ }
+      }
+    }
+
+    const testId = opts?.testId ?? `pkgcfgtest-${configId}-${Date.now()}`
+    // 复用 mcpClient.testConnection 全套基建（进度/取消/超时/树杀）：plan.command 形态
+    // 对 resolveStdioCommand 语义稳定（python=包内绝对路径直用；node=PATH 主路径+兜底）
+    return testConnection(testId, {
+      type: 'stdio',
+      commandOrUrl: plan.command,
+      args: plan.args,
+      env,
+      credential: null,
+    }, opts?.onStage)
+  }
+
+  // -------------------------------------------------------------------
   // 从包创建配置（29-06，PKG-05：D-20/D-21/D-22）
   // -------------------------------------------------------------------
 
@@ -693,14 +784,17 @@ export class McpPackageService {
       }
 
       // ---- 恰好 1 条 config + N 行 rel（各设备独立 env 密文，T-29-07 同款红线）----
+      // 29-09 走查二：type 真实化为 'package'（v28 CHECK 已放开）——不再靠
+      // source='package' 暗号谎报 stdio；command_or_url 存 manifest.entry
+      // （spawn 形态由包元数据装配，读取处不依赖该列——Fix-4）
       const stmtInsCfg = conn.prepare(
         `INSERT INTO mcp_configs (name, type, command_or_url, args_json, package_id, source)
-         VALUES (?, 'stdio', ?, '[]', ?, 'package')`
+         VALUES (?, 'package', ?, '[]', ?, 'package')`
       )
       const stmtInsRel = conn.prepare(
         'INSERT INTO mcp_device_rel (id, mcp_config_id, device_id, env_json_enc) VALUES (?, ?, ?, ?)'
       )
-      const info = stmtInsCfg.run(name.trim(), row.name, packageId)
+      const info = stmtInsCfg.run(name.trim(), row.entry, packageId)
       for (const item of deviceEnvs) {
         const envStr = item.env && Object.keys(item.env).length > 0 ? JSON.stringify(item.env) : null
         stmtInsRel.run(uuidv4(), info.lastInsertRowid as number, item.deviceId, envStr ? encField(envStr, McpPackageService.MK) : null)

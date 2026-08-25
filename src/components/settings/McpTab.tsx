@@ -349,7 +349,8 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
       args: [...cfg.args],
       credential: '', // 未输入新令牌 = 不修改（credentialMasked 回显）
       credentialMasked: cfg.credentialMasked,
-      pkgId: null,
+      // 29-09 走查二：包配置编辑态回填 packageId（型号预筛/设备卡片按包匹配面加载）
+      pkgId: cfg.type === 'package' ? cfg.packageId : null,
       deviceIds: [...cfg.deviceIds],
       deviceEnvValues,
     })
@@ -451,23 +452,50 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
     doSave()
   }
 
-  /** 29-09（Gap-2）：package 分支保存——单条配置绑定 N 台设备（29-07 通道） */
+  /** 29-09（Gap-2）：package 分支保存——新建走 29-07 通道；编辑走 mcp:save（main 侧保留包字段原值） */
   const doPackageSave = async () => {
     if (form.name.trim() === '') { setFormError('请填写名称'); return }
-    if (form.pkgId == null) { setFormError('请选择 MCP 包'); return }
+    if (form.id == null && form.pkgId == null) { setFormError('请选择 MCP 包'); return }
     if (form.deviceIds.length === 0) { setFormError('请至少绑定一台设备'); return }
     setSaving(true)
     setFormError(null)
     try {
-      // 新建无脱敏回显（无哨兵）：非空值条目直接透传输入值
+      // 编辑态无脱敏回显快照缺口：与新建同形态（哨兵比对不到即透传原样值——
+      // openEdit 已把脱敏回显填入 deviceEnvValues，未修改值与快照一致走哨兵）
       const deviceEnvs = form.deviceIds.map((id) => {
         const env: Record<string, string> = {}
         for (const [k, v] of Object.entries(form.deviceEnvValues[id] ?? {})) {
-          if (k !== '' && v !== '') env[k] = v
+          if (k === '' || v === '') continue
+          const snap = editMaskedRef.current[id]?.[k]
+          env[k] = snap != null && v === snap ? UNCHANGED_ENV_SENTINEL : v
         }
         return { deviceId: id, env }
       })
-      const res = await window.api.mcp.createConfigFromPackage(form.pkgId, form.name.trim(), deviceEnvs)
+      if (form.id != null) {
+        // 编辑包配置：type='package'，main 侧保留 type/command_or_url/args 原值，只更新
+        // 名称/绑定/设备级 env/启用态
+        const res = await window.api.mcp.save({
+          id: form.id,
+          name: form.name.trim(),
+          type: 'package',
+          commandOrUrl: '(package)',
+          args: [],
+          env: undefined,
+          credential: undefined,
+          deviceIds: form.deviceIds,
+          deviceEnvs,
+          enabled: true,
+        })
+        if (res.ok) {
+          message.success('配置已保存')
+          setFormOpen(false)
+          load()
+        } else {
+          setFormError(res.error)
+        }
+        return
+      }
+      const res = await window.api.mcp.createConfigFromPackage(form.pkgId!, form.name.trim(), deviceEnvs)
       if (res.ok) {
         message.success('配置已创建')
         setFormOpen(false)
@@ -576,7 +604,14 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
     },
     {
       title: '类型', dataIndex: 'type', width: 140,
-      render: (v: 'stdio' | 'http') => <Tag color={v === 'stdio' ? 'blue' : 'green'} style={{ whiteSpace: 'nowrap' }}>{TYPE_LABEL[v]}</Tag>,
+      render: (v: 'stdio' | 'http' | 'package') => (
+        <Tag
+          color={v === 'stdio' ? 'blue' : v === 'package' ? 'purple' : 'green'}
+          style={{ whiteSpace: 'nowrap' }}
+        >
+          {TYPE_LABEL[v]}
+        </Tag>
+      ),
     },
     {
       title: '绑定设备', dataIndex: 'deviceNames', width: 180, ellipsis: true,
@@ -840,6 +875,7 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
                     <Select
                       value={form.pkgId ?? undefined}
                       onChange={selectPackage}
+                      disabled={form.id != null}
                       style={{ width: 480, marginTop: 4 }}
                       placeholder="选择已导入的 MCP 包"
                       options={pkgs.map((p) => ({
@@ -909,9 +945,13 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
             />
           </div>
           )}
-          {form.type !== 'package' && (
+          {(form.type !== 'package' || form.id != null) && (
             <div>
-              <Button onClick={runFormTest} disabled={test?.running ?? false}>
+              {/* 包配置编辑态测试走包轨（main 侧 testPackageConfig：指纹重验+包内 spawn+设备 env） */}
+              <Button
+                onClick={form.type === 'package' ? () => runTest({ configId: form.id, temp: null }) : runFormTest}
+                disabled={test?.running ?? false}
+              >
                 测试连接
               </Button>
             </div>

@@ -667,7 +667,16 @@ export async function getConnection(configId: string, config: McpDecodedConfig, 
     if (existing.pid !== null) McpProcessRegistry.markUsed(existing.pid)
     return existing.client
   }
-  if (config.type === 'stdio') {
+  if (config.type === 'http') {
+    const { client } = await connectHttp(key, config)
+    return client
+  }
+  // 29-09 走查二：type='package'（v28 真实化）——spawn 计划必须由 opts.package 装配
+  // （python 内嵌轨道 / node entry），command_or_url 列不再是 spawn 语义来源
+  if (config.type === 'package' && !opts?.package) {
+    throw { code: 'MCP_PACKAGE_META_MISSING', reason: 'MCP 包配置缺少包元数据（packageId），拒绝启动' }
+  }
+  {
     let plan: StdioSpawnPlan
     if (opts?.package) {
       // TOCTOU 全树重验（D-26/D-27）：不一致拒绝启动 + integrityHandler 副作用（包 disabled + security 日志，
@@ -693,8 +702,6 @@ export async function getConnection(configId: string, config: McpDecodedConfig, 
     const { client } = await connectStdio(key, config, plan)
     return client
   }
-  const { client } = await connectHttp(key, config)
-  return client
 }
 
 /** callTool 硬超时包装（Phase 22 主消费；29-04 复合键 + 设备级实例透传） */

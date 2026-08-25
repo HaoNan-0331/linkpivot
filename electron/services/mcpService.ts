@@ -35,7 +35,9 @@ export interface McpSaveInput {
   /** 有值 → UPDATE；空 → INSERT（新建） */
   id?: number | null
   name: string
-  type: 'stdio' | 'http'
+  /** 'package' 仅允许编辑既有包配置（id 必须指向 source='package' 行）——service 层保留
+   *  type/command_or_url/args 原值（spawn 形态由包元数据装配，不接受手工改写） */
+  type: 'stdio' | 'http' | 'package'
   commandOrUrl: string
   args?: string[]
   /** stdio 环境变量键值对（undefined=不动现值；null/空对象=清空） */
@@ -57,7 +59,8 @@ export interface McpSaveInput {
 export interface McpConfigView {
   id: number
   name: string
-  type: 'stdio' | 'http'
+  /** 29-09 走查二：包配置 type 真实化 'package'（v28 迁移 + createConfigFromPackage 直写） */
+  type: 'stdio' | 'http' | 'package'
   commandOrUrl: string
   args: string[]
   credentialMasked: string | null
@@ -66,6 +69,8 @@ export interface McpConfigView {
   deviceNames: string[]
   enabled: boolean
   source: string
+  /** 29-09：包配置回溯包 id（编辑态拉型号预筛/包轨测试用；手工配置 null） */
+  packageId: number | null
   lastTestAt: string | null
   lastTestStatus: string | null
   lastTestToolCount: number | null
@@ -78,7 +83,9 @@ export interface McpConfigView {
 
 /** main 进程内部用（21-03 mcpClient 连接测试）——绝不进 IPC 出口 */
 export interface McpDecodedConfig {
-  type: 'stdio' | 'http'
+  /** 'package' = 包配置：mcpClient.getConnection 需 opts.package 装配 spawn 计划；
+   *  连接测试走 mcpPackageService.testPackageConfig 包轨，不经 stdio/http 旧通道 */
+  type: 'stdio' | 'http' | 'package'
   commandOrUrl: string
   args: string[]
   env: Record<string, string>
@@ -153,6 +160,7 @@ export class McpService {
       deviceNames,
       enabled: !!row.enabled,
       source: row.source,
+      packageId: row.package_id ?? null,
       lastTestAt: row.last_test_at ?? null,
       lastTestStatus: row.last_test_status ?? null,
       lastTestToolCount: row.last_test_tool_count ?? null,
@@ -210,16 +218,32 @@ export class McpService {
       }
 
       // ---- 主表 upsert ----
+      // 29-09 走查二：package 类型仅允许编辑既有包配置——type/command_or_url/args_json
+      // 保留 DB 原值（spawn 形态由包元数据装配），env/credential 对包配置无意义一并跳过
+      const isPkgEdit = dto.type === 'package'
+      if (isPkgEdit && configId == null) {
+        result = { ok: false, error: 'MCP 包配置只能从包创建（不允许手工新建）' }
+        return
+      }
       const argsJson = JSON.stringify(dto.args ?? [])
       if (configId != null) {
-        const sets = ['name = ?', 'type = ?', 'command_or_url = ?', 'args_json = ?', "updated_at = datetime('now','localtime')"]
-        const params: any[] = [dto.name, dto.type, dto.commandOrUrl, argsJson]
-        if (dto.env !== undefined) {
+        if (isPkgEdit) {
+          const pkgRow = conn.prepare('SELECT source FROM mcp_configs WHERE id = ?').get(configId) as { source: string } | undefined
+          if (!pkgRow || pkgRow.source !== 'package') {
+            result = { ok: false, error: '该配置不是 MCP 包配置，不能以 package 类型保存' }
+            return
+          }
+        }
+        const sets = isPkgEdit
+          ? ['name = ?', "updated_at = datetime('now','localtime')"]
+          : ['name = ?', 'type = ?', 'command_or_url = ?', 'args_json = ?', "updated_at = datetime('now','localtime')"]
+        const params: any[] = isPkgEdit ? [dto.name] : [dto.name, dto.type, dto.commandOrUrl, argsJson]
+        if (!isPkgEdit && dto.env !== undefined) {
           const envStr = dto.env && Object.keys(dto.env).length > 0 ? JSON.stringify(dto.env) : null
           sets.push('env_json_enc = ?')
           params.push(envStr ? encField(envStr, McpService.MK) : null)
         }
-        if (dto.credential !== undefined) {
+        if (!isPkgEdit && dto.credential !== undefined) {
           sets.push('credential_enc = ?')
           params.push(dto.credential ? encField(dto.credential, McpService.MK) : null)
         }
@@ -316,28 +340,38 @@ export class McpService {
    * 主表 DELETE，mcp_device_rel 随 FK CASCADE 消失（Popconfirm 数据层级联）。
    * WR-03：先杀该 configId 全部运行中 stdio 实例（对齐 deletePackage 语义——防子进程
    * 持用户 env 明文残留至 10 分钟空闲回收）。
-   * WR-06：包根配置（同包 MIN(id) 策略模板载体）删除保护——mcp_tools 随 FK CASCADE 清空
-   * 会连带兄弟配置的工具启用/免确认策略瞬时归零，拒绝并提示改走删包入口。
+   * 29-09 走查二（原 WR-06 拦截移除，用户心智「包/配置独立」裁决方案一——迁移继承）：
+   * 删包配置时 mcp_tools 策略行不再随配置湮灭——同包还有兄弟配置 → 迁移继承到新根
+   * （重选 MIN(id)，重名工具行先清防 UNIQUE 冲突）；同包无兄弟 → 一并清理（包保留）。
+   * 手工配置删除同步清理自身 mcp_tools 缓存行（原路径为孤儿行遗留）。
    */
   static deleteConfig(id: number): { ok: true } | { ok: false; error: string } {
     const conn = McpService.db()
     const row = conn.prepare('SELECT id, source, package_id FROM mcp_configs WHERE id = ?')
       .get(id) as { id: number; source: string; package_id: number | null } | undefined
     if (!row) return { ok: true } // 幂等：行已不在即视为删净
-    if (row.source === 'package' && row.package_id != null) {
-      const root = conn.prepare('SELECT MIN(id) AS rootId FROM mcp_configs WHERE package_id = ?')
-        .get(row.package_id) as { rootId: number | null } | undefined
-      if (root?.rootId === id) {
-        return {
-          ok: false,
-          error: '该配置是所在包的工具策略模板载体（首条包配置），删除会导致同包全部配置的工具启用/免确认策略一并丢失——如需移除请删除整个包',
-        }
-      }
-    }
     for (const rec of McpProcessRegistry.listActive()) {
       if (String(rec.configId).split(':')[0] === String(id)) McpProcessRegistry.killTree(rec.pid)
     }
-    conn.prepare('DELETE FROM mcp_configs WHERE id = ?').run(id)
+    conn.transaction((): void => {
+      if (row.source === 'package' && row.package_id != null) {
+        const sibling = conn.prepare(
+          'SELECT MIN(id) AS rootId FROM mcp_configs WHERE package_id = ? AND id != ?'
+        ).get(row.package_id, id) as { rootId: number | null } | undefined
+        if (sibling?.rootId != null) {
+          // 新根已有同名工具行先清（UNIQUE(config_id, tool_name) 冲突防御），再整体迁移继承
+          conn.prepare(
+            'DELETE FROM mcp_tools WHERE config_id = ? AND tool_name IN (SELECT tool_name FROM mcp_tools WHERE config_id = ?)'
+          ).run(sibling.rootId, id)
+          conn.prepare('UPDATE mcp_tools SET config_id = ? WHERE config_id = ?').run(sibling.rootId, id)
+        } else {
+          conn.prepare('DELETE FROM mcp_tools WHERE config_id = ?').run(id)
+        }
+      } else {
+        conn.prepare('DELETE FROM mcp_tools WHERE config_id = ?').run(id)
+      }
+      conn.prepare('DELETE FROM mcp_configs WHERE id = ?').run(id)
+    })()
     return { ok: true }
   }
 

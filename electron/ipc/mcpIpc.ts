@@ -18,7 +18,8 @@
 
 import { ipcMain } from 'electron'
 import { McpService, MAX_BATCH, UNCHANGED_ENV_SENTINEL } from '../services/mcpService'
-import type { McpSaveInput } from '../services/mcpService'
+import type { McpSaveInput, McpDecodedConfig } from '../services/mcpService'
+import { McpPackageService } from '../services/mcpPackageService'
 import { testConnection as runTest, cancelTest } from '../services/mcpClient'
 import type { McpTestResult } from '../services/mcpClient'
 import { McpToolPolicy } from '../services/mcpToolPolicy'
@@ -34,6 +35,8 @@ const MAX_ENV_PAIRS = 50
 const MAX_ENV_KEY_LENGTH = 100
 const MAX_ENV_VALUE_LENGTH = 2000
 const VALID_TYPES = ['stdio', 'http']
+/** 29-09 走查二：'package' 仅允许编辑既有包配置（新建必须走 mcp:createConfigFromPackage） */
+const VALID_TYPES_SAVE = ['stdio', 'http', 'package']
 
 export interface McpTempTestInput {
   type: 'stdio' | 'http'
@@ -54,11 +57,14 @@ export function registerMcpIpc() {
     }
     if (typeof dto.name !== 'string' || dto.name.trim() === '') throw new Error('参数无效：name 不能为空')
     if (dto.name.length > MAX_NAME_LENGTH) throw new Error(`名称超过长度上限 ${MAX_NAME_LENGTH} 字符`)
-    if (!VALID_TYPES.includes(dto.type)) throw new Error(`参数无效：type 必须是 ${VALID_TYPES.join('/')}`)
-    if (typeof dto.commandOrUrl !== 'string' || dto.commandOrUrl.trim() === '') {
+    if (dto.type === 'package' && dto.id == null) {
+      throw new Error('参数无效：MCP 包配置只能从包创建（新建请使用「MCP 包」列表的创建入口）')
+    }
+    if (!VALID_TYPES_SAVE.includes(dto.type)) throw new Error(`参数无效：type 必须是 ${VALID_TYPES_SAVE.join('/')}`)
+    if (dto.type !== 'package' && (typeof dto.commandOrUrl !== 'string' || dto.commandOrUrl.trim() === '')) {
       throw new Error('参数无效：commandOrUrl 不能为空')
     }
-    if (dto.commandOrUrl.length > MAX_COMMAND_URL_LENGTH) {
+    if (dto.type !== 'package' && dto.commandOrUrl.length > MAX_COMMAND_URL_LENGTH) {
       throw new Error(`命令/URL 超过长度上限 ${MAX_COMMAND_URL_LENGTH} 字符`)
     }
     if (dto.args !== undefined) {
@@ -122,7 +128,12 @@ export function registerMcpIpc() {
     // 保存入口 trim（新数据干净）；全空白 credential 归一为 null（清空）
     const credential =
       dto.credential != null && dto.credential.trim() !== '' ? dto.credential.trim() : null
-    return McpService.saveConfig({ ...dto, commandOrUrl: dto.commandOrUrl.trim(), credential })
+    return McpService.saveConfig({
+      ...dto,
+      // package 编辑：command_or_url 由 service 保留 DB 原值，此处占位串仅过网关
+      commandOrUrl: dto.type === 'package' ? '(package)' : dto.commandOrUrl.trim(),
+      credential,
+    })
   }))
 
   // 删除（Popconfirm；mcp_device_rel 随 FK CASCADE 级联）
@@ -163,13 +174,32 @@ export function registerMcpIpc() {
     // 基线：已存配置解密形态（configId 缺失时为空基线）
     const base = configId != null ? McpService.decodeForTest(configId) : null
 
-    let config: {
-      type: 'stdio' | 'http'
-      commandOrUrl: string
-      args: string[]
-      env: Record<string, string>
-      credential: string | null
+    // 29-09 走查二（缺陷1+3 修复）：包配置（type='package'）不走 stdio/http 旧通道——
+    // 旧路径会把包名当命令 spawn 导致 60s 超时。改走包轨：指纹重验 + 内嵌 python/node
+    // entry + 首台绑定设备 env；进度/取消/超时复用 mcpClient.testConnection 既有基建
+    if (base?.type === 'package') {
+      if (temp !== undefined && temp !== null) {
+        throw new Error('参数无效：MCP 包配置不支持临时参数测试（temp 仅适用于 stdio/http）')
+      }
+      const sendStage = (stage: string, elapsedMs: number): void => {
+        try { e.sender.send('mcp:testProgress', { testId, stage, elapsedMs }) } catch { /* webContents 已销毁，忽略 */ }
+      }
+      const result = await McpPackageService.testPackageConfig(configId!, { testId, onStage: sendStage })
+      // 包配置测试结果照旧落库 + 工具缓存（策略载体的工具清单来源，与 stdio/http 行级测试同语义）
+      if (result.ok) {
+        McpService.recordTestResult(configId!, 'success', result.tools.length)
+        McpToolPolicy.saveToolCache(configId!, result.tools.map((t) => ({
+          ...t,
+          annotations: t.annotations as McpToolAnnotations | undefined,
+        })))
+      } else if (result.error.code !== 'MCP_CANCELLED') {
+        McpService.recordTestResult(configId!, 'failed', null)
+      }
+      return result
     }
+
+    // 包配置已在上方包轨分支早返，此处必为 stdio/http 基线或 temp 组合
+    let config: McpDecodedConfig
     if (temp !== undefined && temp !== null) {
       if (!temp || typeof temp !== 'object') throw new Error('参数无效：temp')
       if (!VALID_TYPES.includes(temp.type)) throw new Error(`参数无效：type 必须是 ${VALID_TYPES.join('/')}`)
@@ -222,6 +252,7 @@ export function registerMcpIpc() {
       }
       config = { type: temp.type, commandOrUrl, args, env, credential }
     } else if (base) {
+      // 包配置已在上方包轨分支早返——此处收窄为 stdio/http 基线
       config = base
     } else {
       throw new Error('参数无效：须提供 configId 或 temp')

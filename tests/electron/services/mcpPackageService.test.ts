@@ -25,6 +25,7 @@ const h = vi.hoisted(() => {
     testConnection: vi.fn(),
     verifyPackageFingerprint: vi.fn(), // 默认 no-op（通过）；WR-01 用例 mock 抛 package_integrity_failed
     reportPackageIntegrityFailure: vi.fn(),
+    resolvePackageSpawn: vi.fn(),
   }
   const registryMock = { listActive: vi.fn(), killTree: vi.fn(), register: vi.fn(), unregister: vi.fn() }
   return { db: null as Database.Database | null, clientMock, registryMock }
@@ -38,6 +39,7 @@ vi.mock('../../../electron/services/mcpClient', () => ({
   testConnection: h.clientMock.testConnection,
   verifyPackageFingerprint: h.clientMock.verifyPackageFingerprint,
   reportPackageIntegrityFailure: h.clientMock.reportPackageIntegrityFailure,
+  resolvePackageSpawn: h.clientMock.resolvePackageSpawn,
 }))
 
 vi.mock('../../../electron/services/mcpProcessRegistry', () => ({
@@ -55,7 +57,7 @@ function makeDb(): Database.Database {
     CREATE TABLE mcp_configs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
-      type TEXT NOT NULL CHECK(type IN ('stdio','http')),
+      type TEXT NOT NULL CHECK(type IN ('stdio','http','package')),
       command_or_url TEXT NOT NULL,
       args_json TEXT,
       env_json_enc TEXT,
@@ -135,7 +137,7 @@ let rootDir: string
 
 function seedPackageConfig(db: Database.Database, packageId: number, envByDevice: Record<string, Record<string, string>>): void {
   const info = db.prepare(
-    `INSERT INTO mcp_configs (name, type, command_or_url, package_id) VALUES (?, 'stdio', 'node', ?)`
+    `INSERT INTO mcp_configs (name, type, command_or_url, package_id, source) VALUES (?, 'package', 'main.js', ?, 'package')`
   ).run(`cfg-${packageId}`, packageId)
   const ins = db.prepare('INSERT INTO mcp_device_rel (id, mcp_config_id, device_id, env_json_enc) VALUES (?, ?, ?, ?)')
   let i = 0
@@ -158,6 +160,10 @@ beforeEach(() => {
   h.clientMock.testConnection.mockReset()
   h.clientMock.verifyPackageFingerprint.mockReset() // 默认 no-op = 指纹通过
   h.clientMock.reportPackageIntegrityFailure.mockReset()
+  // 默认 node 轨 spawn 计划（29-04 resolvePackageSpawn 真实形态镜像）
+  h.clientMock.resolvePackageSpawn.mockReset().mockImplementation((pkg: { dirPath: string; entry: string }) => ({
+    command: 'node', args: [join(pkg.dirPath, pkg.entry)], envMode: 'plain', fallback: null,
+  }))
   h.registryMock.listActive.mockReset().mockReturnValue([])
   h.registryMock.killTree.mockReset().mockReturnValue(true)
 })
@@ -493,10 +499,10 @@ describe('Task 1 (29-07): createConfigFromPackage 单条配置 + N 设备独立 
     const cfg = h.db!.prepare('SELECT * FROM mcp_configs').get() as any
     expect(cfg.id).toBe(res.configId)
     expect(cfg.name).toBe('my-cfg')
-    expect(cfg.type).toBe('stdio')
+    expect(cfg.type).toBe('package') // 29-09 走查二：type 真实化
     expect(cfg.source).toBe('package')
     expect(cfg.package_id).toBe(pkgId)
-    expect(cfg.command_or_url).toBe('s-pkg') // 沿用包入口形态（与批量通道一致）
+    expect(cfg.command_or_url).toBe('main.js') // 29-09 Fix-4：存 manifest.entry（读取处不依赖）
     expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_device_rel').get()).toEqual({ c: 3 })
     expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_device_rel WHERE mcp_config_id = ?').get(res.configId)).toEqual({ c: 3 })
     expect(relEnv(h.db!, 'x1')).toEqual({ NF_TOKEN: 't1' })
@@ -640,7 +646,7 @@ describe('Code-review fix: CR-01 / WR-01 / WR-02 / WR-04', () => {
   it('WR-02：testPackage 实测成功 → 工具缓存写入包根配置（MIN(id) 策略模板载体）', async () => {
     const pkgId = importOne({ tools: ['tool_a'] })
     const cfg = h.db!.prepare(
-      "INSERT INTO mcp_configs (name, type, command_or_url, package_id, source) VALUES ('pkg-cfg', 'stdio', 'node', ?, 'package')"
+      "INSERT INTO mcp_configs (name, type, command_or_url, package_id, source) VALUES ('pkg-cfg', 'package', 'main.js', ?, 'package')"
     ).run(pkgId)
     h.clientMock.testConnection.mockResolvedValue({
       ok: true, protocolVersion: '1.0',
@@ -658,5 +664,98 @@ describe('Code-review fix: CR-01 / WR-01 / WR-02 / WR-04', () => {
     expect(() => McpPackageService.importPackage(mkMcpb())).toThrow()
     expect(existsSync(join(rootDir, 'demo-pkg'))).toBe(false) // 孤儿目录被补偿删除
     expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_packages').get()).toEqual({ c: 0 })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 29-09 走查二：包配置行级「测试」包轨路由（缺陷1+3 修复）
+// ---------------------------------------------------------------------------
+describe('29-09 走查二: testPackageConfig 包轨路由', () => {
+  function importNodePkg(entry = 'main.js'): number {
+    const manifest = {
+      name: 'route-pkg', version: '1.0.0', runtime: 'node', entry,
+      models: ['S5735'], tools: [{ name: 't1', description: 'd' }], envKeys: ['TOKEN'],
+    }
+    const buf = zipSync({
+      'manifest.json': strToU8(JSON.stringify(manifest)),
+      [entry]: strToU8('console.log(1)'),
+    }) as unknown as Buffer
+    const res = McpPackageService.importPackage(buf)
+    if (!res.ok) throw new Error('import failed')
+    return res.package.id
+  }
+
+  function seedPkgConfig(packageId: number, envByDevice: Record<string, Record<string, string>>): number {
+    const info = h.db!.prepare(
+      "INSERT INTO mcp_configs (name, type, command_or_url, package_id, source) VALUES ('route-cfg', 'package', 'main.js', ?, 'package')"
+    ).run(packageId)
+    const ins = h.db!.prepare('INSERT INTO mcp_device_rel (id, mcp_config_id, device_id, env_json_enc) VALUES (?, ?, ?, ?)')
+    let i = 0
+    for (const [deviceId, env] of Object.entries(envByDevice)) {
+      ins.run(`r-${i++}`, info.lastInsertRowid as number, deviceId, encField(JSON.stringify(env), TEST_MK))
+    }
+    return Number(info.lastInsertRowid)
+  }
+
+  it('包配置测试：指纹重验 → 包轨 spawn 计划 → 首台绑定设备 env 合并注入（不 spawn 包名）', async () => {
+    const pkgId = importNodePkg()
+    const cfgId = seedPkgConfig(pkgId, { dev1: { TOKEN: 'tok-1' }, dev2: { TOKEN: 'tok-2' } })
+    h.clientMock.testConnection.mockResolvedValue({
+      ok: true, protocolVersion: '1.0', tools: [{ name: 't1', description: 'd', inputSchema: {} }],
+    })
+
+    const res = await McpPackageService.testPackageConfig(cfgId, { testId: 'route-test-1' })
+    expect(res.ok).toBe(true)
+    expect(h.clientMock.verifyPackageFingerprint).toHaveBeenCalledTimes(1)
+    expect(h.clientMock.resolvePackageSpawn).toHaveBeenCalledTimes(1)
+    // 契约：stdio 通道 + node entry 绝对路径 + 首台绑定设备（rel MIN）env——绝不把包名当命令
+    const call = h.clientMock.testConnection.mock.calls[0]
+    expect(call[0]).toBe('route-test-1')
+    expect(call[1]).toMatchObject({
+      type: 'stdio',
+      commandOrUrl: 'node',
+      env: { TOKEN: 'tok-1' },
+      credential: null,
+    })
+    expect(call[1].args[0]).toBe(join(rootDir, 'route-pkg', 'main.js'))
+  })
+
+  it('无绑定设备空 env 也可测（只验包能起+握手+tools/list）', async () => {
+    const pkgId = importNodePkg()
+    const cfgId = seedPkgConfig(pkgId, {})
+    h.clientMock.testConnection.mockResolvedValue({
+      ok: true, protocolVersion: '1.0', tools: [],
+    })
+    const res = await McpPackageService.testPackageConfig(cfgId)
+    expect(res.ok).toBe(true)
+    expect(h.clientMock.testConnection.mock.calls[0][1].env).toEqual({})
+  })
+
+  it('非包配置 / 配置不存在 / disabled 包 / TOCTOU 检出 → 结构化失败不 spawn', async () => {
+    const manual = h.db!.prepare(
+      "INSERT INTO mcp_configs (name, type, command_or_url, source) VALUES ('m', 'stdio', 'node', 'manual')"
+    ).run()
+    const r1 = await McpPackageService.testPackageConfig(Number(manual.lastInsertRowid))
+    expect(r1.ok).toBe(false)
+    if (!r1.ok) expect(r1.error.reason).toContain('不是 MCP 包配置')
+    expect(await McpPackageService.testPackageConfig(99999)).toMatchObject({ ok: false })
+
+    const pkgId = importNodePkg()
+    const cfgId = seedPkgConfig(pkgId, {})
+    h.db!.prepare('UPDATE mcp_packages SET disabled = 1 WHERE id = ?').run(pkgId)
+    const r2 = await McpPackageService.testPackageConfig(cfgId)
+    expect(r2.ok).toBe(false)
+    if (!r2.ok) expect(r2.error.reason).toContain('已被禁用')
+    h.db!.prepare('UPDATE mcp_packages SET disabled = 0 WHERE id = ?').run(pkgId)
+
+    h.clientMock.verifyPackageFingerprint.mockImplementation(() => {
+      throw { code: 'package_integrity_failed', reason: '包指纹重验失败（TOCTOU 检出）：内容变化 main.js' }
+    })
+    const r3 = await McpPackageService.testPackageConfig(cfgId)
+    expect(r3.ok).toBe(false)
+    if (!r3.ok) expect(r3.error.code).toBe('package_integrity_failed')
+    expect(h.clientMock.testConnection).not.toHaveBeenCalled()
+    expect(h.db!.prepare('SELECT disabled AS d FROM mcp_packages WHERE id = ?').get(pkgId)).toEqual({ d: 1 })
+    expect(h.clientMock.reportPackageIntegrityFailure).toHaveBeenCalledTimes(1)
   })
 })

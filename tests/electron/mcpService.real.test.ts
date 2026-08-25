@@ -36,10 +36,19 @@ const DDL = `
     name TEXT,
     created_at TEXT DEFAULT (datetime('now','localtime'))
   );
+  CREATE TABLE mcp_tools (
+    config_id INTEGER NOT NULL,
+    tool_name TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    skip_confirm INTEGER NOT NULL DEFAULT 0,
+    tool_meta TEXT,
+    updated_at TEXT,
+    PRIMARY KEY (config_id, tool_name)
+  );
   CREATE TABLE mcp_configs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
-    type TEXT NOT NULL CHECK(type IN ('stdio','http')),
+    type TEXT NOT NULL CHECK(type IN ('stdio','http','package')),
     command_or_url TEXT NOT NULL,
     args_json TEXT,
     env_json_enc TEXT,

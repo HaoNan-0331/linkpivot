@@ -41,6 +41,11 @@ vi.mock('../../../electron/services/mcpClient', () => ({
   testConnection: vi.fn(),
   cancelTest: vi.fn().mockReturnValue(true),
 }))
+vi.mock('../../../electron/services/mcpPackageService', () => ({
+  McpPackageService: {
+    testPackageConfig: vi.fn(),
+  },
+}))
 vi.mock('../../../electron/services/mcpToolPolicy', () => ({
   McpToolPolicy: {
     saveToolCache: vi.fn(),
@@ -53,6 +58,7 @@ vi.mock('../../../electron/services/mcpToolPolicy', () => ({
 }))
 
 import { registerMcpIpc } from '../../../electron/ipc/mcpIpc'
+import { McpPackageService } from '../../../electron/services/mcpPackageService'
 import { McpService } from '../../../electron/services/mcpService'
 import { testConnection as runTest } from '../../../electron/services/mcpClient'
 import { McpToolPolicy } from '../../../electron/services/mcpToolPolicy'
@@ -170,5 +176,40 @@ describe('WR-03：temp 测试（configId+temp）不污染已存配置策略缓�
       temp: { type: 'http', commandOrUrl: 'http://temp' },
     })
     expect(McpService.recordTestResult).not.toHaveBeenCalled()
+  })
+})
+
+describe('29-09 走查二：包配置（type=package）测试走包轨路由', () => {
+  it('decodeForTest 返回 package → 走 testPackageConfig（不走 stdio/http 旧通道）并落库缓存', async () => {
+    vi.mocked(McpService.decodeForTest).mockReturnValue({
+      type: 'package', commandOrUrl: 'main.js', args: [], env: {}, credential: null,
+    })
+    vi.mocked(McpPackageService.testPackageConfig).mockResolvedValue({
+      ok: true, protocolVersion: '1.0', tools: [{ name: 't1', inputSchema: {} }],
+    })
+    const test = handlers.get('mcp:testConnection')! as (...a: unknown[]) => Promise<unknown>
+    await test({}, { testId: 't-12345678', configId: 9 })
+    expect(McpPackageService.testPackageConfig).toHaveBeenCalledWith(9, expect.objectContaining({ testId: 't-12345678' }))
+    expect(runTest).not.toHaveBeenCalled()
+    expect(McpService.recordTestResult).toHaveBeenCalledWith(9, 'success', 1)
+    expect(McpToolPolicy.saveToolCache).toHaveBeenCalledWith(9, expect.anything())
+  })
+
+  it('package + temp 组合 → 拒绝（temp 仅适用于 stdio/http）', async () => {
+    vi.mocked(McpService.decodeForTest).mockReturnValue({
+      type: 'package', commandOrUrl: 'main.js', args: [], env: {}, credential: null,
+    })
+    const test = handlers.get('mcp:testConnection')! as (...a: unknown[]) => Promise<unknown>
+    await expect(test({}, {
+      testId: 't-12345678', configId: 9, temp: { type: 'stdio', commandOrUrl: 'x' },
+    })).rejects.toThrow('不支持临时参数测试')
+    expect(McpPackageService.testPackageConfig).not.toHaveBeenCalled()
+  })
+
+  it('mcp:save：type=package 新建被拒；编辑放行（service 层保留包字段原值）', () => {
+    const save = handlers.get('mcp:save')!
+    expect(() => save({}, { name: 'x', type: 'package' })).toThrow('只能从包创建')
+    save({}, { id: 5, name: 'x', type: 'package' })
+    expect(McpService.saveConfig).toHaveBeenCalledWith(expect.objectContaining({ id: 5, type: 'package' }))
   })
 })

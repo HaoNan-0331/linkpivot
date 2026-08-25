@@ -344,7 +344,8 @@ export interface McpToolCacheDto {
 export interface McpConfigDto {
   id: number
   name: string
-  type: 'stdio' | 'http'
+  /** 29-09 走查二：包配置 type='package'（v28 真实化） */
+  type: 'stdio' | 'http' | 'package'
   commandOrUrl: string
   args: string[]
   credentialMasked: string | null
@@ -353,6 +354,8 @@ export interface McpConfigDto {
   deviceNames: string[]
   enabled: boolean
   source: string
+  /** 29-09：包配置回溯包 id（编辑态型号预筛/包轨测试）；手工配置 null */
+  packageId: number | null
   lastTestAt: string | null
   lastTestStatus: string | null
   lastTestToolCount: number | null
@@ -363,7 +366,8 @@ export interface McpConfigDto {
 export interface McpSaveDto {
   id?: number | null
   name: string
-  type: 'stdio' | 'http'
+  /** 'package' 仅编辑既有包配置（type/command_or_url 由 main 侧保留原值） */
+  type: 'stdio' | 'http' | 'package'
   commandOrUrl: string
   args?: string[]
   env?: Record<string, string> | null

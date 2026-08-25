@@ -43,7 +43,7 @@ function makeDb(): Database.Database {
     CREATE TABLE mcp_configs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
-      type TEXT NOT NULL CHECK(type IN ('stdio','http')),
+      type TEXT NOT NULL CHECK(type IN ('stdio','http','package')),
       command_or_url TEXT NOT NULL,
       args_json TEXT,
       env_json_enc TEXT,
@@ -64,6 +64,15 @@ function makeDb(): Database.Database {
       created_at TEXT DEFAULT (datetime('now','localtime')),
       env_json_enc TEXT,
       FOREIGN KEY (mcp_config_id) REFERENCES mcp_configs(id) ON DELETE CASCADE
+    );
+    CREATE TABLE mcp_tools (
+      config_id INTEGER NOT NULL,
+      tool_name TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      skip_confirm INTEGER NOT NULL DEFAULT 0,
+      tool_meta TEXT,
+      updated_at TEXT,
+      PRIMARY KEY (config_id, tool_name)
     );
     CREATE TABLE devices (
       id TEXT PRIMARY KEY,
@@ -168,12 +177,12 @@ describe('29-06：saveConfig deviceEnvs（D-16 手工 stdio 编辑态）', () =>
   })
 })
 
-describe('Phase 29 code-review：deleteConfig（WR-03 杀实例 / WR-06 包根配置保护）', () => {
+describe('Phase 29 code-review / 29-09 走查二：deleteConfig（WR-03 杀实例 / 策略迁移继承）', () => {
   function seedPackageConfigs(db: Database.Database, packageId: number, count: number): number[] {
     const ids: number[] = []
     for (let i = 0; i < count; i++) {
       const r = db.prepare(
-        "INSERT INTO mcp_configs (name, type, command_or_url, package_id, source) VALUES (?, 'stdio', 'node', ?, 'package')"
+        "INSERT INTO mcp_configs (name, type, command_or_url, package_id, source) VALUES (?, 'package', 'main.js', ?, 'package')"
       ).run(`pkg-cfg-${i}`, packageId)
       ids.push(Number(r.lastInsertRowid))
     }
@@ -201,21 +210,77 @@ describe('Phase 29 code-review：deleteConfig（WR-03 杀实例 / WR-06 包根�
     expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_configs').get()).toEqual({ c: 1 })
   })
 
-  it('WR-06：删包根配置（同包 MIN(id) 策略模板载体）→ 拒绝并提示影响面', () => {
+  it('29-09 走查二：删包根配置 → mcp_tools 策略迁移继承到新根（MIN(id) 兄弟），不再拦截', () => {
     const ids = seedPackageConfigs(h.db!, 7, 2)
+    const insTool = h.db!.prepare(
+      'INSERT INTO mcp_tools (config_id, tool_name, enabled, skip_confirm) VALUES (?, ?, 0, 1)'
+    )
+    insTool.run(ids[0], 'get_status')
+    insTool.run(ids[0], 'reboot')
+
     const res = McpService.deleteConfig(ids[0])
-    expect(res.ok).toBe(false)
-    if (!res.ok) expect(res.error).toContain('策略模板载体')
-    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_configs').get()).toEqual({ c: 2 })
-    // 非根配置（兄弟）可正常删除
+    expect(res.ok).toBe(true)
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_configs').get()).toEqual({ c: 1 })
+    // 策略行迁移继承：enabled/skip_confirm 值原样保活，config_id 指向新根（兄弟 MIN(id)）
+    const rows = h.db!.prepare('SELECT config_id, enabled, skip_confirm FROM mcp_tools ORDER BY tool_name').all() as any[]
+    expect(rows).toEqual([
+      { config_id: ids[1], enabled: 0, skip_confirm: 1 },
+      { config_id: ids[1], enabled: 0, skip_confirm: 1 },
+    ])
+    // 删最后一条包配置：工具行一并清理（包保留）
     expect(McpService.deleteConfig(ids[1]).ok).toBe(true)
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_tools').get()).toEqual({ c: 0 })
   })
 
-  it('手工配置删除不受 WR-06 影响；行不存在幂等 ok', () => {
+  it('手工配置删除清理自身 mcp_tools 缓存行；行不存在幂等 ok', () => {
     const r = h.db!.prepare(
       "INSERT INTO mcp_configs (name, type, command_or_url, source) VALUES ('m', 'stdio', 'node', 'manual')"
     ).run()
+    h.db!.prepare('INSERT INTO mcp_tools (config_id, tool_name) VALUES (?, ?)').run(r.lastInsertRowid, 't')
     expect(McpService.deleteConfig(Number(r.lastInsertRowid)).ok).toBe(true)
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_tools').get()).toEqual({ c: 0 })
     expect(McpService.deleteConfig(99999)).toEqual({ ok: true })
   })
 })
+
+describe('29-09 走查二：saveConfig package 编辑（保留包字段原值）', () => {
+  it('type=package 编辑：只更新 name/enabled/绑定/env；type/command_or_url/args/credential 原值保留', () => {
+    const r = h.db!.prepare(
+      "INSERT INTO mcp_configs (name, type, command_or_url, args_json, package_id, source) VALUES ('orig', 'package', 'main.js', '[]', 3, 'package')"
+    ).run()
+    h.db!.prepare("INSERT INTO devices (id, name_enc) VALUES ('e1', ?)").run(encField('E1', TEST_MK))
+    h.db!.prepare('INSERT INTO mcp_device_rel (id, mcp_config_id, device_id) VALUES (?, ?, ?)')
+      .run('rel-e1', r.lastInsertRowid, 'e1')
+    const res = McpService.saveConfig({
+      id: Number(r.lastInsertRowid),
+      name: 'renamed',
+      type: 'package',
+      commandOrUrl: '(package)',
+      args: [],
+      deviceIds: ['e1'],
+      deviceEnvs: [{ deviceId: 'e1', env: { TOKEN: 'v1' } }],
+      enabled: true,
+    })
+    expect(res.ok).toBe(true)
+    const row = h.db!.prepare('SELECT * FROM mcp_configs WHERE id = ?').get(r.lastInsertRowid) as any
+    expect(row.name).toBe('renamed')
+    expect(row.type).toBe('package') // 不被占位串覆盖
+    expect(row.command_or_url).toBe('main.js')
+    expect(row.args_json).toBe('[]')
+    expect(relEnvOf('e1')).toEqual({ TOKEN: 'v1' })
+  })
+
+  it('type=package 新建（无 id）拒绝；非包配置以 package 类型保存拒绝', () => {
+    expect(McpService.saveConfig({ name: 'x', type: 'package', commandOrUrl: '(package)' }).ok).toBe(false)
+    const r = h.db!.prepare(
+      "INSERT INTO mcp_configs (name, type, command_or_url, source) VALUES ('m', 'stdio', 'node', 'manual')"
+    ).run()
+    expect(McpService.saveConfig({ id: Number(r.lastInsertRowid), name: 'm', type: 'package', commandOrUrl: '(package)' }).ok).toBe(false)
+  })
+})
+
+function relEnvOf(deviceId: string): Record<string, string> | null {
+  const row = h.db!.prepare('SELECT env_json_enc FROM mcp_device_rel WHERE device_id = ?').get(deviceId) as { env_json_enc: string | null }
+  if (!row?.env_json_enc) return null
+  return JSON.parse(decField(row.env_json_enc, TEST_MK)!) as Record<string, string>
+}
