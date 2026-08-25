@@ -2,7 +2,15 @@ import { createHash } from 'node:crypto'
 import { unzipSync, strFromU8 } from 'fflate'
 
 /**
- * .mcpb 五向量校验器 + SHA-256 全树指纹（Phase 29 PKG-02 安全核心）。
+ * 设备/配置 env 键名字符集规则（WR-03 单源，29.1 起迁本纯函数层为唯一定义点）：
+ * 字母/下划线开头，仅字母数字下划线，≤100 字符。mcpIpc（mcp:save deviceEnvs 通道）/
+ * mcpPackageService（createConfigFromPackage）/ 本校验器（envMeta 键名）三处共用同一规则，
+ * 防 drift（含 =、控制字符、PATH 覆盖等键名可经宽校验通道写入 buildChildEnv 覆盖 PATH）。
+ */
+export const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]{0,99}$/
+
+/**
+ * .mcpb 六向量校验器 + SHA-256 全树指纹（Phase 29 PKG-02 安全核心 + 29.1 envMeta 向量）。
  *
  * 纯函数层：无 DB、无 IPC、无子进程——D-11 明确只做结构检查，
  * 不做静态内容扫描，也绝不执行任何包内代码。
@@ -15,6 +23,15 @@ export interface McpTool {
   readOnlyHint?: boolean
 }
 
+/** envMeta 单键元数据（29.1 D-03：明文元数据，不含 env 值——值通道仍 env_json_enc） */
+export interface EnvMetaEntry {
+  label: string
+  description?: string
+  required?: boolean
+  example?: string
+  default?: string
+}
+
 export interface McpManifest {
   name: string
   version: string
@@ -23,6 +40,7 @@ export interface McpManifest {
   models: string[]
   tools: McpTool[]
   envKeys?: string[]
+  envMeta?: Record<string, EnvMetaEntry>
 }
 
 export interface FileEntry {
@@ -31,7 +49,7 @@ export interface FileEntry {
 }
 
 export interface VectorResult {
-  id: 'manifest-schema' | 'entry-whitelist' | 'zip-slip' | 'double-extension' | 'manifest-lie'
+  id: 'manifest-schema' | 'entry-whitelist' | 'zip-slip' | 'double-extension' | 'manifest-lie' | 'envmeta-lie'
   ok: boolean
   reason?: string
 }
@@ -80,7 +98,17 @@ const VECTOR_ORDER: VectorResult['id'][] = [
   'zip-slip',
   'double-extension',
   'manifest-lie',
+  'envmeta-lie',
 ]
+
+/** envMeta DoS 上限（T-29.1-06）：序列化总长 64KB / 键数 100 / 单字符串字段 2000 字符 */
+const MAX_ENV_META_BYTES = 64 * 1024
+const MAX_ENV_META_KEYS = 100
+const MAX_ENV_META_STR = 2000
+
+function isPlainObject(x: unknown): x is Record<string, unknown> {
+  return typeof x === 'object' && x !== null && !Array.isArray(x)
+}
 
 function extOf(p: string): string {
   const i = p.lastIndexOf('.')
@@ -122,6 +150,30 @@ export function parseMcpbManifest(raw: string): McpManifest {
   if (obj.envKeys !== undefined) {
     if (!Array.isArray(obj.envKeys) || obj.envKeys.some((x) => typeof x !== 'string')) bad('manifest.envKeys 必须是字符串数组')
   }
+  // 29.1 D-03：envMeta 畸形结构照 envKeys throw 风格拒绝（防投毒哲学，T-29.1-05）
+  if (obj.envMeta !== undefined) {
+    if (!isPlainObject(obj.envMeta)) bad('manifest.envMeta 必须是对象（键为 env 键名）')
+    const keys = Object.keys(obj.envMeta)
+    if (keys.length > MAX_ENV_META_KEYS) bad(`manifest.envMeta 键数超过 ${MAX_ENV_META_KEYS} 上限`)
+    if (Buffer.byteLength(JSON.stringify(obj.envMeta), 'utf8') > MAX_ENV_META_BYTES) {
+      bad(`manifest.envMeta 序列化后超过 ${MAX_ENV_META_BYTES / 1024}KB 上限`)
+    }
+    for (const k of keys) {
+      if (!ENV_KEY_RE.test(k)) bad(`manifest.envMeta 键名 ${k} 不合法（字母/下划线开头，仅含字母数字下划线，≤100 字符）`)
+      const e = obj.envMeta[k]
+      if (!isPlainObject(e)) bad(`manifest.envMeta.${k} 必须是对象`)
+      if (typeof e.label !== 'string' || e.label.length === 0) bad(`manifest.envMeta.${k}.label 必须是非空字符串`)
+      for (const f of ['description', 'example', 'default'] as const) {
+        if (e[f] !== undefined && typeof e[f] !== 'string') bad(`manifest.envMeta.${k}.${f} 必须是字符串`)
+      }
+      if (e.required !== undefined && typeof e.required !== 'boolean') bad(`manifest.envMeta.${k}.required 必须是布尔`)
+      for (const f of ['label', 'description', 'example', 'default'] as const) {
+        if (typeof e[f] === 'string' && (e[f] as string).length > MAX_ENV_META_STR) {
+          bad(`manifest.envMeta.${k}.${f} 超过 ${MAX_ENV_META_STR} 字符上限`)
+        }
+      }
+    }
+  }
   const manifest: McpManifest = {
     name: obj.name as string,
     version: obj.version as string,
@@ -134,6 +186,7 @@ export function parseMcpbManifest(raw: string): McpManifest {
       ...(t.readOnlyHint !== undefined ? { readOnlyHint: t.readOnlyHint } : {}),
     })),
     ...(Array.isArray(obj.envKeys) ? { envKeys: obj.envKeys as string[] } : {}),
+    ...(isPlainObject(obj.envMeta) ? { envMeta: obj.envMeta as Record<string, EnvMetaEntry> } : {}),
   }
   return manifest
 }
@@ -236,6 +289,22 @@ export function validateMcpb(buffer: Buffer | Uint8Array, sizeOverride?: SizeOve
     } else {
       push('manifest-lie', true)
     }
+  }
+
+  // 向量六：envmeta-lie（29.1 D-03：envMeta 键集必须 ⊆ envKeys——越界键 = 谎报向量）
+  if (!manifest || !schemaOk) {
+    push('envmeta-lie', false, '前序校验未通过，envMeta 键集一致性无法校验')
+  } else if (manifest.envMeta) {
+    const envKeys = manifest.envKeys ?? []
+    const outOfBounds = Object.keys(manifest.envMeta).filter((k) => !envKeys.includes(k))
+    if (outOfBounds.length > 0) {
+      push('envmeta-lie', false, `manifest.envMeta 含 envKeys 之外的键（越界元数据谎报）：${outOfBounds.slice(0, 3).join('、')}`)
+    } else {
+      push('envmeta-lie', true)
+    }
+  } else {
+    // 缺省 envMeta 合法（旧包向后兼容）；envKeys 有而 envMeta 缺某键也合法（元数据可选）
+    push('envmeta-lie', true)
   }
 
   return {

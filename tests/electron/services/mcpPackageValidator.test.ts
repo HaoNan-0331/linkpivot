@@ -325,13 +325,13 @@ describe('向量六 envmeta-lie（29.1 D-03：envMeta 键集 ⊆ envKeys）', ()
   it('合法：envMeta 键集 ⊆ envKeys → 全向量 pass', () => {
     const m = validPythonManifest()
     m.envMeta = {
-      NF_TOKEN: { label: '接口令牌', required: true },
+      TOKEN: { label: '接口令牌', required: true },
       NF_PORT: { label: '端口', default: '443', example: '8443', description: 'REST 端口' },
     }
     const r = validateMcpb(makeMcpb({ 'manifest.json': manifestFile(m), 'nf_mcp/server.py': entryContent(m) }))
     expect(r.passed).toBe(true)
     expect(vec(r, 'envmeta-lie').ok).toBe(true)
-    expect(r.manifest?.envMeta?.NF_TOKEN).toEqual({ label: '接口令牌', required: true })
+    expect(r.manifest?.envMeta?.TOKEN).toEqual({ label: '接口令牌', required: true })
   })
 
   it('越界：envMeta 含 envKeys 之外的键 → envmeta-lie fail 且 reason 含 envMeta', () => {

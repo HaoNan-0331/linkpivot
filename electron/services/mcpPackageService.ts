@@ -25,7 +25,7 @@ import { app } from 'electron'
 import type Database from 'better-sqlite3'
 import { getDatabase } from '../database/connection'
 import { encField, decField } from '../utils/crypto'
-import { validateMcpb, buildFingerprintTree, isFingerprintExcluded, MAX_PACKAGE_BYTES } from './mcpPackageValidator'
+import { validateMcpb, buildFingerprintTree, isFingerprintExcluded, MAX_PACKAGE_BYTES, ENV_KEY_RE } from './mcpPackageValidator'
 import { MAX_BATCH } from './mcpService'
 import type { McpManifest, FileEntry, VectorResult } from './mcpPackageValidator'
 import { testConnection, verifyPackageFingerprint, reportPackageIntegrityFailure, resolvePackageSpawn } from './mcpClient'
@@ -39,10 +39,12 @@ export const MAX_PKG_NAME_LENGTH = 100
 
 /**
  * 设备/配置 env 键名字符集规则（WR-03 单源）：字母/下划线开头，仅字母数字下划线，≤100 字符。
- * mcp:createConfigFromPackage 与 mcp:save（deviceEnvs）两通道共用同一规则，防 drift
- * （含 =、控制字符、PATH 覆盖等键名可经宽校验通道写入 buildChildEnv 覆盖 PATH）。
+ * 29.1 起唯一定义点迁 mcpPackageValidator（纯函数层，envMeta 键名校验同源消费），此处转发导出
+ * 保持 mcpIpc / createConfigFromPackage 既有 import 路径不变（mcp:createConfigFromPackage 与
+ * mcp:save deviceEnvs 两通道共用同一规则，防 drift——含 =、控制字符、PATH 覆盖等键名可经宽
+ * 校验通道写入 buildChildEnv 覆盖 PATH）。
  */
-export const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]{0,99}$/
+export { ENV_KEY_RE } from './mcpPackageValidator'
 
 export interface EnvKeysDiff {
   kept: string[]
