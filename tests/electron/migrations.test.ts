@@ -229,7 +229,14 @@ describe('v17 mcp_tools', () => {
       return m![1].replace(/\s+/g, ' ').trim()
     }
 
-    expect(extract(v17Src, 'mcp_tools')).toBe(extract(initSrc, 'mcp_tools'))
+    // 29.1-01 v29 后 init.ts mcp_tools 为双列并存形态——剔除新增列/约束再比对，
+    // v17 逐字一致语义保持（v16-c 剔除先例同款）
+    const stripped = extract(initSrc, 'mcp_tools')
+      .replace('config_id INTEGER,', 'config_id INTEGER NOT NULL,')
+      .replace('package_id INTEGER,', '')
+      .replace('UNIQUE(package_id, tool_name)', '')
+      .replace(/\s+/g, ' ').trim().replace(/,\s*$/, '')
+    expect(extract(v17Src, 'mcp_tools')).toBe(stripped)
   })
 
   it('d) mcp_tools UNIQUE(config_id, tool_name) 二次 INSERT 抛约束', () => {
@@ -544,7 +551,7 @@ describe('v22/v23/v24 devices.name_hash 三段式', () => {
   })
 
   it('d) MIGRATION_HEAD=24、注册表含 v22/v23/v24、init.ts fresh DDL 含 name_hash', () => {
-    expect(MIGRATION_HEAD).toBe(28) // 29-09 v28（type CHECK widen package）推进
+    expect(MIGRATION_HEAD).toBe(29) // 29-09 v28（type CHECK widen package）推进
     const versions = MIGRATIONS.map((m) => m.version)
     expect(versions).toContain(22)
     expect(versions).toContain(23)
@@ -673,14 +680,17 @@ describe('v27 mcp_packages + 设备级 env 列', () => {
     expect(tables!.length).toBe(3)
     for (const stmt of tables!) fresh.exec(stmt)
     for (const t of ['mcp_packages', 'mcp_configs', 'mcp_device_rel']) {
-      expect(columnsOf(fresh, t)).toEqual(columnsOf(mig, t))
+      // 29.1-01 v29 后 init.ts mcp_packages 多出 env_meta（迁移路径 v27 后由 v29 ALTER 追加）——
+      // 剔除后再比对，v27 逐列一致语义保持
+      const freshCols = columnsOf(fresh, t).filter((c) => c !== 'env_meta')
+      expect(freshCols).toEqual(columnsOf(mig, t))
     }
     mig.close()
     fresh.close()
   })
 
   it('d) MIGRATION_HEAD=28、注册表含 v27、init.ts fresh DDL 含三处结构', () => {
-    expect(MIGRATION_HEAD).toBe(28)
+    expect(MIGRATION_HEAD).toBe(29)
     expect(MIGRATIONS.map((m) => m.version)).toContain(27)
 
     const root = path.resolve(__dirname, '../..')
@@ -1002,7 +1012,7 @@ describe('v28 mcp_configs.type CHECK widen package', () => {
     const initSrc = fs.readFileSync(path.join(root, 'electron/database/init.ts'), 'utf-8')
     const ddl = initSrc.match(/CREATE TABLE IF NOT EXISTS mcp_configs \(([\s\S]*?)\);/)!
     expect(ddl[1]).toContain("CHECK(type IN ('stdio','http','package'))")
-    expect(MIGRATION_HEAD).toBe(28)
+    expect(MIGRATION_HEAD).toBe(29)
     expect(MIGRATIONS.map((m) => m.version)).toContain(28)
   })
 })

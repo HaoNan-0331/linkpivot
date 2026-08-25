@@ -13,7 +13,7 @@ import { createSystemLog } from '../services/systemLog'
  *      在 createTables() 建好基线表之后、premigration 备份之后执行（D-06）。
  *      init.ts 不直接调用 runMigrations（单一调用点原则）。
  */
-export const MIGRATION_HEAD = 28
+export const MIGRATION_HEAD = 29
 
 interface MigrationStep {
   version: number
@@ -972,6 +972,77 @@ export const v28 = (db: Database.Database): void => {
   }
 }
 
+/**
+ * v29：Phase 29.1（29.1-01，PKG-29.1-D04/D-05）—— mcp_packages.env_meta 明文 JSON 列 +
+ * mcp_tools 归属从 config_id 借存迁 package_id。
+ *
+ * - env_meta TEXT：包 manifest 的环境变量元数据（{key:{label,description,...}}），
+ *   明文 JSON 无 _enc 后缀（红线：DB 只存明文元数据，敏感值只在 env_json_enc 密文列）。
+ *   hasColumn 幂等守卫（v1/v2/v25/v26 同构，纯 ALTER ADD COLUMN）。
+ * - mcp_tools 借存迁移（D-05）：29-04 起包轨策略行借存在同包根配置 config_id 上
+ *   （resolvePolicyConfigId MIN(id) 载体）——本迁移终结借存：包轨行回填
+ *   package_id = (SELECT c.package_id FROM mcp_configs c WHERE c.id = config_id)
+ *   且同场 config_id 置 NULL；手工轨行 package_id 保持 NULL、config_id 原值保留。
+ *   双列并存 schema：UNIQUE(package_id, tool_name) 包轨 / UNIQUE(config_id, tool_name)
+ *   手工轨（SQLite NULL 互不相等，两约束对各自轨道生效不冲突）。
+ *   表重建走 v28 镜像：sqlite_master 特征串 'package_id' 已含则 no-op；
+ *   借存行同包多配置共享根配置行搬后 UNIQUE 冲突时 INSERT OR IGNORE 保一行（值本同源）。
+ * - mcp_device_rel/mcp_configs 无 FK 指向 mcp_tools，但照 v28 模式事务外
+ *   PRAGMA foreign_keys=OFF + 重建后 foreign_key_check 断言（防御未来 FK 演进）。
+ *
+ * 执行体包 db.transaction（throw 即 ROLLBACK）。
+ * DDL 与 init.ts fresh-install DDL 逐字一致（双路径一致红线）。
+ */
+export const v29 = (db: Database.Database): void => {
+  db.pragma('foreign_keys = OFF') // 事务外执行（PRAGMA 在事务内是 no-op）
+  try {
+    const step = db.transaction((): void => {
+      // D-04：env_meta 明文 JSON 列（hasColumn 幂等守卫）
+      if (!hasColumn(db, 'mcp_packages', 'env_meta')) {
+        db.exec('ALTER TABLE mcp_packages ADD COLUMN env_meta TEXT')
+      }
+      // D-05：mcp_tools 借存迁移（sqlite_master 特征串守卫）
+      const existing = db.prepare(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='mcp_tools'"
+      ).get() as { sql: string } | undefined
+      if (!existing || !existing.sql.includes('package_id')) {
+        db.exec('DROP TABLE IF EXISTS mcp_tools_new')
+        db.exec(`
+          CREATE TABLE mcp_tools_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            config_id INTEGER,
+            tool_name TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            skip_confirm INTEGER NOT NULL DEFAULT 0,
+            tool_meta TEXT,
+            updated_at TEXT,
+            package_id INTEGER,
+            UNIQUE(config_id, tool_name),
+            UNIQUE(package_id, tool_name)
+          );
+          INSERT OR IGNORE INTO mcp_tools_new (config_id, tool_name, enabled, skip_confirm, tool_meta, updated_at, package_id)
+          SELECT
+            CASE WHEN (SELECT c.package_id FROM mcp_configs c WHERE c.id = t.config_id) IS NOT NULL
+              THEN NULL ELSE t.config_id END,
+            t.tool_name, t.enabled, t.skip_confirm, t.tool_meta, t.updated_at,
+            (SELECT c.package_id FROM mcp_configs c WHERE c.id = t.config_id)
+          FROM mcp_tools t;
+          DROP TABLE mcp_tools;
+          ALTER TABLE mcp_tools_new RENAME TO mcp_tools;
+        `)
+      }
+      const fkErrors = db.pragma('foreign_key_check') as unknown[]
+      if (fkErrors.length > 0) {
+        throw new Error('mcp_tools 重建后外键完整性校验失败: ' + JSON.stringify(fkErrors))
+      }
+      db.pragma('user_version = 29')
+    })
+    step()
+  } finally {
+    db.pragma('foreign_keys = ON')
+  }
+}
+
 export const MIGRATIONS: MigrationStep[] = [
   { version: 1, name: 'chat_history.session_id', run: v1 },
   { version: 2, name: 'ai_exec_logs.prompt_text+ai_response', run: v2 },
@@ -1001,6 +1072,7 @@ export const MIGRATIONS: MigrationStep[] = [
   { version: 26, name: 'agent loop limits + chat meta（ai_config 三列 + chat_history.meta_enc，AGENT-04）', run: v26 },
   { version: 27, name: 'mcp_packages + 设备级 env 列（PKG-02/PKG-05/D-15）', run: v27 },
   { version: 28, name: 'mcp_configs.type CHECK widen package + 存量包配置转换（29-09 走查二）', run: v28 },
+  { version: 29, name: 'mcp_packages.env_meta + mcp_tools.package_id 借存迁移（PKG-29.1-D04/D-05）', run: v29 },
 ]
 
 /**

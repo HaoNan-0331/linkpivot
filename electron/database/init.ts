@@ -416,11 +416,12 @@ export function createTables() {
     CREATE INDEX IF NOT EXISTS idx_mcp_device_rel_mcp ON mcp_device_rel(mcp_config_id);
     CREATE INDEX IF NOT EXISTS idx_mcp_device_rel_device ON mcp_device_rel(device_id);
 
-    -- Phase 29（29-02 v27）：MCP 包导入登记表。DDL 必须与 migrations.ts v27 迁移 DDL
-    -- 逐字一致（双路径一致红线，v7/v8/v13-v17 注释同款要求）。
+    -- Phase 29（29-02 v27 / 29.1-01 v29）：MCP 包导入登记表。DDL 必须与 migrations.ts
+    -- v27/v29 迁移后 DDL 逐字一致（双路径一致红线，v7/v8/v13-v17 注释同款要求）。
     -- manifest_json/fingerprint/fingerprint_json 存明文元数据（红线裁决：DB 只存明文
     -- 元数据非凭证）；name UNIQUE——D-05 同名即同包；disabled 为 D-26 禁用态；
-    -- last_test 存自动测结果 JSON（29-03 testPackage 写入）。
+    -- last_test 存自动测结果 JSON（29-03 testPackage 写入）；
+    -- env_meta 存 manifest 环境变量元数据 JSON（29.1 D-04，明文非凭证）。
 
     CREATE TABLE IF NOT EXISTS mcp_packages (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -436,24 +437,29 @@ export function createTables() {
       disabled INTEGER NOT NULL DEFAULT 0,
       last_test TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      env_meta TEXT
     );
 
-    -- Phase 22（22-01 v17）：MCP 工具级策略表。DDL 必须与 migrations.ts v17 迁移 DDL
-    -- 逐字一致（双路径一致红线，v7/v8/v13-v16 注释同款要求）。
+    -- Phase 22（22-01 v17 / 29.1-01 v29）：MCP 工具级策略表。DDL 必须与 migrations.ts
+    -- v29 迁移后 DDL 逐字一致（双路径一致红线，v7/v8/v13-v16 注释同款要求）。
     -- tool_meta 存 JSON 字符串（description/annotations/inputSchema），明文不加密
     -- （prompt_overrides 明文先例，工具级开关非敏感）。skip_confirm 写入由 service 层
     -- 双条件守卫（isReadOnlyEligible）拒绝不满足者——判定权在 main（T-22-01）。
+    -- 29.1 D-05 双列并存：package_id 包轨（config 借存终结）/ config_id 手工轨，
+    -- 双 UNIQUE 各自轨道防重（SQLite NULL 互不相等）。
 
     CREATE TABLE IF NOT EXISTS mcp_tools (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      config_id INTEGER NOT NULL,
+      config_id INTEGER,
       tool_name TEXT NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1,
       skip_confirm INTEGER NOT NULL DEFAULT 0,
       tool_meta TEXT,
       updated_at TEXT,
-      UNIQUE(config_id, tool_name)
+      package_id INTEGER,
+      UNIQUE(config_id, tool_name),
+      UNIQUE(package_id, tool_name)
     );
   `)
 
