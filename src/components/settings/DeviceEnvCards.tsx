@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Card, Empty, Input, Modal, Select, Space, Tag, Typography } from 'antd'
+import { Button, Card, Empty, Input, Modal, Select, Space, Tag, Tooltip, Typography } from 'antd'
+import type { McpEnvMetaEntryDto } from '../../types/electron'
 
 const { Text } = Typography
 
@@ -43,6 +44,8 @@ interface DeviceEnvCardsProps {
   onRemoveDevice: (deviceId: string) => void
   /** 单选弹窗候选设备（已绑定设备由父组件过滤，不传入） */
   selectOptions: DeviceSelectOption[]
+  /** 29.1 D-03：包级 env 元数据（键 → label/description/required/example/default）；缺省回落裸键名渲染 */
+  envMeta?: Record<string, McpEnvMetaEntryDto>
   emptyHint?: string
 }
 
@@ -73,11 +76,12 @@ const sameEnvMap = (a: Record<string, string>, b: Record<string, string>): boole
  * 变量名编辑 = 旧键删新键加，由内部 diff 最终态后统一 onChange。
  */
 function EnvRowsEditor({
-  deviceId, value, onChange,
+  deviceId, value, onChange, envMeta,
 }: {
   deviceId: string
   value: Record<string, string>
   onChange: (deviceId: string, key: string, v: string) => void
+  envMeta?: Record<string, McpEnvMetaEntryDto>
 }) {
   const [rows, setRows] = useState<EnvRow[]>(() => toRows(value))
   /** 自己刚发出的目标态：父组件回显与之一致时不重建本地行（避免输入过程行被重置） */
@@ -130,23 +134,45 @@ function EnvRowsEditor({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {rows.map((r, idx) => (
-        <Space key={`row-${idx}`} align="center">
-          <Input
-            style={{ width: 180 }}
-            placeholder="变量名"
-            value={r.key}
-            onChange={(e) => renameKey(idx, e.target.value)}
-          />
-          <Input.Password
-            style={{ width: 260 }}
-            placeholder="值"
-            value={r.val}
-            onChange={(e) => setVal(idx, e.target.value)}
-          />
-          <Button type="link" size="small" danger onClick={() => removeRow(idx)}>删除</Button>
-        </Space>
-      ))}
+      {rows.map((r, idx) => {
+        // meta 按当前键名动态取（renameKey 后跟随；无 meta 键回落现状裸键名渲染）
+        const meta = envMeta?.[r.key]
+        // 29.1 D-01/D-02：required 且无 default 且值空（含删行/未填）→ 红框硬提示；
+        // 有 default 的 required 键留空合法（default 兜底），仅灰字提示不标红
+        const missingRequired = meta?.required === true && meta.default == null && r.val.trim() === ''
+        const tooltipLines: string[] = []
+        if (meta?.description != null) tooltipLines.push(meta.description)
+        if (meta?.example != null) tooltipLines.push(`示例：${meta.example}`)
+        return (
+          <Space key={`row-${idx}`} align="center">
+            <Input
+              style={{ width: 180 }}
+              placeholder="变量名"
+              value={r.key}
+              onChange={(e) => renameKey(idx, e.target.value)}
+            />
+            {meta && (
+              <Tooltip title={tooltipLines.length > 0 ? tooltipLines.join('\n') : meta.label}>
+                <Space size={4} style={{ maxWidth: 150 }}>
+                  {meta.required === true && <Tag color="red" style={{ marginInlineEnd: 0 }}>必填</Tag>}
+                  <span style={{
+                    fontSize: 12, color: '#595959', maxWidth: 110,
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}>{meta.label}</span>
+                </Space>
+              </Tooltip>
+            )}
+            <Input.Password
+              style={{ width: 260 }}
+              status={missingRequired ? 'error' : undefined}
+              placeholder={meta?.default != null && r.val === '' ? `留空将使用包默认 ${meta.default}` : '值'}
+              value={r.val}
+              onChange={(e) => setVal(idx, e.target.value)}
+            />
+            <Button type="link" size="small" danger onClick={() => removeRow(idx)}>删除</Button>
+          </Space>
+        )
+      })}
       <div>
         <Button size="small" onClick={addRow}>＋添加变量</Button>
       </div>
@@ -155,7 +181,7 @@ function EnvRowsEditor({
 }
 
 export default function DeviceEnvCards({
-  cards, envValues, onValueChange, onAddDevice, onRemoveDevice, selectOptions, emptyHint,
+  cards, envValues, onValueChange, onAddDevice, onRemoveDevice, selectOptions, envMeta, emptyHint,
 }: DeviceEnvCardsProps) {
   const [selectOpen, setSelectOpen] = useState(false)
   const [pickedId, setPickedId] = useState<string | null>(null)
@@ -206,6 +232,7 @@ export default function DeviceEnvCards({
               deviceId={c.deviceId}
               value={envValues[c.deviceId] ?? {}}
               onChange={onValueChange}
+              envMeta={envMeta}
             />
           </Card>
         ))

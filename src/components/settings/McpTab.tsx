@@ -460,6 +460,27 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
     if (form.name.trim() === '') { setFormError('请填写名称'); return }
     if (form.id == null && form.pkgId == null) { setFormError('请选择 MCP 包'); return }
     if (form.deviceIds.length === 0) { setFormError('请至少绑定一台设备'); return }
+    // 29.1（D-01 表单层 + D-02 合成语义）：required=true 且无 default 的键逐设备终态判定——
+    // 值非空非空白才放行；用户删掉该键所在行 = 缺（行删除后键不在 deviceEnvValues）。
+    // 有 default 的 required 键留空由包默认兜底（spawn 侧叠加），不硬拦。
+    // 与运行时层 fail-closed（29.1-04 applyEnvMeta）双保险；stdio/http 分支不经此校验。
+    const pkgForCheck = pkgs.find((p) => p.id === form.pkgId)
+    if (pkgForCheck != null) {
+      const requiredNoDefault = Object.entries(pkgForCheck.envMeta ?? {})
+        .filter(([, m]) => m.required === true && m.default == null)
+      if (requiredNoDefault.length > 0) {
+        for (const id of form.deviceIds) {
+          const env = form.deviceEnvValues[id] ?? {}
+          for (const [k, m] of requiredNoDefault) {
+            if ((env[k] ?? '').trim() === '') {
+              const devName = matched?.find((d) => d.deviceId === id)?.name ?? id
+              setFormError(`设备 ${devName} 未配置必填项 ${m.label}（${k}）`)
+              return
+            }
+          }
+        }
+      }
+    }
     setSaving(true)
     setFormError(null)
     try {
@@ -914,6 +935,7 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
                       onAddDevice={addFormDevice}
                       onRemoveDevice={removeFormDevice}
                       selectOptions={pkgSelectOptions}
+                      envMeta={pkg?.envMeta}
                       emptyHint={form.pkgId == null ? '请先选择 MCP 包，再绑定设备' : undefined}
                     />
                   )}
