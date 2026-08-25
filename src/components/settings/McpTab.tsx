@@ -160,7 +160,7 @@ function ToolDrawer({ tool, onClose }: { tool: McpToolInfoDto | null; onClose: (
 interface FormState {
   id: number | null
   name: string
-  /** 29-09（Gap-2）：表单内部三类型——'package' 仅表单态，落库配置仍 type='stdio'（source='package'） */
+  /** 29-09（走查二）：'package' 编辑态；落库 type='package'（v28 真实化），新建走 mcp:createConfigFromPackage */
   type: 'stdio' | 'http' | 'package'
   commandOrUrl: string
   args: string[]

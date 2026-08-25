@@ -19,7 +19,7 @@
 import { ipcMain } from 'electron'
 import { McpService, MAX_BATCH, UNCHANGED_ENV_SENTINEL } from '../services/mcpService'
 import type { McpSaveInput, McpDecodedConfig } from '../services/mcpService'
-import { McpPackageService } from '../services/mcpPackageService'
+import { McpPackageService, ENV_KEY_RE } from '../services/mcpPackageService'
 import { testConnection as runTest, cancelTest } from '../services/mcpClient'
 import type { McpTestResult } from '../services/mcpClient'
 import { McpToolPolicy } from '../services/mcpToolPolicy'
@@ -115,7 +115,11 @@ export function registerMcpIpc() {
         }
         const keys = Object.keys(item.env)
         if (keys.length > MAX_ENV_PAIRS) throw new Error(`env 键值对超过上限 ${MAX_ENV_PAIRS}`)
-        if (keys.some((k) => k.length > MAX_ENV_KEY_LENGTH)) throw new Error(`env 键超过长度上限 ${MAX_ENV_KEY_LENGTH}`)
+        // WR-03（Phase 29 code-review）：键名字符集与 mcp:createConfigFromPackage 同源
+        // ENV_KEY_RE（单源常量）——两通道同规则，防含 =/控制字符/PATH 覆盖等键名经宽通道写入
+        if (keys.some((k) => !ENV_KEY_RE.test(k))) {
+          throw new Error(`参数无效：env 键必须以字母/下划线开头且仅含字母数字下划线（≤${MAX_ENV_KEY_LENGTH} 字符）`)
+        }
         for (const v of Object.values(item.env)) {
           if (typeof v !== 'string' || v.length > MAX_ENV_VALUE_LENGTH) {
             throw new Error(`参数无效：env 值必须为 string 且不超过 ${MAX_ENV_VALUE_LENGTH} 字符`)

@@ -42,6 +42,7 @@ vi.mock('../../../electron/services/mcpClient', () => ({
   cancelTest: vi.fn().mockReturnValue(true),
 }))
 vi.mock('../../../electron/services/mcpPackageService', () => ({
+  ENV_KEY_RE: /^[A-Za-z_][A-Za-z0-9_]{0,99}$/,
   McpPackageService: {
     testPackageConfig: vi.fn(),
   },
@@ -89,6 +90,26 @@ describe('WR-01：mcp:save credential 长度上限（与 temp 路径同标准 20
   it('credential 合法长度（2000 字符内）→ 放行落库', () => {
     const save = handlers.get('mcp:save')!
     save({}, { ...baseDto, credential: 'c'.repeat(2000) })
+    expect(McpService.saveConfig).toHaveBeenCalled()
+  })
+})
+
+describe('WR-03（Phase 29 code-review）：mcp:save deviceEnvs 键名字符集与 createConfigFromPackage 同源收紧', () => {
+  const baseDto = { name: 'cfg', type: 'stdio', commandOrUrl: 'node x.js' } as const
+
+  it('deviceEnvs 含非法键（= / PATH 覆盖 / 控制字符 / 数字开头）→ 拒绝且不落库', () => {
+    const save = handlers.get('mcp:save')!
+    for (const badKey of ['A=B', 'a\nb', '1KEY', '']) {
+      expect(() =>
+        save({}, { ...baseDto, deviceEnvs: [{ deviceId: 'd1', env: { [badKey]: 'v' } }] })
+      ).toThrow('env 键必须以字母/下划线开头')
+    }
+    expect(McpService.saveConfig).not.toHaveBeenCalled()
+  })
+
+  it('deviceEnvs 合法键（字母/下划线开头，字母数字下划线）→ 放行落库', () => {
+    const save = handlers.get('mcp:save')!
+    save({}, { ...baseDto, deviceIds: ['d1'], deviceEnvs: [{ deviceId: 'd1', env: { TOKEN: 'v', _private: 'v', A_9: 'v' } }] })
     expect(McpService.saveConfig).toHaveBeenCalled()
   })
 })
