@@ -1987,10 +1987,12 @@ async function runAgentLoopInner(
         for (let i = 0; i < mcpCalls.length; i++) {
           const r = await runMcpCall(mcpCalls[i], logIds[i], ctx.emitToolResult)
           results.push(r.text)
+          // 29-09 走查四：直执 mcp 步骤同样记 outputSummary（meta.steps 恢复卡的原始结果回看）
           settleAgentStep(pushAgentStep(state, 'mcp', {
             deviceName: String(mcpCalls[i].context.device?.name ?? ''),
             command: `${mcpCalls[i].context.serverName} · ${mcpCalls[i].tool.name}`,
-          }), 'done', state)
+            outputSummary: sanitizeUntrusted(r.text, 200),
+          }), r.status === 'success' ? 'done' : 'failed', state)
           state.sources.push({ kind: 'mcp', title: `${mcpCalls[i].context.serverName} · ${mcpCalls[i].tool.name}` })
         }
       } else {
@@ -2201,7 +2203,20 @@ export async function confirmCommand(
     for (const logId of batch.mcp.guardLogIds ?? []) updateLogGuardOutcome(logId, 'user_confirmed')
     for (let i = 0; i < batch.mcp.calls.length; i++) {
       updateLogStatus(batch.mcp.logIds[i], 'approved')
-      const r = await runMcpCall(batch.mcp.calls[i], batch.mcp.logIds[i], batch.mcp.emitToolResult)
+      const call = batch.mcp.calls[i]
+      // 29-09 走查四（缺陷1）：确认执行路径的 MCP 步骤必须入 loopState.steps——
+      // 直执分支（runAgentLoop allExecute）有 pushAgentStep，本分支此前只发实时卡
+      // 不入轨迹 → buildAgentMeta 落库的 meta.steps 无 mcp 步骤 → 历史恢复（切界面
+      // 再切回）MCP 执行卡消失。与直执分支同构补齐（emit 仍由 runMcpCall 真实卡
+      // 独占，一步两卡禁令不变）+ sources 归因 + outputSummary 供恢复卡回看。
+      const step = pushAgentStep(batch.mcp.loopState, 'mcp', {
+        deviceName: String(call.context.device?.name ?? ''),
+        command: `${call.context.serverName} · ${call.tool.name}`,
+      })
+      const r = await runMcpCall(call, batch.mcp.logIds[i], batch.mcp.emitToolResult)
+      step.outputSummary = sanitizeUntrusted(r.text, 200)
+      settleAgentStep(step, r.status === 'success' ? 'done' : 'failed', batch.mcp.loopState)
+      batch.mcp.loopState.sources.push({ kind: 'mcp', title: `${call.context.serverName} · ${call.tool.name}` })
       results.push(r.text)
     }
     const { loopCtx, loopState } = batch.mcp
