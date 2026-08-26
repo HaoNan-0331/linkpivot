@@ -116,7 +116,10 @@ function makeDb(): Database.Database {
       created_at TEXT DEFAULT (datetime('now','localtime')), updated_at TEXT DEFAULT (datetime('now','localtime'))
     );
     CREATE TABLE mcp_packages (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, disabled INTEGER DEFAULT 0,
-      last_test TEXT, fingerprint_json TEXT);
+      last_test TEXT, fingerprint_json TEXT,
+      -- 29.1 CR MD-05：loadPackageSpawnInfo 装配源回归所需列（与生产 schema 对齐的最小集）
+      version TEXT, runtime TEXT DEFAULT 'node', entry TEXT DEFAULT 'main.js',
+      manifest_json TEXT, env_meta TEXT, fingerprint TEXT, dir_path TEXT, size_bytes INTEGER DEFAULT 0);
     CREATE TABLE mcp_device_rel (id TEXT PRIMARY KEY, mcp_config_id INTEGER NOT NULL, device_id TEXT NOT NULL UNIQUE, env_json_enc TEXT, created_at TEXT DEFAULT (datetime('now','localtime')));
     CREATE TABLE mcp_tools (
       id INTEGER PRIMARY KEY AUTOINCREMENT, config_id INTEGER NOT NULL, tool_name TEXT NOT NULL,
@@ -133,7 +136,7 @@ vi.mock('../../../electron/database/connection', () => ({
 }))
 
 import { encField } from '../../../electron/utils/crypto'
-import { chat, setAiMasterKey, isDeviceExecutable, stripExpKbSearchMarkers, buildCapabilityBoundary, cmdChannelRejectReason } from '../../../electron/services/ai'
+import { chat, setAiMasterKey, isDeviceExecutable, stripExpKbSearchMarkers, buildCapabilityBoundary, cmdChannelRejectReason, loadPackageSpawnInfo } from '../../../electron/services/ai'
 import { isCommandAllowed } from '../../../electron/services/commandSafety'
 import { AI_QONLY_EXEC_BAN } from '../../../electron/services/promptRegistry'
 import { search as kbSearch } from '../../../electron/services/knowledgeBaseService'
@@ -717,5 +720,63 @@ describe('MCP-only 能力边界三组语义（29.1-06 UAT 缺陷）', () => {
     expect(out).toContain('未执行')
     expect(out).toContain('该设备无 SSH/Telnet 命令通道（[CMD] 未执行')
     expect(out).not.toContain('仅可问答')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 29.1 CR MD-05：spawn 强制层 envMeta 单源 manifest_json
+// 现网缺陷：rowToView（UI 出口）读 manifest_json，loadPackageSpawnInfo（required 硬拦 +
+// default 叠加的执行层）读 env_meta 列——单边更新即静默分叉，分叉后果是 required 运行时
+// 拦截 fail-open 消失。收敛方向：manifest_json 单源（与 HI-01 对 testPackageConfig 的
+// 对齐一致）；env_meta 列降级为仅写入镜像，不再被任何强制层读取。
+// ---------------------------------------------------------------------------
+describe('29.1 CR MD-05: loadPackageSpawnInfo envMeta 单源 manifest_json（与 rowToView/testPackageConfig 同源）', () => {
+  const META_BASE = {
+    name: 'md05-pkg', version: '1.0.0', runtime: 'node', entry: 'main.js',
+    models: ['S5735'], tools: [{ name: 't1', description: 'd' }],
+    envKeys: ['NF_TOKEN'],
+  }
+
+  function seedPkg(manifestJson: string, envMetaColumn: string | null): number {
+    const info = db.prepare(
+      `INSERT INTO mcp_packages (name, version, runtime, entry, manifest_json, env_meta, fingerprint, fingerprint_json, dir_path, size_bytes)
+       VALUES ('md05-pkg', '1.0.0', 'node', 'main.js', ?, ?, 'fp1', '{}', 'C:/x', 1)`
+    ).run(manifestJson, envMetaColumn)
+    return Number(info.lastInsertRowid)
+  }
+
+  it('manifest_json 带 envMeta、env_meta 列 NULL（单边只更新列的形态）→ spawn envMeta 仍取自 manifest_json', () => {
+    const id = seedPkg(
+      JSON.stringify({ ...META_BASE, envMeta: { NF_TOKEN: { label: '防火墙 Token', required: true } } }),
+      null
+    )
+    const info = loadPackageSpawnInfo(id)
+    expect(info).not.toBeNull()
+    expect(info!.envMeta).toEqual({ NF_TOKEN: { label: '防火墙 Token', required: true } })
+  })
+
+  it('env_meta 列带 required、manifest_json 无 envMeta（反向分叉形态）→ 列不再是权威源（envMeta undefined）', () => {
+    const id = seedPkg(
+      JSON.stringify(META_BASE),
+      JSON.stringify({ STALE_KEY: { label: '旧列残留', required: true } })
+    )
+    const info = loadPackageSpawnInfo(id)
+    expect(info).not.toBeNull()
+    expect(info!.envMeta).toBeUndefined()
+  })
+
+  it('DB 篡改形态：entry 字段类型错（label:123 / required:"yes" / default:443）→ 同构结构清洗（label 兜底键名、default 丢弃、required 真值保留不松于 truthy 判定）', () => {
+    const id = seedPkg(
+      JSON.stringify({ ...META_BASE, envMeta: { NF_TOKEN: { label: 123, required: 'yes', default: 443 } } }),
+      null
+    )
+    const info = loadPackageSpawnInfo(id)
+    expect(info).not.toBeNull()
+    expect(info!.envMeta).toEqual({ NF_TOKEN: { label: 'NF_TOKEN', required: true } })
+  })
+
+  it('manifest_json 坏 JSON → fail-closed 拒绝装配返回 null（required 拦截不因元数据损坏静默消失）', () => {
+    const id = seedPkg('{bad json', JSON.stringify({ X: { label: 'x', required: true } }))
+    expect(loadPackageSpawnInfo(id)).toBeNull()
   })
 })

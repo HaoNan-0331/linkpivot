@@ -886,8 +886,9 @@ function buildMcpContexts(targetDevices: any[]): McpCallContext[] {
 /**
  * 29-04：装配包轨道 spawn 信息（TOCTOU 重验 + python/node 双轨的 mcpClient 入参）。
  * 包不存在/disabled/查询异常 → null（调用方 fail-closed 拒绝执行，不给旧 spawn 路径）。
+ * （导出供单测直测装配源语义——29.1 CR MD-05 单源收敛的回归锚点。）
  */
-function loadPackageSpawnInfo(packageId: number): PackageSpawnInfo | null {
+export function loadPackageSpawnInfo(packageId: number): PackageSpawnInfo | null {
   try {
     const row = getDatabase().prepare(
       'SELECT dir_path, runtime, entry, fingerprint_json, env_meta, disabled FROM mcp_packages WHERE id = ?'
