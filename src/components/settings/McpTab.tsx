@@ -12,6 +12,7 @@ import type { Device } from '../../types/device'
 import McpToolManageDrawer from './McpToolManageDrawer'
 import McpPackageTab from './McpPackageTab'
 import DeviceEnvCards from './DeviceEnvCards'
+import EnvKeyMetaList from './EnvKeyMetaList'
 
 const { Text } = Typography
 
@@ -911,8 +912,9 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
                       <Card size="small" style={{ marginTop: 8 }}>
                         <Space direction="vertical" size={4}>
                           <div>适用型号：{pkg.models.length > 0 ? pkg.models.map((m) => <Tag key={m}>{m}</Tag>) : <Text type="secondary">未声明（全部设备需手动添加）</Text>}</div>
+                          {/* 29.1 UAT：每键一行人话化展示（label/必填/默认/描述），与导入预览同源 */}
                           <div>环境变量：{pkg.envKeys.length > 0
-                            ? <Space size={4} wrap>{pkg.envKeys.map((k) => <code key={k} style={{ fontFamily: 'monospace', fontSize: 13 }}>{k}</code>)}</Space>
+                            ? <EnvKeyMetaList envKeys={pkg.envKeys} envMeta={pkg.envMeta} />
                             : <Text type="secondary">该包未声明环境变量，可按需自定义</Text>}</div>
                           <div style={{ fontSize: 12, color: '#8c8c8c' }}>入口：<code style={{ fontFamily: 'monospace', fontSize: 13 }}>{pkg.entry}</code>（{pkg.runtime}）</div>
                         </Space>
@@ -936,6 +938,7 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
                       onRemoveDevice={removeFormDevice}
                       selectOptions={pkgSelectOptions}
                       envMeta={pkg?.envMeta}
+                      envKeys={pkg?.envKeys}
                       emptyHint={form.pkgId == null ? '请先选择 MCP 包，再绑定设备' : undefined}
                     />
                   )}

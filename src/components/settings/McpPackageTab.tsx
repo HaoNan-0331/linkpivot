@@ -10,6 +10,7 @@ import type {
   McpImportOutcomeDto, McpPackageDeleteImpactDto, McpPackageDetailDto, McpPackageViewDto,
   McpVectorResultDto,
 } from '../../types/electron'
+import EnvKeyMetaList from './EnvKeyMetaList'
 
 const { Text } = Typography
 
@@ -527,24 +528,9 @@ export default function McpPackageTab({ onPackagesChanged }: { onPackagesChanged
               <div>
                 <Text strong>环境变量键</Text>
                 <div style={{ marginTop: 4 }}>
+                  {/* 29.1 UAT：展示逻辑抽 EnvKeyMetaList 单源（与 McpTab 包信息区永同步） */}
                   {detail.envKeys.length > 0
-                    ? detail.envKeys.map((k) => {
-                      // 29.1 D-03：有 envMeta 的键展示人话说明（label/必填/描述/默认）
-                      const m = detail.envMeta?.[k]
-                      if (m == null) {
-                        return <code key={k} style={{ fontFamily: 'monospace', fontSize: 13, marginRight: 12 }}>{k}</code>
-                      }
-                      return (
-                        <div key={k} style={{ fontSize: 13, display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
-                          <code style={{ fontFamily: 'monospace', fontSize: 13 }}>{k}</code>
-                          <span style={{ fontWeight: 600 }}>{m.label}</span>
-                          {m.required === true && <Tag color="red" style={{ marginInlineEnd: 0 }}>必填</Tag>}
-                          {m.default != null && <Tag style={{ marginInlineEnd: 0 }}>默认 {m.default}</Tag>}
-                          {m.description != null && <span style={{ fontSize: 12, color: '#8c8c8c' }}>{m.description}</span>}
-                          {m.example != null && <span style={{ fontSize: 12, color: '#8c8c8c' }}>示例：{m.example}</span>}
-                        </div>
-                      )
-                    })
+                    ? <EnvKeyMetaList envKeys={detail.envKeys} envMeta={detail.envMeta} />
                     : <Text type="secondary">该包未声明环境变量，无需填写</Text>}
                 </div>
               </div>

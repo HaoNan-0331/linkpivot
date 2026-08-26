@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Card, Empty, Input, Modal, Select, Space, Tag, Tooltip, Typography } from 'antd'
+import { Button, Card, Empty, Input, Modal, Select, Space, Tag, Typography } from 'antd'
 import type { McpEnvMetaEntryDto } from '../../types/electron'
 
 const { Text } = Typography
@@ -46,6 +46,11 @@ interface DeviceEnvCardsProps {
   selectOptions: DeviceSelectOption[]
   /** 29.1 D-03：包级 env 元数据（键 → label/description/required/example/default）；缺省回落裸键名渲染 */
   envMeta?: Record<string, McpEnvMetaEntryDto>
+  /**
+   * 29.1 UAT：绑定包声明的 env 键集合。非空且该设备尚无已存值时，自动预填全部键的
+   * 骨架行（只填值）；包键集内的键名只读（防手误）。缺省（手工 stdio 轨）行为零变化。
+   */
+  envKeys?: string[]
   emptyHint?: string
 }
 
@@ -68,6 +73,18 @@ const sameEnvMap = (a: Record<string, string>, b: Record<string, string>): boole
 }
 
 /**
+ * 29.1 UAT：外部 value 无任何已存值且包声明了 envKeys → 预填全部键的骨架行（val 空，
+ * 不提交进父组件 value，落库/required 校验语义零变化）；否则按 value 重建。
+ */
+const buildRows = (value: Record<string, string>, envKeys?: string[]): EnvRow[] => {
+  const hasSaved = Object.values(value).some((v) => v !== '')
+  if (!hasSaved && envKeys != null && envKeys.length > 0) {
+    return envKeys.map((k) => ({ key: k, val: '' }))
+  }
+  return toRows(value)
+}
+
+/**
  * env 行编辑器（同文件内不导出）。
  * 29-09 走查修复（问题4）：草稿行模型——行列表完全由本地态驱动；键为空的新增行、
  * 值清空过程中的行停留在草稿态，不再与「空值=删除键」通道直接耦合（旧实现 addRow 发
@@ -76,22 +93,23 @@ const sameEnvMap = (a: Record<string, string>, b: Record<string, string>): boole
  * 变量名编辑 = 旧键删新键加，由内部 diff 最终态后统一 onChange。
  */
 function EnvRowsEditor({
-  deviceId, value, onChange, envMeta,
+  deviceId, value, onChange, envMeta, envKeys,
 }: {
   deviceId: string
   value: Record<string, string>
   onChange: (deviceId: string, key: string, v: string) => void
   envMeta?: Record<string, McpEnvMetaEntryDto>
+  envKeys?: string[]
 }) {
-  const [rows, setRows] = useState<EnvRow[]>(() => toRows(value))
+  const [rows, setRows] = useState<EnvRow[]>(() => buildRows(value, envKeys))
   /** 自己刚发出的目标态：父组件回显与之一致时不重建本地行（避免输入过程行被重置） */
   const lastEmitted = useRef<Record<string, string> | null>(null)
 
-  // 外部变更（编辑回显 / 卡片增删 / 父侧删除）同步进本地行
+  // 外部变更（编辑回显 / 卡片增删 / 父侧删除）同步进本地行；预填仅发生在无已存值时
   useEffect(() => {
     if (lastEmitted.current && sameEnvMap(lastEmitted.current, value)) return
-    setRows(toRows(value))
-  }, [value])
+    setRows(buildRows(value, envKeys))
+  }, [value, envKeys])
 
   const apply = (next: EnvRow[]) => {
     setRows(next)
@@ -135,33 +153,23 @@ function EnvRowsEditor({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {rows.map((r, idx) => {
-        // meta 按当前键名动态取（renameKey 后跟随；无 meta 键回落现状裸键名渲染）
+        // meta 按当前键名动态取（renameKey 后跟随）；29.1 UAT：仅用于行为反馈
+        // （required 红框 / default placeholder），说明性展示（label/描述）移至包信息区
         const meta = envMeta?.[r.key]
         // 29.1 D-01/D-02：required 且无 default 且值空（含删行/未填）→ 红框硬提示；
         // 有 default 的 required 键留空合法（default 兜底），仅灰字提示不标红
         const missingRequired = meta?.required === true && meta.default == null && r.val.trim() === ''
-        const tooltipLines: string[] = []
-        if (meta?.description != null) tooltipLines.push(meta.description)
-        if (meta?.example != null) tooltipLines.push(`示例：${meta.example}`)
+        // 29.1 UAT：包键集内的键名只读（防手误）；手工添加的自定义行键名可编辑
+        const keyReadOnly = envKeys != null && envKeys.includes(r.key)
         return (
           <Space key={`row-${idx}`} align="center">
             <Input
               style={{ width: 180 }}
               placeholder="变量名"
               value={r.key}
+              readOnly={keyReadOnly}
               onChange={(e) => renameKey(idx, e.target.value)}
             />
-            {meta && (
-              <Tooltip title={tooltipLines.length > 0 ? tooltipLines.join('\n') : meta.label}>
-                <Space size={4} style={{ maxWidth: 150 }}>
-                  {meta.required === true && <Tag color="red" style={{ marginInlineEnd: 0 }}>必填</Tag>}
-                  <span style={{
-                    fontSize: 12, color: '#595959', maxWidth: 110,
-                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                  }}>{meta.label}</span>
-                </Space>
-              </Tooltip>
-            )}
             <Input.Password
               style={{ width: 260 }}
               status={missingRequired ? 'error' : undefined}
@@ -181,7 +189,7 @@ function EnvRowsEditor({
 }
 
 export default function DeviceEnvCards({
-  cards, envValues, onValueChange, onAddDevice, onRemoveDevice, selectOptions, envMeta, emptyHint,
+  cards, envValues, onValueChange, onAddDevice, onRemoveDevice, selectOptions, envMeta, envKeys, emptyHint,
 }: DeviceEnvCardsProps) {
   const [selectOpen, setSelectOpen] = useState(false)
   const [pickedId, setPickedId] = useState<string | null>(null)
@@ -233,6 +241,7 @@ export default function DeviceEnvCards({
               value={envValues[c.deviceId] ?? {}}
               onChange={onValueChange}
               envMeta={envMeta}
+              envKeys={envKeys}
             />
           </Card>
         ))
