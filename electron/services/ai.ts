@@ -665,6 +665,66 @@ export function isDeviceExecutable(device: any): boolean {
   return device?.capabilities?.hasSSH === true || device?.capabilities?.hasTelnet === true
 }
 
+/**
+ * 29.1-06（UAT 缺陷修复）：能力边界注入三组语义（Phase 23 D-03/D-05 fail-closed 不回退）。
+ *
+ * 缺陷现场：MCP-only 设备（无 SSH/Telnet、仅绑 MCP 包）此前落入 qOnlyDevices → 注入
+ * 「无命令执行通道（仅可问答）」+ AI_QONLY_EXEC_BAN 硬区禁令，与同轮注入的 MCP 工具
+ * 清单自相矛盾 → 模型服从禁令拒用 MCP 工具。
+ *
+ * 三组分组（isDeviceExecutable 本身不动——它是 [CMD] 执行通道语义，MCP 设备确实不能执行 [CMD]）：
+ * ① 可执行（hasSSH/hasTelnet）：不注入（提示词干净，现状不变）；
+ * ② MCP-only（不可执行但 hasMcp=true）：中性能力说明——无 SSH/Telnet 命令通道、不可输出
+ *    [CMD] 标记、查询与操作经绑定 MCP 工具完成；**不进「仅问答」名单、不拼 AI_QONLY_EXEC_BAN**
+ *    （措辞不出现「仅可问答/不可执行」，与 MCP 工具清单注入配套而非互斥）；
+ * ③ 仅问答（不可执行且无 hasMcp）：保持 Phase 23 原注入（D-03 能力声明 + AI_QONLY_EXEC_BAN
+ *    硬区禁令），真·无通道设备 fail-closed 语义不回退。
+ */
+export function buildCapabilityBoundary(targetDevices: any[]): string {
+  const mcpOnlyDevices = targetDevices.filter(
+    (d) => !isDeviceExecutable(d) && d?.capabilities?.hasMcp === true
+  )
+  const qOnlyDevices = targetDevices.filter(
+    (d) => !isDeviceExecutable(d) && d?.capabilities?.hasMcp !== true
+  )
+  let injection = ''
+  if (mcpOnlyDevices.length > 0) {
+    if (targetDevices.length === 1) {
+      injection +=
+        '\n\n能力说明：该设备无 SSH/Telnet 命令通道，不可对其输出 [CMD] 命令标记；该设备的查询与操作通过其绑定的 MCP 工具完成（见下方 MCP 工具清单）。'
+    } else {
+      const mNames = mcpOnlyDevices.map((d) => String(d.name)).join('、')
+      injection +=
+        `\n\n能力说明：以下设备无 SSH/Telnet 命令通道，不可对其输出 [CMD] 命令标记，其查询与操作通过各自绑定的 MCP 工具完成（见下方 MCP 工具清单）：${mNames}。`
+    }
+  }
+  if (qOnlyDevices.length > 0) {
+    const qNames = qOnlyDevices.map((d) => String(d.name)).join('、')
+    if (targetDevices.length === 1) {
+      injection +=
+        '\n\n能力说明：该设备无命令执行通道（仅可基于关联知识库/经验作答，不可执行命令）。\n' +
+        AI_QONLY_EXEC_BAN
+    } else {
+      injection +=
+        `\n\n能力说明：以下设备无命令执行通道（仅可问答，不可执行命令）：${qNames}。命令只可作用于其余有执行通道的设备；若用户请求涉及这些仅问答设备，请在回复中主动说明已跳过它们（点名设备名），不要对其输出 [CMD] 标记。\n` +
+        AI_QONLY_EXEC_BAN
+    }
+  }
+  return injection
+}
+
+/**
+ * 29.1-06：[CMD] 拒绝原因文案（MCP-aware）——目标设备无 SSH/Telnet 但绑定 MCP 时指向
+ * MCP 工具（消除「仅可问答」与 MCP 工具清单的矛盾声明），真·无通道设备（含 capabilities
+ * 缺失）保持 Phase 23 原文案（fail-closed 不回退）。qOnlyTail 为仅问答分支的既有尾缀。
+ */
+export function cmdChannelRejectReason(dev: any, qOnlyTail = ''): string {
+  if (dev?.capabilities?.hasMcp === true) {
+    return '该设备无 SSH/Telnet 命令通道（[CMD] 未执行；该设备操作请通过 MCP 工具完成）'
+  }
+  return `该设备无命令执行通道（仅可问答）${qOnlyTail}`
+}
+
 export function getDeviceByIdInternal(id: string): any {
   const row = getDatabase()
     .prepare(
@@ -1536,7 +1596,7 @@ function buildDroppedCmdNotice(
     }
     const dev = resolveTargetDevice(b.deviceName, targetDevices)
     if (!dev) pushLine(b.deviceName, b.cmd, '未找到指定设备')
-    else if (!isDeviceExecutable(dev)) pushLine(String(dev.name), b.cmd, '该设备无命令执行通道（仅可问答）')
+    else if (!isDeviceExecutable(dev)) pushLine(String(dev.name), b.cmd, cmdChannelRejectReason(dev))
   }
   // qOnly 拒绝中不在首答块的命令（重试轮再犯被 strip 的标记）同样显式回注
   for (const r of qOnlyRejections) {
@@ -1694,7 +1754,8 @@ async function runAgentCmdRound(
     }
     if (!targetDevice) continue
     if (!isDeviceExecutable(targetDevice)) {
-      rejectedCommands.push({ deviceName: String(targetDevice.name), cmd, reason: '该设备无命令执行通道（仅可问答），命令未执行' })
+      // 29.1-06：MCP-only 设备拒绝文案指向 MCP 工具，真·无通道保持 Phase 23 原文案
+      rejectedCommands.push({ deviceName: String(targetDevice.name), cmd, reason: cmdChannelRejectReason(targetDevice, '，命令未执行') })
       continue
     }
     const key = `${targetDevice.id}:${cmd}`
@@ -2726,23 +2787,12 @@ export async function chat(
       multi += '\n\n你可以在不同设备上执行不同命令，请用 [CMD:设备名] 格式指定在哪台设备上执行。'
       deviceInfo = multi
     }
-    // Phase 23（23-03，D-03/D-05）：能力边界注入——仅问答设备（isDeviceExecutable 为 false）
-    // 在场时追加动态能力声明（进 deviceInfo 变量值，可编辑面）+ 拒绝执行指令（代码级常量
-    // AI_QONLY_EXEC_BAN 硬区，不可编辑弱化）。混选时注入 D-05 语义：命令只作用于可执行
-    // 子集，回复须主动点名跳过的仅问答设备。全可执行设备时不注入（提示词干净）。
-    const qOnlyDevices = targetDevices.filter((d) => !isDeviceExecutable(d))
-    if (qOnlyDevices.length > 0) {
-      const qNames = qOnlyDevices.map((d) => String(d.name)).join('、')
-      if (targetDevices.length === 1) {
-        deviceInfo +=
-          '\n\n能力说明：该设备无命令执行通道（仅可基于关联知识库/经验作答，不可执行命令）。\n' +
-          AI_QONLY_EXEC_BAN
-      } else {
-        deviceInfo +=
-          `\n\n能力说明：以下设备无命令执行通道（仅可问答，不可执行命令）：${qNames}。命令只可作用于其余有执行通道的设备；若用户请求涉及这些仅问答设备，请在回复中主动说明已跳过它们（点名设备名），不要对其输出 [CMD] 标记。\n` +
-          AI_QONLY_EXEC_BAN
-      }
-    }
+    // Phase 23（23-03，D-03/D-05）+ 29.1-06：能力边界注入——三组语义抽至 buildCapabilityBoundary
+    // 纯函数（可执行不注入 / MCP-only 中性说明指向 MCP 工具 / 仅问答 D-03 声明 +
+    // AI_QONLY_EXEC_BAN 硬区禁令 fail-closed 不回退）。动态能力声明进 deviceInfo 变量值
+    // （可编辑面），拒绝执行指令为代码级常量（不可编辑弱化）。全可执行设备时不注入
+    // （提示词干净）。
+    deviceInfo += buildCapabilityBoundary(targetDevices)
   }
 
   // Phase 23（23-02，D-10）：自动预取彻底移除——经验检索只在 AI 回复含 [EXP_SEARCH] 标记时
@@ -3130,22 +3180,23 @@ export async function chat(
     let qOnlyPrompted = false
     const resolveTarget = (deviceName: string): any => resolveTargetDevice(deviceName, targetDevices)
     for (;;) {
-      const blocked: Array<{ deviceName: string; cmd: string }> = []
+      const blocked: Array<{ deviceName: string; cmd: string; dev?: any }> = []
       const pass: Array<{ deviceName: string; cmd: string }> = []
       for (const c of commands) {
         const dev = resolveTarget(c.deviceName)
         if (dev && !isDeviceExecutable(dev)) {
-          blocked.push({ deviceName: String(dev.name), cmd: c.cmd })
+          blocked.push({ deviceName: String(dev.name), cmd: c.cmd, dev })
         } else {
           pass.push(c)
         }
       }
       if (blocked.length === 0) break
       if (pass.length > 0 || qOnlyPrompted) {
-        // 混选（D-05）：可执行子集继续走既有安全链路；被拒标记显式回传。
+        // 混选（D-05）：可执行子集继续走既有安全链路；被拒标记显式回传（29.1-06：
+        // MCP-only 设备拒绝文案指向 MCP 工具，真·无通道保持原文案）。
         // 顽固再犯（pass 为空）：strip 标记收尾，命令不进执行/确认流。
         for (const b of blocked) {
-          qOnlyRejections.push({ ...b, reason: '该设备无命令执行通道（仅可问答），命令未执行' })
+          qOnlyRejections.push({ deviceName: b.deviceName, cmd: b.cmd, reason: cmdChannelRejectReason(b.dev, '，命令未执行') })
         }
         if (pass.length === 0) {
           finalAiReply = finalAiReply
@@ -3159,14 +3210,24 @@ export async function chat(
         break
       }
       qOnlyPrompted = true
-      const qNames = [...new Set(blocked.map((b) => b.deviceName))].join('、')
+      // 29.1-06：回注重试提示按能力分组——MCP-only 设备指向 MCP 工具（不出现「仅可问答」
+      // 矛盾语义），真·无通道设备保持 Phase 23 原提示（fail-closed 不回退）。
+      const mcpBlockedNames = [...new Set(blocked.filter((b) => b.dev?.capabilities?.hasMcp === true).map((b) => b.deviceName))]
+      const qOnlyBlockedNames = [...new Set(blocked.filter((b) => b.dev?.capabilities?.hasMcp !== true).map((b) => b.deviceName))]
+      const retryParts: string[] = []
+      if (mcpBlockedNames.length > 0) {
+        retryParts.push(`以下 [CMD] 命令标记指向的设备无 SSH/Telnet 命令通道，已被系统拦截未执行：${mcpBlockedNames.join('、')}。这些设备的查询与操作请通过其绑定的 MCP 工具完成，不要再对其输出 [CMD] 命令标记。`)
+      }
+      if (qOnlyBlockedNames.length > 0) {
+        retryParts.push(`以下 [CMD] 命令标记指向的设备无命令执行通道（仅可问答），已被系统拦截未执行：${qOnlyBlockedNames.join('、')}。请直接回答用户问题，或仅对有执行通道的设备输出 [CMD] 命令标记；不要再对无命令执行通道的设备输出 [CMD] 标记。`)
+      }
       finalAiReply = stripExpKbSearchMarkers(await callAI(config, [
         ...fullMessages,
         ...extraContext,
         { role: 'assistant', content: finalAiReply },
         {
           role: 'user',
-          content: `以下 [CMD] 命令标记指向的设备无命令执行通道（仅可问答），已被系统拦截未执行：${qNames}。请直接回答用户问题，或仅对有执行通道的设备输出 [CMD] 命令标记；不要再对无命令执行通道的设备输出 [CMD] 标记。`,
+          content: retryParts.join(''),
         },
       ], signal))
       commands.length = 0

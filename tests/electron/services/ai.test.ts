@@ -42,6 +42,8 @@ vi.mock('../../../electron/services/experienceRetrieval', () => ({
 }))
 const RESOURCE_MAP_TEXT = '资源地图测试文本。[EXP_SEARCH] 用法：输出标记查询经验库，优先查经验库。'
 const CMD_STYLE_TEXT = '命令风格指引测试文本：服务器用 uname/hostnamectl，网络设备用 show/display。'
+// 29.1-06：MCP 工具清单模板（含 {{tools}} 占位符——驱动 MCP-only 场景工具清单注入断言）
+const MCP_TOOLS_TEXT = 'MCP 工具清单测试模板：\n{{tools}}'
 vi.mock('../../../electron/services/promptService', () => ({
   PromptService: {
     getPrompt: vi.fn((id: string) =>
@@ -51,7 +53,9 @@ vi.mock('../../../electron/services/promptService', () => ({
           ? RESOURCE_MAP_TEXT
           : id === 'ai.chat.cmdStyle'
             ? CMD_STYLE_TEXT
-            : ''
+            : id === 'ai.chat.mcpTools'
+              ? MCP_TOOLS_TEXT
+              : ''
     ),
   },
 }))
@@ -129,7 +133,7 @@ vi.mock('../../../electron/database/connection', () => ({
 }))
 
 import { encField } from '../../../electron/utils/crypto'
-import { chat, setAiMasterKey, isDeviceExecutable, stripExpKbSearchMarkers } from '../../../electron/services/ai'
+import { chat, setAiMasterKey, isDeviceExecutable, stripExpKbSearchMarkers, buildCapabilityBoundary, cmdChannelRejectReason } from '../../../electron/services/ai'
 import { isCommandAllowed } from '../../../electron/services/commandSafety'
 import { AI_QONLY_EXEC_BAN } from '../../../electron/services/promptRegistry'
 import { search as kbSearch } from '../../../electron/services/knowledgeBaseService'
@@ -605,5 +609,113 @@ describe('privilegeGuard 接入（Phase 27 27-03）', () => {
       ['ssh 10.0.0.2'],
       { guardApproved: true },
     )).rejects.toThrow()
+  })
+})
+
+// ---------- 29.1 Plan 06（UAT 缺陷）—— MCP-only 设备能力边界三组语义 ----------
+// 缺陷现场：MCP-only 设备（无 SSH/Telnet、仅绑 MCP 包）被 Phase 23 能力边界注入归入
+// 「仅问答」组 → 与 MCP 工具清单注入自相矛盾 → 模型服从禁令拒用 MCP 工具。
+// 修复语义：可执行（不注入）/ MCP-only（中性说明指向 MCP 工具）/ 仅问答（原文案+硬区
+// 禁令 fail-closed 不回退）三组；isDeviceExecutable 本身不动（[CMD] 执行通道语义）。
+
+describe('MCP-only 能力边界三组语义（29.1-06 UAT 缺陷）', () => {
+  const DEV_EXEC = { id: 'a1', name: '可执行A', capabilities: { hasSSH: true, hasTelnet: false, hasMcp: false } }
+  const DEV_MCP = { id: 'm1', name: '绿盟防火墙_公司', capabilities: { hasSSH: false, hasTelnet: false, hasMcp: true } }
+  const DEV_QONLY = { id: 'q1', name: '仅问答机', capabilities: { hasSSH: false, hasTelnet: false, hasMcp: false } }
+
+  it('纯函数：MCP-only 单设备 → 中性能力说明指向 MCP 工具，无「仅可问答」/「不可执行」/硬区禁令', () => {
+    const b = buildCapabilityBoundary([DEV_MCP])
+    expect(b).toContain('无 SSH/Telnet 命令通道')
+    expect(b).toContain('MCP 工具')
+    expect(b).toContain('[CMD]')
+    expect(b).not.toContain('仅可问答')
+    expect(b).not.toContain('不可执行')
+    expect(b).not.toContain(AI_QONLY_EXEC_BAN)
+  })
+
+  it('纯函数：混选 exec+MCP-only → MCP 设备点名中性说明无禁令；MCP-only+仅问答 → 双段并存且 MCP 设备不进「仅问答」名单', () => {
+    const b1 = buildCapabilityBoundary([DEV_EXEC, DEV_MCP])
+    expect(b1).toContain('绿盟防火墙_公司')
+    expect(b1).toContain('MCP 工具')
+    expect(b1).not.toContain('仅可问答')
+    expect(b1).not.toContain(AI_QONLY_EXEC_BAN)
+
+    const b2 = buildCapabilityBoundary([DEV_MCP, DEV_QONLY])
+    expect(b2).toContain('绿盟防火墙_公司') // MCP 段点名
+    expect(b2).toContain('仅问答机') // 仅问答段点名
+    expect(b2).toContain(AI_QONLY_EXEC_BAN) // 真·仅问答 fail-closed 不回退
+    // MCP 设备不混入「仅问答」名单（名单头格式：…（仅可问答，不可执行命令）：名单。）
+    expect(b2).not.toContain(`（仅可问答，不可执行命令）：${DEV_MCP.name}。`)
+  })
+
+  it('纯函数（回归）：真·仅问答单设备原文案+禁令不变；全可执行/SSH+MCP 双通道为空；capabilities 缺失归仅问答（fail-closed）', () => {
+    const q = buildCapabilityBoundary([DEV_QONLY])
+    expect(q).toContain('仅可基于关联知识库/经验作答')
+    expect(q).toContain(AI_QONLY_EXEC_BAN)
+    expect(buildCapabilityBoundary([DEV_EXEC])).toBe('')
+    expect(buildCapabilityBoundary([
+      { ...DEV_EXEC, capabilities: { hasSSH: true, hasTelnet: false, hasMcp: true } },
+    ])).toBe('') // SSH+MCP 双通道 = 可执行组，不注入
+    expect(buildCapabilityBoundary([{ id: 'x', name: '裸设备' }])).toContain(AI_QONLY_EXEC_BAN)
+  })
+
+  it('cmdChannelRejectReason：MCP 设备指向 MCP 工具；无 MCP/null 保持 Phase 23 原文案（fail-closed）', () => {
+    expect(cmdChannelRejectReason(DEV_MCP, '，命令未执行')).toBe(
+      '该设备无 SSH/Telnet 命令通道（[CMD] 未执行；该设备操作请通过 MCP 工具完成）'
+    )
+    expect(cmdChannelRejectReason(DEV_MCP)).not.toContain('仅可问答')
+    expect(cmdChannelRejectReason(DEV_QONLY, '，命令未执行')).toBe('该设备无命令执行通道（仅可问答），命令未执行')
+    expect(cmdChannelRejectReason(DEV_QONLY)).toBe('该设备无命令执行通道（仅可问答）')
+    expect(cmdChannelRejectReason(null)).toBe('该设备无命令执行通道（仅可问答）')
+  })
+
+  /** 绑定 MCP 配置+单工具（驱动 capabilities.hasMcp 派生 + buildMcpContexts 工具清单注入） */
+  function bindMcp(deviceId: string, toolName = 'get_cpu_usage') {
+    db.prepare(
+      "INSERT INTO mcp_configs (name, type, command_or_url) VALUES ('nsfocus-nf', 'http', 'http://x')"
+    ).run()
+    const configId = (db.prepare('SELECT last_insert_rowid() AS id').get() as any).id
+    db.prepare('INSERT INTO mcp_device_rel (id, mcp_config_id, device_id) VALUES (?, ?, ?)').run('rel-1', configId, deviceId)
+    db.prepare('INSERT INTO mcp_tools (config_id, tool_name, enabled, tool_meta) VALUES (?, ?, 1, ?)')
+      .run(configId, toolName, JSON.stringify({ description: '查询 CPU 使用率', inputSchema: { type: 'object' } }))
+    return configId
+  }
+
+  it('主缺陷场景：MCP-only 单选设备 system prompt 注入中性能力说明 + MCP 工具清单，无「仅可问答」矛盾禁令', async () => {
+    insertDevice('m1', '绿盟防火墙_公司', null)
+    bindMcp('m1')
+    const fetchMock = queueReplies('好的')
+    await chat([{ role: 'user', content: '查看这台设备的 CPU 使用率' }], ['m1'], null)
+    const sys = JSON.parse((fetchMock.mock.calls[0][1] as any).body).messages[0].content
+    expect(sys).toContain('能力说明')
+    expect(sys).toContain('无 SSH/Telnet 命令通道')
+    expect(sys).toContain(MCP_TOOLS_TEXT.split('\n')[0]) // MCP 工具清单真实注入（183 工具场景最小模拟）
+    expect(sys).toContain('get_cpu_usage')
+    expect(sys).not.toContain('仅可问答')
+    expect(sys).not.toContain('不可执行命令')
+    expect(sys).not.toContain(AI_QONLY_EXEC_BAN)
+  })
+
+  it('[CMD] 打标 MCP-only 设备：循环内拒绝文案与兜底「未执行」提示均指向 MCP 工具（不再宣称「仅可问答」）', async () => {
+    insertDevice('m1', '绿盟防火墙_公司', null)
+    bindMcp('m1')
+    const fetchMock = queueReplies(
+      '执行 [CMD:绿盟防火墙_公司] display cpu[/CMD]',
+      '已改用绑定的 MCP 工具查询 CPU。'
+    )
+    const out = await chat([{ role: 'user', content: '查 CPU' }], ['m1'], null)
+    expect(fetchMock.mock.calls.length).toBe(2) // 循环拒绝结果回注恰好一次
+    // MCP 绑定在场 → 首答 [CMD] 走统一 agent 循环（3109 行 mcpContexts 分支）：
+    // runAgentCmdRound 拒绝（MCP-aware reason）→ 结果以 user 消息回注重试
+    const retry = JSON.parse((fetchMock.mock.calls[1][1] as any).body)
+    const retryMsg = retry.messages.find((m: any) => m.role === 'user' && m.content.includes('命令被拒绝'))
+    expect(retryMsg).toBeTruthy()
+    expect(retryMsg.content).toContain('该设备无 SSH/Telnet 命令通道（[CMD] 未执行')
+    expect(retryMsg.content).toContain('MCP 工具完成')
+    expect(retryMsg.content).not.toContain('仅可问答')
+    // 兜底「未执行」回注同样 MCP-aware（防 AI 脑补已执行）
+    expect(out).toContain('未执行')
+    expect(out).toContain('该设备无 SSH/Telnet 命令通道（[CMD] 未执行')
+    expect(out).not.toContain('仅可问答')
   })
 })
