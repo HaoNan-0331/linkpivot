@@ -255,11 +255,12 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
     })
   }, [])
 
-  // package 分支：已导入（未禁用）包清单——表单切到 package 时加载
+  // package 分支：已导入包清单（全量，不过滤 disabled——MD-01：编辑「包已禁用」的配置时
+  // required 硬拦与 DeviceEnvCards envMeta 仍需拿到包数据；仅新建选择器处过滤禁用包）
   useEffect(() => {
     if (!formOpen || form.type !== 'package') return
     window.api.mcp.listPackages()
-      .then((list) => setPkgs(list.filter((p) => !p.disabled)))
+      .then((list) => setPkgs(list))
       .catch((e: unknown) => setFormError(ipcErrMsg(e)))
   }, [formOpen, form.type])
 
@@ -465,19 +466,32 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
     // 值非空非空白才放行；用户删掉该键所在行 = 缺（行删除后键不在 deviceEnvValues）。
     // 有 default 的 required 键留空由包默认兜底（spawn 侧叠加），不硬拦。
     // 与运行时层 fail-closed（29.1-04 applyEnvMeta）双保险；stdio/http 分支不经此校验。
-    const pkgForCheck = pkgs.find((p) => p.id === form.pkgId)
-    if (pkgForCheck != null) {
-      const requiredNoDefault = Object.entries(pkgForCheck.envMeta ?? {})
-        .filter(([, m]) => m.required === true && m.default == null)
-      if (requiredNoDefault.length > 0) {
-        for (const id of form.deviceIds) {
-          const env = form.deviceEnvValues[id] ?? {}
-          for (const [k, m] of requiredNoDefault) {
-            if ((env[k] ?? '').trim() === '') {
-              const devName = matched?.find((d) => d.deviceId === id)?.name ?? id
-              setFormError(`设备 ${devName} 未配置必填项 ${m.label}（${k}）`)
-              return
-            }
+    // MD-01（29.1 CR）：包不可得（列表未就绪/包被删）不再静默跳过整段校验——pkgs 单查
+    // 兜底 getPackage，仍不可得则显式报错阻塞保存（fail-closed：报错前置到表单层，
+    // 不再延迟到之后的 AI 调用里才炸）
+    let pkgForCheck = pkgs.find((p) => p.id === form.pkgId) ?? null
+    if (pkgForCheck == null && form.pkgId != null) {
+      try {
+        const r = await window.api.mcp.getPackage(form.pkgId)
+        pkgForCheck = r.ok ? r.package : null
+      } catch {
+        pkgForCheck = null
+      }
+    }
+    if (pkgForCheck == null) {
+      setFormError('所选 MCP 包不可用（可能已被删除或列表未加载完成），请刷新后重试')
+      return
+    }
+    const requiredNoDefault = Object.entries(pkgForCheck.envMeta ?? {})
+      .filter(([, m]) => m.required === true && m.default == null)
+    if (requiredNoDefault.length > 0) {
+      for (const id of form.deviceIds) {
+        const env = form.deviceEnvValues[id] ?? {}
+        for (const [k, m] of requiredNoDefault) {
+          if ((env[k] ?? '').trim() === '') {
+            const devName = matched?.find((d) => d.deviceId === id)?.name ?? id
+            setFormError(`设备 ${devName} 未配置必填项 ${m.label}（${k}）`)
+            return
           }
         }
       }
@@ -694,7 +708,10 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
   const empty = configs.length === 0
 
   // 29-09（Gap-2）：package 分支——选中包 + 卡片/弹窗候选（已绑定设备过滤，弹窗不出现）
+  // MD-01：pkgs 全量（含禁用），仅新建选择器过滤禁用包（createConfigFromPackage 拒绝禁用包）
   const pkg = pkgs.find((p) => p.id === form.pkgId) ?? null
+  const enabledPkgs = pkgs.filter((p) => !p.disabled)
+  const pkgSelectPkgs = form.id == null ? enabledPkgs : pkgs
   const matchedRows = matched ?? []
   const pkgCards = form.deviceIds.map((id) => {
     const d = matchedRows.find((m) => m.deviceId === id)
@@ -890,7 +907,7 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
             <>
               <div>
                 <Text strong>选择 MCP 包</Text>
-                {pkgs.length === 0 ? (
+                {pkgSelectPkgs.length === 0 ? (
                   <Empty
                     image={Empty.PRESENTED_IMAGE_SIMPLE}
                     description="还没有可用的 MCP 包——先在上方「MCP 包」列表完成导入（已禁用的包不可用）"
@@ -903,7 +920,7 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
                       disabled={form.id != null}
                       style={{ width: 480, marginTop: 4 }}
                       placeholder="选择已导入的 MCP 包"
-                      options={pkgs.map((p) => ({
+                      options={pkgSelectPkgs.map((p) => ({
                         value: p.id,
                         label: `${p.name}${p.version ? ` v${p.version}` : ''} · ${p.runtime} · ${p.toolCount} 个工具`,
                       }))}
@@ -911,6 +928,11 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
                     {pkg && (
                       <Card size="small" style={{ marginTop: 8 }}>
                         <Space direction="vertical" size={4}>
+                          {pkg.disabled && (
+                            <div style={{ color: '#d46b08' }}>
+                              该包当前已被禁用（重新导入校验后方可恢复）——AI 调用与测试暂不可用，仍可在此补填/校验设备环境变量
+                            </div>
+                          )}
                           <div>适用型号：{pkg.models.length > 0 ? pkg.models.map((m) => <Tag key={m}>{m}</Tag>) : <Text type="secondary">未声明（全部设备需手动添加）</Text>}</div>
                           {/* 29.1 UAT：每键一行人话化展示（label/必填/默认/描述），与导入预览同源 */}
                           <div>环境变量：{pkg.envKeys.length > 0
