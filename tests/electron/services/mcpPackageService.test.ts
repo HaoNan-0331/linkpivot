@@ -35,12 +35,18 @@ vi.mock('../../../electron/database/connection', () => ({
   getDatabase: () => h.db
 }))
 
-vi.mock('../../../electron/services/mcpClient', () => ({
-  testConnection: h.clientMock.testConnection,
-  verifyPackageFingerprint: h.clientMock.verifyPackageFingerprint,
-  reportPackageIntegrityFailure: h.clientMock.reportPackageIntegrityFailure,
-  resolvePackageSpawn: h.clientMock.resolvePackageSpawn,
-}))
+// 29.1 CR HI-01：service 另消费 applyEnvMeta 纯函数——用真实现（mcpClient.test.ts 已单测，
+// 此处只验接线语义，不再造第二份逻辑），仅替换四个副作用函数；其余导出经 importOriginal 原样透传
+vi.mock('../../../electron/services/mcpClient', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../electron/services/mcpClient')>()
+  return {
+    ...actual,
+    testConnection: h.clientMock.testConnection,
+    verifyPackageFingerprint: h.clientMock.verifyPackageFingerprint,
+    reportPackageIntegrityFailure: h.clientMock.reportPackageIntegrityFailure,
+    resolvePackageSpawn: h.clientMock.resolvePackageSpawn,
+  }
+})
 
 vi.mock('../../../electron/services/mcpProcessRegistry', () => ({
   McpProcessRegistry: h.registryMock
@@ -855,5 +861,74 @@ describe('29-09 走查二: testPackageConfig 包轨路由', () => {
     expect(h.clientMock.testConnection).not.toHaveBeenCalled()
     expect(h.db!.prepare('SELECT disabled AS d FROM mcp_packages WHERE id = ?').get(pkgId)).toEqual({ d: 1 })
     expect(h.clientMock.reportPackageIntegrityFailure).toHaveBeenCalledTimes(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 29.1 CR HI-01：行级测试通道接入 applyEnvMeta（required 硬拦 + default 叠加，对齐主链）
+// ---------------------------------------------------------------------------
+describe('29.1 CR HI-01: testPackageConfig spawn env 过 applyEnvMeta（与主链 getConnection 同语义）', () => {
+  function importPkgWithEnvMeta(
+    envMeta: Record<string, { label: string; required?: boolean; default?: string }>
+  ): number {
+    const res = McpPackageService.importPackage(mkMcpb({
+      name: 'hi01-pkg',
+      envKeys: Object.keys(envMeta),
+      envMeta,
+    }))
+    if (!res.ok) throw new Error('import failed')
+    return res.package.id
+  }
+
+  function seedCfg(packageId: number, envByDevice: Record<string, Record<string, string>>): number {
+    const info = h.db!.prepare(
+      "INSERT INTO mcp_configs (name, type, command_or_url, package_id, source) VALUES ('hi01-cfg', 'package', 'main.js', ?, 'package')"
+    ).run(packageId)
+    const ins = h.db!.prepare('INSERT INTO mcp_device_rel (id, mcp_config_id, device_id, env_json_enc) VALUES (?, ?, ?, ?)')
+    let i = 0
+    for (const [deviceId, env] of Object.entries(envByDevice)) {
+      ins.run(`hr-${i++}`, info.lastInsertRowid as number, deviceId, encField(JSON.stringify(env), TEST_MK))
+    }
+    return Number(info.lastInsertRowid)
+  }
+
+  it('required 缺值 → MCP_ENV_REQUIRED_MISSING 结构化失败不 spawn，reason 含 label 人话（D-01 运行时层闭合）', async () => {
+    const pkgId = importPkgWithEnvMeta({ NF_TOKEN: { label: '防火墙 API Token', required: true } })
+    const cfgId = seedCfg(pkgId, { dev1: {} }) // 绑定设备 env 缺 required 键
+    const res = await McpPackageService.testPackageConfig(cfgId)
+    expect(res.ok).toBe(false)
+    if (!res.ok) {
+      expect(res.error.code).toBe('MCP_ENV_REQUIRED_MISSING')
+      expect(res.error.reason).toContain('防火墙 API Token')
+    }
+    expect(h.clientMock.testConnection).not.toHaveBeenCalled()
+  })
+
+  it('required 留空但有 default → default 叠加后拉起（行级测试与主链真跑结论一致，消除通道矛盾）', async () => {
+    const pkgId = importPkgWithEnvMeta({
+      NF_TOKEN: { label: 'Token', required: true, default: 'tok-default' },
+      NF_PORT: { label: '端口', default: '443' },
+    })
+    const cfgId = seedCfg(pkgId, { dev1: { NF_TOKEN: '' } }) // 用户留空 → 叠 default
+    h.clientMock.testConnection.mockResolvedValue({
+      ok: true, protocolVersion: '1.0', tools: [],
+    })
+    const res = await McpPackageService.testPackageConfig(cfgId)
+    expect(res.ok).toBe(true)
+    expect(h.clientMock.testConnection.mock.calls[0][1].env).toEqual({ NF_TOKEN: 'tok-default', NF_PORT: '443' })
+  })
+
+  it('用户已填值优先于 default（叠加不覆盖用户值）', async () => {
+    const pkgId = importPkgWithEnvMeta({
+      NF_TOKEN: { label: 'Token', required: true, default: 'tok-default' },
+      NF_PORT: { label: '端口', default: '443' },
+    })
+    const cfgId = seedCfg(pkgId, { dev1: { NF_TOKEN: 'user-tok', NF_PORT: '8443' } })
+    h.clientMock.testConnection.mockResolvedValue({
+      ok: true, protocolVersion: '1.0', tools: [],
+    })
+    const res = await McpPackageService.testPackageConfig(cfgId)
+    expect(res.ok).toBe(true)
+    expect(h.clientMock.testConnection.mock.calls[0][1].env).toEqual({ NF_TOKEN: 'user-tok', NF_PORT: '8443' })
   })
 })
