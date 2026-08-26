@@ -86,6 +86,12 @@ export function registerMcpIpc() {
       if (envKeys.some((k) => k.length > MAX_ENV_KEY_LENGTH)) {
         throw new Error(`env 键超过长度上限 ${MAX_ENV_KEY_LENGTH} 字符`)
       }
+      // MD-04（29.1 CR）：配置级共享 env 存量通道键名同源 ENV_KEY_RE——与 deviceEnvs /
+      // createConfigFromPackage 三通道真正同规则，防含 =/控制字符键名经宽通道写入
+      // buildChildEnv（该通道值同样直达子进程 env）
+      if (envKeys.some((k) => !ENV_KEY_RE.test(k))) {
+        throw new Error(`参数无效：env 键必须以字母/下划线开头且仅含字母数字下划线（≤${MAX_ENV_KEY_LENGTH} 字符）`)
+      }
     }
     if (dto.credential !== undefined && dto.credential !== null && typeof dto.credential !== 'string') {
       throw new Error('参数无效：credential')
