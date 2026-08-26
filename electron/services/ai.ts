@@ -20,6 +20,7 @@ import { McpService } from './mcpService'
 import { callToolWithTimeout } from './mcpClient'
 import type { PackageSpawnInfo } from './mcpClient'
 import type { EnvMetaEntry } from './mcpPackageValidator'
+import { sanitizeEnvMeta } from './mcpPackageValidator'
 import { classifyTier, type AgentTier } from './agentRouter'
 import {
   retrieveForTier, verifySourcesEvidence, listExpCatalog, listKbCatalog,
@@ -884,42 +885,37 @@ function buildMcpContexts(targetDevices: any[]): McpCallContext[] {
 }
 
 /**
- * 29-04：装配包轨道 spawn 信息（TOCTOU 重验 + python/node 双轨的 mcpClient 入参）。
+ * 29-04 + 29.1 CR MD-05：装配包轨道 spawn 信息（TOCTOU 重验 + python/node 双轨的 mcpClient 入参）。
  * 包不存在/disabled/查询异常 → null（调用方 fail-closed 拒绝执行，不给旧 spawn 路径）。
+ * envMeta 单源 manifest_json（与 rowToView / testPackageConfig 同源——env_meta 列 29.1 MD-05
+ * 起降级为仅写入镜像，任何强制层不再读取，杜绝「表单校验用的 meta」与「spawn 强制用的 meta」
+ * 双源静默分叉）；消费前经 sanitizeEnvMeta 同构结构清洗（防 DB 篡改值直接进 spawn 合并）。
+ * manifest_json 坏 JSON → null：required 硬拦在强制层静默消失属 fail-open，宁可拒绝装配。
  * （导出供单测直测装配源语义——29.1 CR MD-05 单源收敛的回归锚点。）
  */
 export function loadPackageSpawnInfo(packageId: number): PackageSpawnInfo | null {
   try {
     const row = getDatabase().prepare(
-      'SELECT dir_path, runtime, entry, fingerprint_json, env_meta, disabled FROM mcp_packages WHERE id = ?'
-    ).get(packageId) as { dir_path: string; runtime: 'node' | 'python'; entry: string; fingerprint_json: string | null; env_meta: string | null; disabled: number } | undefined
+      'SELECT dir_path, runtime, entry, fingerprint_json, manifest_json, disabled FROM mcp_packages WHERE id = ?'
+    ).get(packageId) as { dir_path: string; runtime: 'node' | 'python'; entry: string; fingerprint_json: string | null; manifest_json: string | null; disabled: number } | undefined
     if (!row || row.disabled) return null
+    let envMeta: Record<string, EnvMetaEntry> | undefined
+    try {
+      const manifest = JSON.parse(row.manifest_json ?? '') as { envMeta?: unknown } | null
+      envMeta = sanitizeEnvMeta(manifest && typeof manifest === 'object' && !Array.isArray(manifest) ? manifest.envMeta : undefined)
+    } catch {
+      return null // 坏 JSON fail-closed（见方法注）
+    }
     return {
       packageId,
       dirPath: row.dir_path,
       runtime: row.runtime,
       entry: row.entry,
       fingerprintJson: row.fingerprint_json ?? '',
-      envMeta: parseEnvMetaColumn(row.env_meta),
+      envMeta,
     }
   } catch {
     return null
-  }
-}
-
-/**
- * 29.1-04：解析 mcp_packages.env_meta 明文 JSON 列为 spawn 侧 envMeta。
- * 坏 JSON / 非对象 → undefined（元数据降级为「无 envMeta」现状行为——值通道 env_json_enc
- * 不受影响；required 硬拦由表单层与包导入校验兜住，此处不 fail 整个装配）。
- */
-function parseEnvMetaColumn(raw: string | null): Record<string, EnvMetaEntry> | undefined {
-  if (!raw) return undefined
-  try {
-    const v = JSON.parse(raw) as unknown
-    if (v && typeof v === 'object' && !Array.isArray(v)) return v as Record<string, EnvMetaEntry>
-    return undefined
-  } catch {
-    return undefined
   }
 }
 

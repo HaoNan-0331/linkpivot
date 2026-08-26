@@ -93,7 +93,7 @@ export interface PackageSpawnInfo {
   entry: string
   /** 落盘 fingerprint_json（mcp_packages.fingerprint_json 原文） */
   fingerprintJson: string
-  /** 包 envMeta（mcp_packages.env_meta 解析，29.1-04 D-01/D-02：required 硬拦 + default 叠加） */
+  /** 包 envMeta（29.1-04 D-01/D-02：required 硬拦 + default 叠加；MD-05 起装配源单源 manifest_json） */
   envMeta?: Record<string, EnvMetaEntry>
 }
 

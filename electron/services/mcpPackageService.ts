@@ -25,7 +25,7 @@ import { app } from 'electron'
 import type Database from 'better-sqlite3'
 import { getDatabase } from '../database/connection'
 import { encField, decField } from '../utils/crypto'
-import { validateMcpb, buildFingerprintTree, isFingerprintExcluded, MAX_PACKAGE_BYTES, ENV_KEY_RE } from './mcpPackageValidator'
+import { validateMcpb, buildFingerprintTree, isFingerprintExcluded, MAX_PACKAGE_BYTES, ENV_KEY_RE, sanitizeEnvMeta } from './mcpPackageValidator'
 import { MAX_BATCH } from './mcpService'
 import type { McpManifest, FileEntry, VectorResult, EnvMetaEntry } from './mcpPackageValidator'
 import { testConnection, verifyPackageFingerprint, reportPackageIntegrityFailure, resolvePackageSpawn, applyEnvMeta } from './mcpClient'
@@ -288,7 +288,7 @@ export class McpPackageService {
         `INSERT INTO mcp_packages (name, version, runtime, entry, manifest_json, env_meta, fingerprint, fingerprint_json, dir_path, size_bytes)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(manifest.name, manifest.version, manifest.runtime, manifest.entry,
-        JSON.stringify(manifest), manifest.envMeta ? JSON.stringify(manifest.envMeta) : null,
+        JSON.stringify(manifest), manifest.envMeta ? JSON.stringify(manifest.envMeta) : null, // env_meta：MD-05 起仅写入镜像（读取单源 manifest_json）
         fp.treeSha256, JSON.stringify(fp), dir, v.totalBytes)
     } catch (e) {
       // WR-04：DB 落库失败（如并发同名 UNIQUE 兜底触发）补偿删除孤儿目录，防磁盘/DB 不一致
@@ -654,6 +654,11 @@ export class McpPackageService {
     if (row.disabled) {
       return { ok: false, error: { code: 'MCP_ERROR', reason: '包已被禁用（TOCTOU 检出后需重新导入校验），不能测试' } }
     }
+    // 29.1 CR MD-05：坏 manifest fail-closed 拒绝（与 testPackage/loadPackageSpawnInfo 同语义——
+    // envMeta 装配源 manifest_json 损坏时 required 硬拦不得静默消失）
+    if (!McpPackageService.parseManifestSafe(row.manifest_json)) {
+      return { ok: false, error: { code: 'MCP_ERROR', reason: '包 manifest 元数据损坏' } }
+    }
     // WR-01 同款：TOCTOU 指纹重验失败 → disabled=1 + security 日志副作用（不 spawn）
     try {
       verifyPackageFingerprint(row.dir_path, row.fingerprint_json)
@@ -706,10 +711,11 @@ export class McpPackageService {
     // 29.1 CR HI-01：spawn env 与主链 getConnection 同源过 applyEnvMeta（复用纯函数，不复制
     // 逻辑防单源分叉）——required 缺值 fail-closed 不拉起（D-01 运行时层闭合到行级测试通道），
     // default 留空即用（D-02，行级测试不再因缺默认值握手失败而与 AI 真跑结论矛盾）。
-    // envMeta 与 rowToView 同源解 manifest_json（29.1-02 单源投影，杜绝 env_meta 列双源漂移）
+    // envMeta 与 rowToView 同源解 manifest_json（29.1-02 单源投影，杜绝 env_meta 列双源漂移）；
+    // MD-05 追加 sanitizeEnvMeta 同构清洗（与 loadPackageSpawnInfo 强制层同标准）
     let spawnEnv = env
     try {
-      spawnEnv = applyEnvMeta(env, McpPackageService.parseManifestSafe(row.manifest_json)?.envMeta)
+      spawnEnv = applyEnvMeta(env, sanitizeEnvMeta(McpPackageService.parseManifestSafe(row.manifest_json)?.envMeta))
     } catch (e) {
       const err = e as { code?: string; reason?: string }
       return { ok: false, error: { code: err?.code ?? 'MCP_ENV_REQUIRED_MISSING', reason: err?.reason ?? '环境变量校验失败' } }

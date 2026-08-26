@@ -32,6 +32,33 @@ export interface EnvMetaEntry {
   default?: string
 }
 
+/**
+ * 29.1 CR MD-05：envMeta 结构清洗（spawn 强制层消费 manifest_json 前的同构守卫）。
+ * manifest 在导入时已过 parseMcpbManifest 六向量结构校验——此处防 DB 篡改/历史坏行
+ * 直接进 spawn 合并（required 硬拦 + default 叠加链路）：
+ *  - 键名不合法（ENV_KEY_RE）或 entry 非对象 → 整项丢弃
+ *  - label/description/example/default 仅保留 string 类型字段；label 缺失兜底键名
+ *    （applyEnvMeta 报错文案同款 fallback，人话不丢）
+ *  - required 真值收窄为 true（truthy → true，不松于 applyEnvMeta 的 truthy 判定——
+ *    fail-closed 方向：篡改值不得让 required 拦截消失）
+ * 非 plain object 入参 → undefined（无 envMeta 现状行为，零回归）。
+ */
+export function sanitizeEnvMeta(v: unknown): Record<string, EnvMetaEntry> | undefined {
+  if (!isPlainObject(v)) return undefined
+  let out: Record<string, EnvMetaEntry> | undefined
+  for (const [k, e] of Object.entries(v)) {
+    if (!ENV_KEY_RE.test(k) || !isPlainObject(e)) continue
+    const entry: EnvMetaEntry = { label: typeof e.label === 'string' && e.label.length > 0 ? e.label : k }
+    if (e.required) entry.required = true
+    if (typeof e.description === 'string') entry.description = e.description
+    if (typeof e.example === 'string') entry.example = e.example
+    if (typeof e.default === 'string') entry.default = e.default
+    out ??= {}
+    out[k] = entry
+  }
+  return out
+}
+
 export interface McpManifest {
   name: string
   version: string
