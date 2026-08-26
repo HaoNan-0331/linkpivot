@@ -932,3 +932,35 @@ describe('29.1 CR HI-01: testPackageConfig spawn env 过 applyEnvMeta（与主�
     expect(h.clientMock.testConnection.mock.calls[0][1].env).toEqual({ NF_TOKEN: 'user-tok', NF_PORT: '8443' })
   })
 })
+
+// ---------------------------------------------------------------------------
+// 29.1 CR MD-02：confirmOverwrite「DB 已提交 → 换盘」窗口防护
+// 现网缺陷：换盘失败（或窗口内 spawn）用新指纹比旧磁盘 → TOCTOU 误判 → 包永久禁用，
+// 恢复只能完整重导。修复语义：换盘失败按事务前快照回滚 DB（消除持续态误禁用窗口）+
+// 换盘窗口 swap 守卫（spawn/测试通道返回「正在更新」可重试，不触发 TOCTOU 副作用）。
+// ---------------------------------------------------------------------------
+describe('29.1 CR MD-02: confirmOverwrite 换盘失败 → 快照回滚（不留「DB 新指纹/磁盘旧内容」TOCTOU 误禁用持续态）', () => {
+  it('换盘 rename 失败 → DB 回滚事务前旧指纹/旧 rel env（被剔除键恢复），包不被置 disabled', () => {
+    const imp = McpPackageService.importPackage(mkMcpb({ envKeys: ['A', 'B'] }))
+    if (!imp.ok) throw new Error('import failed')
+    const pkgId = imp.package.id
+    seedPackageConfig(h.db!, pkgId, { dev1: { A: 'a1', B: 'b1' } })
+    const oldFp = (h.db!.prepare('SELECT fingerprint AS f FROM mcp_packages WHERE id = ?').get(pkgId) as any).f
+    const oldRel = relEnv(h.db!, 'dev1')
+    expect(oldRel).toEqual({ A: 'a1', B: 'b1' })
+    // 注入换盘失败：dir_path 指向包根内「父目录不存在」路径——rmSync(force) 对不存在路径
+    // 静默通过、renameSync 因父目录缺失 ENOENT 必败（等价真实「rm 成功/rename 半途失败」形态）
+    const phantom = join(rootDir, 'no-such-parent', 'demo-pkg')
+    h.db!.prepare('UPDATE mcp_packages SET dir_path = ? WHERE id = ?').run(phantom, pkgId)
+    expect(() =>
+      McpPackageService.confirmOverwrite(pkgId, mkMcpb({ version: '2.0.0', envKeys: ['A'], entryContent: 'console.log(2)' }))
+    ).toThrow()
+    // 快照回滚：指纹回旧值（配旧磁盘内容）、事务剔除的 B 键恢复、包未禁用
+    const row = h.db!.prepare('SELECT fingerprint AS f, disabled AS d FROM mcp_packages WHERE id = ?').get(pkgId) as any
+    expect(row.f).toBe(oldFp)
+    expect(row.d).toBe(0)
+    expect(relEnv(h.db!, 'dev1')).toEqual(oldRel)
+    // 真实磁盘旧内容原样（注入路径本就未触碰真实包目录）
+    expect(readFileSync(join(rootDir, 'demo-pkg', 'main.js'), 'utf-8')).toBe('console.log(1)')
+  })
+})
