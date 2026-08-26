@@ -114,6 +114,26 @@ describe('WR-03（Phase 29 code-review）：mcp:save deviceEnvs 键名字符集�
   })
 })
 
+describe('MD-04（29.1 CR）：mcp:save dto.env（配置级共享 env 存量通道）键名同源 ENV_KEY_RE', () => {
+  const baseDto = { name: 'cfg', type: 'stdio', commandOrUrl: 'node x.js' } as const
+
+  it('dto.env 含非法键（= / 控制字符 / 数字开头）→ 拒绝且不落库（第三条通道不再宽进）', () => {
+    const save = handlers.get('mcp:save')!
+    for (const badKey of ['A=B', 'a\nb', '1KEY', '']) {
+      expect(() =>
+        save({}, { ...baseDto, env: { [badKey]: 'v' } })
+      ).toThrow('env 键必须以字母/下划线开头')
+    }
+    expect(McpService.saveConfig).not.toHaveBeenCalled()
+  })
+
+  it('dto.env 合法键 → 放行（存量通道不误伤）', () => {
+    const save = handlers.get('mcp:save')!
+    save({}, { ...baseDto, env: { TOKEN: 'v', _private: 'v' } })
+    expect(McpService.saveConfig).toHaveBeenCalled()
+  })
+})
+
 describe('Bug A（生产实测）：credential / commandOrUrl 保存与测试入口防御性 trim', () => {
   const baseDto = { name: 'cfg', type: 'http', commandOrUrl: 'http://x' } as const
 
