@@ -53,6 +53,7 @@ vi.mock('../../../electron/services/mcpProcessRegistry', () => ({
 }))
 
 import { McpPackageService } from '../../../electron/services/mcpPackageService'
+import { McpPackageSwapGuard } from '../../../electron/services/mcpPackageSwapGuard'
 import { encField, decField } from '../../../electron/utils/crypto'
 
 const TEST_MK = 'test-mk-29-03'
@@ -962,5 +963,71 @@ describe('29.1 CR MD-02: confirmOverwrite 换盘失败 → 快照回滚（不留
     expect(relEnv(h.db!, 'dev1')).toEqual(oldRel)
     // 真实磁盘旧内容原样（注入路径本就未触碰真实包目录）
     expect(readFileSync(join(rootDir, 'demo-pkg', 'main.js'), 'utf-8')).toBe('console.log(1)')
+  })
+
+  it('换盘异常路径也清零 swap 标记（finally 语义，不永久卡死测试通道）', () => {
+    const imp = McpPackageService.importPackage(mkMcpb())
+    if (!imp.ok) throw new Error('import failed')
+    const pkgId = imp.package.id
+    const phantom = join(rootDir, 'no-such-parent-2', 'demo-pkg')
+    h.db!.prepare('UPDATE mcp_packages SET dir_path = ? WHERE id = ?').run(phantom, pkgId)
+    expect(() =>
+      McpPackageService.confirmOverwrite(pkgId, mkMcpb({ version: '2.0.0' }))
+    ).toThrow()
+    expect(McpPackageSwapGuard.isSwapping(pkgId)).toBe(false)
+  })
+})
+
+describe('29.1 CR MD-02: 换盘窗口 swap 守卫——测试通道返回「正在更新」不触发 TOCTOU 重验/禁用', () => {
+  function seedOne(): { pkgId: number; cfgId: number } {
+    const imp = McpPackageService.importPackage(mkMcpb())
+    if (!imp.ok) throw new Error('import failed')
+    const pkgId = imp.package.id
+    seedPackageConfig(h.db!, pkgId, { dev1: { A: 'a1' } })
+    const cfgId = Number((h.db!.prepare('SELECT id FROM mcp_configs WHERE package_id = ?').get(pkgId) as any).id)
+    return { pkgId, cfgId }
+  }
+
+  it('isSwapping 置位期间 testPackageConfig → MCP_PACKAGE_SWAPPING 结构化失败，不重验不 spawn 不禁用', async () => {
+    const { pkgId, cfgId } = seedOne()
+    McpPackageSwapGuard.begin(pkgId)
+    try {
+      const res = await McpPackageService.testPackageConfig(cfgId)
+      expect(res.ok).toBe(false)
+      if (!res.ok) {
+        expect(res.error.code).toBe('MCP_PACKAGE_SWAPPING')
+        expect(res.error.reason).toContain('正在更新')
+      }
+      expect(h.clientMock.verifyPackageFingerprint).not.toHaveBeenCalled()
+      expect(h.clientMock.testConnection).not.toHaveBeenCalled()
+      expect((h.db!.prepare('SELECT disabled AS d FROM mcp_packages WHERE id = ?').get(pkgId) as any).d).toBe(0)
+    } finally {
+      McpPackageSwapGuard.end(pkgId)
+    }
+  })
+
+  it('isSwapping 置位期间 testPackage → 提示稍后重试，不重验不禁用', async () => {
+    const { pkgId } = seedOne()
+    McpPackageSwapGuard.begin(pkgId)
+    try {
+      const res = await McpPackageService.testPackage(pkgId)
+      expect(res.ok).toBe(false)
+      expect(res.error).toContain('正在更新')
+      expect(h.clientMock.verifyPackageFingerprint).not.toHaveBeenCalled()
+      expect(h.clientMock.testConnection).not.toHaveBeenCalled()
+      expect((h.db!.prepare('SELECT disabled AS d FROM mcp_packages WHERE id = ?').get(pkgId) as any).d).toBe(0)
+    } finally {
+      McpPackageSwapGuard.end(pkgId)
+    }
+  })
+
+  it('守卫清零后通道即恢复（begin/end 对称，无残留拦截）', async () => {
+    const { pkgId, cfgId } = seedOne()
+    McpPackageSwapGuard.begin(pkgId)
+    McpPackageSwapGuard.end(pkgId)
+    h.clientMock.testConnection.mockResolvedValue({ ok: true, protocolVersion: '1.0', tools: [] })
+    const res = await McpPackageService.testPackageConfig(cfgId)
+    expect(res.ok).toBe(true)
+    expect(h.clientMock.testConnection).toHaveBeenCalledTimes(1)
   })
 })

@@ -33,6 +33,7 @@ import type { McpTestResult, StageCallback } from './mcpClient'
 import { McpToolPolicy } from './mcpToolPolicy'
 import type { McpToolAnnotations } from './mcpToolPolicy'
 import { McpProcessRegistry } from './mcpProcessRegistry'
+import { McpPackageSwapGuard, packageSwappingError } from './mcpPackageSwapGuard'
 
 /** manifest.name 长度上限（网关与 service 同源，D-05 包身份健壮性） */
 export const MAX_PKG_NAME_LENGTH = 100
@@ -358,88 +359,154 @@ export class McpPackageService {
     const unsafe = McpPackageService.unsafePackageDirError(existing.dir_path)
     if (unsafe) return { ok: false, error: unsafe }
 
-    // 1) WR-04：新内容先写包根下临时目录，DB 事务成功后再原子换入——
-    //    事务失败时磁盘零变动（旧内容原样），不再出现「磁盘已新、DB 旧指纹」的不一致窗口
-    const tmpDir = join(McpPackageService.rootGetter(), `.overwrite-${packageId}-${Date.now()}`)
-    McpPackageService.writePackageFiles(tmpDir, v.fileTree)
-
-    // 2) DB 事务：rel 行 env 键剔除 + 主表更新
+    // MD-02（29.1 CR）换盘窗口三重防护——
+    // ① 实例先杀前移至 DB 事务前：此时旧指纹仍匹配磁盘，误杀代价低（事务失败仅损失长连接
+    //    需重连，不损失数据）；原顺序「提交后才杀」与 rmSync 同窗口，晚杀无增益
+    // ② swap-in-progress 进程内标记覆盖「DB 提交新指纹 → 换盘完成」全程：getConnection /
+    //    testPackage / testPackageConfig / loadPackageSpawnInfo 检测到标记返回
+    //    「包正在更新，请稍后重试」（可重试），不触发 TOCTOU 重验误禁用
+    // ③ 换盘失败补偿：按事务前快照回滚 DB（主行旧值 + rel 行 env 密文原样），消除持续态
+    //    「DB 新指纹/磁盘旧内容」让后续 spawn 全部 TOCTOU 误禁用的窗口
+    McpPackageSwapGuard.begin(packageId)
     try {
-      conn.transaction((): void => {
-      const removedKeys = diff.env.removed
-      if (removedKeys.length > 0) {
-        const stmtRel = conn.prepare(
-          `SELECT rel.id AS relId, rel.env_json_enc AS enc FROM mcp_device_rel rel
-           JOIN mcp_configs c ON c.id = rel.mcp_config_id
-           WHERE c.package_id = ? AND rel.env_json_enc IS NOT NULL`
-        )
-        const stmtUpd = conn.prepare('UPDATE mcp_device_rel SET env_json_enc = ? WHERE id = ?')
-        for (const r of stmtRel.all(packageId) as Array<{ relId: string; enc: string }>) {
-          const dec = decField(r.enc, McpPackageService.MK)
-          if (!dec) continue // 坏密文跳过（decField 失败已走 setDecryptFailureHandler）
-          try {
-            const env = JSON.parse(dec) as Record<string, string>
-            if (!env || typeof env !== 'object') continue
-            let changed = false
-            for (const k of removedKeys) {
-              if (k in env) {
-                delete env[k]
-                changed = true
+      // 0) 先杀该包全部运行实例（WR-02，复用 deletePackage 树杀路径——Windows 运行中
+      //    node.exe/python.exe 持句柄，rmSync 会 EBUSY/EPERM）
+      const ownIds = new Set(
+        (conn.prepare('SELECT id FROM mcp_configs WHERE package_id = ?')
+          .all(packageId) as Array<{ id: number }>).map((r) => String(r.id))
+      )
+      for (const rec of McpProcessRegistry.listActive()) {
+        if (ownIds.has(String(rec.configId).split(':')[0])) McpProcessRegistry.killTree(rec.pid)
+      }
+
+      // 0b) 补偿快照（事务前旧值：主行 + rel 行密文原样——仅换盘失败回滚用，密文不解不重组）
+      const snapMain = conn.prepare(
+        `SELECT version, runtime, entry, manifest_json, env_meta, fingerprint, fingerprint_json, size_bytes, updated_at
+         FROM mcp_packages WHERE id = ?`
+      ).get(packageId) as any
+      const snapRels = conn.prepare(
+        `SELECT rel.id AS relId, rel.env_json_enc AS enc FROM mcp_device_rel rel
+         JOIN mcp_configs c ON c.id = rel.mcp_config_id WHERE c.package_id = ?`
+      ).all(packageId) as Array<{ relId: string; enc: string | null }>
+
+      // 1) WR-04：新内容先写包根下临时目录，DB 事务成功后再原子换入——
+      //    事务失败时磁盘零变动（旧内容原样），不再出现「磁盘已新、DB 旧指纹」的不一致窗口
+      const tmpDir = join(McpPackageService.rootGetter(), `.overwrite-${packageId}-${Date.now()}`)
+      McpPackageService.writePackageFiles(tmpDir, v.fileTree)
+
+      // 2) DB 事务：rel 行 env 键剔除 + 主表更新
+      try {
+        conn.transaction((): void => {
+        const removedKeys = diff.env.removed
+        if (removedKeys.length > 0) {
+          const stmtRel = conn.prepare(
+            `SELECT rel.id AS relId, rel.env_json_enc AS enc FROM mcp_device_rel rel
+             JOIN mcp_configs c ON c.id = rel.mcp_config_id
+             WHERE c.package_id = ? AND rel.env_json_enc IS NOT NULL`
+          )
+          const stmtUpd = conn.prepare('UPDATE mcp_device_rel SET env_json_enc = ? WHERE id = ?')
+          for (const r of stmtRel.all(packageId) as Array<{ relId: string; enc: string }>) {
+            const dec = decField(r.enc, McpPackageService.MK)
+            if (!dec) continue // 坏密文跳过（decField 失败已走 setDecryptFailureHandler）
+            try {
+              const env = JSON.parse(dec) as Record<string, string>
+              if (!env || typeof env !== 'object') continue
+              let changed = false
+              for (const k of removedKeys) {
+                if (k in env) {
+                  delete env[k]
+                  changed = true
+                }
               }
+              if (changed) stmtUpd.run(encField(JSON.stringify(env), McpPackageService.MK), r.relId)
+            } catch {
+              // 坏 JSON 跳过该行（交集语义降级为不动）
             }
-            if (changed) stmtUpd.run(encField(JSON.stringify(env), McpPackageService.MK), r.relId)
-          } catch {
-            // 坏 JSON 跳过该行（交集语义降级为不动）
           }
         }
+        conn.prepare(
+          `UPDATE mcp_packages SET version = ?, runtime = ?, entry = ?, manifest_json = ?, env_meta = ?, fingerprint = ?,
+           fingerprint_json = ?, size_bytes = ?, last_test = NULL, updated_at = datetime('now','localtime')
+           WHERE id = ?`
+        ).run(manifest.version, manifest.runtime, manifest.entry, JSON.stringify(manifest),
+          manifest.envMeta ? JSON.stringify(manifest.envMeta) : null,
+          fp.treeSha256, JSON.stringify(fp), v.totalBytes, packageId)
+        })()
+      } catch (e) {
+        // WR-04：事务失败补偿——清临时目录，磁盘保持旧内容（DB 已随事务 ROLLBACK）
+        rmSync(tmpDir, { recursive: true, force: true })
+        throw e
       }
-      conn.prepare(
-        `UPDATE mcp_packages SET version = ?, runtime = ?, entry = ?, manifest_json = ?, env_meta = ?, fingerprint = ?,
-         fingerprint_json = ?, size_bytes = ?, last_test = NULL, updated_at = datetime('now','localtime')
-         WHERE id = ?`
-      ).run(manifest.version, manifest.runtime, manifest.entry, JSON.stringify(manifest),
-        manifest.envMeta ? JSON.stringify(manifest.envMeta) : null,
-        fp.treeSha256, JSON.stringify(fp), v.totalBytes, packageId)
-      })()
-    } catch (e) {
-      // WR-04：事务失败补偿——清临时目录，磁盘保持旧内容（DB 已随事务 ROLLBACK）
-      rmSync(tmpDir, { recursive: true, force: true })
-      throw e
-    }
 
-    // 3) 换盘前先杀该包全部运行实例（WR-02，复用 deletePackage 树杀路径——Windows
-    //    运行中 node.exe/python.exe 持句柄，rmSync 会 EBUSY/EPERM → DB 新指纹/磁盘
-    //    旧内容不一致 → 包被 TOCTOU 重验自动禁用）
-    const ownIds = new Set(
-      (conn.prepare('SELECT id FROM mcp_configs WHERE package_id = ?')
-        .all(packageId) as Array<{ id: number }>).map((r) => String(r.id))
-    )
-    for (const rec of McpProcessRegistry.listActive()) {
-      if (ownIds.has(String(rec.configId).split(':')[0])) McpProcessRegistry.killTree(rec.pid)
-    }
-    // 4) 换入：删旧目录 → 临时目录同卷 rename 到位（旧内容 → 新内容近原子替换）；
-    //    失败补偿：旧目录改名 .stale-<id>-<ts> 隔离后再试换入（rmSync 半删/残留句柄场景），
-    //    仍失败则抛错（DB 指纹已是新值、磁盘未换入——下次 spawn TOCTOU 检出即禁用，fail-closed）
-    try {
-      rmSync(existing.dir_path, { recursive: true, force: true })
-      renameSync(tmpDir, existing.dir_path)
-    } catch {
-      const staleDir = join(McpPackageService.rootGetter(), `.stale-${packageId}-${Date.now()}`)
+      // 3) 换入：删旧目录 → 临时目录同卷 rename 到位（旧内容 → 新内容近原子替换）；
+      //    失败补偿：旧目录改名 .stale-<id>-<ts> 隔离后再试换入（rmSync 半删/残留句柄场景），
+      //    仍失败则按快照回滚 DB（MD-02 ③）后抛错
+      let staleDir: string | null = null
       try {
-        renameSync(existing.dir_path, staleDir)
-      } catch { /* 旧目录已删净或同样被占——继续尝试换入新目录 */ }
-      try {
+        rmSync(existing.dir_path, { recursive: true, force: true })
         renameSync(tmpDir, existing.dir_path)
-      } catch (e2) {
-        console.warn(
-          `[mcpPackage] confirmOverwrite 换盘失败（DB 指纹已更新、磁盘未换入，下次 spawn 将 TOCTOU 检出并禁用包，请重新覆盖导入）：`,
-          (e2 as Error).message
-        )
-        throw e2
+      } catch {
+        staleDir = join(McpPackageService.rootGetter(), `.stale-${packageId}-${Date.now()}`)
+        try {
+          renameSync(existing.dir_path, staleDir)
+        } catch { /* 旧目录已删净或同样被占——继续尝试换入新目录 */ }
+        try {
+          renameSync(tmpDir, existing.dir_path)
+          staleDir = null // 换入成功，stale 目录只是旧内容隔离垃圾（LO-05 清理范畴）
+        } catch (e2) {
+          console.warn(
+            '[mcpPackage] confirmOverwrite 换盘失败，按事务前快照回滚 DB（旧指纹 + 旧 rel env）：',
+            (e2 as Error).message
+          )
+          McpPackageService.compensateOverwriteSwapFailure(conn, packageId, existing.dir_path, snapMain, snapRels, staleDir)
+          throw e2
+        }
       }
+    } finally {
+      McpPackageSwapGuard.end(packageId)
     }
     const row = conn.prepare('SELECT * FROM mcp_packages WHERE id = ?').get(packageId) as any
     return { ok: true, status: 'overwritten', package: McpPackageService.rowToView(row), diff }
+  }
+
+  /**
+   * MD-02（29.1 CR）③：confirmOverwrite 换盘失败补偿——DB 按事务前快照回滚（主行旧值 +
+   * rel 行 env 密文原样恢复，密文不解不重组零加解密损耗），磁盘尽力还原（.stale- 隔离目录
+   * 改回原位 = 旧内容配旧指纹，一致可 spawn）。
+   * 补偿自身失败仅告警（维持既有 fail-closed 语义：下次 spawn TOCTOU 检出禁用，需重新覆盖导入）。
+   */
+  private static compensateOverwriteSwapFailure(
+    conn: Database.Database,
+    packageId: number,
+    dirPath: string,
+    snapMain: any,
+    snapRels: Array<{ relId: string; enc: string | null }>,
+    staleDir: string | null
+  ): void {
+    try {
+      conn.transaction((): void => {
+        conn.prepare(
+          `UPDATE mcp_packages SET version = ?, runtime = ?, entry = ?, manifest_json = ?, env_meta = ?,
+           fingerprint = ?, fingerprint_json = ?, size_bytes = ?, updated_at = ?
+           WHERE id = ?`
+        ).run(snapMain.version, snapMain.runtime, snapMain.entry, snapMain.manifest_json, snapMain.env_meta,
+          snapMain.fingerprint, snapMain.fingerprint_json, snapMain.size_bytes, snapMain.updated_at, packageId)
+        const upd = conn.prepare('UPDATE mcp_device_rel SET env_json_enc = ? WHERE id = ?')
+        for (const r of snapRels) upd.run(r.enc, r.relId)
+      })()
+    } catch (e) {
+      console.warn(
+        '[mcpPackage] confirmOverwrite 换盘失败补偿回滚失败（下次 spawn 将 TOCTOU 检出禁用，请重新覆盖导入）：',
+        (e as Error).message
+      )
+      return
+    }
+    // 磁盘尽力还原：stale 隔离目录改回原位（旧内容 + 旧指纹 = 一致）
+    if (staleDir != null && existsSync(staleDir)) {
+      try {
+        renameSync(staleDir, dirPath)
+      } catch { /* 还原失败：DB 已回滚旧指纹，磁盘缺失由下次 spawn TOCTOU 检出（fail-closed） */ }
+    }
   }
 
   static listPackages(): McpPackageView[] {
@@ -548,6 +615,10 @@ export class McpPackageService {
     if (row.disabled) {
       return { ok: false, error: '包已被禁用（TOCTOU 检出后需重新导入校验），不能自动测试' }
     }
+    // MD-02：覆盖导入换盘窗口（DB 已提交新指纹、磁盘未换入）——重验必误判，提示稍后重试
+    if (McpPackageSwapGuard.isSwapping(packageId)) {
+      return { ok: false, error: packageSwappingError().reason }
+    }
     try {
       verifyPackageFingerprint(row.dir_path, row.fingerprint_json)
     } catch (e) {
@@ -653,6 +724,10 @@ export class McpPackageService {
     if (!row) return { ok: false, error: { code: 'MCP_ERROR', reason: '包不存在或已被删除' } }
     if (row.disabled) {
       return { ok: false, error: { code: 'MCP_ERROR', reason: '包已被禁用（TOCTOU 检出后需重新导入校验），不能测试' } }
+    }
+    // MD-02：换盘窗口守卫——重验必误判（新指纹比旧磁盘），返回可重试结构化错误不触发 TOCTOU 副作用
+    if (McpPackageSwapGuard.isSwapping(row.id)) {
+      return { ok: false, error: packageSwappingError() }
     }
     // 29.1 CR MD-05：坏 manifest fail-closed 拒绝（与 testPackage/loadPackageSpawnInfo 同语义——
     // envMeta 装配源 manifest_json 损坏时 required 硬拦不得静默消失）

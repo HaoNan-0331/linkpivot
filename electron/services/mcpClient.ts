@@ -29,6 +29,7 @@ import { join } from 'path'
 import { McpProcessRegistry } from './mcpProcessRegistry'
 import { buildFingerprintTree, isFingerprintExcluded } from './mcpPackageValidator'
 import type { EnvMetaEntry } from './mcpPackageValidator'
+import { McpPackageSwapGuard, packageSwappingError } from './mcpPackageSwapGuard'
 import type { McpDecodedConfig } from './mcpService'
 
 /** env 白名单（21-RESEARCH Pattern 3）——显式拷贝，禁止 spread process.env */
@@ -727,6 +728,12 @@ export async function getConnection(configId: string, config: McpDecodedConfig, 
     /** 29.1-04：包轨 envMeta 叠加产物（required 校验 + default 补齐），纯内存不落库 */
     let spawnEnv: Record<string, string> | null = null
     if (opts?.package) {
+      // MD-02（29.1 CR）：换盘窗口守卫——覆盖导入「DB 已提交新指纹 → 磁盘换入完成」期间
+      // 重验必新指纹比旧磁盘误判（→包永久禁用）；窗口内返回可重试错误，不触发重验与
+      // integrity 副作用（窗口毫秒级，调用方稍后重试即可）
+      if (McpPackageSwapGuard.isSwapping(opts.package.packageId)) {
+        throw packageSwappingError()
+      }
       // TOCTOU 全树重验（D-26/D-27）：不一致拒绝启动 + integrityHandler 副作用（包 disabled + security 日志，
       // 由 main.ts 注入 service 落库——mcpClient 零 DB 依赖）；handler 故障不吞主线错误（安全语义不降级）
       try {

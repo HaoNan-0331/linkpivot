@@ -21,6 +21,7 @@ import { callToolWithTimeout } from './mcpClient'
 import type { PackageSpawnInfo } from './mcpClient'
 import type { EnvMetaEntry } from './mcpPackageValidator'
 import { sanitizeEnvMeta } from './mcpPackageValidator'
+import { McpPackageSwapGuard, packageSwappingError } from './mcpPackageSwapGuard'
 import { classifyTier, type AgentTier } from './agentRouter'
 import {
   retrieveForTier, verifySourcesEvidence, listExpCatalog, listKbCatalog,
@@ -948,6 +949,11 @@ function buildMcpContexts(targetDevices: any[]): McpCallContext[] {
  * （导出供单测直测装配源语义——29.1 CR MD-05 单源收敛的回归锚点。）
  */
 export function loadPackageSpawnInfo(packageId: number): PackageSpawnInfo | null {
+  // MD-02（29.1 CR）：换盘窗口守卫——抛可重试结构化错误（runMcpCall catch 透出 reason），
+  // 不走后续装配/重验（getConnection 侧同款守卫双覆盖）
+  if (McpPackageSwapGuard.isSwapping(packageId)) {
+    throw packageSwappingError()
+  }
   try {
     const row = getDatabase().prepare(
       'SELECT dir_path, runtime, entry, fingerprint_json, manifest_json, disabled FROM mcp_packages WHERE id = ?'

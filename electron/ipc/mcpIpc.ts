@@ -196,7 +196,8 @@ export function registerMcpIpc() {
           ...t,
           annotations: t.annotations as McpToolAnnotations | undefined,
         })))
-      } else if (result.error.code !== 'MCP_CANCELLED') {
+      } else if (result.error.code !== 'MCP_CANCELLED' && result.error.code !== 'MCP_PACKAGE_SWAPPING') {
+        // MD-02：换盘窗口「正在更新」是可重试瞬时态，不计入最近测试失败记录
         McpService.recordTestResult(configId!, 'failed', null)
       }
       return result

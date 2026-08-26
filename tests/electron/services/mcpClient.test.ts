@@ -36,6 +36,7 @@ import type { PackageSpawnInfo } from '../../../electron/services/mcpClient'
 import type { EnvMetaEntry } from '../../../electron/services/mcpPackageValidator'
 import { buildFingerprintTree } from '../../../electron/services/mcpPackageValidator'
 import type { FileEntry } from '../../../electron/services/mcpPackageValidator'
+import { McpPackageSwapGuard } from '../../../electron/services/mcpPackageSwapGuard'
 import { startMockHttpMcpServer } from '../_helpers/mockMcpServer'
 
 /** 构造内存 FileEntry 树并落盘到临时目录（两态同源——指纹天然一致） */
@@ -224,6 +225,25 @@ describe('TOCTOU 拒绝启动（T-29-04-01，D-26/D-27）', () => {
     await expect(
       getConnection('9', cfg, { deviceId: 'd1', package: pkgInfo(dir, JSON.stringify(fp)) })
     ).rejects.toMatchObject({ code: 'package_integrity_failed' })
+  }, 30000)
+
+  it('MD-02 换盘窗口：isSwapping 置位 → 抛 MCP_PACKAGE_SWAPPING（不走 TOCTOU 重验/integrity 副作用）', async () => {
+    const { dir, fileTree } = makePackageDir(PKG_FILES)
+    cleanupDirs.push(dir)
+    const fp = buildFingerprintTree(fileTree)
+    const handler = vi.fn()
+    setIntegrityHandler(handler)
+    const cfg = { type: 'stdio' as const, commandOrUrl: 'node', args: [], env: {}, credential: null }
+    McpPackageSwapGuard.begin(42)
+    try {
+      await expect(
+        getConnection('92', cfg, { deviceId: 'd1', package: pkgInfo(dir, JSON.stringify(fp)) })
+      ).rejects.toMatchObject({ code: 'MCP_PACKAGE_SWAPPING' })
+      expect(handler).not.toHaveBeenCalled() // 不触发 integrity 副作用（非 TOCTOU 检出）
+      expect(_activeConnectionKeys()).toEqual([])
+    } finally {
+      McpPackageSwapGuard.end(42)
+    }
   }, 30000)
 })
 
