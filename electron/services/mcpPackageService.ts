@@ -28,7 +28,7 @@ import { encField, decField } from '../utils/crypto'
 import { validateMcpb, buildFingerprintTree, isFingerprintExcluded, MAX_PACKAGE_BYTES, ENV_KEY_RE } from './mcpPackageValidator'
 import { MAX_BATCH } from './mcpService'
 import type { McpManifest, FileEntry, VectorResult, EnvMetaEntry } from './mcpPackageValidator'
-import { testConnection, verifyPackageFingerprint, reportPackageIntegrityFailure, resolvePackageSpawn } from './mcpClient'
+import { testConnection, verifyPackageFingerprint, reportPackageIntegrityFailure, resolvePackageSpawn, applyEnvMeta } from './mcpClient'
 import type { McpTestResult, StageCallback } from './mcpClient'
 import { McpToolPolicy } from './mcpToolPolicy'
 import type { McpToolAnnotations } from './mcpToolPolicy'
@@ -634,6 +634,8 @@ export class McpPackageService {
    *  - spawn 计划复用 resolvePackageSpawn（python 内嵌轨道 / node entry——不复制第二份逻辑）
    *  - env 注入 = 首台绑定设备（MIN(rel.id)）的 env_json_enc 解密合并；无绑定设备空 env
    *    也可测（只验包能起 + 握手 + tools/list）
+   *  - 29.1 CR HI-01：spawn env 过 applyEnvMeta（required 缺值硬拦不 spawn + default
+   *    留空叠加）——与主链 getConnection 同语义，行级测试与 AI 真跑结论一致
    *  - 进度事件/取消/超时/树杀复用 mcpClient.testConnection 既有基建（testId 透传）
    */
   static async testPackageConfig(configId: number, opts?: {
@@ -701,13 +703,24 @@ export class McpPackageService {
     }
 
     const testId = opts?.testId ?? `pkgcfgtest-${configId}-${Date.now()}`
+    // 29.1 CR HI-01：spawn env 与主链 getConnection 同源过 applyEnvMeta（复用纯函数，不复制
+    // 逻辑防单源分叉）——required 缺值 fail-closed 不拉起（D-01 运行时层闭合到行级测试通道），
+    // default 留空即用（D-02，行级测试不再因缺默认值握手失败而与 AI 真跑结论矛盾）。
+    // envMeta 与 rowToView 同源解 manifest_json（29.1-02 单源投影，杜绝 env_meta 列双源漂移）
+    let spawnEnv = env
+    try {
+      spawnEnv = applyEnvMeta(env, McpPackageService.parseManifestSafe(row.manifest_json)?.envMeta)
+    } catch (e) {
+      const err = e as { code?: string; reason?: string }
+      return { ok: false, error: { code: err?.code ?? 'MCP_ENV_REQUIRED_MISSING', reason: err?.reason ?? '环境变量校验失败' } }
+    }
     // 复用 mcpClient.testConnection 全套基建（进度/取消/超时/树杀）：plan.command 形态
     // 对 resolveStdioCommand 语义稳定（python=包内绝对路径直用；node=PATH 主路径+兜底）
     return testConnection(testId, {
       type: 'stdio',
       commandOrUrl: plan.command,
       args: plan.args,
-      env,
+      env: spawnEnv,
       credential: null,
     }, opts?.onStage)
   }
