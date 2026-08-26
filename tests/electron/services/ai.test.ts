@@ -780,3 +780,64 @@ describe('29.1 CR MD-05: loadPackageSpawnInfo envMeta 单源 manifest_json（与
     expect(loadPackageSpawnInfo(id)).toBeNull()
   })
 })
+
+// ---------------------------------------------------------------------------
+// 29.1 CR MD-03：能力边界感知包禁用态
+// 现网缺陷：hasMcp 由 rel 关联存在性派生，不感知包/配置禁用态——绑禁用包的设备被注入
+// 「操作经 MCP 工具完成（见下方 MCP 工具清单）」而 buildMcpContexts 因 pkgDisabled 跳过
+// 该设备（清单为空）——e31003a 消除的「能力声明与工具清单矛盾」以反向形态复发。
+// 修复语义：不可用 MCP 设备归第四组「MCP 工具当前不可用」中性表述（不承诺工具清单）。
+// ---------------------------------------------------------------------------
+describe('29.1 CR MD-03: 绑定禁用包/停用配置的 MCP 设备 → 不再指向不存在的工具清单', () => {
+  const DEV_MCP_DEAD = { id: 'md3-1', name: '禁用包防火墙', capabilities: { hasSSH: false, hasTelnet: false, hasMcp: true } }
+
+  /** 绑定包轨配置（pkgDisabled/cfgEnabled 组合；复用 buildMcpContexts 同款 SQL 语义的字段面） */
+  function bindMcpPkg(deviceId: string, pkgDisabled: number, cfgEnabled: number): void {
+    db.prepare('INSERT INTO mcp_packages (id, name, disabled) VALUES (901, ?, ?)').run('md03-pkg', pkgDisabled)
+    const info = db.prepare(
+      "INSERT INTO mcp_configs (name, type, command_or_url, enabled, package_id) VALUES ('md03-cfg', 'package', 'x', ?, 901)"
+    ).run(cfgEnabled)
+    db.prepare('INSERT INTO mcp_device_rel (id, mcp_config_id, device_id) VALUES (?, ?, ?)')
+      .run('md3-rel', Number(info.lastInsertRowid), deviceId)
+  }
+
+  it('包被禁用（TOCTOU 检出）→ 第四组「MCP 工具当前不可用」中性表述，不承诺工具清单', () => {
+    bindMcpPkg('md3-1', 1, 1)
+    const b = buildCapabilityBoundary([DEV_MCP_DEAD])
+    expect(b).toContain('MCP 工具当前不可用')
+    expect(b).toContain('包被禁用/配置停用')
+    expect(b).not.toContain('见下方 MCP 工具清单')
+    expect(b).toContain(AI_QONLY_EXEC_BAN) // 真零通道 fail-closed：[CMD] 禁令照注入
+  })
+
+  it('配置被停用（enabled=0）→ 同第四组语义', () => {
+    bindMcpPkg('md3-1', 0, 0)
+    const b = buildCapabilityBoundary([DEV_MCP_DEAD])
+    expect(b).toContain('MCP 工具当前不可用')
+    expect(b).not.toContain('见下方 MCP 工具清单')
+  })
+
+  it('[回归] 包与配置均可用 → 维持 29.1-06 第二组中性说明（不因感知逻辑误伤可用链路）', () => {
+    bindMcpPkg('md3-1', 0, 1)
+    const b = buildCapabilityBoundary([DEV_MCP_DEAD])
+    expect(b).toContain('见下方 MCP 工具清单')
+    expect(b).not.toContain('当前不可用')
+    expect(b).not.toContain(AI_QONLY_EXEC_BAN)
+  })
+
+  it('cmdChannelRejectReason：禁用包 MCP 设备 → 指明工具不可用而非指向 MCP 工具', () => {
+    bindMcpPkg('md3-1', 1, 1)
+    expect(cmdChannelRejectReason(DEV_MCP_DEAD, '，命令未执行')).toBe(
+      '该设备无 SSH/Telnet 命令通道（[CMD] 未执行；绑定的 MCP 工具当前不可用：包被禁用/配置停用）'
+    )
+  })
+
+  it('可用性可注入（纯函数回归锚点）：() => false → 第四组；() => true → 第二组', () => {
+    const unusable = buildCapabilityBoundary([DEV_MCP_DEAD], () => false)
+    expect(unusable).toContain('MCP 工具当前不可用')
+    expect(unusable).toContain(AI_QONLY_EXEC_BAN)
+    const usable = buildCapabilityBoundary([DEV_MCP_DEAD], () => true)
+    expect(usable).toContain('见下方 MCP 工具清单')
+    expect(usable).not.toContain(AI_QONLY_EXEC_BAN)
+  })
+})
