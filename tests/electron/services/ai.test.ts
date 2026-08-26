@@ -627,7 +627,8 @@ describe('MCP-only 能力边界三组语义（29.1-06 UAT 缺陷）', () => {
   const DEV_QONLY = { id: 'q1', name: '仅问答机', capabilities: { hasSSH: false, hasTelnet: false, hasMcp: false } }
 
   it('纯函数：MCP-only 单设备 → 中性能力说明指向 MCP 工具，无「仅可问答」/「不可执行」/硬区禁令', () => {
-    const b = buildCapabilityBoundary([DEV_MCP])
+    // MD-03 后默认可用性走 DB 单查——纯文案用例注入 () => true 钉住「可用」分支
+    const b = buildCapabilityBoundary([DEV_MCP], () => true)
     expect(b).toContain('无 SSH/Telnet 命令通道')
     expect(b).toContain('MCP 工具')
     expect(b).toContain('[CMD]')
@@ -637,13 +638,13 @@ describe('MCP-only 能力边界三组语义（29.1-06 UAT 缺陷）', () => {
   })
 
   it('纯函数：混选 exec+MCP-only → MCP 设备点名中性说明无禁令；MCP-only+仅问答 → 双段并存且 MCP 设备不进「仅问答」名单', () => {
-    const b1 = buildCapabilityBoundary([DEV_EXEC, DEV_MCP])
+    const b1 = buildCapabilityBoundary([DEV_EXEC, DEV_MCP], () => true)
     expect(b1).toContain('绿盟防火墙_公司')
     expect(b1).toContain('MCP 工具')
     expect(b1).not.toContain('仅可问答')
     expect(b1).not.toContain(AI_QONLY_EXEC_BAN)
 
-    const b2 = buildCapabilityBoundary([DEV_MCP, DEV_QONLY])
+    const b2 = buildCapabilityBoundary([DEV_MCP, DEV_QONLY], () => true)
     expect(b2).toContain('绿盟防火墙_公司') // MCP 段点名
     expect(b2).toContain('仅问答机') // 仅问答段点名
     expect(b2).toContain(AI_QONLY_EXEC_BAN) // 真·仅问答 fail-closed 不回退
@@ -663,10 +664,10 @@ describe('MCP-only 能力边界三组语义（29.1-06 UAT 缺陷）', () => {
   })
 
   it('cmdChannelRejectReason：MCP 设备指向 MCP 工具；无 MCP/null 保持 Phase 23 原文案（fail-closed）', () => {
-    expect(cmdChannelRejectReason(DEV_MCP, '，命令未执行')).toBe(
+    expect(cmdChannelRejectReason(DEV_MCP, '，命令未执行', () => true)).toBe(
       '该设备无 SSH/Telnet 命令通道（[CMD] 未执行；该设备操作请通过 MCP 工具完成）'
     )
-    expect(cmdChannelRejectReason(DEV_MCP)).not.toContain('仅可问答')
+    expect(cmdChannelRejectReason(DEV_MCP, '', () => true)).not.toContain('仅可问答')
     expect(cmdChannelRejectReason(DEV_QONLY, '，命令未执行')).toBe('该设备无命令执行通道（仅可问答），命令未执行')
     expect(cmdChannelRejectReason(DEV_QONLY)).toBe('该设备无命令执行通道（仅可问答）')
     expect(cmdChannelRejectReason(null)).toBe('该设备无命令执行通道（仅可问答）')
@@ -801,11 +802,10 @@ describe('29.1 CR MD-03: 绑定禁用包/停用配置的 MCP 设备 → 不再�
       .run('md3-rel', Number(info.lastInsertRowid), deviceId)
   }
 
-  it('包被禁用（TOCTOU 检出）→ 第四组「MCP 工具当前不可用」中性表述，不承诺工具清单', () => {
+  it('包被禁用（TOCTOU 检出）→ 第四组「MCP 工具暂不可用」中性表述，不承诺工具清单', () => {
     bindMcpPkg('md3-1', 1, 1)
     const b = buildCapabilityBoundary([DEV_MCP_DEAD])
-    expect(b).toContain('MCP 工具当前不可用')
-    expect(b).toContain('包被禁用/配置停用')
+    expect(b).toContain('MCP 工具因包被禁用/配置停用暂不可用')
     expect(b).not.toContain('见下方 MCP 工具清单')
     expect(b).toContain(AI_QONLY_EXEC_BAN) // 真零通道 fail-closed：[CMD] 禁令照注入
   })
@@ -813,7 +813,7 @@ describe('29.1 CR MD-03: 绑定禁用包/停用配置的 MCP 设备 → 不再�
   it('配置被停用（enabled=0）→ 同第四组语义', () => {
     bindMcpPkg('md3-1', 0, 0)
     const b = buildCapabilityBoundary([DEV_MCP_DEAD])
-    expect(b).toContain('MCP 工具当前不可用')
+    expect(b).toContain('暂不可用')
     expect(b).not.toContain('见下方 MCP 工具清单')
   })
 
@@ -821,7 +821,7 @@ describe('29.1 CR MD-03: 绑定禁用包/停用配置的 MCP 设备 → 不再�
     bindMcpPkg('md3-1', 0, 1)
     const b = buildCapabilityBoundary([DEV_MCP_DEAD])
     expect(b).toContain('见下方 MCP 工具清单')
-    expect(b).not.toContain('当前不可用')
+    expect(b).not.toContain('暂不可用')
     expect(b).not.toContain(AI_QONLY_EXEC_BAN)
   })
 
@@ -834,7 +834,7 @@ describe('29.1 CR MD-03: 绑定禁用包/停用配置的 MCP 设备 → 不再�
 
   it('可用性可注入（纯函数回归锚点）：() => false → 第四组；() => true → 第二组', () => {
     const unusable = buildCapabilityBoundary([DEV_MCP_DEAD], () => false)
-    expect(unusable).toContain('MCP 工具当前不可用')
+    expect(unusable).toContain('暂不可用')
     expect(unusable).toContain(AI_QONLY_EXEC_BAN)
     const usable = buildCapabilityBoundary([DEV_MCP_DEAD], () => true)
     expect(usable).toContain('见下方 MCP 工具清单')

@@ -667,36 +667,85 @@ export function isDeviceExecutable(device: any): boolean {
 }
 
 /**
- * 29.1-06（UAT 缺陷修复）：能力边界注入三组语义（Phase 23 D-03/D-05 fail-closed 不回退）。
- *
- * 缺陷现场：MCP-only 设备（无 SSH/Telnet、仅绑 MCP 包）此前落入 qOnlyDevices → 注入
- * 「无命令执行通道（仅可问答）」+ AI_QONLY_EXEC_BAN 硬区禁令，与同轮注入的 MCP 工具
- * 清单自相矛盾 → 模型服从禁令拒用 MCP 工具。
- *
- * 三组分组（isDeviceExecutable 本身不动——它是 [CMD] 执行通道语义，MCP 设备确实不能执行 [CMD]）：
- * ① 可执行（hasSSH/hasTelnet）：不注入（提示词干净，现状不变）；
- * ② MCP-only（不可执行但 hasMcp=true）：中性能力说明——无 SSH/Telnet 命令通道、不可输出
- *    [CMD] 标记、查询与操作经绑定 MCP 工具完成；**不进「仅问答」名单、不拼 AI_QONLY_EXEC_BAN**
- *    （措辞不出现「仅可问答/不可执行」，与 MCP 工具清单注入配套而非互斥）；
- * ③ 仅问答（不可执行且无 hasMcp）：保持 Phase 23 原注入（D-03 能力声明 + AI_QONLY_EXEC_BAN
- *    硬区禁令），真·无通道设备 fail-closed 语义不回退。
+ * 29.1 CR MD-03：hasMcp 设备的 MCP 工具可用性判定（感知包禁用/配置停用态）。
+ * 复用 buildMcpContexts 同款 SQL 字段面（enabled + pkgDisabled）单查；查询异常/无绑定
+ * → false（fail-closed：宁可误报「不可用」也不注入指向不存在工具清单的矛盾声明——
+ * buildMcpContexts 出错时同样跳过该设备，两处降级方向一致）。
+ * 手工 stdio/http 配置（package_id NULL → LEFT JOIN pkgDisabled NULL）按可用（true），
+ * 维持 29.1-06 第二组语义不回退。
  */
-export function buildCapabilityBoundary(targetDevices: any[]): string {
+export function isDeviceMcpUsable(dev: any): boolean {
+  try {
+    const rel = getDatabase()
+      .prepare(
+        `SELECT c.enabled AS enabled, p.disabled AS pkgDisabled
+         FROM mcp_device_rel r
+         JOIN mcp_configs c ON c.id = r.mcp_config_id
+         LEFT JOIN mcp_packages p ON p.id = c.package_id
+         WHERE r.device_id = ?`
+      )
+      .get(String(dev?.id ?? '')) as { enabled: number; pkgDisabled: number | null } | undefined
+    return !!rel && !!rel.enabled && !rel.pkgDisabled
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 29.1-06（UAT 缺陷修复）+ 29.1 CR MD-03：能力边界注入四组语义（Phase 23 D-03/D-05
+ * fail-closed 不回退）。
+ *
+ * 缺陷现场（29.1-06）：MCP-only 设备（无 SSH/Telnet、仅绑 MCP 包）此前落入 qOnlyDevices →
+ * 注入「无命令执行通道（仅可问答）」+ AI_QONLY_EXEC_BAN 硬区禁令，与同轮注入的 MCP 工具
+ * 清单自相矛盾 → 模型服从禁令拒用 MCP 工具。
+ * 反向复发（MD-03）：hasMcp 不感知包禁用态——绑禁用包的设备仍被注入「操作经 MCP 工具完成
+ * （见下方 MCP 工具清单）」而 buildMcpContexts 因 pkgDisabled 跳过该设备（清单为空）。
+ *
+ * 四组分组（isDeviceExecutable 本身不动——它是 [CMD] 执行通道语义，MCP 设备确实不能执行 [CMD]）：
+ * ① 可执行（hasSSH/hasTelnet）：不注入（提示词干净，现状不变）；
+ * ② MCP-only 可用（不可执行、hasMcp=true 且绑定包/配置可用）：中性能力说明——无 SSH/Telnet
+ *    命令通道、不可输出 [CMD] 标记、查询与操作经绑定 MCP 工具完成；**不进「仅问答」名单、
+ *    不拼 AI_QONLY_EXEC_BAN**（措辞不出现「仅可问答/不可执行」，与 MCP 工具清单注入配套）；
+ * ③ MCP-only 不可用（MD-03 第四组）：包被禁用/配置停用 → 中性「MCP 工具当前不可用」表述，
+ *    不承诺工具清单；此时该设备真零通道，[CMD] 禁令照注入（fail-closed）；
+ * ④ 仅问答（不可执行且无 hasMcp）：保持 Phase 23 原注入（D-03 能力声明 + AI_QONLY_EXEC_BAN
+ *    硬区禁令），真·无通道设备 fail-closed 语义不回退。
+ *
+ * isMcpUsable 参数：默认走 isDeviceMcpUsable（DB 单查）；纯函数单测可注入替身。
+ */
+export function buildCapabilityBoundary(
+  targetDevices: any[],
+  isMcpUsable: (dev: any) => boolean = isDeviceMcpUsable
+): string {
   const mcpOnlyDevices = targetDevices.filter(
     (d) => !isDeviceExecutable(d) && d?.capabilities?.hasMcp === true
   )
+  const mcpUsableDevices = mcpOnlyDevices.filter((d) => isMcpUsable(d))
+  const mcpUnavailableDevices = mcpOnlyDevices.filter((d) => !isMcpUsable(d))
   const qOnlyDevices = targetDevices.filter(
     (d) => !isDeviceExecutable(d) && d?.capabilities?.hasMcp !== true
   )
   let injection = ''
-  if (mcpOnlyDevices.length > 0) {
+  if (mcpUsableDevices.length > 0) {
     if (targetDevices.length === 1) {
       injection +=
         '\n\n能力说明：该设备无 SSH/Telnet 命令通道，不可对其输出 [CMD] 命令标记；该设备的查询与操作通过其绑定的 MCP 工具完成（见下方 MCP 工具清单）。'
     } else {
-      const mNames = mcpOnlyDevices.map((d) => String(d.name)).join('、')
+      const mNames = mcpUsableDevices.map((d) => String(d.name)).join('、')
       injection +=
         `\n\n能力说明：以下设备无 SSH/Telnet 命令通道，不可对其输出 [CMD] 命令标记，其查询与操作通过各自绑定的 MCP 工具完成（见下方 MCP 工具清单）：${mNames}。`
+    }
+  }
+  if (mcpUnavailableDevices.length > 0) {
+    const uNames = mcpUnavailableDevices.map((d) => String(d.name)).join('、')
+    if (targetDevices.length === 1) {
+      injection +=
+        '\n\n能力说明：该设备当前无可用命令执行通道（无 SSH/Telnet，绑定的 MCP 工具因包被禁用/配置停用暂不可用），不可对其输出 [CMD] 命令标记；恢复对应 MCP 包/配置前仅可基于关联知识库/经验作答。\n' +
+        AI_QONLY_EXEC_BAN
+    } else {
+      injection +=
+        `\n\n能力说明：以下设备当前无可用命令执行通道（无 SSH/Telnet，绑定的 MCP 工具因包被禁用/配置停用暂不可用）：${uNames}。不可对这些设备输出 [CMD] 命令标记；恢复 MCP 包/配置前仅可基于关联知识库/经验作答，请在回复中主动说明已跳过它们（点名设备名）。\n` +
+        AI_QONLY_EXEC_BAN
     }
   }
   if (qOnlyDevices.length > 0) {
@@ -715,13 +764,18 @@ export function buildCapabilityBoundary(targetDevices: any[]): string {
 }
 
 /**
- * 29.1-06：[CMD] 拒绝原因文案（MCP-aware）——目标设备无 SSH/Telnet 但绑定 MCP 时指向
- * MCP 工具（消除「仅可问答」与 MCP 工具清单的矛盾声明），真·无通道设备（含 capabilities
- * 缺失）保持 Phase 23 原文案（fail-closed 不回退）。qOnlyTail 为仅问答分支的既有尾缀。
+ * 29.1-06 + MD-03：[CMD] 拒绝原因文案（MCP-aware）——目标设备无 SSH/Telnet 但绑定 MCP
+ * 且工具可用时指向 MCP 工具（消除「仅可问答」与 MCP 工具清单的矛盾声明）；绑定 MCP 但
+ * 包禁用/配置停用时指明工具当前不可用（不指向不存在的清单）；真·无通道设备（含
+ * capabilities 缺失）保持 Phase 23 原文案（fail-closed 不回退）。qOnlyTail 为仅问答
+ * 分支的既有尾缀。isMcpUsable 同 buildCapabilityBoundary 注入口。
  */
-export function cmdChannelRejectReason(dev: any, qOnlyTail = ''): string {
+export function cmdChannelRejectReason(dev: any, qOnlyTail = '', isMcpUsable: (dev: any) => boolean = isDeviceMcpUsable): string {
   if (dev?.capabilities?.hasMcp === true) {
-    return '该设备无 SSH/Telnet 命令通道（[CMD] 未执行；该设备操作请通过 MCP 工具完成）'
+    if (isMcpUsable(dev)) {
+      return '该设备无 SSH/Telnet 命令通道（[CMD] 未执行；该设备操作请通过 MCP 工具完成）'
+    }
+    return '该设备无 SSH/Telnet 命令通道（[CMD] 未执行；绑定的 MCP 工具当前不可用：包被禁用/配置停用）'
   }
   return `该设备无命令执行通道（仅可问答）${qOnlyTail}`
 }
