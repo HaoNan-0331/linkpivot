@@ -8,6 +8,7 @@ import ExecModeSwitch from '../settings/ExecModeSwitch'
 import AgentLimitsCard from '../settings/AgentLimitsCard'
 import PromptTab from '../settings/PromptTab'
 import McpTab from '../settings/McpTab'
+import AboutTab from '../settings/AboutTab'
 import type { AIConfig } from '../../types/electron'
 import type { ScheduleConfig, SchedulerStatus } from '../../types/oui'
 
@@ -242,6 +243,7 @@ export default function SettingsPage() {
           { key: 'ip', label: 'IP 管理', children: ipSettings },
           { key: 'prompt', label: 'AI 提示词', children: <PromptTab refreshKey={promptRefresh} /> },
           { key: 'mcp', label: 'MCP 服务', children: <McpTab refreshKey={mcpRefresh} /> },
+          { key: 'about', label: '关于', children: <AboutTab /> },
         ]} />
     </div>
   )
