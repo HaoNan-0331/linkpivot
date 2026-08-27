@@ -57,15 +57,16 @@ export function dbPreExisted(): boolean {
  *
  * fresh-install（DB 文件新建）跳过 premigration 备份（无数据可恢复）；遗留库（文件预存在）必备份。
  * CR-02：门控改用 dbPreExisted()（文件预存在），不再按核心表行数判定——避免纯 IP 数据旧库误判为空。
+ * BUG-3 修复（Phase 30-01）：premigration 备份完整 await 后才跑 runMigrations（防在线备份重拷贝捕获迁移后状态）。
  */
-export function migrateAndSecure(): void {
+export async function migrateAndSecure(): Promise<void> {
   const conn = getDatabase()
   const currentVersion = (conn.pragma('user_version') as Array<{ user_version: number }>)[0]?.user_version ?? 0
 
   // D-06：迁移前备份（gated on DB 文件预存在，CR-02）。createTables 之后、runMigrations 之前。
   if (currentVersion < MIGRATION_HEAD) {
     if (dbPreExisted()) {
-      BackupScheduler.createPremigrationBackup(currentVersion, MIGRATION_HEAD)
+      await BackupScheduler.createPremigrationBackup(currentVersion, MIGRATION_HEAD)
     } else {
       // fresh-install 空库无数据可恢复，premigration 备份无价值，跳过并记录
       try {

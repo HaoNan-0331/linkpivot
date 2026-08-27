@@ -16,7 +16,7 @@ import { getSystemLogs, createSystemLog, setSystemLogMasterKey, backfillSystemLo
 import { backfillAiExecLogEnc } from './services/aiExecLogger'
 import { setArpMasterKey } from './services/arpCollector'
 import { SchedulerService } from './services/schedulerService'
-import { BackupScheduler } from './services/backupScheduler'
+import { BackupScheduler, BACKUP_QUIT_WAIT_TIMEOUT_MS } from './services/backupScheduler'
 import { OUIService } from './services/ouiService'
 import { registerArpIpc } from './ipc/arpIpc'
 import { registerNetworkIpc } from './ipc/networkIpc'
@@ -67,7 +67,7 @@ function createWindow() {
   mainWindow.on('closed', () => { mainWindow = null })
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // 注入严格 CSP（渲染层 XSS 第二道防线）；AI API 由主进程 fetch，不受此限制
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     // dev 模式：vite + @vitejs/plugin-react 注入 inline HMR preamble，严格 CSP 'script-src self' 会阻止 → 白屏。
@@ -123,7 +123,7 @@ app.whenReady().then(() => {
   const __startupT0 = performance.now()   // PERF-04 (W1)：冷启动 DB+OUI init 计时起点
   initDatabase()
   createTables()
-  migrateAndSecure()   // 迁移前备份(gated on 非空库) + runMigrations + ACL 收紧 db/wal/shm（D-06/D-12a）
+  await migrateAndSecure()   // 迁移前备份(gated on 非空库) + runMigrations + ACL 收紧 db/wal/shm（D-06/D-12a）；BUG-3 修复：premigration 备份完整 await 后才跑 runMigrations
   // Phase 10 Plan 04 CR-02：post-MK 历史 severity 回填（治本 D-10-2 筛层兑现）。
   // 迁移在 MK 注入前跑，v10 内无法解密 attrs_enc 回填 severity 明文列——此钩子在 MK 注入 + 迁移后跑，
   // 解密 attrs_enc.severity 回填，使历史数据 severity 筛选/排序对称可用。幂等（severity IS NULL 守卫），
@@ -405,7 +405,22 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
 
-app.on('before-quit', () => {
+// BUG-3 修复（Phase 30-01）：在途 better-sqlite3 backup 是 setImmediate 分页传输（首 transfer 在下一
+// tick），同步 before-quit 链会在备份一次 transfer 都没跑完时 closeDatabase → backups 目录残留撕裂
+// .bak 冒充有效备份。guard 形态：有在途备份时 preventDefault + 等待（≤BACKUP_QUIT_WAIT_TIMEOUT_MS，
+// 超时放行保证退出永不卡死）后重放 app.quit()；30-03 quitAndInstall 触发的 app.quit() 走同一 guard
+// 天然兼容。快路径（无在途）与重放路径（quitReplayGuard=true）均落穿到下方既有三步链——
+// 禁止改写 early-return 双分支形态（会使 cleanupAll/closeDatabase 不可达）。
+let quitReplayGuard = false
+app.on('before-quit', (e: Electron.Event) => {
+  // 单一入口判定（全函数唯一 return 在其内部）：仅「非重放且有在途备份」进等待分支
+  if (!quitReplayGuard && BackupScheduler.hasInFlightBackup()) {
+    e.preventDefault()
+    quitReplayGuard = true
+    BackupScheduler.stop() // 防等待期间 interval 再起新备份（stop 幂等，与下方落穿首步重复调用无害——intervalId 空值守卫）
+    BackupScheduler.waitIdle(BACKUP_QUIT_WAIT_TIMEOUT_MS).catch(() => {}).finally(() => app.quit())
+    return
+  }
   BackupScheduler.stop()
   // 21-03：MCP stdio 子进程树杀（3s 预算，closeDatabase 之前，同步快路径不新增 async 阻塞）
   try { McpProcessRegistry.cleanupAll() }
