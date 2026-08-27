@@ -3,6 +3,7 @@ import path from 'path'
 import { initDatabase, closeDatabase, migrateAndSecure, getDatabase } from './database/connection'
 import { createTables } from './database/init'
 import { getOrCreateMasterKey } from './utils/keyManager'
+import { migrateLegacyUserData, TARGET_DIR_NAME } from './utils/dataDirMigration'
 import { setDecryptFailureHandler } from './utils/crypto'
 import { hardenWindow, openExternalSafe } from './utils/webSecurity'
 import { secure, safe, setAuthenticated } from './utils/authGuard'
@@ -40,6 +41,17 @@ import { registerMcpIpc } from './ipc/mcpIpc'
 import { registerMcpPackageIpc } from './ipc/mcpPackageIpc'
 import { registerUpdateIpc } from './ipc/updateIpc'
 import { UpdateService } from './services/updateService'
+
+// 30.1-02（改名数据连续性红线）：productName 改「灵枢」后 Electron 默认 userData 会漂移到
+// %APPDATA%\灵枢——0.4.0 老用户 DB/masterKey/kb_files/backups 全部「消失」。
+// 在一切 userData 消费（keyManager/connection/backupScheduler/kb 均为惰性求值）之前：
+//   1) 一次性原子迁移 %APPDATA%\网络拓扑管理工具 → LinkPivot（永不覆盖既有目录；rename 失败
+//      （旧应用占用等）回退继续用旧目录，数据可用性优先，应用启动永不因迁移炸死）；
+//   2) app.setPath 显式钉定 userData=LinkPivot，与 productName 解耦（未来显示名再改不再迁移数据）。
+const dataDirMigration = migrateLegacyUserData(app.getPath('appData'))
+app.setPath('userData', dataDirMigration.status === 'fallback' && dataDirMigration.from
+  ? dataDirMigration.from
+  : path.join(app.getPath('appData'), TARGET_DIR_NAME))
 
 let mainWindow: BrowserWindow | null = null
 let masterKey: string
@@ -125,6 +137,17 @@ app.whenReady().then(async () => {
   const __startupT0 = performance.now()   // PERF-04 (W1)：冷启动 DB+OUI init 计时起点
   initDatabase()
   createTables()
+  // 30.1-02 审计留痕（T-30.1-09）：迁移结果写 system_log（type='migration'，v6 起 CHECK 白名单合法）。
+  // 仅 status!=='none' 时记录；写库失败非致命（极老库 CHECK 拒绝等不炸启动，T-30.1-07 同语义）。
+  if (dataDirMigration.status !== 'none') {
+    try {
+      createSystemLog({
+        type: 'migration',
+        status: 'success',
+        errorMessage: `用户数据目录迁移：${dataDirMigration.from ?? 'legacy 目录'} → ${app.getPath('userData')}（${dataDirMigration.status}）`,
+      })
+    } catch { /* 审计写库失败非致命 */ }
+  }
   await migrateAndSecure()   // 迁移前备份(gated on 非空库) + runMigrations + ACL 收紧 db/wal/shm（D-06/D-12a）；BUG-3 修复：premigration 备份完整 await 后才跑 runMigrations
   // Phase 10 Plan 04 CR-02：post-MK 历史 severity 回填（治本 D-10-2 筛层兑现）。
   // 迁移在 MK 注入前跑，v10 内无法解密 attrs_enc 回填 severity 明文列——此钩子在 MK 注入 + 迁移后跑，
