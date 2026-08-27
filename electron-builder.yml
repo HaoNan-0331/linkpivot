@@ -1,5 +1,5 @@
-appId: com.network-topology.manager
-productName: 网络拓扑管理工具
+appId: com.linkpivot.app
+productName: 灵枢
 
 # === 输出目录：与 vite renderer 的 dist/ 解耦 ===
 # 修复：electron-builder 输出原也在 dist/，files: dist/**/* 会把上一次打包产物
@@ -52,7 +52,7 @@ npmRebuild: true
 publish:
   provider: github
   owner: HaoNan-0331
-  repo: network-topology-manager
+  repo: linkpivot
 
 # === Windows 配置 ===
 win:

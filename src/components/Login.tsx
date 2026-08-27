@@ -31,7 +31,7 @@ export default function Login() {
   return (
     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#f0f2f5' }}>
       <Card style={{ width: 400 }}>
-        <Title level={3} style={{ textAlign: 'center' }}>网络拓扑管理工具</Title>
+        <Title level={3} style={{ textAlign: 'center' }}>灵枢</Title>
         <Form form={form} onFinish={onFinish}>
           <Form.Item name="username" rules={[{ required: true }]}>
             <Input prefix={<UserOutlined />} placeholder="用户名" />

@@ -1,7 +1,7 @@
 {
-  "name": "network-topology-manager",
+  "name": "linkpivot",
   "version": "0.5.0",
-  "description": "网络拓扑管理工具",
+  "description": "灵枢 LinkPivot —— 网络拓扑管理桌面工具",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",

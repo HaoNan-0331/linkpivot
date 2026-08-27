@@ -6,7 +6,7 @@ import type { UpdateErrorKind } from '../../types/electron'
 const { Text, Link } = Typography
 
 /** Releases 页直链（模块常量硬编码，T-30-12——不经任何 IPC 可写参数） */
-const RELEASES_URL = 'https://github.com/HaoNan-0331/network-topology-manager/releases'
+const RELEASES_URL = 'https://github.com/HaoNan-0331/linkpivot/releases'
 
 /**
  * UPD-06 六类错误分诊文案（UI-SPEC 逐字）；network/ratelimit/unknown 三类内嵌「手动下载」链接兜底
@@ -145,7 +145,7 @@ export default function AboutTab() {
     <Card title="关于本应用" size="small">
       <div style={{ marginBottom: 24 }}>
         <div>
-          <Text>网络拓扑管理工具</Text>
+          <Text>灵枢 LinkPivot</Text>
         </div>
         <div style={{ marginTop: 4 }}>
           <Text type="secondary">当前版本</Text>{' '}
