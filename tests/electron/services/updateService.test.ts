@@ -131,6 +131,11 @@ describe('classifyUpdateError 六类分诊（Pitfall 6）', () => {
     expect(classifyUpdateError(new Error('connect ECONNREFUSED 10.0.0.1:22'))).toBe('unknown')
   })
 
+  it('Chromium net 栈死代理错误码形态（30-05 真机形态②实证：electron.net 走死系统代理报 net::ERR_PROXY_CONNECTION_FAILED，非 errno 形态）', () => {
+    expect(classifyUpdateError(new Error('net::ERR_PROXY_CONNECTION_FAILED'))).toBe('proxy')
+    expect(classifyUpdateError({ code: 'ERR_PROXY_CONNECTION_FAILED' })).toBe('proxy')
+  })
+
   it('畸形输入兜底 unknown（null/undefined/plain string/空对象，T-30-05）', () => {
     expect(classifyUpdateError(null)).toBe('unknown')
     expect(classifyUpdateError(undefined)).toBe('unknown')

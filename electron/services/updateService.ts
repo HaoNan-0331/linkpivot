@@ -77,7 +77,12 @@ export function classifyUpdateError(err: unknown): UpdateErrorKind {
   if (s.includes('ENOTFOUND') || s.includes('EAI_AGAIN') || s.includes('ETIMEDOUT')) {
     return 'network'
   }
-  if (s.includes('ECONNREFUSED') && s.includes('127.0.0.1')) {
+  if (
+    (s.includes('ECONNREFUSED') && s.includes('127.0.0.1')) ||
+    s.includes('ERR_PROXY_CONNECTION_FAILED')
+  ) {
+    // Chromium net 栈（electron.net）走死系统代理报 net::ERR_PROXY_CONNECTION_FAILED——
+    // 非 errno 形态、不含 127.0.0.1 字样（30-05 真机形态②实证，30-SPIKE-RECORD §5.8 根因 B）
     return 'proxy'
   }
   if (statusCode === 403 || statusCode === 429 || s.includes('403') || s.includes('429')) {
