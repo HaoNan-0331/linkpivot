@@ -551,7 +551,7 @@ describe('v22/v23/v24 devices.name_hash 三段式', () => {
   })
 
   it('d) MIGRATION_HEAD=24、注册表含 v22/v23/v24、init.ts fresh DDL 含 name_hash', () => {
-    expect(MIGRATION_HEAD).toBe(29) // 29-09 v28（type CHECK widen package）推进
+    expect(MIGRATION_HEAD).toBe(30) // 30-02 v30（ai_config 升级压制两列）推进
     const versions = MIGRATIONS.map((m) => m.version)
     expect(versions).toContain(22)
     expect(versions).toContain(23)
@@ -690,7 +690,7 @@ describe('v27 mcp_packages + 设备级 env 列', () => {
   })
 
   it('d) MIGRATION_HEAD=28、注册表含 v27、init.ts fresh DDL 含三处结构', () => {
-    expect(MIGRATION_HEAD).toBe(29)
+    expect(MIGRATION_HEAD).toBe(30) // 30-02 v30 推进
     expect(MIGRATIONS.map((m) => m.version)).toContain(27)
 
     const root = path.resolve(__dirname, '../..')
@@ -862,7 +862,7 @@ describe('v29 mcp_packages.env_meta + mcp_tools.package_id 借存迁移', () => 
   })
 
   it('d) MIGRATION_HEAD=29、注册表含 v29、init.ts fresh DDL 双列并存', () => {
-    expect(MIGRATION_HEAD).toBe(29)
+    expect(MIGRATION_HEAD).toBe(30) // 30-02 v30 推进
     expect(MIGRATIONS.map((m) => m.version)).toContain(29)
 
     const root = path.resolve(__dirname, '../..')
@@ -1012,7 +1012,7 @@ describe('v28 mcp_configs.type CHECK widen package', () => {
     const initSrc = fs.readFileSync(path.join(root, 'electron/database/init.ts'), 'utf-8')
     const ddl = initSrc.match(/CREATE TABLE IF NOT EXISTS mcp_configs \(([\s\S]*?)\);/)!
     expect(ddl[1]).toContain("CHECK(type IN ('stdio','http','package'))")
-    expect(MIGRATION_HEAD).toBe(29)
+    expect(MIGRATION_HEAD).toBe(30) // 30-02 v30 推进
     expect(MIGRATIONS.map((m) => m.version)).toContain(28)
   })
 })

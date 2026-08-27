@@ -13,7 +13,7 @@ import { createSystemLog } from '../services/systemLog'
  *      在 createTables() 建好基线表之后、premigration 备份之后执行（D-06）。
  *      init.ts 不直接调用 runMigrations（单一调用点原则）。
  */
-export const MIGRATION_HEAD = 29
+export const MIGRATION_HEAD = 30
 
 interface MigrationStep {
   version: number
@@ -1043,6 +1043,32 @@ export const v29 = (db: Database.Database): void => {
   }
 }
 
+/**
+ * v30：Phase 30（UPD-03/04）—— 升级压制状态两列。
+ *
+ * - update_skip_version TEXT：NULL=无压制；值为明文版本号（如 '0.5.0'）——「跳过此版本」档位，
+ *   出现不同版本号自动恢复（shouldAutoPrompt 判定，30-02 updateService）。
+ * - update_snooze_until TEXT：NULL=无压制；值为 ISO 时间戳（30 天/180 天档到期自动恢复提醒）
+ *   或 'forever' 哨兵（永久档永静默——仅自动提醒通道，手动检查不受影响，D-02）。
+ * - 非敏感数据不加密（仅版本号/时间戳，对齐 mcp_packages 明文元数据红线裁决，T-30-06 accept）。
+ *
+ * 幂等守卫：hasColumn（与 v1/v2/v20/v21/v22/v25/v26 同构，纯 ALTER ADD COLUMN，
+ * 不靠 user_version 判定）。init.ts fresh-install DDL 已同步含两列（双路径一致红线）。
+ */
+export const v30 = (db: Database.Database): void => {
+  // 与 v1-v29 一致，步骤执行体包 db.transaction（throw 即 ROLLBACK，原子迁移红线）
+  const step = db.transaction(() => {
+    if (!hasColumn(db, 'ai_config', 'update_skip_version')) {
+      db.exec('ALTER TABLE ai_config ADD COLUMN update_skip_version TEXT')
+    }
+    if (!hasColumn(db, 'ai_config', 'update_snooze_until')) {
+      db.exec('ALTER TABLE ai_config ADD COLUMN update_snooze_until TEXT')
+    }
+    db.pragma('user_version = 30')
+  })
+  step()
+}
+
 export const MIGRATIONS: MigrationStep[] = [
   { version: 1, name: 'chat_history.session_id', run: v1 },
   { version: 2, name: 'ai_exec_logs.prompt_text+ai_response', run: v2 },
@@ -1073,6 +1099,7 @@ export const MIGRATIONS: MigrationStep[] = [
   { version: 27, name: 'mcp_packages + 设备级 env 列（PKG-02/PKG-05/D-15）', run: v27 },
   { version: 28, name: 'mcp_configs.type CHECK widen package + 存量包配置转换（29-09 走查二）', run: v28 },
   { version: 29, name: 'mcp_packages.env_meta + mcp_tools.package_id 借存迁移（PKG-29.1-D04/D-05）', run: v29 },
+  { version: 30, name: 'ai_config.update_skip_version+update_snooze_until（UPD-03/04 升级压制档位）', run: v30 },
 ]
 
 /**

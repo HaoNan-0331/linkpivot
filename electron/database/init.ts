@@ -55,6 +55,9 @@ export function createTables() {
       agent_max_rounds INTEGER,
       agent_burnout_count INTEGER,
       agent_cooldown_secs INTEGER,
+      -- 升级压制状态两列（Phase 30 UPD-03/04）：NULL=无压制，明文版本号/ISO 时间戳/'forever' 哨兵；列定义与 migrations.ts v30 ALTER 逐字一致（双路径一致红线）
+      update_skip_version TEXT,
+      update_snooze_until TEXT,
       created_at TEXT DEFAULT (datetime('now','localtime'))
     );
 
