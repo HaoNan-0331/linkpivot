@@ -164,6 +164,20 @@ export interface ElectronAPI {
     runNow: () => Promise<SchedulerRunResult>
     getStatus: () => Promise<SchedulerStatus>
   }
+  // Phase 30（30-03，UPD-01/02/06）：update 域通道（updateIpc 八 secure handler + preload update 块镜像，
+  // 30-04 升级弹窗/AboutTab 消费）。UpdateErrorKind 字面联合与 electron/services/updateService.ts 镜像。
+  update: {
+    getStatus: () => Promise<UpdateStatusInfo>
+    checkNow: () => Promise<CheckNowResult>
+    download: () => Promise<{ started: boolean; errorKind?: UpdateErrorKind }>
+    cancel: () => Promise<void>
+    install: () => Promise<void>
+    setSnooze: (mode: UpdateSnoozeMode) => Promise<{ success: boolean; error?: string }>
+    setSkipVersion: (v: string) => Promise<{ success: boolean; error?: string }>
+    getVersion: () => Promise<string>
+    /** main→renderer 升级事件推送订阅（update:event 单通道；返回解绑函数） */
+    onUpdateEvent: (cb: (payload: UpdateEventPayload) => void) => () => void
+  }
   // FE-02 (05-04)：kb.* 通道已全量收类型（05-01 的宽返回已在 05-04 收窄，DTO 见 src/types/kb.ts）
   kb: {
     uploadBuffer: (buffer: ArrayBuffer, fileName: string, fileType: string, fileSize: number, category: string, deviceId: string | null) => Promise<{ id: string }>
@@ -508,6 +522,47 @@ export interface PromptDiffBase {
   basedOnVersion: number | null
   currentVersion: number
 }
+
+// ===== Phase 30（30-03）：update 域类型契约（main updateService 契约的 renderer 镜像）=====
+
+/** 「不再提醒」档位（网关层枚举校验；'30d'/'180d' → 未来 ISO，'forever' → 永久哨兵） */
+export type UpdateSnoozeMode = '30d' | '180d' | 'forever'
+
+/** 更新错误六类分诊（electron/services/updateService.ts UpdateErrorKind 镜像） */
+export type UpdateErrorKind = 'network' | 'proxy' | 'ratelimit' | 'nometa' | 'server' | 'unknown'
+
+/** 新版本信息（update-available / update-downloaded 事件与 getStatus 快照共用形态） */
+export interface UpdateInfoBrief {
+  version: string
+  notes: string
+  releaseDate: string
+}
+
+/** update:event 单通道广播负载（main 七事件转发；payload 按 type 区分形态） */
+export type UpdateEventPayload =
+  | { type: 'checking-for-update' }
+  | { type: 'update-available'; payload: UpdateInfoBrief }
+  | { type: 'update-not-available' }
+  | { type: 'download-progress'; payload: { percent: number; transferred: number; total: number; bytesPerSecond: number } }
+  | { type: 'update-downloaded'; payload: UpdateInfoBrief }
+  | { type: 'update-cancelled' }
+  | { type: 'error'; payload: { errorKind: UpdateErrorKind; message: string } }
+
+/** 升级引擎状态快照（主布局挂载拉取：已下载待安装优先弹，其次未压制新版弹窗） */
+export interface UpdateStatusInfo {
+  phase: 'idle' | 'available' | 'downloading' | 'downloaded'
+  currentVersion: string
+  updateInfo: UpdateInfoBrief | null
+  /** 启动自动提醒通道被压制（skip / 不再提醒命中）；手动检查无视压制（D-02） */
+  suppressed: boolean
+  progress?: { percent: number; transferred: number; total: number }
+}
+
+/** 手动检查结果（业务拒绝走结果对象不 throw；已是 latest / 有新版 / 结构化错误三态） */
+export type CheckNowResult =
+  | { result: 'latest'; currentVersion: string }
+  | { result: 'available'; currentVersion: string; updateInfo: UpdateInfoBrief }
+  | { result: 'error'; errorKind: UpdateErrorKind; message: string }
 
 export interface TerminalAPI {
   onData: (cb: (data: string) => void) => void

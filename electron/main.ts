@@ -38,6 +38,8 @@ import { McpPackageService } from './services/mcpPackageService'
 import { McpProcessRegistry } from './services/mcpProcessRegistry'
 import { registerMcpIpc } from './ipc/mcpIpc'
 import { registerMcpPackageIpc } from './ipc/mcpPackageIpc'
+import { registerUpdateIpc } from './ipc/updateIpc'
+import { UpdateService } from './services/updateService'
 
 let mainWindow: BrowserWindow | null = null
 let masterKey: string
@@ -246,6 +248,8 @@ app.whenReady().then(async () => {
   registerExperienceDraftingIpc()
   registerMcpIpc()
   registerMcpPackageIpc()
+  // Phase 30（30-03）：update:* 八通道（全 secure 登录后域，UPD-01/02 执行面）
+  registerUpdateIpc()
   // Phase 29（29-04，D-26）：TOCTOU 检出副作用链路——spawn 前指纹重验失败时 mcpClient 经
   // 注入回调触发：包 disabled=1（直到重新导入走完整校验链）+ ai_system_logs security 行。
   // mcpClient 零 DB 依赖，service 侧落库在此接线；两步各自 try/catch 隔离（禁用失败仍尝试留痕）。
@@ -267,6 +271,11 @@ app.whenReady().then(async () => {
   })
   SchedulerService.start()
   BackupScheduler.start()
+  // Phase 30（30-03，UPD-01）：启动静默检测——init 内部 dev 门控（!app.isPackaged 直接 return，
+  // Pitfall 7）+ SC 红线默认值覆写；checkForUpdatesAuto fire-and-forget 不 await（内部自 catch
+  // 静默，启动链不被网络阻塞，D-03）。
+  UpdateService.init()
+  UpdateService.checkForUpdatesAuto()
 
   // Auth IPC（登录前可用，不做鉴权；login 成功置登录态）
   ipcMain.handle('auth:getCaptcha', safe(() => { const r = generateCaptcha(); return { svg: r.svg, key: r.key } }))

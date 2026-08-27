@@ -177,6 +177,22 @@ const api = {
     runNow: () => ipcRenderer.invoke('scheduler:runNow'),
     getStatus: () => ipcRenderer.invoke('scheduler:getStatus'),
   },
+  // Phase 30（30-03，UPD-01/02）：update 域（八通道全 secure；onUpdateEvent 订阅解绑照 :44-48 ai.onToolResult 先例）
+  update: {
+    getStatus: () => ipcRenderer.invoke('update:getStatus'),
+    checkNow: () => ipcRenderer.invoke('update:checkNow'),
+    download: () => ipcRenderer.invoke('update:download'),
+    cancel: () => ipcRenderer.invoke('update:cancel'),
+    install: () => ipcRenderer.invoke('update:install'),
+    setSnooze: (mode: string) => ipcRenderer.invoke('update:setSnooze', mode),
+    setSkipVersion: (v: string) => ipcRenderer.invoke('update:setSkipVersion', v),
+    getVersion: () => ipcRenderer.invoke('update:getVersion'),
+    onUpdateEvent: (cb: (payload: unknown) => void) => {
+      const listener = (_e: unknown, payload: unknown) => cb(payload)
+      ipcRenderer.on('update:event', listener as never)
+      return () => ipcRenderer.removeListener('update:event', listener as never)
+    },
+  },
   kb: {
     uploadBuffer: (buffer: ArrayBuffer, fileName: string, fileType: string, fileSize: number, category: string, deviceId: string | null) => ipcRenderer.invoke('kb:uploadBuffer', buffer, fileName, fileType, fileSize, category, deviceId),
     listDocuments: (deviceId?: string, category?: string) => ipcRenderer.invoke('kb:listDocuments', deviceId, category),
