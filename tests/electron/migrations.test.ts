@@ -20,7 +20,7 @@ import Database from 'better-sqlite3'
  * 安全域：内存库（`:memory:`）无落盘；只跑 v16 本体不碰 runMigrations/system log。
  */
 
-import { v16, v17, v19, v20, v21, v22, v23, v24, v26, v27, v28, MIGRATION_HEAD, MIGRATIONS } from '../../electron/database/migrations'
+import { v16, v17, v19, v20, v21, v22, v23, v24, v26, v27, v28, v31, MIGRATION_HEAD, MIGRATIONS } from '../../electron/database/migrations'
 import { encField } from '../../electron/utils/crypto'
 import {
   appendLogAiResponse,
@@ -551,7 +551,7 @@ describe('v22/v23/v24 devices.name_hash 三段式', () => {
   })
 
   it('d) MIGRATION_HEAD=24、注册表含 v22/v23/v24、init.ts fresh DDL 含 name_hash', () => {
-    expect(MIGRATION_HEAD).toBe(30) // 30-02 v30（ai_config 升级压制两列）推进
+    expect(MIGRATION_HEAD).toBe(31) // 30-05 v31（ai_config 升级压制两列）推进
     const versions = MIGRATIONS.map((m) => m.version)
     expect(versions).toContain(22)
     expect(versions).toContain(23)
@@ -690,7 +690,7 @@ describe('v27 mcp_packages + 设备级 env 列', () => {
   })
 
   it('d) MIGRATION_HEAD=28、注册表含 v27、init.ts fresh DDL 含三处结构', () => {
-    expect(MIGRATION_HEAD).toBe(30) // 30-02 v30 推进
+    expect(MIGRATION_HEAD).toBe(31) // 30-05 v31 推进
     expect(MIGRATIONS.map((m) => m.version)).toContain(27)
 
     const root = path.resolve(__dirname, '../..')
@@ -862,7 +862,7 @@ describe('v29 mcp_packages.env_meta + mcp_tools.package_id 借存迁移', () => 
   })
 
   it('d) MIGRATION_HEAD=29、注册表含 v29、init.ts fresh DDL 双列并存', () => {
-    expect(MIGRATION_HEAD).toBe(30) // 30-02 v30 推进
+    expect(MIGRATION_HEAD).toBe(31) // 30-05 v31 推进
     expect(MIGRATIONS.map((m) => m.version)).toContain(29)
 
     const root = path.resolve(__dirname, '../..')
@@ -1012,7 +1012,101 @@ describe('v28 mcp_configs.type CHECK widen package', () => {
     const initSrc = fs.readFileSync(path.join(root, 'electron/database/init.ts'), 'utf-8')
     const ddl = initSrc.match(/CREATE TABLE IF NOT EXISTS mcp_configs \(([\s\S]*?)\);/)!
     expect(ddl[1]).toContain("CHECK(type IN ('stdio','http','package'))")
-    expect(MIGRATION_HEAD).toBe(30) // 30-02 v30 推进
+    expect(MIGRATION_HEAD).toBe(31) // 30-05 v31 推进
     expect(MIGRATIONS.map((m) => m.version)).toContain(28)
+  })
+})
+
+describe('v31 ai_system_logs CHECK widen update（30-05 真机审计链路修复）', () => {
+  /**
+   * security-era 基线 = 用户真库形态（30-SPIKE-RECORD §5.8）：CHECK 白名单无 'update'，
+   * 列序模拟真实迁移路径（v13 ALTER 追加 _enc 两列在 created_at 之后——证明 v31 按列名寻址序无关）。
+   */
+  function createSecurityEraLogTable(db: Database.Database): void {
+    db.exec(`
+      CREATE TABLE ai_system_logs (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL DEFAULT 'discovery' CHECK(type IN ('discovery','acl','migration','backup','security')),
+        status TEXT NOT NULL CHECK(status IN ('success','failed','warning')),
+        device_ids TEXT,
+        device_names TEXT,
+        prompt_text TEXT,
+        ai_response TEXT,
+        parsed_result TEXT,
+        error_message TEXT,
+        created_at TEXT DEFAULT (datetime('now','localtime')),
+        prompt_text_enc TEXT,
+        ai_response_enc TEXT
+      );
+    `)
+    db.pragma('user_version = 30')
+  }
+
+  it('a) 基线 INSERT type=update 抛 CHECK（复现根因）→ v31 放开 + 数据保活 + user_version=31', () => {
+    const db = new Database(':memory:')
+    createSecurityEraLogTable(db)
+    db.prepare(
+      "INSERT INTO ai_system_logs (id, type, status, error_message, prompt_text_enc) VALUES ('old-1', 'migration', 'success', '[startup] 老行', 'enc-甲')"
+    ).run()
+    // 根因复现：v31 前真库上 update 域审计必炸（生产 handler try/catch 静默吞掉的正是这个 throw）
+    expect(() =>
+      db.prepare("INSERT INTO ai_system_logs (id, type, status) VALUES ('x', 'update', 'failed')").run()
+    ).toThrow(/CHECK/i)
+
+    v31(db)
+
+    expect(getTableSql(db, 'ai_system_logs')).toContain("'update'")
+    expect(() =>
+      db.prepare("INSERT INTO ai_system_logs (id, type, status, error_message) VALUES ('u-1', 'update', 'failed', '更新失败（proxy）: 测试')").run()
+    ).not.toThrow()
+    const old = db.prepare('SELECT error_message, prompt_text_enc FROM ai_system_logs WHERE id = ?').get('old-1') as any
+    expect(old.error_message).toBe('[startup] 老行')
+    expect(old.prompt_text_enc).toBe('enc-甲') // _enc 密文列保活（v6 时代没有的列，SELECT 显式携带）
+    expect(db.pragma('user_version', { simple: true })).toBe(31)
+    db.close()
+  })
+
+  it('b) v31 重复执行幂等（特征串守卫不重建，数据保活）；fresh 形态（已含 update）只推 user_version', () => {
+    const db = new Database(':memory:')
+    createSecurityEraLogTable(db)
+    v31(db)
+    db.prepare("INSERT INTO ai_system_logs (id, type, status) VALUES ('u-2', 'update', 'success')").run()
+    expect(() => v31(db)).not.toThrow()
+    expect(db.prepare('SELECT COUNT(*) AS c FROM ai_system_logs').get()).toEqual({ c: 1 })
+    expect(db.pragma('user_version', { simple: true })).toBe(31)
+
+    // fresh install 形态：init.ts 新 DDL（已含 'update'）→ guard 命中跳过重建，仅推进版本
+    const fresh = new Database(':memory:')
+    fresh.exec(`
+      CREATE TABLE ai_system_logs (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL DEFAULT 'discovery' CHECK(type IN ('discovery','acl','migration','backup','security','update')),
+        status TEXT NOT NULL CHECK(status IN ('success','failed','warning')),
+        device_ids TEXT, device_names TEXT, prompt_text TEXT, ai_response TEXT,
+        parsed_result TEXT, error_message TEXT, prompt_text_enc TEXT, ai_response_enc TEXT,
+        created_at TEXT DEFAULT (datetime('now','localtime'))
+      );
+    `)
+    fresh.pragma('user_version = 30')
+    fresh.prepare("INSERT INTO ai_system_logs (id, type, status) VALUES ('f-1', 'update', 'success')").run()
+    expect(() => v31(fresh)).not.toThrow()
+    expect(fresh.prepare('SELECT COUNT(*) AS c FROM ai_system_logs').get()).toEqual({ c: 1 }) // 不重建不丢行
+    expect(fresh.pragma('user_version', { simple: true })).toBe(31)
+    db.close()
+    fresh.close()
+  })
+
+  it('c) init.ts 与 migrations.ts 的 ai_system_logs CHECK 白名单特征串逐字一致（静态守卫，Phase 17 Test 5 模式）', () => {
+    const root = path.resolve(__dirname, '../..')
+    const expected = "CHECK(type IN ('discovery','acl','migration','backup','security','update'))"
+    const initSrc = fs.readFileSync(path.join(root, 'electron/database/init.ts'), 'utf-8')
+    const migrationsSrc = fs.readFileSync(path.join(root, 'electron/database/migrations.ts'), 'utf-8')
+    expect(initSrc).toContain(expected)
+    expect(migrationsSrc).toContain(expected)
+  })
+
+  it('d) MIGRATION_HEAD=31 且注册表含 v31', () => {
+    expect(MIGRATION_HEAD).toBe(31) // 30-05 v31（ai_system_logs CHECK widen update）推进
+    expect(MIGRATIONS.map((m) => m.version)).toContain(31)
   })
 })

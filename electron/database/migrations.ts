@@ -13,7 +13,7 @@ import { createSystemLog } from '../services/systemLog'
  *      在 createTables() 建好基线表之后、premigration 备份之后执行（D-06）。
  *      init.ts 不直接调用 runMigrations（单一调用点原则）。
  */
-export const MIGRATION_HEAD = 30
+export const MIGRATION_HEAD = 31
 
 interface MigrationStep {
   version: number
@@ -1069,6 +1069,53 @@ export const v30 = (db: Database.Database): void => {
   step()
 }
 
+/**
+ * 30-05 真机实证修复（30-SPIKE-RECORD §5.8 根因 A）：ai_system_logs CHECK type 白名单缺 'update'——
+ * updateService 全部审计日志（启动检测失败 / 下载完成 success / 错误分诊 failed）在真库上
+ * SQLITE_CONSTRAINT_CHECK 被 handler try/catch 静默吞掉，update 域审计链路自 30-03 起从未落库。
+ * 内存 mock 测不出 DDL 约束（30-02 测试盲区），本迁移 + 特征串静态守卫测试双兜底。
+ */
+export const v31 = (db: Database.Database): void => {
+  // 幂等守卫：sqlite_master schema 已含 'update'（fresh install 走 init.ts 新 DDL）则跳过重建；
+  // user_version 无条件推进到 31（v30 模式——guard 命中也须达 HEAD，防每启动重跑尾步）。
+  // v6 rebuild 模式镜像；SELECT 显式携带 v13 起的 _enc 两列（v6 时代尚无，列名寻址序无关）。
+  const logSchema =
+    (
+      db
+        .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='ai_system_logs'")
+        .get() as { sql?: string } | undefined
+    )?.sql || ''
+  const step = db.transaction(() => {
+    if (!logSchema.includes("'update'")) {
+      db.exec('DROP TABLE IF EXISTS ai_system_logs_new')
+      db.exec(`
+        CREATE TABLE ai_system_logs_new (
+          id TEXT PRIMARY KEY,
+          type TEXT NOT NULL DEFAULT 'discovery' CHECK(type IN ('discovery','acl','migration','backup','security','update')),
+          status TEXT NOT NULL CHECK(status IN ('success','failed','warning')),
+          device_ids TEXT,
+          device_names TEXT,
+          prompt_text TEXT,
+          ai_response TEXT,
+          parsed_result TEXT,
+          error_message TEXT,
+          prompt_text_enc TEXT,
+          ai_response_enc TEXT,
+          created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        INSERT INTO ai_system_logs_new
+          (id, type, status, device_ids, device_names, prompt_text, ai_response, parsed_result, error_message, prompt_text_enc, ai_response_enc, created_at)
+          SELECT id, type, status, device_ids, device_names, prompt_text, ai_response, parsed_result, error_message, prompt_text_enc, ai_response_enc, created_at
+          FROM ai_system_logs;
+        DROP TABLE ai_system_logs;
+        ALTER TABLE ai_system_logs_new RENAME TO ai_system_logs;
+      `)
+    }
+    db.pragma('user_version = 31')
+  })
+  step()
+}
+
 export const MIGRATIONS: MigrationStep[] = [
   { version: 1, name: 'chat_history.session_id', run: v1 },
   { version: 2, name: 'ai_exec_logs.prompt_text+ai_response', run: v2 },
@@ -1100,6 +1147,7 @@ export const MIGRATIONS: MigrationStep[] = [
   { version: 28, name: 'mcp_configs.type CHECK widen package + 存量包配置转换（29-09 走查二）', run: v28 },
   { version: 29, name: 'mcp_packages.env_meta + mcp_tools.package_id 借存迁移（PKG-29.1-D04/D-05）', run: v29 },
   { version: 30, name: 'ai_config.update_skip_version+update_snooze_until（UPD-03/04 升级压制档位）', run: v30 },
+  { version: 31, name: 'ai_system_logs CHECK widen update（30-05 真机实证 update 域审计链路修复）', run: v31 },
 ]
 
 /**

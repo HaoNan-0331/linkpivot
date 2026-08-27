@@ -103,7 +103,7 @@ export function createTables() {
 
     CREATE TABLE IF NOT EXISTS ai_system_logs (
       id TEXT PRIMARY KEY,
-      type TEXT NOT NULL DEFAULT 'discovery' CHECK(type IN ('discovery','acl','migration','backup','security')),
+      type TEXT NOT NULL DEFAULT 'discovery' CHECK(type IN ('discovery','acl','migration','backup','security','update')),
       status TEXT NOT NULL CHECK(status IN ('success','failed','warning')),
       device_ids TEXT,
       device_names TEXT,

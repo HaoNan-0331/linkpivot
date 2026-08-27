@@ -140,7 +140,7 @@ describe('v26 迁移幂等（T-28-01-03）', () => {
     expect(v26(db)).toBeUndefined() // 第二次重复执行（hasColumn 幂等守卫）
     const uv = db.pragma('user_version') as Array<{ user_version: number }>
     expect(uv[0].user_version).toBe(26)
-    expect(MIGRATION_HEAD).toBe(30) // 30-02 v30 推进
+    expect(MIGRATION_HEAD).toBe(31) // 30-05 v31 推进
   })
 
   it('v26 后 chat_history 可建 meta_enc 列（升级路径）', () => {
