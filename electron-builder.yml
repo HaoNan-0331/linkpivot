@@ -47,6 +47,13 @@ extraResources:
 buildDependenciesFromSource: false
 npmRebuild: true
 
+# === 发布配置：GitHub Releases 自动更新源 ===
+# 驱动 latest.yml 与安装包内 app-update.yml 生成（electron-updater 运行时读取）
+publish:
+  provider: github
+  owner: HaoNan-0331
+  repo: network-topology-manager
+
 # === Windows 配置 ===
 win:
   target:
@@ -59,6 +66,9 @@ nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
   deleteAppDataOnUninstall: false
+  # ASCII 显式产物名：匹配安全字符正则 → safeArtifactName=null →
+  # 本地名 = 上传名 = latest.yml url 三位一体（中文名 productName 的清洗链坑不复现）
+  artifactName: "Setup.${version}.${ext}"
 
 # === 精简 Electron 语言包 ===
 electronLanguages:
