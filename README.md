@@ -1,6 +1,6 @@
-# 网络拓扑管理工具 (Network Topology Manager)
+# 灵枢 LinkPivot
 
-面向运维人员的桌面工具：在一个应用里可视化网络拓扑、安全地远程操控设备、用 AI 辅助分析与执行运维命令，并维护设备资料与运维知识库。
+灵枢（LinkPivot）是面向运维人员的桌面工具：在一个应用里可视化网络拓扑、安全地远程操控设备、用 AI 辅助分析与执行运维命令，并维护设备资料与运维知识库。
 
 ## ✨ 功能特性
 
@@ -13,7 +13,7 @@
 
 ## 📥 下载安装
 
-到 [Releases](https://github.com/HaoNan-0331/network-topology-manager/releases) 下载最新 `Setup.x.x.x.exe`（Windows x64，NSIS 安装包），双击安装即可。
+到 [Releases](https://github.com/HaoNan-0331/linkpivot/releases) 下载最新 `Setup.x.x.x.exe`（Windows x64，NSIS 安装包），双击安装即可。
 
 所有数据（设备资料 / 凭证 / 知识库 / 监控记录）存储在本地 SQLite 数据库，无需服务端。
 
