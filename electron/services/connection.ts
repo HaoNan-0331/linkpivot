@@ -278,10 +278,25 @@ export function openRDP(device: DeviceInfo) {
   }
   // mstsc on Windows accepts an .rdp file path as argument
   const tmpPath = path.join(require('os').tmpdir(), `rdp_${device.id || Date.now()}.rdp`)
-  fs.writeFileSync(tmpPath, rdpFile, 'utf-8')
+  try {
+    fs.writeFileSync(tmpPath, rdpFile, 'utf-8')
+  } catch (e) {
+    removeTempRdpFile(tmpPath) // 写入半途失败也不残留半写文件
+    throw e
+  }
   execFile('mstsc', [tmpPath], { shell: false }, (err) => {
+    // F-02: mstsc 进程退出（含启动失败）后清理临时文件——回调触发时文件已被消费，成功路径行为不变
+    removeTempRdpFile(tmpPath)
     if (err) throw new Error(`启动 RDP 失败: ${err.message}`)
   })
+}
+
+function removeTempRdpFile(tmpPath: string) {
+  try {
+    fs.unlinkSync(tmpPath)
+  } catch {
+    /* 文件不存在/被占用：清理失败不掩盖原始结果 */
+  }
 }
 
 function testRDPConnection(host: string, port: number): Promise<{ success: boolean; message: string }> {
