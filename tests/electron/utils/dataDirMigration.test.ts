@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
@@ -17,6 +17,8 @@ import {
  *   - target=LinkPivot 已存在 → none（永不覆盖既有目录红线，用例 3）
  *   - 按 LEGACY_DIR_NAMES 有序遍历（打包态「网络拓扑管理工具」优先，用例 5）
  *   - renameSync 同卷原子搬迁；失败 → fallback 继续用旧目录（数据可用性优先，用例 6）
+ *   - 30-06 WR-01/02 补锁：全新安装 target 显式创建（用例 7）+ 并发实例已完成迁移的
+ *     源消失型 rename 失败复核 → none 非 fallback（用例 8，IN-04 回归锁缺口补齐）
  *
  * 纯函数零 electron import（ELECTRON_RUN_AS_NODE 可测）；每用例 os.tmpdir() mkdtemp
  * 独立 appData 根，互不串扰；afterEach 统一回收。
@@ -124,6 +126,44 @@ describe('migrateLegacyUserData（30.1-02 改名数据迁移）', () => {
       expect(fs.existsSync(path.join(legacy, 'topology.db'))).toBe(true)
     } finally {
       fs.closeSync(fd)
+    }
+  })
+
+  it('用例 7（WR-01）：无 legacy 无 target（全新安装）→ none 且 target 目录被显式创建', () => {
+    const root = makeAppDataRoot()
+    const r = migrateLegacyUserData(root)
+    expect(r.status).toBe('none')
+    expect(r.from).toBeUndefined()
+    // WR-01 红线：setPath 目标目录必须就绪（main.ts setPath 后 Electron 无隐式建目录承诺，
+    // keyManager writeFileSync(master.key) 前 ENOENT = 全新安装首启即「启动失败」）
+    expect(fs.existsSync(path.join(root, TARGET_DIR_NAME))).toBe(true)
+  })
+
+  it('用例 8（WR-02）：existsSync(legacy) 通过后、rename 前被并发实例迁走（源消失型 ENOENT）→ none 非 fallback，数据已落 target', () => {
+    const root = makeAppDataRoot()
+    const legacy = path.join(root, '网络拓扑管理工具')
+    fs.mkdirSync(legacy, { recursive: true })
+    fs.writeFileSync(path.join(legacy, 'topology.db'), 'db')
+    // 模拟并发实例在本实例 existsSync(legacy) 通过后、renameSync 执行前恰好完成同一次迁移：
+    // legacy 被整体搬走（消失）+ target 就绪，随后本实例的 renameSync 抛源消失型 ENOENT。
+    // 修复前该场景误判 fallback → setPath 回已被迁走的 legacy 路径（假性数据丢失窗口）。
+    const renameSpy = vi.spyOn(fs, 'renameSync').mockImplementation((from: fs.PathLike, to: fs.PathLike) => {
+      fs.mkdirSync(String(to), { recursive: true })
+      fs.copyFileSync(String(from), path.join(String(to), 'topology.db'))
+      fs.rmSync(String(from), { recursive: true, force: true })
+      throw Object.assign(
+        new Error(`ENOENT: no such file or directory, rename '${String(from)}' -> '${String(to)}'`),
+        { code: 'ENOENT' },
+      )
+    })
+    try {
+      const r = migrateLegacyUserData(root)
+      expect(r.status).toBe('none')
+      expect(r.from).toBeUndefined()
+      // 并发实例迁移的数据在 target 完好；本实例未误判 fallback
+      expect(fs.readFileSync(path.join(root, TARGET_DIR_NAME, 'topology.db'), 'utf8')).toBe('db')
+    } finally {
+      renameSpy.mockRestore()
     }
   })
 })
