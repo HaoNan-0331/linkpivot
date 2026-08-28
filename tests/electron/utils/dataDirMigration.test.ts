@@ -149,7 +149,7 @@ describe('migrateLegacyUserData（30.1-02 改名数据迁移）', () => {
     // 修复前该场景误判 fallback → setPath 回已被迁走的 legacy 路径（假性数据丢失窗口）。
     const renameSpy = vi.spyOn(fs, 'renameSync').mockImplementation((from: fs.PathLike, to: fs.PathLike) => {
       fs.mkdirSync(String(to), { recursive: true })
-      fs.copyFileSync(String(from), path.join(String(to), 'topology.db'))
+      fs.copyFileSync(path.join(String(from), 'topology.db'), path.join(String(to), 'topology.db'))
       fs.rmSync(String(from), { recursive: true, force: true })
       throw Object.assign(
         new Error(`ENOENT: no such file or directory, rename '${String(from)}' -> '${String(to)}'`),
