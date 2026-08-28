@@ -3,7 +3,7 @@ import path from 'path'
 import { initDatabase, closeDatabase, migrateAndSecure, getDatabase } from './database/connection'
 import { createTables } from './database/init'
 import { getOrCreateMasterKey } from './utils/keyManager'
-import { migrateLegacyUserData, TARGET_DIR_NAME } from './utils/dataDirMigration'
+import { migrateLegacyUserData, TARGET_DIR_NAME, type MigrationResult } from './utils/dataDirMigration'
 import { setDecryptFailureHandler } from './utils/crypto'
 import { hardenWindow, openExternalSafe } from './utils/webSecurity'
 import { secure, safe, setAuthenticated } from './utils/authGuard'
@@ -42,14 +42,34 @@ import { registerMcpPackageIpc } from './ipc/mcpPackageIpc'
 import { registerUpdateIpc } from './ipc/updateIpc'
 import { UpdateService } from './services/updateService'
 
+// WR-03（30-06，单实例锁）：根治迁移 check-then-rename 的 TOCTOU 竞态——双开（双击两次/
+// 安装器「完成后运行」+手动启动）时第二实例不再触碰 userData 目录。锁必须先于下方迁移逻辑；
+// 未拿到锁的实例：app.quit() + 跳过一切模块级启动副作用（迁移 ternary 门控 + whenReady 回调
+// early-return），仅 before-quit 兜底链照常可达（BackupScheduler.stop/closeDatabase 均幂等安全）。
+// 拿到锁的实例注册 second-instance：再次启动尝试聚焦已有窗口。
+const gotTheLock = app.requestSingleInstanceLock()
+if (!gotTheLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+    }
+  })
+}
+
 // 30.1-02（改名数据连续性红线）：productName 改「灵枢」后 Electron 默认 userData 会漂移到
 // %APPDATA%\灵枢——0.4.0 老用户 DB/masterKey/kb_files/backups 全部「消失」。
 // 在一切 userData 消费（keyManager/connection/backupScheduler/kb 均为惰性求值）之前：
 //   1) 一次性原子迁移 %APPDATA%\网络拓扑管理工具 → LinkPivot（永不覆盖既有目录；rename 失败
 //      （旧应用占用等）回退继续用旧目录，数据可用性优先，应用启动永不因迁移炸死）；
 //   2) app.setPath 显式钉定 userData=LinkPivot，与 productName 解耦（未来显示名再改不再迁移数据）。
-const dataDirMigration = migrateLegacyUserData(app.getPath('appData'))
-app.setPath('userData', dataDirMigration.status === 'fallback' && dataDirMigration.from
+// WR-03：第二实例（未拿到锁、退出中）不执行迁移（竞态源）；setPath 仅设值无文件系统副作用。
+const dataDirMigration: MigrationResult = gotTheLock
+  ? migrateLegacyUserData(app.getPath('appData'))
+  : { status: 'none' }
+app.setPath('userData', gotTheLock && dataDirMigration.status === 'fallback' && dataDirMigration.from
   ? dataDirMigration.from
   : path.join(app.getPath('appData'), TARGET_DIR_NAME))
 
@@ -82,6 +102,9 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  // WR-03（30-06）：未拿到单实例锁的第二实例（quit 退出中）——ready 前后仍可能触发本回调，
+  // early-return 跳过全部启动副作用（masterKey/DB 初始化/IPC 注册/窗口创建）。
+  if (!gotTheLock) return
   // 注入严格 CSP（渲染层 XSS 第二道防线）；AI API 由主进程 fetch，不受此限制
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     // dev 模式：vite + @vitejs/plugin-react 注入 inline HMR preamble，严格 CSP 'script-src self' 会阻止 → 白屏。
