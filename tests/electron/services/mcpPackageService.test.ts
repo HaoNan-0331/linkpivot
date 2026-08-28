@@ -1031,3 +1031,122 @@ describe('29.1 CR MD-02: 换盘窗口 swap 守卫——测试通道返回「正�
     expect(h.clientMock.testConnection).toHaveBeenCalledTimes(1)
   })
 })
+
+// ---------------------------------------------------------------------------
+// 0.5.0 线上回归修复（debug mcp-pkg-legacy-path）：mcp_packages.dir_path 绝对路径漂移
+// 30.1 userData 整体迁移（network-topology-manager → LinkPivot）后 DB 内旧绝对路径失效：
+// spawn ENOENT（+ integrity 副作用误禁用）+ delete/overwrite 沙箱拒绝 → 三路死锁。
+// 修复语义回归锚点：healPackagePaths 启动自愈 + deletePackage legacy 残留出路（fail-closed 不削弱）。
+// ---------------------------------------------------------------------------
+describe('0.5.0 回归修复 mcp-pkg-legacy-path: healPackagePaths 启动自愈', () => {
+  /** 复现线上形态：正常导入 → 模拟 30.1 迁移后 DB 行旧态（dir_path=旧绝对路径 + ENOENT 误禁用） */
+  function seedLegacyDrift(db: Database.Database, legacyRoot: string): { pkgId: number; cfgId: number } {
+    const res = McpPackageService.importPackage(mkMcpb())
+    if (!res.ok) throw new Error('import failed')
+    const pkgId = res.package.id
+    const cfg = db.prepare(
+      "INSERT INTO mcp_configs (name, type, command_or_url, package_id, source) VALUES ('legacy-cfg', 'package', 'main.js', ?, 'package')"
+    ).run(pkgId)
+    // 线上形态注入：dir_path 指向「已随 30.1 迁移消失」的旧 userData 绝对路径 + 假阳性 disabled=1
+    db.prepare('UPDATE mcp_packages SET dir_path = ?, disabled = 1 WHERE id = ?')
+      .run(join(legacyRoot, 'demo-pkg'), pkgId)
+    return { pkgId, cfgId: Number(cfg.lastInsertRowid) }
+  }
+
+  it('legacy 前缀 dir_path + 误禁用 → 规范位置在盘且指纹复验通过 → 重写路径 + 清 disabled（幂等）', () => {
+    const legacyRoot = join(rootDir, '..', 'legacy-user-data', 'mcp-packages')
+    const { pkgId } = seedLegacyDrift(h.db!, legacyRoot)
+
+    const r = McpPackageService.healPackagePaths()
+    expect(r).toEqual({ scanned: 1, healed: 1 })
+    const row = h.db!.prepare('SELECT dir_path, disabled FROM mcp_packages WHERE id = ?').get(pkgId) as any
+    expect(row.dir_path).toBe(join(rootDir, 'demo-pkg')) // 重写为规范位置（当前包根 + name）
+    expect(row.disabled).toBe(0) // ENOENT 假阳性禁用清除（指纹复验通过 = 内容与导入时一致）
+
+    // 幂等：已一致的行快速跳过，零重复写
+    const again = McpPackageService.healPackagePaths()
+    expect(again.healed).toBe(0)
+  })
+
+  it('heal 后下游读点零改动即恢复：管理页影响面/出口投影读到规范路径（非死路径）', () => {
+    const legacyRoot = join(rootDir, '..', 'legacy-user-data', 'mcp-packages')
+    const { pkgId } = seedLegacyDrift(h.db!, legacyRoot)
+    expect(McpPackageService.healPackagePaths().healed).toBe(1)
+    expect(McpPackageService.getPackageDeleteImpact(pkgId)!.dirPath).toBe(join(rootDir, 'demo-pkg'))
+    expect(McpPackageService.listPackages().find((p) => p.id === pkgId)!.dirPath).toBe(join(rootDir, 'demo-pkg'))
+  })
+
+  it('规范位置缺失（幽灵残留：目录没随迁/被手删）→ 跳过不改（保留 ENOENT 真实语义，fail-closed）', () => {
+    const pkgId = (McpPackageService.importPackage(mkMcpb({ name: 'ghost-pkg' })) as any).package.id
+    rmSync(join(rootDir, 'ghost-pkg'), { recursive: true, force: true })
+    const legacy = 'C:\\Users\\legacy\\AppData\\Roaming\\network-topology-manager\\mcp-packages\\ghost-pkg'
+    h.db!.prepare('UPDATE mcp_packages SET dir_path = ?, disabled = 1 WHERE id = ?').run(legacy, pkgId)
+
+    const r = McpPackageService.healPackagePaths()
+    expect(r.healed).toBe(0)
+    const row = h.db!.prepare('SELECT dir_path, disabled FROM mcp_packages WHERE id = ?').get(pkgId) as any
+    expect(row.dir_path).toBe(legacy) // 零改动
+    expect(row.disabled).toBe(1)
+  })
+
+  it('规范位置指纹复验不通过（内容与导入时不一致）→ 跳过且不清 disabled（重新导入才是出路）', () => {
+    const pkgId = (McpPackageService.importPackage(mkMcpb({ name: 'tamper-pkg' })) as any).package.id
+    const legacy = 'C:\\Users\\legacy\\AppData\\Roaming\\network-topology-manager\\mcp-packages\\tamper-pkg'
+    h.db!.prepare('UPDATE mcp_packages SET dir_path = ?, disabled = 1 WHERE id = ?').run(legacy, pkgId)
+    // 规范位置在盘但内容被篡改 → 复验必败
+    writeFileSync(join(rootDir, 'tamper-pkg', 'main.js'), 'tampered')
+    h.clientMock.verifyPackageFingerprint.mockImplementation(() => {
+      throw { code: 'package_integrity_failed', reason: '包指纹重验失败（TOCTOU 检出）：内容变化 main.js' }
+    })
+
+    const r = McpPackageService.healPackagePaths()
+    expect(r.healed).toBe(0)
+    const row = h.db!.prepare('SELECT dir_path, disabled FROM mcp_packages WHERE id = ?').get(pkgId) as any
+    expect(row.dir_path).toBe(legacy)
+    expect(row.disabled).toBe(1)
+  })
+
+  it('name 被篡改（派生规范位置逃逸包根）→ heal 跳过（留给既有拒绝链，不生产越界重写）', () => {
+    const pkgId = (McpPackageService.importPackage(mkMcpb({ name: 'evil-pkg' })) as any).package.id
+    const legacy = 'C:\\Users\\legacy\\AppData\\Roaming\\network-topology-manager\\mcp-packages\\x'
+    h.db!.prepare('UPDATE mcp_packages SET name = ?, dir_path = ? WHERE id = ?').run('..\\evil', legacy, pkgId)
+
+    const r = McpPackageService.healPackagePaths()
+    expect(r.healed).toBe(0)
+    const row = h.db!.prepare('SELECT dir_path FROM mcp_packages WHERE id = ?').get(pkgId) as any
+    expect(row.dir_path).toBe(legacy)
+  })
+})
+
+describe('0.5.0 回归修复 mcp-pkg-legacy-path: deletePackage legacy 残留死锁出路', () => {
+  it('dir_path 逃逸且目标不在盘（legacy 迁移残留）→ DB 四表级联清净 + 清规范位置孤儿 + 逃逸路径零 fs 动作', () => {
+    const res = McpPackageService.importPackage(mkMcpb())
+    if (!res.ok) throw new Error('import failed')
+    const pkgId = res.package.id
+    seedPackageConfig(h.db!, pkgId, { dev1: { A: '1' } })
+    // 逃逸目标不在盘的 legacy 残留形态；规范位置（root/demo-pkg）在盘持有真实包文件
+    const phantom = join(rootDir, '..', 'gone-legacy-user-data', 'mcp-packages', 'demo-pkg')
+    h.db!.prepare('UPDATE mcp_packages SET dir_path = ? WHERE id = ?').run(phantom, pkgId)
+
+    const del = McpPackageService.deletePackage(pkgId)
+    expect(del.ok).toBe(true)
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_packages').get()).toEqual({ c: 0 })
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_configs').get()).toEqual({ c: 0 })
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_device_rel').get()).toEqual({ c: 0 })
+    expect(existsSync(join(rootDir, 'demo-pkg'))).toBe(false) // 规范位置孤儿文件一并清净
+    expect(existsSync(phantom)).toBe(false) // 逃逸路径从未被创建/触碰
+  })
+
+  it('dir_path 逃逸且目标在盘 → 维持 CR-01 整体拒绝不 rmSync（既有语义零削弱，上方 CR-01 用例同锚）', () => {
+    const pkgId = (McpPackageService.importPackage(mkMcpb({ name: 'cr1-pkg' })) as any).package.id
+    const sentinel = join(rootDir, '..', 'sentinel-legacy-residue.txt')
+    writeFileSync(sentinel, 'keep')
+    h.db!.prepare('UPDATE mcp_packages SET dir_path = ? WHERE id = ?').run(resolve(rootDir, '..'), pkgId)
+    const del = McpPackageService.deletePackage(pkgId)
+    expect(del.ok).toBe(false)
+    if (!del.ok) expect(del.error).toContain('不安全')
+    expect(existsSync(sentinel)).toBe(true)
+    expect(h.db!.prepare('SELECT COUNT(*) AS c FROM mcp_packages').get()).toEqual({ c: 1 }) // 行未删
+    rmSync(sentinel, { force: true })
+  })
+})

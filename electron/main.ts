@@ -172,6 +172,26 @@ app.whenReady().then(async () => {
     } catch { /* 审计写库失败非致命 */ }
   }
   await migrateAndSecure()   // 迁移前备份(gated on 非空库) + runMigrations + ACL 收紧 db/wal/shm（D-06/D-12a）；BUG-3 修复：premigration 备份完整 await 后才跑 runMigrations
+
+  // 0.5.0 线上回归修复（debug mcp-pkg-legacy-path）：mcp_packages.dir_path 启动自愈——
+  // 30.1 userData 目录整体迁移后，DB 内持久化的旧绝对路径漂移（spawn ENOENT + 删除沙箱拒绝
+  // 死锁 + ENOENT 假阳性误禁用）。规范位置（userData/mcp-packages/{name}）指纹复验通过才
+  // 重写并清误禁用；幂等、失败非致命（fail-closed 保留原路径由既有拒绝链兜底，T-30.1-07 同语义）。
+  try {
+    const mcpHeal = McpPackageService.healPackagePaths()
+    if (mcpHeal.healed > 0) {
+      console.log('[startup] mcp package dir_path healed:', mcpHeal.healed)
+      try {
+        createSystemLog({
+          type: 'migration',
+          status: 'success',
+          errorMessage: `MCP 包路径自愈：${mcpHeal.healed} 个包的 dir_path 由旧 userData 绝对路径重写至 ${app.getPath('userData')}\\mcp-packages 并清除迁移期误禁用（TOCTOU 全树指纹复验通过）`,
+        })
+      } catch { /* 审计写库失败非致命（与上方迁移审计同语义） */ }
+    }
+  } catch (e) {
+    console.warn('[startup] mcp package dir_path heal failed (non-blocking):', (e as Error).message)
+  }
   // Phase 10 Plan 04 CR-02：post-MK 历史 severity 回填（治本 D-10-2 筛层兑现）。
   // 迁移在 MK 注入前跑，v10 内无法解密 attrs_enc 回填 severity 明文列——此钩子在 MK 注入 + 迁移后跑，
   // 解密 attrs_enc.severity 回填，使历史数据 severity 筛选/排序对称可用。幂等（severity IS NULL 守卫），

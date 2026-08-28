@@ -144,6 +144,58 @@ export class McpPackageService {
     McpPackageService.rootGetter = fn
   }
 
+  /**
+   * 包规范目录（唯一可信位置）：包根 + name——name 经 PKG_NAME_RE 导入校验（无路径分隔符），
+   * DB 篡改 name 的逃逸形态由 unsafePackageDirError 沙箱守卫拦截。
+   */
+  private static packageDir(name: string): string {
+    return join(McpPackageService.rootGetter(), name)
+  }
+
+  /**
+   * 启动自愈（main.ts whenReady 在 migrateAndSecure 之后调用）——0.5.0 线上回归修复
+   * （debug mcp-pkg-legacy-path）：importPackage 曾把包目录**绝对路径**持久化进 dir_path，
+   * 30.1 userData 目录整体原子迁移（network-topology-manager → LinkPivot）后该路径失效：
+   * spawn 链 readdirSync ENOENT（且 integrity 副作用把包误标 disabled=1）、delete/overwrite
+   * 链 CR-01 沙箱守卫以新包根比对旧绝对路径必然「逃逸」拒绝——三路叠加成死锁。
+   *
+   * 语义：dir_path 与规范位置（包根 + name）漂移的行，仅在规范位置
+   *  ① 过 CR-01 沙箱守卫（name 被篡改的逃逸形态跳过，留给既有拒绝链）；
+   *  ② 在盘（目录没随迁/被手删的幽灵残留跳过——保留 spawn ENOENT 真实语义）；
+   *  ③ TOCTOU 全树指纹复验通过（与重新导入的密码学校验等价——清 disabled 的安全依据：
+   *    迁移期 ENOENT 假阳性所致禁用，内容此刻被证明与导入时一致）
+   * 时单事务重写 dir_path 并清除 disabled。幂等（已一致的行快速跳过）；
+   * 失败/跳过均零 DB 改动（fail-closed，由既有拒绝链兜底）。
+   */
+  static healPackagePaths(): { scanned: number; healed: number } {
+    const conn = McpPackageService.db()
+    const rows = conn.prepare('SELECT id, name, dir_path, fingerprint_json, disabled FROM mcp_packages').all() as Array<{
+      id: number; name: string; dir_path: string; fingerprint_json: string | null; disabled: number
+    }>
+    const fixes: Array<{ id: number; canonical: string }> = []
+    for (const row of rows) {
+      const canonical = resolve(McpPackageService.packageDir(row.name))
+      if (resolve(row.dir_path) === canonical) continue // 已一致（幂等快速路径）
+      if (McpPackageService.unsafePackageDirError(canonical) !== null) continue // name 篡改逃逸形态：跳过
+      if (!existsSync(canonical)) continue // 规范位置缺失：不改路径，让 ENOENT 如实暴露
+      try {
+        verifyPackageFingerprint(canonical, row.fingerprint_json ?? '')
+      } catch {
+        continue // 内容与导入时不一致：fail-closed 不自愈（重新导入链路兜底）
+      }
+      fixes.push({ id: row.id, canonical })
+    }
+    if (fixes.length > 0) {
+      const upd = conn.prepare(
+        "UPDATE mcp_packages SET dir_path = ?, disabled = 0, updated_at = datetime('now','localtime') WHERE id = ?"
+      )
+      conn.transaction((): void => {
+        for (const f of fixes) upd.run(f.canonical, f.id)
+      })()
+    }
+    return { scanned: rows.length, healed: fixes.length }
+  }
+
   private static db(): Database.Database {
     return McpPackageService.dbGetter()
   }
@@ -279,7 +331,7 @@ export class McpPackageService {
       )
       return { ok: true, status: 'changed', package: McpPackageService.rowToView(existing), diff }
     }
-    const dir = join(McpPackageService.rootGetter(), manifest.name)
+    const dir = McpPackageService.packageDir(manifest.name)
     // CR-01 纵深防御：落盘前 resolve 前缀守卫（校验器白名单之外的第二道闸）
     const unsafe = McpPackageService.unsafePackageDirError(dir)
     if (unsafe) return { ok: false, error: unsafe }
@@ -553,10 +605,13 @@ export class McpPackageService {
     const conn = McpPackageService.db()
     const row = conn.prepare('SELECT * FROM mcp_packages WHERE id = ?').get(packageId) as any
     if (!row) return { ok: false, error: '包不存在或已被删除' }
-    // CR-01 纵深防御：rmSync 前置 resolve 前缀守卫——dir_path 逃逸包根即整体拒绝
-    // （DB 行被篡改的形态；不执行任何破坏性动作，由用户人工核查）
+    // CR-01 纵深防御：rmSync 前置 resolve 前缀守卫——dir_path 逃逸包根且目标在盘即整体拒绝
+    // （DB 行被篡改的形态；不执行任何破坏性动作，由用户人工核查）。
+    // 0.5.0 回归修复（mcp-pkg-legacy-path）：逃逸目标**不在盘**的 legacy 迁移残留形态
+    // （目录已随 30.1 userData 整体迁移消失，无可破坏对象）放行 DB 级联清理并跳过 rmSync
+    // ——对逃逸路径零 fs 动作，沙箱语义零削弱，打破「spawn ENOENT + delete 沙箱拒绝」死锁。
     const unsafe = McpPackageService.unsafePackageDirError(row.dir_path)
-    if (unsafe) return { ok: false, error: unsafe }
+    if (unsafe && existsSync(row.dir_path)) return { ok: false, error: unsafe }
 
     // 1) 杀该包全部运行实例（登记键=复合键 `${configId}:${deviceId}`（29-04 D-18）——取 ':' 前
     //    configId 段比对，设备级多实例一并树杀；只杀本包配置对应的 pid）
@@ -577,8 +632,18 @@ export class McpPackageService {
       conn.prepare('DELETE FROM mcp_packages WHERE id = ?').run(packageId)
     })()
 
-    // 3) 事务外删文件目录
-    rmSync(row.dir_path, { recursive: true, force: true })
+    // 3) 事务外删文件目录：
+    //    - 正常形态：删 DB 持久化路径（沙箱守卫已过）
+    //    - legacy 残留形态（逃逸且不在盘）：不触碰逃逸路径（零 fs 动作红线），改清规范位置
+    //      root/{name} 的孤儿文件（目录已随迁移到达规范位置时一并清净；name 篡改形态守卫拦截跳过）
+    if (!unsafe) {
+      rmSync(row.dir_path, { recursive: true, force: true })
+    } else {
+      const canonical = resolve(McpPackageService.packageDir(row.name))
+      if (McpPackageService.unsafePackageDirError(canonical) === null) {
+        rmSync(canonical, { recursive: true, force: true })
+      }
+    }
     return { ok: true }
   }
 
