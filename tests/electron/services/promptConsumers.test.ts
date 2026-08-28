@@ -15,6 +15,9 @@ import path from 'path'
  * Mock 策略（ai.saveChatMessage.test.ts 同款 + 扩展）：getDatabase 按 SQL 分流、
  * ssh2 / telnetExec / aiExecLogger / knowledgeBaseService / experienceRetrieval 桩化，
  * callAI 经 global.fetch stub 控制回复内容（不改 ai.ts 内部结构，真路径跑 chat()）。
+ *
+ * F-01 归位（27-01 Rule 3 先例）：原居 electron/services/__tests__/ 不被 vitest.electron.config.ts
+ * 采集，现迁 tests/electron/services/ 由 electron 轨唯一采集（mock 轨 exclude tests/electron/**）。
  */
 
 // ---------- 共享 mock：getDatabase 按 SQL 分流 ----------
@@ -42,7 +45,7 @@ const prepareFn = vi.fn((sql: string) => {
   return { get: prepareGet, all: () => [], run: prepareRun }
 })
 
-vi.mock('../../database/connection', () => ({
+vi.mock('../../../electron/database/connection', () => ({
   getDatabase: () => ({ prepare: prepareFn }),
 }))
 
@@ -56,13 +59,13 @@ vi.mock('ssh2', () => {
   return { Client }
 })
 
-vi.mock('../../utils/telnetExec', () => ({
+vi.mock('../../../electron/utils/telnetExec', () => ({
   executeTelnetCommand: vi.fn(),
   pickDisablePaginationCmd: vi.fn(),
   pickShellPrompt: vi.fn(),
 }))
 
-vi.mock('../aiExecLogger', () => ({
+vi.mock('../../../electron/services/aiExecLogger', () => ({
   createLog: vi.fn(() => 'log-test-1'),
   updateLogStatus: vi.fn(),
   appendLogAiResponse: vi.fn(),
@@ -70,19 +73,19 @@ vi.mock('../aiExecLogger', () => ({
   setAiExecLoggerMasterKey: vi.fn(),
 }))
 
-vi.mock('../knowledgeBaseService', () => ({
+vi.mock('../../../electron/services/knowledgeBaseService', () => ({
   search: vi.fn(async () => ({ rows: [] })),
 }))
 
-vi.mock('../experienceRetrieval', () => ({
+vi.mock('../../../electron/services/experienceRetrieval', () => ({
   retrieveForAnswer: vi.fn(async () => ({ injected: [] })),
 }))
 
-import { encField } from '../../utils/crypto'
-import { PROMPT_REGISTRY, getRegistryEntry } from '../promptRegistry'
-import { buildDraftingPrompt, buildVerdictPrompt } from '../draftingService'
-import { buildRerankPrompt } from '../experienceRerank'
-import { chat, confirmCommand, setAiMasterKey, buildExpContextText } from '../ai'
+import { encField } from '../../../electron/utils/crypto'
+import { PROMPT_REGISTRY, getRegistryEntry } from '../../../electron/services/promptRegistry'
+import { buildDraftingPrompt, buildVerdictPrompt } from '../../../electron/services/draftingService'
+import { buildRerankPrompt } from '../../../electron/services/experienceRerank'
+import { chat, confirmCommand, setAiMasterKey, buildExpContextText } from '../../../electron/services/ai'
 
 const MK = 'test-mk-for-prompt-consumers'
 
@@ -149,13 +152,15 @@ describe('7 处 prompt 调用点收敛到 PromptService.getPrompt（PMT-01）', 
     expect(system).toBe(getRegistryEntry('rerank.experience')!.content)
   })
 
-  it('registry 恰好 10 条（口径锁死：真实 LLM prompt 调用点 + 资源地图/cmdStyle/禁止令静态条目）', () => {
-    // 7 处 LLM 调用点 + ai.chat.resourceMap（23-02 D-07）+ ai.chat.cmdStyle（23-03）+ kb.pick
-    expect(PROMPT_REGISTRY).toHaveLength(10)
+  it('registry 恰好 15 条（口径锁死：真实 LLM prompt 调用点 + 资源地图/cmdStyle/禁止令静态条目 + Phase 28 agent 循环五条目）', () => {
+    // 原 10 条口径：7 处 LLM 调用点 + ai.chat.resourceMap（23-02 D-07）+ ai.chat.cmdStyle（23-03）+ kb.pick
+    // Phase 28 新增 5 条：agentHonestWrapup / agentRetryHint / agentBurnoutNote（28-01 硬顶诚实收尾、
+    // 重试提示、熔断说明）+ agentConflictGuide（28-04 D-10 三源冲突标注）+ sourceAttribution（28-06 R6 来源归因）
+    expect(PROMPT_REGISTRY).toHaveLength(15)
   })
 
   // 重依赖模块（ai / discovery / kb）源码级收敛断言：内联 prompt 已删、getPrompt(id) 接入
-  const srcDir = path.resolve(__dirname, '..')
+  const srcDir = path.resolve(__dirname, '../../../electron/services')
   const sourceLevel: Array<[string, string]> = [
     ['ai.ts', "PromptService.getPrompt('ai.chat.systemPrompt')"],
     ['discovery.ts', "PromptService.getPrompt('discovery.vendor')"],
@@ -194,13 +199,17 @@ describe('ai.chat confirm 解析失败 fail-closed（T-20-04 / PMT-04）', () =>
     expect(payload.execId.length).toBeGreaterThan(0)
   })
 
-  it('畸形回复（空命令体）+ confirm 模式 → 同样 fail-closed 回落人工确认', async () => {
+  it('混合畸形回复（空命令体块）+ confirm 模式 → 空块剔除不产生命令，合法命令仍走人工确认不进执行路径', async () => {
+    // 28-03 parseCmdBlocks 分块语义（F-01 随真实合同更新）：[CMD] [/CMD] 空命令体 trim 后被
+    // filter 剔除（不产生任何命令条目）；同回复内合法块照常提取进 confirm_required——
+    // confirm 模式下用户确认门保留，T-20-04 fail-closed 红线（畸形部分永不进执行路径）不回归。
     const malformed = '两段命令：[CMD]display version[/CMD] 与空命令体 [CMD] [/CMD]'
     stubFetchReply(malformed)
     const raw = await chat([{ role: 'user', content: '查下版本' }], ['dev-1'], 'sess-1')
     const payload = JSON.parse(raw)
     expect(payload.type).toBe('confirm_required')
-    expect(payload.commands).toEqual([])
+    // 合法块提取 1 条；空命令体块不产生命令条目（不混入空串/畸形命令）
+    expect(payload.commands).toEqual([{ deviceName: 'SW-Core', command: 'display version' }])
   })
 
   it('畸形回复 + auto 模式 → 既有行为不变（无命令可提取时原样返回纯文本回复）', async () => {

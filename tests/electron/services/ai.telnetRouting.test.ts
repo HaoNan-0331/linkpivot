@@ -7,6 +7,9 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
  * telnet 设备（仅开 23 端口）一律 ECONNREFUSED。修复后 runOne 按 connectionType 分流——
  * telnet 走 executeTelnetCommand（telnet-client），ssh（含默认）走 buildSSHConfig + client.exec + execOne。
  *
+ * F-01 归位（27-01 Rule 3 先例）：原居 electron/services/ 不被 vitest.electron.config.ts 采集，
+ * 现迁 tests/electron/services/ 由 electron 轨唯一采集（mock 轨 exclude tests/electron/**）。
+ *
  * 验证目标：
  * 1. connectionType=telnet 设备执行命令时，走 telnet 通道（executeTelnetCommand 被调用），ssh2 Client 不被实例化。
  * 2. connectionType=ssh（含默认/未设置）设备执行命令时，走 SSH 通道（ssh2 Client 被实例化），executeTelnetCommand 不被调用。
@@ -16,6 +19,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
  * - getDatabase → 内存 mock，只支撑 getCommandWhitelist 的 SELECT pattern 返回（放行全部命令）。
  * - ssh2 Client → 真 class（vitest 要求构造器 mock 为 function/class），计数实例化 + 暴露 on/connect/end。
  * - telnetExec.executeTelnetCommand → spy，记录调用参数 + 返回可控输出。
+ * - commandSafety → tokenizeCommand 用真实现（Phase 27 T-27-04 单一 token 源，ai.ts 两处消费），
+ *   isCommandAllowed 全放行 mock（聚焦分流逻辑；安全规则由 commandSafety.test.ts 覆盖）。
  */
 
 // ---- Mock：ssh2 Client（真 class，验证 telnet 路径不创建 SSH 客户端；SSH 路径计数实例化） ----
@@ -41,21 +46,27 @@ const telnetExecSpy = vi.fn()
 // WR-03：pickDisablePaginationCmd/pickShellPrompt 已从 ai.ts 抽到 telnetExec.ts 真实实现，
 // mock 保留两者真实导出（用 importActual），仅替换 executeTelnetCommand 为 spy。
 // 测试断言关分页命令文本与 shellPrompt 正则匹配（依赖真实 picker 实现）。
-vi.mock('../utils/telnetExec', async () => {
-  const actual = await vi.importActual<any>('../utils/telnetExec')
+vi.mock('../../../electron/utils/telnetExec', async () => {
+  const actual = await vi.importActual<any>('../../../electron/utils/telnetExec')
   return {
     ...actual,
     executeTelnetCommand: (...args: any[]) => telnetExecSpy(...args),
   }
 })
 
-// ---- Mock：commandSafety（放行全部，聚焦分流逻辑而非安全规则——安全规则由 commandSafety.test.ts 覆盖） ----
-vi.mock('./commandSafety', () => ({
-  isCommandAllowed: (_cmd: string, _whitelist: string[]) => ({ allowed: true, reason: '' }),
-}))
+// ---- Mock：commandSafety（tokenizeCommand 真实现 + isCommandAllowed 放行，聚焦分流而非安全规则） ----
+vi.mock('../../../electron/services/commandSafety', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../electron/services/commandSafety')>()
+  return {
+    // F-01 修复：Phase 27 起 ai.ts 另消费 tokenizeCommand（首词判定单一 token 源），
+    // 旧 mock 只给 isCommandAllowed → 9/10 用例报「No "tokenizeCommand" export」。
+    tokenizeCommand: actual.tokenizeCommand,
+    isCommandAllowed: (_cmd: string, _whitelist: string[]) => ({ allowed: true, reason: '' }),
+  }
+})
 
 // ---- Mock：getDatabase（仅支撑 getCommandWhitelist 的 SELECT pattern） ----
-vi.mock('../database/connection', () => ({
+vi.mock('../../../electron/database/connection', () => ({
   getDatabase: () => ({
     prepare: () => ({
       all: () => [{ pattern: '*' }], // whitelist 通配放行（isCommandAllowed 已 mock 全放行，此处仅防 NPE）
@@ -64,7 +75,7 @@ vi.mock('../database/connection', () => ({
 }))
 
 // 其余依赖（aiExecLogger/knowledgeBaseService/crypto）在本用例不触发，无需 mock；import 安全。
-import { executeCommandsOnDevice } from './ai'
+import { executeCommandsOnDevice } from '../../../electron/services/ai'
 
 beforeEach(() => {
   sshClientCtor.mockClear()

@@ -268,9 +268,9 @@ const v10 = (db: Database.Database): void => {
   // 幂等守卫 D-14 第一形式：hasColumn（与 v1/v2/v3/v4/v9 同构，纯 ALTER ADD COLUMN）。
   // 不动 status 枚举（沿用 Phase 7 四态）、不加 CHECK/DEFAULT（severity 值由 service 层
   // VALID_SEVERITIES 校验，与 v9 同款纯 ALTER）。
-  // 数据回填 caveat：迁移在 MK 注入前跑（migrateAndSecure 早于 setExperienceMasterKey），
-  // 无法在 v10 内解密 attrs_enc 回填 severity 明文列——历史数据 severity 仍只在 attrs_enc，
-  // 由 service 层 rowToExperience fallback 兜底（保证历史数据可查）。
+  // 数据回填 caveat：迁移内刻意不解密回填（P1 实测 main.ts MK 注入先于 migrateAndSecure，
+  // 技术上可解密，但解密回填须可失败重试不阻塞启动，见 v13 caveat 同款论据）——
+  // 历史数据 severity 仍只在 attrs_enc，由 service 层 rowToExperience fallback 兜底（保证历史数据可查）。
   const step = db.transaction(() => {
     if (!hasColumn(db, 'experiences', 'severity')) {
       db.exec('ALTER TABLE experiences ADD COLUMN severity TEXT')
@@ -290,8 +290,8 @@ const v10 = (db: Database.Database): void => {
  * 这两条 INSERT 全撞 SQLITE_CONSTRAINT_CHECK，被外层 try/catch 静默吞 → R2 解密失败 + 经验关联失败
  * 告警**全部落空**，无声数据丢失，审计盲区。本迁移把 type CHECK 扩为含 'security'，让告警真正落库可观测。
  *
- * caveat 同 v10：迁移在 MK 注入前跑（migrateAndSecure 早于 setXxxMasterKey），**不解密**（本迁移也不碰
- * 加密列，只改 CHECK 约束，与 v6 同款纯 DDL 重建表）。
+ * caveat 同 v10：迁移内刻意不解密（P1 实测 MK 注入虽先于 migrateAndSecure，但解密回填统一走
+ * post-migration 钩子，v13 caveat 论据同款；本迁移也不碰加密列，只改 CHECK 约束，与 v6 同款纯 DDL 重建表）。
  *
  * 幂等守卫 D-14 第二形式：sqlite_master sql 含 "'security'" 则 no-op 早返
  * （与 v5 查 'rdp'、v6 查 'warning'、v7 查 'WHEN' 同构，不靠 user_version 判定）。
@@ -757,8 +757,8 @@ export const v22 = (db: Database.Database): void => {
 /**
  * v23：Phase 25（25-01）三段式迁移第二段——版本占位（回填发生在 post-MK 钩子）。
  *
- * name_hash 存量回填需解密 name_enc，而迁移在 MK 注入前跑（migrateAndSecure 早于
- * setDeviceMasterKey，v10/v13 caveat 同款）——回填由 25-03 的 backfillNameHash
+ * name_hash 存量回填需解密 name_enc，而迁移内刻意不解密（P1 实测 MK 注入先于 migrateAndSecure，
+ * 技术上可解密但回填须可失败重试不阻塞启动，v10/v13 caveat 同款）——回填由 25-03 的 backfillNameHash
  * post-MK 钩子执行（幂等守卫 WHERE name_hash IS NULL，失败 warn 不阻塞启动）。
  * 本步骤仅推进 user_version=23 作为三段式版本锚点，无 DDL、无数据搬动。
  */
