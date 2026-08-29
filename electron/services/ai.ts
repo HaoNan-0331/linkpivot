@@ -2831,6 +2831,20 @@ export async function chat(
     throw new Error('请先配置 AI 服务（API Key 未设置）')
   }
 
+  // Phase 31（31-05，FIX-02 GAP-1 候选② / WR-04 option a）：用户消息入口落库——在 config
+  // 校验后、tier 预取/首轮 callAI 之前持久化本轮提问。31-04 真机裁决 CONFIRMED：此前 user
+  // 行仅在 7 处退出点落库——在途回合中途切回原会话时 history 不含本轮提问（同会话
+  // msgsCount 6→9 与丢失/恢复时刻一一对应）→ 提问「消失」；中断轮（ChatInterruptedError/
+  // AbortError 逃逸 chat()）更是全丢。入口落库后任意终态提问必在 DB（切回 history 恢复必含）；
+  // 原 7 处退出点 user 落库已全部移除（防入口+出口双写，confirmCommand 的 assistant-only
+  // 落库不受影响——续跑轮 user 行由本入口已存）。DB 写入沿用既有 saveChatMessage
+  //（content_enc 经 encField，不新增写路径）；trim 空守卫——空内容跳过，不得让入口落库
+  // 提前杀死 chat（saveChatMessage 空内容 throw）。
+  const userEntryContent = messages[messages.length - 1]?.content ?? ''
+  if (userEntryContent.trim()) {
+    saveChatMessage('user', userEntryContent, null, sessionId)
+  }
+
   const whitelist = getCommandWhitelist()
   const execMode = getExecMode()
 
@@ -3182,7 +3196,6 @@ export async function chat(
     // （任一标记自动延续，D-03）；MCP 分类/确认/守卫语义不变（mcp 分支一行不改）。
     const res = await runAgentLoop(agentLoopCtx, agentState, finalAiReply)
     if (res.kind === 'confirm_required') {
-      saveChatMessage('user', messages[messages.length - 1]?.content || '', null, sessionId)
       saveChatMessage('assistant', `等待确认 ${res.count} 个操作...`, null, sessionId)
       return res.payload
     }
@@ -3236,7 +3249,6 @@ export async function chat(
       ],
       aiExplanation: finalAiReply,
     })
-    saveChatMessage('user', messages[messages.length - 1]?.content || '', null, sessionId)
     saveChatMessage('assistant', '回复命令结构解析失败（fail-closed），等待人工确认...', null, sessionId)
     return failClosedResponse
   }
@@ -3319,7 +3331,6 @@ export async function chat(
     }
     // 28-06 R3（兜底防线）：首答 [CMD] 未被任何路径执行时显式回注未执行提示
     finalAiReply += buildDroppedCmdNotice(firstReplyCmdBlocks, qOnlyRejections, targetDevices, agentState)
-    saveChatMessage('user', messages[messages.length - 1]?.content || '', null, sessionId)
     // 28-04（D-07）：agent 轨迹 meta 加密落 chat_history.meta_enc（encField 红线）
     saveChatMessage('assistant', finalAiReply, null, sessionId, buildAgentMeta(agentState, tier))
     // 28-04（AGENT-05）：统一 payload 组装——既有 kb_answer/exp_answer 契约保留 + meta 附带；
@@ -3393,7 +3404,6 @@ export async function chat(
       finalAiReply = await runEvidenceBackfill(agentLoopCtx, agentState, tier, finalAiReply)
     }
     const fullReplyAfterBackfill = finalAiReply + '\n\n' + rejectionText
-    saveChatMessage('user', messages[messages.length - 1]?.content || '', null, sessionId)
     saveChatMessage('assistant', fullReplyAfterBackfill, null, sessionId, buildAgentMeta(agentState, tier))
     return wrapAgentFinalPayload(fullReplyAfterBackfill, { kbReferences, expReferences }, agentState, tier)
   }
@@ -3444,7 +3454,6 @@ export async function chat(
       // Phase 27（Pitfall 5）：越权命中信息并入既有 payload，同一批次同一弹窗
       guardInfo,
     })
-    saveChatMessage('user', messages[messages.length - 1]?.content || '', null, sessionId)
     saveChatMessage('assistant', `等待确认 ${allowedCommands.length} 条命令...`, null, sessionId)
     return confirmResponse
   }
@@ -3525,7 +3534,6 @@ export async function chat(
   }
   if (agentRes.kind === 'confirm_required') {
     // 循环后续轮命中 confirm 门（guard 命中打断，D-06）→ 挂起弹窗等待用户确认
-    saveChatMessage('user', messages[messages.length - 1]?.content || '', null, sessionId)
     saveChatMessage('assistant', `等待确认 ${agentRes.count} 个操作...`, null, sessionId)
     return agentRes.payload
   }
@@ -3539,7 +3547,6 @@ export async function chat(
   }
   const finalReply = stripMcpMarkers(stripExpKbSearchMarkers(agentRes.reply))
 
-  saveChatMessage('user', messages[messages.length - 1]?.content || '', null, sessionId)
   saveChatMessage('assistant', finalReply, null, sessionId, buildAgentMeta(agentState, tier))
 
   // Phase 11 UAT fix 语义保留（auto 命令路径返来源列表）+ 28-04 agent_answer/meta 统一组装
