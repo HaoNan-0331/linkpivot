@@ -15,3 +15,23 @@ html, body, #root {
 .react-flow__node:not(.dragging) {
   transition: transform 150ms ease-out;
 }
+
+/* Phase 33 / UI-SPEC §7.2 裁决：AntD 浮层形态覆写。
+   Modal 取 dsh Modal.module.css 真值 r24——borderRadiusLG 12 服务 Menu/Dropdown，Modal 单独提到 24；
+   antd 6 Modal 面板类名为 -container（非旧版 -content），且 cssinjs 运行时注入晚于静态样式，
+   需 body 前缀抬升特异性才能覆盖默认的 var(--ant-border-radius-lg)。
+   AntD 6 Drawer 零 radius 样式（33-RESEARCH Pitfall 8），右抽屉仅圆朝内容侧的左上/左下两角
+   （全库 Drawer 无 placement 覆写均默认右侧）。
+   Toast 对齐 dsh r14（antd 6 message 卡片样式坐落 notice 元素本体，无 -content 子级）。 */
+body .ant-modal .ant-modal-container {
+  border-radius: 24px;
+}
+
+.ant-drawer-right .ant-drawer-content {
+  border-top-left-radius: 12px;
+  border-bottom-left-radius: 12px;
+}
+
+body .ant-message .ant-message-notice {
+  border-radius: 14px;
+}

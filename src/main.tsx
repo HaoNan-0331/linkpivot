@@ -4,12 +4,16 @@ import { ConfigProvider } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import App from './App'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { ntTheme } from './theme/ntTheme'
 import './styles/global.css'
+import './styles/tokens.css'
+import './styles/fonts.css'
+import './styles/scrollbar.css'
 import 'reactflow/dist/style.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <ConfigProvider locale={zhCN}>
+    <ConfigProvider locale={zhCN} theme={ntTheme}>
       <ErrorBoundary>
         <App />
       </ErrorBoundary>
