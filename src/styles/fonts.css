@@ -1,0 +1,253 @@
+/* Phase 33 / UI-02（33-UI-SPEC §3.1 字体双栈 + §3.3 三十复合 token 全族 + §3.5 动效）。
+   源出处：dsh packages/client/ui-theme/src/styles/base.css（字体栈 + 动效）
+   + gradient-shadow-text.css 字体段（三十复合 token 及炸开子 token，Figma 插件导出物）。
+
+   双前缀归一处置：源文件混用 --dsw- / --ds- 两种前缀（--ds- 变量共 5 个：代码字体栈 1 +
+   动效曲线时长 4），灵枢统一归一为 --nt-（防 sed 式单前缀替换漏掉代码栈载体）。
+
+   挂载裁决：dsh 原挂 :root 的字体/动效，灵枢统一迁 body（33-UI-SPEC §五裁决，
+   与 tokens.css 挂载结构对齐）——不得「优化」改回 :root。
+
+   命名归一：数字档 strong 变体统一取「档位在前、变体在后」形态（如 xxxs-11 档的 strong
+   变体名尾缀 -strong；dsh 源是把 strong 置于数字前，此处按 33-01-PLAN 命名示例归一）；
+   markdown 族变体（-strong/-italic/-strong-italic）dsh 原即后缀形态，照搬。 */
+body {
+  /* ---- 字体双栈（D-04 锁定，系统字体路线，不打包 webfont） ---- */
+  /* 正文栈：Windows 命中 'Segoe UI' + 'Microsoft YaHei'；macOS 项保留自动跳过 */
+  --nt-font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  /* 代码栈：尾部 PingFang/雅黑承接中文注释——禁裸 monospace 尾巴
+     （Windows CJK 落裸 monospace 会回落宋体 SimSun，dsh 实测结论） */
+  --nt-font-family-code: 'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas,
+    'Liberation Mono', Menlo, Courier, 'PingFang SC', 'Microsoft YaHei';
+
+  /* ---- 动效曲线与时长（原 --ds- 前缀 4 变量归一） ---- */
+  --nt-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --nt-transition-duration: 0.2s;
+  --nt-transition-duration-fast: 0.1s;
+  --nt-transition-duration-slow: 0.3s;
+
+  /* ---- 极小标注档 11px/14px ---- */
+  --nt-font-xxxs-11: 11px/14px var(--nt-font-family);
+  --nt-font-xxxs-11-font-family: var(--nt-font-family);
+  --nt-font-xxxs-11-font-weight: 400;
+  --nt-font-xxxs-11-line-height: 14px;
+  --nt-font-xxxs-11-font-size: 11px;
+  --nt-font-xxxs-11-font-style: normal;
+
+  --nt-font-xxxs-11-strong: 500 11px/14px var(--nt-font-family);
+  --nt-font-xxxs-11-strong-font-family: var(--nt-font-family);
+  --nt-font-xxxs-11-strong-font-weight: 500;
+  --nt-font-xxxs-11-strong-line-height: 14px;
+  --nt-font-xxxs-11-strong-font-size: 11px;
+  --nt-font-xxxs-11-strong-font-style: normal;
+
+  /* ---- 密度档 12px/18px（列表/日志最密、sm 按钮文字） ---- */
+  --nt-font-xxs-12: 12px/18px var(--nt-font-family);
+  --nt-font-xxs-12-font-family: var(--nt-font-family);
+  --nt-font-xxs-12-font-weight: 400;
+  --nt-font-xxs-12-line-height: 18px;
+  --nt-font-xxs-12-font-size: 12px;
+  --nt-font-xxs-12-font-style: normal;
+
+  --nt-font-xxs-12-strong: 500 12px/18px var(--nt-font-family);
+  --nt-font-xxs-12-strong-font-family: var(--nt-font-family);
+  --nt-font-xxs-12-strong-font-weight: 500;
+  --nt-font-xxs-12-strong-line-height: 18px;
+  --nt-font-xxs-12-strong-font-size: 12px;
+  --nt-font-xxs-12-strong-font-style: normal;
+
+  /* ---- 密度档 13px/20px（antd 无 13 刻度，只走本 token） ---- */
+  --nt-font-xs-13: 13px/20px var(--nt-font-family);
+  --nt-font-xs-13-font-family: var(--nt-font-family);
+  --nt-font-xs-13-font-weight: 400;
+  --nt-font-xs-13-line-height: 20px;
+  --nt-font-xs-13-font-size: 13px;
+  --nt-font-xs-13-font-style: normal;
+
+  --nt-font-xs-13-strong: 500 13px/20px var(--nt-font-family);
+  --nt-font-xs-13-strong-font-family: var(--nt-font-family);
+  --nt-font-xs-13-strong-font-weight: 500;
+  --nt-font-xs-13-strong-line-height: 20px;
+  --nt-font-xs-13-strong-font-size: 13px;
+  --nt-font-xs-13-strong-font-style: normal;
+
+  /* ---- 正文档 14px/22px（antd 默认值恰同，锚定） ---- */
+  --nt-font-s-14: 14px/22px var(--nt-font-family);
+  --nt-font-s-14-font-family: var(--nt-font-family);
+  --nt-font-s-14-font-weight: 400;
+  --nt-font-s-14-line-height: 22px;
+  --nt-font-s-14-font-size: 14px;
+  --nt-font-s-14-font-style: normal;
+
+  --nt-font-s-14-strong: 500 14px/22px var(--nt-font-family);
+  --nt-font-s-14-strong-font-family: var(--nt-font-family);
+  --nt-font-s-14-strong-font-weight: 500;
+  --nt-font-s-14-strong-line-height: 22px;
+  --nt-font-s-14-strong-font-size: 14px;
+  --nt-font-s-14-strong-font-style: normal;
+
+  /* ---- UI 层 16px 档 16px/24px（Modal 标题形态；区别于 markdown 16/28） ---- */
+  --nt-font-base-16: 16px/24px var(--nt-font-family);
+  --nt-font-base-16-font-family: var(--nt-font-family);
+  --nt-font-base-16-font-weight: 400;
+  --nt-font-base-16-line-height: 24px;
+  --nt-font-base-16-font-size: 16px;
+  --nt-font-base-16-font-style: normal;
+
+  --nt-font-base-16-strong: 500 16px/24px var(--nt-font-family);
+  --nt-font-base-16-strong-font-family: var(--nt-font-family);
+  --nt-font-base-16-strong-font-weight: 500;
+  --nt-font-base-16-strong-line-height: 24px;
+  --nt-font-base-16-strong-font-size: 16px;
+  --nt-font-base-16-strong-font-style: normal;
+
+  /* ---- 中标题（dsh 命名 18 实为 16px，照搬不改名） ---- */
+  --nt-font-m-18: 500 16px/28px var(--nt-font-family);
+  --nt-font-m-18-font-family: var(--nt-font-family);
+  --nt-font-m-18-font-weight: 500;
+  --nt-font-m-18-line-height: 28px;
+  --nt-font-m-18-font-size: 16px;
+  --nt-font-m-18-font-style: normal;
+
+  /* ---- 大标题 20px/28px ---- */
+  --nt-font-l-20: 500 20px/28px var(--nt-font-family);
+  --nt-font-l-20-font-family: var(--nt-font-family);
+  --nt-font-l-20-font-weight: 500;
+  --nt-font-l-20-line-height: 28px;
+  --nt-font-l-20-font-size: 20px;
+  --nt-font-l-20-font-style: normal;
+
+  /* ---- 特大标题 24px/32px ---- */
+  --nt-font-xl-24: 600 24px/32px var(--nt-font-family);
+  --nt-font-xl-24-font-family: var(--nt-font-family);
+  --nt-font-xl-24-font-weight: 600;
+  --nt-font-xl-24-line-height: 32px;
+  --nt-font-xl-24-font-size: 24px;
+  --nt-font-xl-24-font-style: normal;
+
+  /* ---- markdown 标题族（Phase 34 主消费） ---- */
+  --nt-font-markdown-h1: 700 24px/34px var(--nt-font-family);
+  --nt-font-markdown-h1-font-family: var(--nt-font-family);
+  --nt-font-markdown-h1-font-weight: 700;
+  --nt-font-markdown-h1-line-height: 34px;
+  --nt-font-markdown-h1-font-size: 24px;
+  --nt-font-markdown-h1-font-style: normal;
+
+  --nt-font-markdown-h2: 700 22px/32px var(--nt-font-family);
+  --nt-font-markdown-h2-font-family: var(--nt-font-family);
+  --nt-font-markdown-h2-font-weight: 700;
+  --nt-font-markdown-h2-line-height: 32px;
+  --nt-font-markdown-h2-font-size: 22px;
+  --nt-font-markdown-h2-font-style: normal;
+
+  --nt-font-markdown-h3: 700 20px/30px var(--nt-font-family);
+  --nt-font-markdown-h3-font-family: var(--nt-font-family);
+  --nt-font-markdown-h3-font-weight: 700;
+  --nt-font-markdown-h3-line-height: 30px;
+  --nt-font-markdown-h3-font-size: 20px;
+  --nt-font-markdown-h3-font-style: normal;
+
+  --nt-font-markdown-h4: 600 16px/28px var(--nt-font-family);
+  --nt-font-markdown-h4-font-family: var(--nt-font-family);
+  --nt-font-markdown-h4-font-weight: 600;
+  --nt-font-markdown-h4-line-height: 28px;
+  --nt-font-markdown-h4-font-size: 16px;
+  --nt-font-markdown-h4-font-style: normal;
+
+  /* ---- markdown 正文族 16px/28px（strong 档 600） ---- */
+  --nt-font-markdown-base: 16px/28px var(--nt-font-family);
+  --nt-font-markdown-base-font-family: var(--nt-font-family);
+  --nt-font-markdown-base-font-weight: 400;
+  --nt-font-markdown-base-line-height: 28px;
+  --nt-font-markdown-base-font-size: 16px;
+  --nt-font-markdown-base-font-style: normal;
+
+  --nt-font-markdown-base-strong: 600 16px/28px var(--nt-font-family);
+  --nt-font-markdown-base-strong-font-family: var(--nt-font-family);
+  --nt-font-markdown-base-strong-font-weight: 600;
+  --nt-font-markdown-base-strong-line-height: 28px;
+  --nt-font-markdown-base-strong-font-size: 16px;
+  --nt-font-markdown-base-strong-font-style: normal;
+
+  --nt-font-markdown-base-italic: italic 16px/28px var(--nt-font-family);
+  --nt-font-markdown-base-italic-font-family: var(--nt-font-family);
+  --nt-font-markdown-base-italic-font-weight: 400;
+  --nt-font-markdown-base-italic-line-height: 28px;
+  --nt-font-markdown-base-italic-font-size: 16px;
+  --nt-font-markdown-base-italic-font-style: italic;
+
+  --nt-font-markdown-base-strong-italic: italic 600 16px/28px var(--nt-font-family);
+  --nt-font-markdown-base-strong-italic-font-family: var(--nt-font-family);
+  --nt-font-markdown-base-strong-italic-font-weight: 600;
+  --nt-font-markdown-base-strong-italic-line-height: 28px;
+  --nt-font-markdown-base-strong-italic-font-size: 16px;
+  --nt-font-markdown-base-strong-italic-font-style: italic;
+
+  /* ---- markdown 表格 15px/25px ---- */
+  --nt-font-markdown-table: 15px/25px var(--nt-font-family);
+  --nt-font-markdown-table-font-family: var(--nt-font-family);
+  --nt-font-markdown-table-font-weight: 400;
+  --nt-font-markdown-table-line-height: 25px;
+  --nt-font-markdown-table-font-size: 15px;
+  --nt-font-markdown-table-font-style: normal;
+
+  --nt-font-markdown-table-head: 500 15px/25px var(--nt-font-family);
+  --nt-font-markdown-table-head-font-family: var(--nt-font-family);
+  --nt-font-markdown-table-head-font-weight: 500;
+  --nt-font-markdown-table-head-line-height: 25px;
+  --nt-font-markdown-table-head-font-size: 15px;
+  --nt-font-markdown-table-head-font-style: normal;
+
+  /* ---- markdown 小字族 14px/24px（strong 档 600） ---- */
+  --nt-font-markdown-small: 14px/24px var(--nt-font-family);
+  --nt-font-markdown-small-font-family: var(--nt-font-family);
+  --nt-font-markdown-small-font-weight: 400;
+  --nt-font-markdown-small-line-height: 24px;
+  --nt-font-markdown-small-font-size: 14px;
+  --nt-font-markdown-small-font-style: normal;
+
+  --nt-font-markdown-small-strong: 600 14px/24px var(--nt-font-family);
+  --nt-font-markdown-small-strong-font-family: var(--nt-font-family);
+  --nt-font-markdown-small-strong-font-weight: 600;
+  --nt-font-markdown-small-strong-line-height: 24px;
+  --nt-font-markdown-small-strong-font-size: 14px;
+  --nt-font-markdown-small-strong-font-style: normal;
+
+  --nt-font-markdown-small-italic: italic 14px/24px var(--nt-font-family);
+  --nt-font-markdown-small-italic-font-family: var(--nt-font-family);
+  --nt-font-markdown-small-italic-font-weight: 400;
+  --nt-font-markdown-small-italic-line-height: 24px;
+  --nt-font-markdown-small-italic-font-size: 14px;
+  --nt-font-markdown-small-italic-font-style: italic;
+
+  --nt-font-markdown-small-strong-italic: italic 600 14px/24px var(--nt-font-family);
+  --nt-font-markdown-small-strong-italic-font-family: var(--nt-font-family);
+  --nt-font-markdown-small-strong-italic-font-weight: 600;
+  --nt-font-markdown-small-strong-italic-line-height: 24px;
+  --nt-font-markdown-small-strong-italic-font-size: 14px;
+  --nt-font-markdown-small-strong-italic-font-style: italic;
+
+  /* ---- 代码档（代码栈，中文注释由栈尾承接） ---- */
+  --nt-font-markdown-code: 14px/22px var(--nt-font-family-code);
+  --nt-font-markdown-code-font-family: var(--nt-font-family-code);
+  --nt-font-markdown-code-font-weight: 400;
+  --nt-font-markdown-code-line-height: 22px;
+  --nt-font-markdown-code-font-size: 14px;
+  --nt-font-markdown-code-font-style: normal;
+
+  --nt-font-markdown-code-block: 13px/22px var(--nt-font-family-code);
+  --nt-font-markdown-code-block-font-family: var(--nt-font-family-code);
+  --nt-font-markdown-code-block-font-weight: 400;
+  --nt-font-markdown-code-block-line-height: 22px;
+  --nt-font-markdown-code-block-font-size: 13px;
+  --nt-font-markdown-code-block-font-style: normal;
+
+  /* 展开卡小号代码（dsh 手工补充档，非插件导出） */
+  --nt-font-markdown-code-block-small: 12px/18px var(--nt-font-family-code);
+  --nt-font-markdown-code-block-small-font-family: var(--nt-font-family-code);
+  --nt-font-markdown-code-block-small-font-weight: 400;
+  --nt-font-markdown-code-block-small-line-height: 18px;
+  --nt-font-markdown-code-block-small-font-size: 12px;
+  --nt-font-markdown-code-block-small-font-style: normal;
+}

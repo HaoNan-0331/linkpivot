@@ -1,0 +1,396 @@
+/* Phase 33 / UI-01（33-UI-SPEC §五 token 全量清单，downstream 唯一权威即本文件）。
+   源出处：dsh packages/client/ui-theme/src/styles/design-platform.css（三层色板）
+   + gradient-shadow-text.css（阴影三档 / 渐变 2 项）——33-01 Task 1 单次授权直读逐值照搬。
+   前缀归一规则：源文件 --dsw- / --ds- / --dsh- 三种前缀统一归一为 --nt-；
+   层名编入变量名（static / alias / specific），怪名（700-delete、Figma 导出长名）照搬不改名。
+
+   双轨铁律（与 src/theme/ntTheme.ts 交叉引用）：本文件 --nt-* 只服务自研样式，
+   AntD theme seed 永远持字面值；自研样式禁引 --ant-*；--nt-* 不进 antd theme。
+
+   挂载结构红线：亮色挂 body、暗色挂 body[data-nt-theme] 整块覆盖（存在性属性，无值），
+   禁「优化」为 :root——滚动条 l1/l2 重绑机制与暗色块结构依赖 body 挂载。
+   暗色块本期为机制预留（UI-F01 届时零补值开启）；全库唯一亮暗差异项：
+   蓝灰主族 60 档（亮 rgb(245, 246, 247) / 暗 rgb(249, 250, 251)）。 */
+body {
+  /* ---- static 层 · 蓝灰主族 19 档 ---- */
+  --nt-static-neutral-bluish-00: rgb(255, 255, 255);
+  --nt-static-neutral-bluish-50: rgb(249, 250, 251);
+  --nt-static-neutral-bluish-60: rgb(245, 246, 247);
+  --nt-static-neutral-bluish-75: rgb(241, 243, 245);
+  --nt-static-neutral-bluish-100: rgb(235, 238, 242);
+  --nt-static-neutral-bluish-150: rgb(233, 236, 242);
+  --nt-static-neutral-bluish-200: rgb(225, 229, 238);
+  --nt-static-neutral-bluish-300: rgb(207, 211, 214);
+  --nt-static-neutral-bluish-400: rgb(173, 178, 184);
+  --nt-static-neutral-bluish-500: rgb(151, 157, 166);
+  --nt-static-neutral-bluish-600: rgb(129, 133, 140);
+  --nt-static-neutral-bluish-700: rgb(97, 102, 107);
+  --nt-static-neutral-bluish-750: rgb(67, 69, 74);
+  --nt-static-neutral-bluish-800: rgb(53, 54, 56);
+  --nt-static-neutral-bluish-850: rgb(44, 44, 46);
+  --nt-static-neutral-bluish-875: rgb(35, 35, 36);
+  --nt-static-neutral-bluish-900: rgb(27, 27, 28);
+  --nt-static-neutral-bluish-950: rgb(21, 21, 23);
+  --nt-static-neutral-bluish-1000: rgb(15, 17, 21);
+
+  /* ---- static 层 · 纯灰族 16 档（滚动条专用） ---- */
+  --nt-static-neutral-00: rgb(255, 255, 255);
+  --nt-static-neutral-50: rgb(250, 250, 250);
+  --nt-static-neutral-100: rgb(245, 245, 245);
+  --nt-static-neutral-150: rgb(237, 237, 237);
+  --nt-static-neutral-200: rgb(229, 229, 229);
+  --nt-static-neutral-250: rgb(220, 220, 220);
+  --nt-static-neutral-300: rgb(212, 212, 212);
+  --nt-static-neutral-400: rgb(162, 164, 166);
+  --nt-static-neutral-500: rgb(127, 130, 135);
+  --nt-static-neutral-550: rgb(101, 103, 107);
+  --nt-static-neutral-600: rgb(84, 85, 87);
+  --nt-static-neutral-700: rgb(60, 60, 61);
+  --nt-static-neutral-800: rgb(41, 41, 41);
+  --nt-static-neutral-850: rgb(33, 33, 35);
+  --nt-static-neutral-900: rgb(15, 15, 15);
+  --nt-static-neutral-1000: rgb(0, 0, 0);
+
+  /* ---- static 层 · 品牌蓝 11 档（D-02 原值照搬，含 700-delete 怪名） ---- */
+  --nt-static-deepseek-50: rgb(237, 243, 254);
+  --nt-static-deepseek-100: rgb(228, 237, 253);
+  --nt-static-deepseek-200: rgb(211, 226, 255);
+  --nt-static-deepseek-300: rgb(183, 200, 254);
+  --nt-static-deepseek-400: rgb(103, 158, 254);
+  --nt-static-deepseek-450: rgb(86, 134, 254);
+  --nt-static-deepseek-500: rgb(65, 118, 230);
+  --nt-static-deepseek-600: rgb(72, 104, 178);
+  --nt-static-deepseek-700-delete: rgb(47, 76, 143);
+  --nt-static-deepseek-800: rgb(52, 65, 91);
+  --nt-static-deepseek-900: rgb(40, 49, 66);
+
+  /* ---- static 层 · blue 族 12 档（含 50p / 450 怪档名） ---- */
+  --nt-static-blue-50: rgb(239, 246, 255);
+  --nt-static-blue-50p: rgb(234, 243, 255);
+  --nt-static-blue-75: rgb(229, 240, 255);
+  --nt-static-blue-100: rgb(219, 234, 254);
+  --nt-static-blue-300: rgb(147, 197, 253);
+  --nt-static-blue-400: rgb(96, 165, 250);
+  --nt-static-blue-450: rgb(77, 147, 248);
+  --nt-static-blue-500: rgb(59, 130, 246);
+  --nt-static-blue-600: rgb(37, 99, 235);
+  --nt-static-blue-800: rgb(30, 64, 175);
+  --nt-static-blue-900: rgb(14, 48, 116);
+  --nt-static-blue-950: rgb(23, 37, 84);
+
+  /* ---- static 层 · green / red / amber ---- */
+  --nt-static-green-100: rgb(230, 250, 237);
+  --nt-static-green-400: rgb(78, 209, 126);
+  --nt-static-green-500: rgb(34, 197, 94);
+  --nt-static-green-900: rgb(35, 60, 44);
+  --nt-static-red-50: rgb(254, 242, 242);
+  --nt-static-red-100: rgb(254, 226, 226);
+  --nt-static-red-400: rgb(242, 90, 90);
+  --nt-static-red-500: rgb(239, 68, 68);
+  --nt-static-red-600: rgb(236, 19, 19);
+  --nt-static-red-900: rgb(87, 12, 12);
+  --nt-static-amber-100: rgb(254, 245, 231);
+  --nt-static-amber-400: rgb(247, 173, 49);
+  --nt-static-amber-500: rgb(245, 158, 11);
+  --nt-static-amber-600: rgb(221, 134, 41);
+  --nt-static-amber-900: rgb(39, 36, 31);
+
+  /* ---- 阴影三档 + 扩散件 + 遮罩毛玻璃（§5.4，浮层统一 lv3） ---- */
+  --nt-shadow-lv1: 0 2px 4px 0 rgba(0, 0, 0, 0.05);
+  --nt-shadow-lv1-blur: 0 4px 12px 0 rgba(0, 0, 0, 0.02);
+  --nt-shadow-lv2: 0 4px 12px 0 rgba(0, 0, 0, 0.02), 0 2px 8px 0 rgba(0, 0, 0, 0.04);
+  --nt-shadow-lv3: 0 0 1px 0 rgba(0, 0, 0, 0.2), 0 0 4px 0 rgba(0, 0, 0, 0.02), 0 12px 32px 0 rgba(0, 0, 0, 0.08);
+  --nt-mask-blur: blur(2px);
+
+  /* ---- 渐变 2 项（思考态，Phase 34 备用） ---- */
+  --nt-linear-gradient-think: linear-gradient(180deg, #fff 20.19%, rgba(255, 255, 255, 0) 100%);
+  --nt-linear-gradient-think-select: linear-gradient(180deg, #f5f6f7 20.19%, rgba(245, 246, 247, 0) 100%);
+
+  /* ---- alias 层 · bg 组 13 项 ---- */
+  --nt-alias-bg-base: var(--nt-static-neutral-bluish-00);
+  --nt-alias-bg-layer-1: var(--nt-static-neutral-bluish-00);
+  --nt-alias-bg-layer-2: var(--nt-static-neutral-bluish-00);
+  --nt-alias-bg-layer-3: var(--nt-static-neutral-bluish-00);
+  --nt-alias-bg-mask-1: rgba(0, 0, 0, 0.24);
+  --nt-alias-bg-mask-2: rgba(0, 0, 0, 0.12);
+  --nt-alias-bg-mask-3: rgba(0, 0, 0, 0.48);
+  --nt-alias-bg-mask-photo: rgba(0, 0, 0, 0.88);
+  --nt-alias-bg-mask-drop: rgba(255, 255, 255, 0.7);
+  --nt-alias-bg-module-platform: var(--nt-static-neutral-bluish-60);
+  --nt-alias-bg-multi-select: var(--nt-static-neutral-bluish-60);
+  --nt-alias-bg-overlay: var(--nt-static-neutral-bluish-150);
+  --nt-alias-bg-skeleton: rgba(0, 0, 0, 0.04);
+
+  /* ---- alias 层 · border 组 7 项 ---- */
+  --nt-alias-border-inverted2: rgba(0, 0, 0, 0);
+  --nt-alias-border-inverted: rgba(0, 0, 0, 0);
+  --nt-alias-border-l1: rgba(0, 0, 0, 0.04);
+  --nt-alias-border-l2-darkmode-thin: rgba(0, 0, 0, 0.1);
+  --nt-alias-border-l2: rgba(0, 0, 0, 0.1);
+  --nt-alias-border-l3: rgba(0, 0, 0, 0.12);
+  --nt-alias-border-l4: rgba(0, 0, 0, 0.16);
+
+  /* ---- alias 层 · brand 组 4 项（含 Figma 导出怪名照搬不改名） ---- */
+  --nt-alias-brand-primary-invert: var(--nt-static-neutral-bluish-1000);
+  --nt-alias-brand-primary-new-colorprimary-new-color: rgb(65, 118, 230);
+  --nt-alias-brand-primary: var(--nt-static-neutral-bluish-1000);
+  --nt-alias-brand-text: var(--nt-static-neutral-bluish-1000);
+
+  /* ---- alias 层 · button 组 15 项 ---- */
+  --nt-alias-button-contrast-fill: var(--nt-static-neutral-bluish-700);
+  --nt-alias-button-elevated-fill: var(--nt-static-neutral-bluish-00);
+  --nt-alias-button-floating-fill: var(--nt-static-neutral-bluish-00);
+  --nt-alias-button-floating-hover: var(--nt-static-neutral-bluish-75);
+  --nt-alias-button-ghost-active-border: var(--nt-static-neutral-bluish-500);
+  --nt-alias-button-ghost-active-fill: var(--nt-static-neutral-bluish-100);
+  --nt-alias-button-ghost-active-hover: var(--nt-static-neutral-bluish-150);
+  --nt-alias-button-info-fill: var(--nt-static-deepseek-500);
+  --nt-alias-button-info-hover: var(--nt-static-deepseek-400);
+  --nt-alias-button-primary-dimmed: var(--nt-static-neutral-bluish-100);
+  --nt-alias-button-primary-fill: var(--nt-alias-brand-primary);
+  --nt-alias-button-primary-hover: var(--nt-static-neutral-bluish-750);
+  --nt-alias-button-tool-bar-fill-invisible: rgba(31, 31, 31, 0.36);
+  --nt-alias-button-tool-bar-fill: rgba(84, 85, 87, 0.5);
+  --nt-alias-button-tool-bar-hover: rgba(84, 85, 87, 0.6);
+
+  /* ---- alias 层 · interactive 组 5 项（ghost hover 透明度档在库） ---- */
+  --nt-alias-interactive-bg-active: rgba(38, 49, 72, 0.1);
+  --nt-alias-interactive-bg-hover-accent: rgba(38, 49, 72, 0.14);
+  --nt-alias-interactive-bg-hover-danger: rgba(236, 19, 19, 0.05);
+  --nt-alias-interactive-bg-hover-solid: var(--nt-static-neutral-bluish-75);
+  --nt-alias-interactive-bg-hover: rgba(38, 49, 72, 0.06);
+
+  /* ---- alias 层 · label 组 9 项 ---- */
+  --nt-alias-label-caption: var(--nt-static-neutral-bluish-400);
+  --nt-alias-label-dimmed: var(--nt-static-neutral-bluish-200);
+  --nt-alias-label-primary-bluish: var(--nt-static-blue-900);
+  --nt-alias-label-primary-dimmed: var(--nt-static-neutral-bluish-950);
+  --nt-alias-label-primary-foreground: var(--nt-static-neutral-bluish-00);
+  --nt-alias-label-primary-inverted: var(--nt-static-neutral-bluish-00);
+  --nt-alias-label-primary: var(--nt-static-neutral-bluish-1000);
+  --nt-alias-label-secondary: var(--nt-static-neutral-bluish-700);
+  --nt-alias-label-tertiary: var(--nt-static-neutral-bluish-600);
+
+  /* ---- alias 层 · markdown 组 8 项（Phase 34 主消费） ---- */
+  --nt-alias-markdown-citation: var(--nt-static-neutral-bluish-100);
+  --nt-alias-markdown-code-block-banner: var(--nt-static-neutral-bluish-50);
+  --nt-alias-markdown-code-block: var(--nt-static-neutral-bluish-50);
+  --nt-alias-markdown-code-segment-selected: var(--nt-static-neutral-bluish-00);
+  --nt-alias-markdown-code-segment-unselected: var(--nt-static-neutral-bluish-75);
+  --nt-alias-markdown-inline-code: var(--nt-static-neutral-bluish-100);
+  --nt-alias-markdown-placeholder: var(--nt-static-neutral-bluish-60);
+  --nt-alias-markdown-tag: var(--nt-static-neutral-bluish-75);
+
+  /* ---- alias 层 · scrollbar 组 4 项（l1 基础面 / l2 浮层面，重绑机制见 scrollbar.css） ---- */
+  --nt-alias-scrollbar-bg-l1: var(--nt-static-neutral-200);
+  --nt-alias-scrollbar-bg-l2: var(--nt-static-neutral-200);
+  --nt-alias-scrollbar-hover-l1: var(--nt-static-neutral-300);
+  --nt-alias-scrollbar-hover-l2: var(--nt-static-neutral-300);
+
+  /* ---- alias 层 · state 组 11 项 ---- */
+  --nt-alias-state-business-primary: var(--nt-static-deepseek-500);
+  --nt-alias-state-business-tertiary: var(--nt-static-deepseek-100);
+  --nt-alias-state-error-primary: var(--nt-static-red-600);
+  --nt-alias-state-error-secondary: var(--nt-static-red-400);
+  --nt-alias-state-success-primary: var(--nt-static-green-500);
+  --nt-alias-state-success-secondary: var(--nt-static-green-400);
+  --nt-alias-state-success-tertiary: var(--nt-static-green-100);
+  --nt-alias-state-warn-label: var(--nt-static-amber-600);
+  --nt-alias-state-warn-primary: var(--nt-static-amber-500);
+  --nt-alias-state-warn-secondary: var(--nt-static-amber-400);
+  --nt-alias-state-warn-tertiary: var(--nt-static-amber-100);
+
+  /* ---- alias 层 · toast / tooltip 组 2 项 ---- */
+  --nt-alias-toast-bg: var(--nt-static-neutral-bluish-800);
+  --nt-alias-tooltip-bg: var(--nt-static-neutral-bluish-850);
+
+  /* ---- specific 场景层 12 项 = dsh 照搬 11 + 灵枢新增终端底色 1 ---- */
+  --nt-specific-bubble-highlight: var(--nt-static-deepseek-200);
+  --nt-specific-bubble: var(--nt-static-deepseek-50);
+  --nt-specific-input-major: var(--nt-static-neutral-bluish-00);
+  --nt-specific-login-input: var(--nt-static-neutral-bluish-50);
+  --nt-specific-menu: var(--nt-alias-bg-layer-3);
+  --nt-specific-selector: var(--nt-static-neutral-bluish-60);
+  --nt-specific-sidebar-fill: var(--nt-static-neutral-bluish-50);
+  --nt-specific-sidebar-nav-item-active-accent: var(--nt-static-deepseek-100);
+  --nt-specific-sidebar-nav-item-active: var(--nt-static-neutral-bluish-100);
+  --nt-specific-sidebar-nav-item-hover: var(--nt-static-neutral-bluish-75);
+  --nt-specific-tip: var(--nt-static-neutral-bluish-60);
+  --nt-specific-terminal-bg: rgb(30, 30, 30);
+}
+
+/* 暗色值块（机制预留，本期不接切换 UI 不验证双态；UI-F01 开双态时零补值）。
+   整块覆盖 static 73 + 渐变 2 + alias 78 + specific 11（终端底色固定深色不入暗块）。 */
+body[data-nt-theme] {
+  /* ---- static 暗色 73 项（唯蓝灰主族 60 档与亮色值不同） ---- */
+  --nt-static-neutral-bluish-00: rgb(255, 255, 255);
+  --nt-static-neutral-bluish-50: rgb(249, 250, 251);
+  --nt-static-neutral-bluish-60: rgb(249, 250, 251);
+  --nt-static-neutral-bluish-75: rgb(241, 243, 245);
+  --nt-static-neutral-bluish-100: rgb(235, 238, 242);
+  --nt-static-neutral-bluish-150: rgb(233, 236, 242);
+  --nt-static-neutral-bluish-200: rgb(225, 229, 238);
+  --nt-static-neutral-bluish-300: rgb(207, 211, 214);
+  --nt-static-neutral-bluish-400: rgb(173, 178, 184);
+  --nt-static-neutral-bluish-500: rgb(151, 157, 166);
+  --nt-static-neutral-bluish-600: rgb(129, 133, 140);
+  --nt-static-neutral-bluish-700: rgb(97, 102, 107);
+  --nt-static-neutral-bluish-750: rgb(67, 69, 74);
+  --nt-static-neutral-bluish-800: rgb(53, 54, 56);
+  --nt-static-neutral-bluish-850: rgb(44, 44, 46);
+  --nt-static-neutral-bluish-875: rgb(35, 35, 36);
+  --nt-static-neutral-bluish-900: rgb(27, 27, 28);
+  --nt-static-neutral-bluish-950: rgb(21, 21, 23);
+  --nt-static-neutral-bluish-1000: rgb(15, 17, 21);
+  --nt-static-neutral-00: rgb(255, 255, 255);
+  --nt-static-neutral-50: rgb(250, 250, 250);
+  --nt-static-neutral-100: rgb(245, 245, 245);
+  --nt-static-neutral-150: rgb(237, 237, 237);
+  --nt-static-neutral-200: rgb(229, 229, 229);
+  --nt-static-neutral-250: rgb(220, 220, 220);
+  --nt-static-neutral-300: rgb(212, 212, 212);
+  --nt-static-neutral-400: rgb(162, 164, 166);
+  --nt-static-neutral-500: rgb(127, 130, 135);
+  --nt-static-neutral-550: rgb(101, 103, 107);
+  --nt-static-neutral-600: rgb(84, 85, 87);
+  --nt-static-neutral-700: rgb(60, 60, 61);
+  --nt-static-neutral-800: rgb(41, 41, 41);
+  --nt-static-neutral-850: rgb(33, 33, 35);
+  --nt-static-neutral-900: rgb(15, 15, 15);
+  --nt-static-neutral-1000: rgb(0, 0, 0);
+  --nt-static-deepseek-50: rgb(237, 243, 254);
+  --nt-static-deepseek-100: rgb(228, 237, 253);
+  --nt-static-deepseek-200: rgb(211, 226, 255);
+  --nt-static-deepseek-300: rgb(183, 200, 254);
+  --nt-static-deepseek-400: rgb(103, 158, 254);
+  --nt-static-deepseek-450: rgb(86, 134, 254);
+  --nt-static-deepseek-500: rgb(65, 118, 230);
+  --nt-static-deepseek-600: rgb(72, 104, 178);
+  --nt-static-deepseek-700-delete: rgb(47, 76, 143);
+  --nt-static-deepseek-800: rgb(52, 65, 91);
+  --nt-static-deepseek-900: rgb(40, 49, 66);
+  --nt-static-blue-50: rgb(239, 246, 255);
+  --nt-static-blue-50p: rgb(234, 243, 255);
+  --nt-static-blue-75: rgb(229, 240, 255);
+  --nt-static-blue-100: rgb(219, 234, 254);
+  --nt-static-blue-300: rgb(147, 197, 253);
+  --nt-static-blue-400: rgb(96, 165, 250);
+  --nt-static-blue-450: rgb(77, 147, 248);
+  --nt-static-blue-500: rgb(59, 130, 246);
+  --nt-static-blue-600: rgb(37, 99, 235);
+  --nt-static-blue-800: rgb(30, 64, 175);
+  --nt-static-blue-900: rgb(14, 48, 116);
+  --nt-static-blue-950: rgb(23, 37, 84);
+  --nt-static-green-100: rgb(230, 250, 237);
+  --nt-static-green-400: rgb(78, 209, 126);
+  --nt-static-green-500: rgb(34, 197, 94);
+  --nt-static-green-900: rgb(35, 60, 44);
+  --nt-static-red-50: rgb(254, 242, 242);
+  --nt-static-red-100: rgb(254, 226, 226);
+  --nt-static-red-400: rgb(242, 90, 90);
+  --nt-static-red-500: rgb(239, 68, 68);
+  --nt-static-red-600: rgb(236, 19, 19);
+  --nt-static-red-900: rgb(87, 12, 12);
+  --nt-static-amber-100: rgb(254, 245, 231);
+  --nt-static-amber-400: rgb(247, 173, 49);
+  --nt-static-amber-500: rgb(245, 158, 11);
+  --nt-static-amber-600: rgb(221, 134, 41);
+  --nt-static-amber-900: rgb(39, 36, 31);
+
+  /* ---- 渐变 2 项（暗色值） ---- */
+  --nt-linear-gradient-think: linear-gradient(180deg, #151517 20.19%, rgba(21, 21, 23, 0) 100%);
+  --nt-linear-gradient-think-select: linear-gradient(180deg, #232325 20.19%, rgba(35, 35, 37, 0) 100%);
+
+  /* ---- alias 暗色 78 项 ---- */
+  --nt-alias-bg-base: var(--nt-static-neutral-bluish-950);
+  --nt-alias-bg-layer-1: var(--nt-static-neutral-bluish-875);
+  --nt-alias-bg-layer-2: var(--nt-static-neutral-bluish-850);
+  --nt-alias-bg-layer-3: var(--nt-static-neutral-bluish-800);
+  --nt-alias-bg-mask-1: rgba(0, 0, 0, 0.5);
+  --nt-alias-bg-mask-2: rgba(0, 0, 0, 0.2);
+  --nt-alias-bg-mask-3: rgba(0, 0, 0, 0.48);
+  --nt-alias-bg-mask-photo: rgba(0, 0, 0, 0.88);
+  --nt-alias-bg-mask-drop: rgba(39, 39, 48, 0.7);
+  --nt-alias-bg-module-platform: var(--nt-static-neutral-bluish-800);
+  --nt-alias-bg-multi-select: var(--nt-static-neutral-850);
+  --nt-alias-bg-overlay: var(--nt-static-neutral-bluish-700);
+  --nt-alias-bg-skeleton: rgba(255, 255, 255, 0.08);
+  --nt-alias-border-inverted2: rgba(255, 255, 255, 0.08);
+  --nt-alias-border-inverted: rgba(255, 255, 255, 0.06);
+  --nt-alias-border-l1: rgba(255, 255, 255, 0.06);
+  --nt-alias-border-l2-darkmode-thin: rgba(255, 255, 255, 0.06);
+  --nt-alias-border-l2: rgba(255, 255, 255, 0.12);
+  --nt-alias-border-l3: rgba(255, 255, 255, 0.16);
+  --nt-alias-border-l4: rgba(255, 255, 255, 0.2);
+  --nt-alias-brand-primary-invert: var(--nt-static-neutral-bluish-50);
+  --nt-alias-brand-primary-new-colorprimary-new-color: var(--nt-static-deepseek-450);
+  --nt-alias-brand-primary: var(--nt-static-neutral-bluish-50);
+  --nt-alias-brand-text: var(--nt-static-neutral-bluish-50);
+  --nt-alias-button-contrast-fill: var(--nt-static-neutral-bluish-50);
+  --nt-alias-button-elevated-fill: var(--nt-static-neutral-bluish-750);
+  --nt-alias-button-floating-fill: var(--nt-static-neutral-bluish-850);
+  --nt-alias-button-floating-hover: var(--nt-static-neutral-bluish-800);
+  --nt-alias-button-ghost-active-border: var(--nt-static-neutral-bluish-600);
+  --nt-alias-button-ghost-active-fill: var(--nt-static-neutral-bluish-750);
+  --nt-alias-button-ghost-active-hover: var(--nt-static-neutral-bluish-700);
+  --nt-alias-button-info-fill: var(--nt-static-deepseek-400);
+  --nt-alias-button-info-hover: var(--nt-static-deepseek-500);
+  --nt-alias-button-primary-dimmed: var(--nt-static-neutral-bluish-750);
+  --nt-alias-button-primary-fill: var(--nt-alias-brand-primary);
+  --nt-alias-button-primary-hover: var(--nt-static-neutral-bluish-100);
+  --nt-alias-button-tool-bar-fill-invisible: rgba(31, 31, 31, 0.36);
+  --nt-alias-button-tool-bar-fill: rgba(84, 85, 87, 0.5);
+  --nt-alias-button-tool-bar-hover: rgba(84, 85, 87, 0.6);
+  --nt-alias-interactive-bg-active: rgba(255, 255, 255, 0.14);
+  --nt-alias-interactive-bg-hover-accent: rgba(255, 255, 255, 0.24);
+  --nt-alias-interactive-bg-hover-danger: rgba(242, 90, 90, 0.15);
+  --nt-alias-interactive-bg-hover-solid: var(--nt-static-neutral-bluish-800);
+  --nt-alias-interactive-bg-hover: rgba(255, 255, 255, 0.08);
+  --nt-alias-label-caption: var(--nt-static-neutral-bluish-600);
+  --nt-alias-label-dimmed: var(--nt-static-neutral-bluish-750);
+  --nt-alias-label-primary-bluish: var(--nt-static-neutral-bluish-50);
+  --nt-alias-label-primary-dimmed: var(--nt-static-neutral-bluish-100);
+  --nt-alias-label-primary-foreground: var(--nt-static-neutral-bluish-1000);
+  --nt-alias-label-primary-inverted: var(--nt-static-neutral-bluish-800);
+  --nt-alias-label-primary: var(--nt-static-neutral-bluish-50);
+  --nt-alias-label-secondary: var(--nt-static-neutral-bluish-300);
+  --nt-alias-label-tertiary: var(--nt-static-neutral-bluish-400);
+  --nt-alias-markdown-citation: var(--nt-static-neutral-bluish-800);
+  --nt-alias-markdown-code-block-banner: var(--nt-static-neutral-bluish-850);
+  --nt-alias-markdown-code-block: var(--nt-static-neutral-bluish-900);
+  --nt-alias-markdown-code-segment-selected: var(--nt-static-neutral-bluish-800);
+  --nt-alias-markdown-code-segment-unselected: var(--nt-static-neutral-bluish-900);
+  --nt-alias-markdown-inline-code: var(--nt-static-neutral-bluish-850);
+  --nt-alias-markdown-placeholder: var(--nt-static-neutral-bluish-850);
+  --nt-alias-markdown-tag: var(--nt-static-neutral-bluish-850);
+  --nt-alias-scrollbar-bg-l1: var(--nt-static-neutral-700);
+  --nt-alias-scrollbar-bg-l2: var(--nt-static-neutral-600);
+  --nt-alias-scrollbar-hover-l1: var(--nt-static-neutral-600);
+  --nt-alias-scrollbar-hover-l2: var(--nt-static-neutral-550);
+  --nt-alias-state-business-primary: var(--nt-static-deepseek-400);
+  --nt-alias-state-business-tertiary: var(--nt-static-deepseek-800);
+  --nt-alias-state-error-primary: var(--nt-static-red-400);
+  --nt-alias-state-error-secondary: var(--nt-static-red-400);
+  --nt-alias-state-success-primary: var(--nt-static-green-500);
+  --nt-alias-state-success-secondary: var(--nt-static-green-400);
+  --nt-alias-state-success-tertiary: var(--nt-static-green-900);
+  --nt-alias-state-warn-label: var(--nt-static-amber-600);
+  --nt-alias-state-warn-primary: var(--nt-static-amber-500);
+  --nt-alias-state-warn-secondary: var(--nt-static-amber-400);
+  --nt-alias-state-warn-tertiary: var(--nt-static-amber-900);
+  --nt-alias-toast-bg: var(--nt-static-neutral-bluish-750);
+  --nt-alias-tooltip-bg: var(--nt-static-neutral-bluish-750);
+
+  /* ---- specific 暗色 11 项（无终端底色） ---- */
+  --nt-specific-bubble-highlight: var(--nt-static-neutral-bluish-750);
+  --nt-specific-bubble: var(--nt-static-neutral-bluish-850);
+  --nt-specific-input-major: var(--nt-static-neutral-bluish-850);
+  --nt-specific-login-input: var(--nt-static-neutral-bluish-900);
+  --nt-specific-menu: var(--nt-alias-bg-layer-3);
+  --nt-specific-selector: var(--nt-static-neutral-bluish-800);
+  --nt-specific-sidebar-fill: var(--nt-static-neutral-bluish-900);
+  --nt-specific-sidebar-nav-item-active-accent: var(--nt-static-neutral-bluish-800);
+  --nt-specific-sidebar-nav-item-active: var(--nt-static-neutral-bluish-750);
+  --nt-specific-sidebar-nav-item-hover: var(--nt-static-neutral-bluish-850);
+  --nt-specific-tip: var(--nt-static-neutral-bluish-800);
+}

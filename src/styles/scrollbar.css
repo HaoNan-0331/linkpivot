@@ -1,0 +1,49 @@
+/* Phase 33 / UI-03（33-UI-SPEC §5.5 滚动条契约）：8px 细滚动条皮肤。
+   源出处：dsh packages/client/ui-theme/src/styles/scrollbar.css（前缀 --dsh- 归一 --nt-）。
+   Firefox 标准属性分支整体不移植（Electron/Chromium-only，CONTEXT discretion 裁决：裁）。 */
+
+/* ⚠ load-bearing 红线 1（code review 视违反为红灯）：
+   禁在任何元素声明非 auto 的 scrollbar-width / scrollbar-color —— Chromium 将因此
+   丢弃该元素全部 ::-webkit-scrollbar* 规则（含 hover），8px 细滚动条整体静默失效
+   回退原生粗样式。此为 dsh 实测结论（measured in chromium），勿「顺手补标准属性」。 */
+
+/* ⚠ load-bearing 红线 2：滚动条规则坐落 body 层级——token 经 body 声明向下继承、
+   由容器重绑实现浮层差异化；:root 层声明对 l1/l2 重绑机制失效（挂载红线同 tokens.css）。 */
+body {
+  --nt-scrollbar-thumb: var(--nt-alias-scrollbar-bg-l1);
+  --nt-scrollbar-thumb-hover: var(--nt-alias-scrollbar-hover-l1);
+  --nt-scrollbar-width: 8px;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border-radius: 4px;
+  background: var(--nt-scrollbar-thumb);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--nt-scrollbar-thumb-hover);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* 浮层（menu/popover/dialog）差异化：在 elevated surface 容器上重绑 thumb 变量为
+   l2 对（--nt-alias-scrollbar-bg-l2 / hover-l2）即可——层级重绑机制照搬 dsh。 */
+
+/* Phase 33 / SC4（UI-SPEC §5.5 / §十 Q4 裁决）：滚动条常驻占位工具类。
+   逐容器施加于真机排查确认「滚动条出现/消失引起布局跳动」的容器
+   （33-01 Task 4 产出回流命中清单，33-02~05 迁移 plan 按域消费）；
+   禁止全局 * 撒网——永不滚动的容器会白占 8px。 */
+.nt-scroll-stable {
+  scrollbar-gutter: stable;
+}
