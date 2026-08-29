@@ -367,3 +367,95 @@ describe('31 FIX-02（31-02）：sessionId 可选字段校验 + 归因纯函数'
     expect(attributeToolResultSession({ ...baseToolResult }, null)).toBe(null)
   })
 })
+
+// ---------- Phase 31（31-05，FIX-02 候选③ / D-04）：mergeStashedCards 暂存幂等合并 ----------
+// 31-04 裁决 CONFIRMED：切走前已实时上屏的步骤卡不进暂存（stash-merge stashed:0），
+// handleSelectSession 以 DB history 整体替换后内存卡丢失。31-05 起在途回合载荷
+// 无条件全量入暂存（与 live 上屏并行），切回统一经 mergeStashedCards 幂等合并：
+// - 含 stepIndex：applyStepCardToMessages 定位更新，同 index 重放更新同一卡（天然幂等）
+// - 无 stepIndex（legacy MCP tool_result）：按 server+tool+argsJson+resultJson+status 判重跳过
+// - 回合存活期暂存不删（多次往返靠幂等防重复），finishReply 统一弃暂存（DB meta.steps 为准）
+describe('31 FIX-02（31-05）：mergeStashedCards 暂存幂等合并（多轮往返不丢不重）', () => {
+  const stepCard = (stepIndex: number, resultJson: string) => ({
+    type: 'tool_result' as const,
+    server: 'agent',
+    tool: '命令执行',
+    deviceName: 'SW-Core',
+    argsJson: 'display version',
+    resultJson,
+    status: 'success' as const,
+    stepIndex,
+  })
+  const legacyCard = (resultJson: string, status: 'success' | 'failed' = 'success') => ({
+    type: 'tool_result' as const,
+    server: 'mock-server',
+    tool: 'get_status',
+    deviceName: 'SW-Core',
+    argsJson: '{}',
+    resultJson,
+    status,
+  })
+
+  it('含 stepIndex 载荷序列 reduce 后再整体 reduce 一遍（A→B→A→B→A 两轮往返）——卡片数不变、终态 status 保留（幂等）', async () => {
+    const { mergeStashedCards } = await import('@/components/pages/ai/parseAiReply')
+    const payloads = [stepCard(0, '{"v":"v1"}'), stepCard(1, '{"c":"c1"}'), stepCard(2, '{"p":"p1"}')]
+    // 切回时 DB history：31-05 候选②修复后含本轮 user 行（合并基准）
+    const history = [{ role: 'user' as const, content: '多步任务' }]
+    const once = mergeStashedCards(history, payloads)
+    expect(once).toHaveLength(4) // user + 3 卡
+    // 第二轮往返：同序列重放（回合存活期暂存未删）
+    const twice = mergeStashedCards(once, payloads)
+    expect(twice).toHaveLength(4) // 幂等：重放不增卡
+    expect(twice[1].toolResult?.stepIndex).toBe(0)
+    expect(twice[1].toolResult?.resultJson).toBe('{"v":"v1"}')
+    expect(twice[2].toolResult?.stepIndex).toBe(1)
+    expect(twice[3].toolResult?.stepIndex).toBe(2)
+    // 终态更新语义：step 1 结果被后续载荷更新后，重放旧序仍保留最新终态
+    const updated = mergeStashedCards(twice, [stepCard(1, '{"c":"c1-final"}')])
+    expect(updated).toHaveLength(4)
+    expect(updated[2].toolResult?.resultJson).toBe('{"c":"c1-final"}')
+    // 第三轮往返仍不变（任意次数）
+    expect(mergeStashedCards(updated, payloads)).toHaveLength(4)
+  })
+
+  it('无 stepIndex 的 legacy 载荷重复合并两遍——不产生重复卡片（按 server+tool+argsJson+resultJson+status 判重）', async () => {
+    const { mergeStashedCards } = await import('@/components/pages/ai/parseAiReply')
+    const payloads = [legacyCard('{"ok":1}'), legacyCard('{"ok":2}')]
+    const history = [{ role: 'user' as const, content: '查状态' }]
+    const once = mergeStashedCards(history, payloads)
+    expect(once).toHaveLength(3)
+    const twice = mergeStashedCards(once, payloads)
+    expect(twice).toHaveLength(3) // 重放零重复
+    // 五键任一不同即不同卡（status 变体不去重，如实追加）
+    const variant = mergeStashedCards(twice, [legacyCard('{"ok":1}', 'failed')])
+    expect(variant).toHaveLength(4)
+  })
+
+  it('切走前已渲染卡（合并入 prev）+ 切走后到达卡（暂存序列）混合合并——全部可见且无重复', async () => {
+    const { mergeStashedCards } = await import('@/components/pages/ai/parseAiReply')
+    // 用户在 A 时已实时上屏的卡（切走前）——31-05 起这些载荷同时进了暂存
+    const renderedBeforeSwitch = stepCard(0, '{"v":"v1"}')
+    // 切走后在 B 期间到达的卡（仅在暂存）
+    const arrivedWhileAway = [stepCard(1, '{"c":"c1"}'), stepCard(2, '{"p":"p1"}')]
+    // 切回 A：prev = DB history（含本轮 user 行）+ 切走前已渲染卡（仍在归属会话内存的形态）
+    const prev = [
+      { role: 'user' as const, content: '多步任务' },
+      { role: 'assistant' as const, content: '', toolResult: renderedBeforeSwitch },
+    ]
+    // 暂存 = 全回合载荷（切走前 + 切走后，31-05 全量暂存语义）
+    const stash = [renderedBeforeSwitch, ...arrivedWhileAway]
+    const merged = mergeStashedCards(prev, stash)
+    expect(merged).toHaveLength(4) // user + 3 卡全可见
+    expect(merged[1].toolResult?.stepIndex).toBe(0) // 切走前的卡不被覆盖
+    expect(merged[2].toolResult?.stepIndex).toBe(1)
+    expect(merged[3].toolResult?.stepIndex).toBe(2)
+    // 再往返一次仍 4（幂等）
+    expect(mergeStashedCards(merged, stash)).toHaveLength(4)
+  })
+
+  it('空暂存序列——直接返回 prev 原引用（零合并开销）', async () => {
+    const { mergeStashedCards } = await import('@/components/pages/ai/parseAiReply')
+    const prev = [{ role: 'user' as const, content: 'q' }]
+    expect(mergeStashedCards(prev, [])).toBe(prev)
+  })
+})
