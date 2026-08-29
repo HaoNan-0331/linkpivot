@@ -335,7 +335,8 @@ describe('smart 直执链路（双条件免确认，D-04）', () => {
     const fetchMock = queueReplies(CALL_MARKER, '最终总结')
     vi.mocked(callToolWithTimeout).mockResolvedValue({ ok: 1 } as any)
     const emitted: any[] = []
-    const out = await chat([{ role: 'user', content: '查状态' }], ['dev1'], null, // 28-06 R6：预取步骤卡（prefetched=true）也在 emit 流中——本套件只断言 MCP tool_result，过滤之
+    // Phase 31（31-02，FIX-02 D-01）：sessionId 传真实值——直执路 MCP 工具卡载荷必须携带（runMcpCall ctx.sessionId 注入）
+    const out = await chat([{ role: 'user', content: '查状态' }], ['dev1'], 's31-fix02', // 28-06 R6：预取步骤卡（prefetched=true）也在 emit 流中——本套件只断言 MCP tool_result，过滤之
 (p) => { if (!p.prefetched && !p.backfilled) emitted.push(p) })
     expect(JSON.parse(out).content).toBe('最终总结')
     // tool_result 契约
@@ -344,6 +345,7 @@ describe('smart 直执链路（双条件免确认，D-04）', () => {
       type: 'tool_result', server: 'srv-a', tool: 'get_status', deviceName: 'dev1',
       argsJson: '{"x":1}', status: 'success',
     })
+    expect(emitted[0].sessionId).toBe('s31-fix02')
     expect(emitted[0].resultJson).toContain('"ok"')
     // 审计：command=mcp:server:tool，mode=smart
     expect(createLog).toHaveBeenCalledWith(expect.objectContaining({
@@ -412,7 +414,9 @@ describe('确认流（confirm 档总闸 / smart 未勾免确认）', () => {
     const fetchMock = queueReplies(CALL_MARKER, '确认后的总结')
     vi.mocked(callToolWithTimeout).mockResolvedValue({ done: true } as any)
     const emitted: any[] = []
-    const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null, // 28-06 R6：预取步骤卡（prefetched=true）也在 emit 流中——本套件只断言 MCP tool_result，过滤之
+    // Phase 31（31-02，FIX-02 D-01 / T-31-05）：确认续跑批次的工具卡 sessionId 必须来自
+    // 挂起批次携带的 loopCtx（batch.mcp.loopCtx.sessionId 注入）——不能丢，否则被 renderer 错归因过滤
+    const out = await chat([{ role: 'user', content: '查' }], ['dev1'], 's31-fix02', // 28-06 R6：预取步骤卡（prefetched=true）也在 emit 流中——本套件只断言 MCP tool_result，过滤之
 (p) => { if (!p.prefetched && !p.backfilled) emitted.push(p) })
     const execId = JSON.parse(out).execId
     const final = await confirmCommand(execId, true)
@@ -421,6 +425,7 @@ describe('确认流（confirm 档总闸 / smart 未勾免确认）', () => {
     expect(JSON.parse(final).steps.some((s: any) => s.actionType === 'mcp')).toBe(true)
     expect(emitted).toHaveLength(1)
     expect(emitted[0]).toMatchObject({ type: 'tool_result', status: 'success', server: 'srv-a', tool: 'get_status' })
+    expect(emitted[0].sessionId).toBe('s31-fix02')
     expect(fetchMock.mock.calls.length).toBe(2)
   })
 

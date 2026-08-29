@@ -865,6 +865,9 @@ export interface ToolResultPayload {
   stepStatus?: AgentStep['status']
   /** 28-06 R6 增强 a：预取步骤卡标志（renderer 折叠态动作描述加「[预取]」前缀） */
   prefetched?: boolean
+  /** Phase 31（31-02，FIX-02 D-01）：归属会话标识——在场时 renderer 按当前显示会话
+   *  过滤步骤卡；旧 renderer 校验链只认基础字段，天然兼容。 */
+  sessionId?: string
 }
 
 /** 选中设备的 MCP 上下文（注入 + 执行白名单判定用） */
@@ -1044,7 +1047,10 @@ const MCP_LOG_RESULT_MAX = 4000
 async function runMcpCall(
   call: ValidMcpCall,
   logId: string,
-  emitToolResult?: (p: ToolResultPayload) => void
+  emitToolResult?: (p: ToolResultPayload) => void,
+  /** Phase 31（31-02，FIX-02 D-01）：归属会话标识——直执传 ctx.sessionId，确认续跑
+   *  传挂起批次携带的 loopCtx.sessionId（T-31-05：确认分支不能丢，否则步骤卡被错归因过滤） */
+  sessionId?: string | null
 ): Promise<{ status: ToolResultPayload['status']; text: string }> {
   const deviceName = String(call.context.device?.name ?? '')
   const config = McpService.decodeForTest(call.context.configId)
@@ -1088,6 +1094,8 @@ async function runMcpCall(
     resultJson,
     status,
     errorText,
+    // Phase 31（31-02，FIX-02 D-01）：MCP 工具卡载荷携带发起会话标识（缺失自然降级）
+    ...(sessionId ? { sessionId } : {}),
   })
   return { status, text: `工具 ${call.context.serverName} · ${call.tool.name}\n状态: ${status}\n${resultJson || errorText || ''}` }
 }
@@ -2124,7 +2132,7 @@ async function runAgentLoopInner(
       if (allExecute) {
         // 整批直执（smart 双条件全满足 / auto 档）→ 每轮独立 tool_result 下发 + 审计（累积）
         for (let i = 0; i < mcpCalls.length; i++) {
-          const r = await runMcpCall(mcpCalls[i], logIds[i], ctx.emitToolResult)
+          const r = await runMcpCall(mcpCalls[i], logIds[i], ctx.emitToolResult, ctx.sessionId)
           results.push(r.text)
           // 29-09 走查四：直执 mcp 步骤同样记 outputSummary（meta.steps 恢复卡的原始结果回看）
           settleAgentStep(pushAgentStep(state, 'mcp', {
@@ -2352,7 +2360,9 @@ export async function confirmCommand(
         deviceName: String(call.context.device?.name ?? ''),
         command: `${call.context.serverName} · ${call.tool.name}`,
       })
-      const r = await runMcpCall(call, batch.mcp.logIds[i], batch.mcp.emitToolResult)
+      // Phase 31（31-02，T-31-05）：confirm 续跑批次的 sessionId 必须来自挂起批次携带的
+      // loopCtx（chat 阶段发起会话）——不能丢，否则确认后执行分支的步骤卡被 renderer 错归因过滤
+      const r = await runMcpCall(call, batch.mcp.logIds[i], batch.mcp.emitToolResult, batch.mcp.loopCtx.sessionId)
       step.outputSummary = sanitizeUntrusted(r.text, 200)
       settleAgentStep(step, r.status === 'success' ? 'done' : 'failed', batch.mcp.loopState)
       batch.mcp.loopState.sources.push({ kind: 'mcp', title: `${call.context.serverName} · ${call.tool.name}` })
@@ -2987,7 +2997,11 @@ export async function chat(
   // 28-05（D-08 步骤级推送）：注入 emitStep——步骤轨迹经 ctx.emitToolResult 以 tool_result
   // 扩展载荷（stepIndex/actionType/stepStatus）推送 renderer 步骤卡。agentState 随
   // pendingBatches 按引用携带，confirm 续跑推送不断链。emitToolResult 缺席（无窗口）零推送。
-  agentState.emitStep = emitToolResult ? (s) => emitToolResult(agentStepToToolResultPayload(s)) : undefined
+  // Phase 31（31-02，FIX-02 D-01）：包装 spread 注入 chat 作用域 sessionId（与下方
+  // agentLoopCtx 组装 `sessionId: sessionId || null` 同源）——步骤卡载荷可标识归属会话。
+  agentState.emitStep = emitToolResult
+    ? (s) => emitToolResult({ ...agentStepToToolResultPayload(s), ...(sessionId ? { sessionId } : {}) })
+    : undefined
   // 28-04：分档预取命中即入 sources 轨迹（代码层溯源，D-09——预取是真实检索而非模型自述）
   for (const inj of tierInjected) {
     agentState.sources.push({ kind: inj.kind, title: inj.title, refId: inj.sourceId ?? undefined })

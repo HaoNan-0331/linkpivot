@@ -1392,3 +1392,33 @@ describe('28-06 R8：循环外二段式 KB/EXP 检索生成步骤卡（真实检
     expect(payloads.some((p) => p.actionType === 'kb' && p.stepStatus === 'failed' && p.status === 'failed')).toBe(true)
   })
 })
+
+// ---------- Phase 31（31-02，FIX-02 D-01）：main 侧 ai:toolResult 载荷携带 sessionId ----------
+// emitStep 包装注入（chat 作用域 sessionId spread 进 agentStepToToolResultPayload 载荷）——
+// 回复进行中切换会话时 renderer 据此归属步骤卡（FIX-02「流式内容不串会话」的地基）。
+// runMcpCall 两路注入（直执 ctx.sessionId / 确认续跑 loopCtx.sessionId，T-31-05）由
+// mcpAiFlow.test.ts 既有 emit 捕获用例追加断言锁死。
+
+describe('31 FIX-02（31-02）：main 侧 ai:toolResult 载荷携带 sessionId', () => {
+  it('chat() 全程 emit 的每张步骤卡载荷均携带传入 sessionId（emitStep 包装注入，含预取/补查/二段式）', async () => {
+    // troubleshoot 档（故障排查话术）驱动分档预取 + 收尾补查链路——多源步骤卡全量 emit
+    retrieveForAnswerMock.mockResolvedValue(EXP_HIT)
+    vi.mocked(kbSearch).mockResolvedValue(KB_ROWS as any)
+    queueReplies('初步分析', '补查后总结')
+    const emitted: any[] = []
+    // 第 4 参即 emitToolResult（调用形态参照 electron/main.ts:405 ai:chat handler）
+    await chat([{ role: 'user', content: '网络故障排查' }], ['dev1'], 's31-fix02', (p) => { emitted.push(p) })
+    expect(emitted.length).toBeGreaterThan(0)
+    expect(emitted.every((p: any) => p.sessionId === 's31-fix02')).toBe(true)
+  })
+
+  it('sessionId 缺席（null）——载荷不携带 sessionId 字段（legacy 形态，renderer 归因走回退分支）', async () => {
+    retrieveForAnswerMock.mockResolvedValue(EXP_HIT)
+    vi.mocked(kbSearch).mockResolvedValue(KB_ROWS as any)
+    queueReplies('初步分析', '补查后总结')
+    const emitted: any[] = []
+    await chat([{ role: 'user', content: '网络故障排查' }], ['dev1'], null, (p) => { emitted.push(p) })
+    expect(emitted.length).toBeGreaterThan(0)
+    expect(emitted.every((p: any) => p.sessionId === undefined)).toBe(true)
+  })
+})

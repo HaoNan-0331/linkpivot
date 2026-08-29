@@ -41,6 +41,8 @@ const api = {
   ai: {
     chat: (messages: unknown[], deviceIds?: string[], sessionId?: string) => ipcRenderer.invoke('ai:chat', messages, deviceIds, sessionId),
     // Phase 22（22-03，D-03）：main→renderer 工具结果推送订阅（返回解绑函数）
+    // Phase 31（31-02，FIX-02 D-01）：payload 自 31-02 起可携带 sessionId（归属会话标识，
+    // agent 步骤卡 + MCP 工具卡两路注入）；preload unknown 纯透传零结构改动，channel 名不变。
     onToolResult: (cb: (payload: unknown) => void) => {
       const listener = (_e: unknown, payload: unknown) => cb(payload)
       ipcRenderer.on('ai:toolResult', listener as never)
