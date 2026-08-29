@@ -93,8 +93,29 @@ export function isValidToolResultPayload(v: unknown): v is ToolResultMessage {
     isStr(p.argsJson) &&
     isStr(p.resultJson) &&
     isStr(p.status) &&
-    (TOOL_RESULT_STATUSES as readonly string[]).includes(p.status)
+    (TOOL_RESULT_STATUSES as readonly string[]).includes(p.status) &&
+    // Phase 31（31-02，FIX-02 D-01）：归属会话标识可选字段——在场即校验、缺失放行
+    // （legacy 载荷兼容，照 guardInfo 先例；畸形非 string 整条丢弃 fail-closed，T-31-03）
+    (p.sessionId === undefined || isStr(p.sessionId))
   )
+}
+
+/**
+ * Phase 31（31-02，FIX-02 D-01）：ai:toolResult 载荷归属会话归因纯函数。
+ * 三分支语义：
+ * 1. payload.sessionId 为 string → 返回之（31-02 起新载荷自带归属，权威来源）；
+ * 2. 无 sessionId（legacy 载荷）且 inFlightSessionId 非空 → 返回在途回复会话
+ *    （回复进行中切换会话的场景，步骤卡据此归属发起会话而非当前显示会话）；
+ * 3. 双缺 → null（legacy 载荷且无在途回复——调用方按当前会话渲染，保既有行为）。
+ * 消费方：useAIChat onToolResult 订阅（31-03 接续，本 plan 不动消费逻辑）。
+ */
+export function attributeToolResultSession(
+  payload: ToolResultMessage,
+  inFlightSessionId: string | null
+): string | null {
+  if (isStr(payload.sessionId)) return payload.sessionId
+  if (inFlightSessionId !== null) return inFlightSessionId
+  return null
 }
 
 // ConfirmData 载荷校验：execId/aiExplanation string + commands 形状合法（缺任一降级 plain）。

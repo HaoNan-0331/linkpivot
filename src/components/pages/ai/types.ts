@@ -94,6 +94,9 @@ export interface ToolResultMessage {
   prefetched?: boolean
   /** 28-06 R8：后置证据补查步骤卡标志——动作描述加「[补查]」前缀（收尾按 TIER_RETRIEVAL_PLAN 补查缺席源） */
   backfilled?: boolean
+  // Phase 31（31-02，FIX-02 D-01）：归属会话标识——与 main 侧 ToolResultPayload 逐字对齐；
+  // 旧载荷无字段自然降级（归因回退在途会话，见 parseAiReply.attributeToolResultSession）
+  sessionId?: string
 }
 
 /**
