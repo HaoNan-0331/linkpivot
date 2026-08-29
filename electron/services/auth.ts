@@ -27,9 +27,9 @@ export function verifyCaptcha(key: string, input: string): boolean {
   return s.text.toUpperCase() === input.toUpperCase()
 }
 
-/** 口令强度策略：最少 10 位且需同时含字母与数字。 */
+/** 口令强度策略：不低于 10 位且需同时含字母与数字。 */
 export function validatePasswordStrength(password: string): { ok: boolean; error?: string } {
-  if (!password || password.length < 10) return { ok: false, error: '密码至少 10 位' }
+  if (!password || password.length < 10) return { ok: false, error: '密码不低于 10 位' }
   if (!/[a-zA-Z]/.test(password) || !/\d/.test(password)) return { ok: false, error: '密码需同时包含字母和数字' }
   return { ok: true }
 }

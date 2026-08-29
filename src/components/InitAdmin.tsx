@@ -25,8 +25,20 @@ export default function InitAdmin({ onSuccess }: { onSuccess: () => void }) {
           <Form.Item name="username" rules={[{ required: true, message: '请输入用户名' }]}>
             <Input prefix={<UserOutlined />} placeholder="管理员用户名" />
           </Form.Item>
-          <Form.Item name="password" rules={[{ required: true, message: '请输入密码' }, { min: 6, message: '至少6位' }]}>
-            <Input.Password prefix={<LockOutlined />} placeholder="密码" />
+          <Form.Item
+            name="password"
+            rules={[
+              { required: true, message: '请输入密码' },
+              { min: 10, message: '密码不低于 10 位' },
+              {
+                validator: (_: unknown, value: string) =>
+                  value && /[a-zA-Z]/.test(value) && /\d/.test(value)
+                    ? Promise.resolve()
+                    : Promise.reject(new Error('密码需同时包含字母和数字')),
+              },
+            ]}
+          >
+            <Input.Password prefix={<LockOutlined />} placeholder="密码（不低于 10 位，需同时包含字母和数字）" />
           </Form.Item>
           <Form.Item name="confirmPassword" rules={[{ required: true, message: '请确认密码' }]}>
             <Input.Password prefix={<LockOutlined />} placeholder="确认密码" />
