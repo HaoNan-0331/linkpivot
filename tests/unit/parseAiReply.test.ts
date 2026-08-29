@@ -322,3 +322,48 @@ describe('parsedToMessages 函数式追加语义（CR-01）', () => {
     expect(parsedToMessages(parseAiReply('纯文本'))).toEqual([{ role: 'assistant', content: '纯文本' }])
   })
 })
+
+// ---------- Phase 31（31-02，FIX-02 D-01）：sessionId 可选字段校验 + 归因纯函数 ----------
+// main 侧 ai:toolResult 载荷自 31-02 起携带发起会话 sessionId（agent 步骤卡 emitStep +
+// MCP 工具卡 runMcpCall 两路注入）。此处锁死 renderer 契约语义：
+// - 可选字段「在场即校验、缺失放行」（legacy 载荷兼容，照 guardInfo 先例）
+// - sessionId 畸形（非 string）整条丢弃 fail-closed（T-31-03）
+// - 归因纯函数三分支：payload 优先 → 回退在途回复会话 → null（legacy 按当前会话渲染）
+describe('31 FIX-02（31-02）：sessionId 可选字段校验 + 归因纯函数', () => {
+  const baseToolResult = {
+    type: 'tool_result',
+    server: 'agent',
+    tool: '命令执行',
+    deviceName: 'SW-Core',
+    argsJson: 'display version',
+    resultJson: '{"ok":true}',
+    status: 'success',
+  }
+
+  it('sessionId 为 string——校验通过（31-02 新载荷合法）', async () => {
+    const mod = await import('@/components/pages/ai/parseAiReply')
+    expect(mod.isValidToolResultPayload({ ...baseToolResult, sessionId: 's1' })).toBe(true)
+  })
+
+  it('sessionId 非 string（number 畸形）——整条拒绝 fail-closed（T-31-03，防伪造/篡改归因）', async () => {
+    const mod = await import('@/components/pages/ai/parseAiReply')
+    expect(mod.isValidToolResultPayload({ ...baseToolResult, sessionId: 123 })).toBe(false)
+  })
+
+  it('无 sessionId 字段（legacy 载荷）——放行不拒绝（向后兼容，归因走回退分支）', async () => {
+    const mod = await import('@/components/pages/ai/parseAiReply')
+    expect(mod.isValidToolResultPayload({ ...baseToolResult })).toBe(true)
+  })
+
+  it('归因三分支——payload.sessionId 优先（在途传什么都不夺权）', async () => {
+    const { attributeToolResultSession } = await import('@/components/pages/ai/parseAiReply')
+    expect(attributeToolResultSession({ ...baseToolResult, sessionId: 'sA' }, 'sX')).toBe('sA')
+    expect(attributeToolResultSession({ ...baseToolResult, sessionId: 'sA' }, null)).toBe('sA')
+  })
+
+  it('归因三分支——legacy 载荷回退在途回复会话 / 双缺返回 null（调用方按当前会话渲染）', async () => {
+    const { attributeToolResultSession } = await import('@/components/pages/ai/parseAiReply')
+    expect(attributeToolResultSession({ ...baseToolResult }, 'sB')).toBe('sB')
+    expect(attributeToolResultSession({ ...baseToolResult }, null)).toBe(null)
+  })
+})
