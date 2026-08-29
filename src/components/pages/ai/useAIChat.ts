@@ -5,11 +5,6 @@ import type { ConfirmDraftsResult } from '@/types/experience'
 import type { UseAIChatReturn, DeviceOption, ChatMsg, ConfirmData, ToolResultMessage } from './types'
 import { parseAiReply, parsedToMessages, isValidToolResultPayload, historyMessageToChatMsgs, applyStepCardToMessages, mergeStashedCards, attributeToolResultSession } from './parseAiReply'
 
-// [GAP1] 31-04 临时取证埋点——31-05 Task 4 移除。
-// 纯 console 观测：只记 sessionId/条数/角色/枚举/布尔/时间戳（performance.now 同源时钟，可全局排序），
-// 严禁记录消息文本/argsJson/resultJson/设备名/凭证；埋点调用不参与任何守卫分支的求值结果。
-const gap1Log = (tag: string, data: Record<string, unknown>) => console.log('[GAP1]', tag, JSON.stringify(data), 't=' + performance.now().toFixed(1))
-
 /**
  * useAIChat —— AIPage page-local 会话态自定义 hook（FE-01 / D-5-1）。
  *
@@ -69,8 +64,6 @@ export function useAIChat(): UseAIChatReturn {
   // 本 useEffect 镜像保留作兜底（防未来新增 setCurrentSessionId 调用点漏写 ref）
   const currentSessionIdRef = useRef<string | null>(null)
   useEffect(() => {
-    // [GAP1] mirror 埋点——赋值前读 ref 即旧值（from）
-    gap1Log('mirror', { from: currentSessionIdRef.current, to: currentSessionId })
     currentSessionIdRef.current = currentSessionId
   }, [currentSessionId])
 
@@ -95,17 +88,6 @@ export function useAIChat(): UseAIChatReturn {
     const unsubscribe = window.api.ai.onToolResult((payload: unknown) => {
       if (!isValidToolResultPayload(payload)) return
       const owner = attributeToolResultSession(payload, replySessionIdRef.current)
-      // [GAP1] card 埋点——纯读取；decision 表达式仅复述下方分支条件（render=当前/legacy 上屏、
-      // stash=在途回合载荷入暂存（与 render 并行）、drop=异会话无在途孤儿丢弃），不参与控制流
-      gap1Log('card', {
-        owner,
-        ref: currentSessionIdRef.current,
-        reply: replySessionIdRef.current,
-        payloadSid: payload.sessionId ?? 'none',
-        step: payload.stepIndex ?? 'none',
-        status: payload.status,
-        decision: owner === null || owner === currentSessionIdRef.current ? 'render' : (replySessionIdRef.current !== null ? 'stash' : 'drop')
-      })
       // 31-05 候选③：载荷属于在途回合（owner = 在途回复归属会话）→ 无论当前显示哪个会话，
       // 按到达顺序 append 进该会话暂存（get-or-create）——live 上屏与暂存记录并行发生
       if (replySessionIdRef.current !== null && owner === replySessionIdRef.current) {
@@ -143,8 +125,6 @@ export function useAIChat(): UseAIChatReturn {
   const finishReply = useCallback(() => {
     const sid = replySessionIdRef.current
     if (sid === null) return
-    // [GAP1] finish 埋点
-    gap1Log('finish', { sid, ref: currentSessionIdRef.current, unread: currentSessionIdRef.current !== sid })
     replySessionIdRef.current = null
     setReplySessionId(null)
     stashedStepCardsRef.current.delete(sid)
@@ -182,8 +162,6 @@ export function useAIChat(): UseAIChatReturn {
     setNewSessionInFlight(true)
     try {
       const session = await window.api.ai.createSession('新对话')
-      // [GAP1] new-session 埋点（createSession 返回后）
-      gap1Log('new-session', { id: session.id })
       setSessions((prev) => [session, ...prev])
       // Phase 31（31-05，WR-01 硬化）：ref 同步先行（同 handleSelectSession 模式——
       // createSession await 期间用户可并发切换会话，ref 立即反映最新归属）
@@ -198,8 +176,6 @@ export function useAIChat(): UseAIChatReturn {
   }, [])
 
   const handleSelectSession = useCallback(async (sessionId: string) => {
-    // [GAP1] select-enter 埋点（setCurrentSessionId 调用之前）
-    gap1Log('select-enter', { target: sessionId, ref: currentSessionIdRef.current })
     // Phase 31（31-05，WR-01 硬化）：ref 同步先行——判重与赋值合并为对 ref 的同步读写
     //（31-04 实测 useEffect 镜像滞后 126–151ms，虽本轮零内容经窗口泄漏，仍消灭比较窗口；
     // setState 随后，:61 useEffect 镜像保留兜底防未来新增 setState 点）
@@ -208,9 +184,6 @@ export function useAIChat(): UseAIChatReturn {
     setCurrentSessionId(sessionId)
     setPendingConfirm(null)
     const msgs = await window.api.ai.getSessionMessages(sessionId)
-    // [GAP1] select-resolved 埋点——ref !== sid 即乱序 resolve/快速连点直接证据；
-    // lastRole ≠ 'user' 配合复现时序是候选②（提问未落库）的证据面
-    gap1Log('select-resolved', { sid: sessionId, ref: currentSessionIdRef.current, msgsCount: msgs.length, lastRole: msgs[msgs.length - 1]?.role ?? 'none' })
     // Phase 31（31-05，WR-01 硬化）：post-await 陈旧性守卫——getSessionMessages 返回后
     // ref ≠ 目标会话即放弃本次 setMessages（同时覆盖镜像滞后窗口、乱序 resolve、快速连点
     // 三场景——最后一次 select 胜出；其下的暂存合并与清未读随之跳过是正确行为，后续真正的
@@ -230,8 +203,6 @@ export function useAIChat(): UseAIChatReturn {
     // **回合存活期不删暂存条目**（多次往返靠幂等防重复）——弃暂存只保留在 finishReply
     // 与 handleDeleteSession 两处；回复完成后 finishReply 已弃暂存，get 为空自然跳过
     const stashed = stashedStepCardsRef.current.get(sessionId)
-    // [GAP1] stash-merge 埋点——31-05 后切回在途回合会话 stashed 应 ≥ 切走前已上屏卡数
-    gap1Log('stash-merge', { sid: sessionId, stashed: stashed?.length ?? 0 })
     if (stashed && stashed.length > 0) {
       setMessages((prev) => mergeStashedCards(prev, stashed))
     }
@@ -342,8 +313,6 @@ export function useAIChat(): UseAIChatReturn {
     const sendingSessionId = currentSessionId
     replySessionIdRef.current = sendingSessionId
     setReplySessionId(sendingSessionId)
-    // [GAP1] send 埋点（sendingSessionId 锁定后）
-    gap1Log('send', { sid: sendingSessionId })
 
     const userMsg: ChatMsg = { role: 'user', content: text }
     const newMessages = [...messages, userMsg]
@@ -385,8 +354,6 @@ export function useAIChat(): UseAIChatReturn {
       // ai:toolResult 事件已按 prev 追加过工具结果卡片，基于发送前 newMessages snapshot
       // 的整体替换会把卡片整批丢弃（D-03 核心交付在主发送路径不可见）。与 handleConfirm 对齐。
       if (parsed.kind === 'answer' || parsed.kind === 'toolResult' || parsed.kind === 'plain') {
-        // [GAP1] reply-guard 埋点（answer 路径）——visible=true 但用户实际在看别的会话 = 候选①串话直接证据
-        gap1Log('reply-guard', { reply: replySessionIdRef.current, ref: currentSessionIdRef.current, visible: replySessionIdRef.current === currentSessionIdRef.current, path: 'answer' })
         // Phase 31（31-03，D-01）：归属守卫——仅归属会话仍是当前显示会话才上屏（切走则跳过：
         // DB 已落库，切回经 history 恢复，不串话）；setLoading(false) 不被守卫包裹（全局锁必释放，D-02）
         if (replySessionIdRef.current === currentSessionIdRef.current) {
@@ -402,8 +369,6 @@ export function useAIChat(): UseAIChatReturn {
       const isAbort = e instanceof DOMException && e.name === 'AbortError'
         || /aborted|用户已停止/i.test(e instanceof Error ? e.message : String(e))
       // Phase 31（31-03，D-01）：同款归属守卫——错误/中断条仅归属会话可见
-      // [GAP1] reply-guard 埋点（catch 路径）
-      gap1Log('reply-guard', { reply: replySessionIdRef.current, ref: currentSessionIdRef.current, visible: replySessionIdRef.current === currentSessionIdRef.current, path: 'catch' })
       if (replySessionIdRef.current === currentSessionIdRef.current) {
         if (isAbort) {
           setMessages((prev) => prev.some((m) => m.content.includes('已停止——任务中断'))
