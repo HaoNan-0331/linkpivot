@@ -1422,3 +1422,58 @@ describe('31 FIX-02（31-02）：main 侧 ai:toolResult 载荷携带 sessionId',
     expect(emitted.every((p: any) => p.sessionId === undefined)).toBe(true)
   })
 })
+
+// ---------- Phase 31（31-05，FIX-02 候选② / WR-04 option a）：chat() 入口持久化用户消息 ----------
+// 31-04 真机裁决 CONFIRMED：用户消息仅在各退出点落库——在途回合中途切回原会话时 DB
+// history 不含本轮提问（同会话 msgsCount 6→9 与丢失/恢复时刻一一对应），提问「消失」。
+// 31-05 修复：user 行自 chat() 入口（config 校验后、tier 预取/首轮 callAI 前）即落库
+//（trim 非空守卫），chat() 内 7 处退出点 user 落库全部移除（防入口+出口双写）。
+// 不变量锁死：整轮恰 1 条 user 行 / 中断轮提问不丢 / confirm_required 出口计数。
+
+describe('31-05 候选②：chat() 入口持久化用户消息（WR-04 option a）', () => {
+  /** 取指定会话的解密行（role/content 明文，按插入序） */
+  function sessionRows(sessionId: string): Array<{ role: string; content: string }> {
+    return (db.prepare(
+      'SELECT role, content_enc FROM chat_history WHERE session_id = ? ORDER BY rowid'
+    ).all(sessionId) as any[]).map((r) => ({ role: r.role, content: decField(r.content_enc, MK) as string }))
+  }
+
+  it('正常完成一轮——chat_history 恰 1 条 user 行（content=最后一条 message）+ assistant 行，无重复 user 行（防入口+出口双写）', async () => {
+    allowCmd()
+    queueReplies('[CMD:dev1]display version[/CMD]', '执行完成总结')
+    await chat([{ role: 'user', content: '查状态和资料' }], ['dev1'], 'sess-entry-1')
+    const rows = sessionRows('sess-entry-1')
+    const userRows = rows.filter((r) => r.role === 'user')
+    expect(userRows).toHaveLength(1)
+    expect(userRows[0].content).toBe('查状态和资料')
+    expect(rows.some((r) => r.role === 'assistant')).toBe(true)
+  })
+
+  it('用户中断轮（首答 callAI 中止 → ChatInterruptedError 逃逸 chat()）——user 行已在 DB，提问不丢', async () => {
+    const controller = new AbortController()
+    const fetchMock = vi.fn(async () => {
+      controller.abort()
+      if (controller.signal.aborted) throw new DOMException('This operation was aborted', 'AbortError')
+      return { ok: true, json: async () => ({ choices: [{ message: { content: 'x' } }] }) }
+    })
+    global.fetch = fetchMock as unknown as typeof fetch
+    await expect(chat(
+      [{ role: 'user', content: '中途停止的提问' }], ['dev1'], 'sess-entry-2', undefined, controller.signal
+    )).rejects.toBeInstanceOf(ChatInterruptedError)
+    const rows = sessionRows('sess-entry-2')
+    const userRows = rows.filter((r) => r.role === 'user')
+    expect(userRows).toHaveLength(1)
+    expect(userRows[0].content).toBe('中途停止的提问')
+  })
+
+  it('confirm_required 出口——user 行恰 1 条 + 「等待确认」assistant 行 1 条', async () => {
+    db.prepare("UPDATE ai_config SET exec_mode = 'confirm'").run()
+    allowCmd()
+    queueReplies('[CMD:dev1]display version[/CMD]')
+    const out = await chat([{ role: 'user', content: '查版本' }], ['dev1'], 'sess-entry-3')
+    expect(JSON.parse(out).type).toBe('confirm_required')
+    const rows = sessionRows('sess-entry-3')
+    expect(rows.filter((r) => r.role === 'user')).toHaveLength(1)
+    expect(rows.filter((r) => r.role === 'assistant' && r.content.includes('等待确认'))).toHaveLength(1)
+  })
+})
