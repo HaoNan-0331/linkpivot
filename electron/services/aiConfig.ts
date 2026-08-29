@@ -2,6 +2,10 @@ import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../database/connection'
 import { encField, decField } from '../utils/crypto'
 import { verifyPasswordSync } from '../utils/crypto'
+import { setAiExecLoggerMasterKey } from './aiExecLogger'
+import { setAiSessionMasterKey } from './aiSession'
+import { setAiExecMasterKey } from './aiExec'
+import { setAiMcpMasterKey } from './aiMcp'
 
 /**
  * aiConfig —— AI 配置域（ai_config CRUD + 掩码 + exec mode + 命令白名单）。
@@ -11,13 +15,22 @@ import { verifyPasswordSync } from '../utils/crypto'
  * getCommandWhitelist/saveCommandWhitelist），函数体逐字零改动，保持源函数式形态
  * 不转静态类（32-PATTERNS Shared Pattern 1）。
  *
- * MK 注入链（过渡形态）：本文件持模块级 MK，由 ai.ts setAiMasterKey 链式调用
- * setAiConfigMasterKey 注入（P4 终态吸收 setAiMasterKey 本体）；service 不直接读
- * keyManager（红线）。掩码守卫红线：**** 掩码串不得落库（stripMaskedKeys）。
+ * MK 注入链（Phase 32 P4 终态）：setAiMasterKey 本体落此文件（吸收原 ai.ts 过渡
+ * orchestrator）——MK = key 赋值本域 + 链式注入 aiExecLogger/aiSession/aiExec/aiMcp
+ * 四域（main.ts:139 经 ai.ts barrel 调用零改动）；service 不直接读 keyManager
+ * （红线）。已知 aiConfig↔aiExec 模块环（本文件 setAiExecMasterKey × aiExec
+ * getCommandWhitelist）为运行时函数级使用，CJS bundle 无害（Shared Pattern 6 先例）。
+ * 掩码守卫红线：**** 掩码串不得落库（stripMaskedKeys）。
  */
 
 let MK = ''
-export function setAiConfigMasterKey(key: string) { MK = key }
+export function setAiMasterKey(key: string) {
+  MK = key
+  setAiExecLoggerMasterKey(key)
+  setAiSessionMasterKey(key)
+  setAiExecMasterKey(key)
+  setAiMcpMasterKey(key)
+}
 
 // ---------- Config ----------
 

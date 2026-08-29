@@ -162,7 +162,8 @@ describe('7 处 prompt 调用点收敛到 PromptService.getPrompt（PMT-01）', 
   // 重依赖模块（ai / discovery / kb）源码级收敛断言：内联 prompt 已删、getPrompt(id) 接入
   const srcDir = path.resolve(__dirname, '../../../electron/services')
   const sourceLevel: Array<[string, string]> = [
-    ['ai.ts', "PromptService.getPrompt('ai.chat.systemPrompt')"],
+    // Phase 32（32-04）：chat 本体自 ai.ts 迁 aiChat.ts，源码断言随实现文件改向（断言意图不变）
+    ['aiChat.ts', "PromptService.getPrompt('ai.chat.systemPrompt')"],
     ['discovery.ts', "PromptService.getPrompt('discovery.vendor')"],
     ['discovery.ts', "PromptService.getPrompt('discovery.topology')"],
     ['knowledgeBaseService.ts', "PromptService.getPrompt('kb.pick')"],

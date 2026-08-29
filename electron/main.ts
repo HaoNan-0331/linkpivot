@@ -141,7 +141,7 @@ app.whenReady().then(async () => {
   setKbMasterKey(masterKey)
   setExperienceMasterKey(masterKey)
   // 第 8 直接注入器（SEC-06）：systemLog 持模块级 MK 加密 prompt_text_enc/ai_response_enc；
-  // aiExecLogger 已由 setAiMasterKey 内部链式注入（ai.ts），不重复。service 不直读 keyManager 红线。
+  // aiExecLogger/aiSession/aiExec/aiMcp 已由 setAiMasterKey（aiConfig.ts）内部链式注入，不重复。service 不直读 keyManager 红线。
   setSystemLogMasterKey(masterKey)
   // 第 9 直接注入器（Phase 21）：mcpService 持 private static MK 加密 env_json_enc/credential_enc。
   McpService.setMcpMasterKey(masterKey)
