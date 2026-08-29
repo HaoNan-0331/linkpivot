@@ -8,12 +8,12 @@
  * Phase 32（D-01 / D-03 / D-05）：机械搬移自 ai.ts 原装配段（拆分前原始行号 :2566-2819），
  * 函数体逐字零改动，保持源函数形态（不转静态类）。
  *
- * 依赖方向：供 aiChat / confirm 链 / aiAgentLoop 三方引用，import 方向单向（本模块不反向
- * import aiChat/aiAgentLoop）。McpLoopCtx/AgentLoopState 等类型以 import type 过渡引用 './ai'
- * （agent 段 Phase 32 P3 搬至 aiAgent* 后改向，type-only 编译后擦除）；
- * pushTaggedRetrievalStep/buildKbRoundContext/stripAllAgentMarkers 为 agent 段函数的过渡值引用
- * （同既存 ai.ts ↔ knowledgeBaseService 运行时环先例，调用时点晚于模块加载，CJS/ESM 双安全，
- * P3 随 agent 段搬移改向）。
+ * 依赖方向：供 aiChat / confirm 链引用，import 方向单向（本模块不反向 import aiChat）。
+ * AgentStep/SourceRecord/AgentLoopState/McpLoopCtx 类型自 Phase 32 P3 起 import type 直连
+ * './aiAgentState'（type-only 编译后擦除）；pushTaggedRetrievalStep/buildKbRoundContext/
+ * stripAllAgentMarkers 自 P3 起值引用 './aiAgentLoop'——该三函数的调用时点晚于模块加载，
+ * 与既存 ai.ts ↔ knowledgeBaseService 运行时环同构（CJS/ESM 双安全）；P2 的 './ai'
+ * 过渡引用已全部清零。
  */
 
 import { sanitizeUntrusted } from './untrustedText'
@@ -23,7 +23,7 @@ import { callAI } from './aiClient'
 import { verifySourcesEvidence } from './agentRetrieval'
 import type { AgentTier } from './agentRouter'
 import type { AgentStep, SourceRecord, AgentLoopState, McpLoopCtx } from './aiAgentState'
-import { pushTaggedRetrievalStep, buildKbRoundContext, stripAllAgentMarkers } from './ai'
+import { pushTaggedRetrievalStep, buildKbRoundContext, stripAllAgentMarkers } from './aiAgentLoop'
 
 // ---------- Phase 11 experience references helpers ----------
 // UAT fix：经验引用 references 映射——chat()/confirmCommand 所有返回路径（无命令 exp_answer /
