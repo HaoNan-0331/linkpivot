@@ -87,7 +87,17 @@ export default function AIPage() {
           />
         </div>
         {/* Phase 28（28-05）：agentRunning/handleStop——agent 任务运行中进度区常驻停止按钮（D-06） */}
-        <ChatMessageList messages={chat.messages} loading={chat.loading} agentRunning={chat.agentRunning} onStop={chat.handleStop} />
+        {/* Phase 31（31-05，根因④，31-04 裁决新根因）：「思考中/停止」指示按归属门控——
+            在途回复归属其他会话时不在当前会话消息区渲染指示气泡（31-04 真机锤实：用户在 B
+            看到的「A 的气泡」即此全局 loading 指示，非内容串话）。与下方 ChatInput
+            aiReplyElsewhere 同款归属条件（D-02 输入锁/提示条语义保留不动，T5 已过）；
+            replySessionId === null（legacy/无在途）保持原行为 */}
+        <ChatMessageList
+          messages={chat.messages}
+          loading={chat.loading && (chat.replySessionId === null || chat.replySessionId === chat.currentSessionId)}
+          agentRunning={chat.agentRunning}
+          onStop={chat.handleStop}
+        />
         <ChatInput
           value={chat.input}
           loading={chat.loading}

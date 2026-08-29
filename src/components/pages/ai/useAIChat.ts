@@ -3,7 +3,7 @@ import { message } from 'antd'
 import type { ChatSession } from '@/types/ai'
 import type { ConfirmDraftsResult } from '@/types/experience'
 import type { UseAIChatReturn, DeviceOption, ChatMsg, ConfirmData, ToolResultMessage } from './types'
-import { parseAiReply, parsedToMessages, isValidToolResultPayload, historyMessageToChatMsgs, applyStepCardToMessages, attributeToolResultSession } from './parseAiReply'
+import { parseAiReply, parsedToMessages, isValidToolResultPayload, historyMessageToChatMsgs, applyStepCardToMessages, mergeStashedCards, attributeToolResultSession } from './parseAiReply'
 
 // [GAP1] 31-04 临时取证埋点——31-05 Task 4 移除。
 // 纯 console 观测：只记 sessionId/条数/角色/枚举/布尔/时间戳（performance.now 同源时钟，可全局排序），
@@ -53,8 +53,10 @@ export function useAIChat(): UseAIChatReturn {
   // D-01/D-04：在途回复归属会话双轨——ref 供事件/终态同步读最新值，state 供 D-02 他会在途回复提示条消费
   const [replySessionId, setReplySessionId] = useState<string | null>(null)
   const replySessionIdRef = useRef<string | null>(null)
-  // D-04：异会话步骤卡暂存——回复进行中切走时按归属会话暂存（切回合并渲染，见 handleSelectSession）；
-  // 回复完成 finishReply 弃之（以 DB 落库 + meta.steps 重建恢复为准，防两路重复）
+  // D-04：异会话步骤卡暂存——在途回合产生的全部步骤卡载荷按归属会话全量暂存
+  //（31-05 候选③：切走前已上屏与切走后到达的卡都进暂存，切回 mergeStashedCards 幂等合并）；
+  // 回合存活期不删（多次往返靠幂等防重复），回复完成 finishReply 弃之
+  //（以 DB 落库 + meta.steps 重建恢复为准，防两路重复）
   const stashedStepCardsRef = useRef<Map<string, ToolResultMessage[]>>(new Map())
   // D-05①：新建会话 IPC 在途双轨——同步 ref 锁根治连点双发 + state 驱动新建按钮 loading+disabled
   const [newSessionInFlight, setNewSessionInFlight] = useState(false)
@@ -62,7 +64,9 @@ export function useAIChat(): UseAIChatReturn {
   // D-03：未读会话集合（回复完成且用户已切走 → 会话列表小点，点入即清）——更新一律 new Set 引用替换
   const [unreadSessionIds, setUnreadSessionIds] = useState<Set<string>>(new Set())
   // D-01/D-05②：currentSessionId ref 镜像——此后「读最新会话 id」一律走此 ref，不信闭包快照
-  //（照 pendingConfirmRef :67-68 useEffect 镜像先例）
+  // Phase 31（31-05，WR-01 硬化）：ref 赋值改为「同步先行」——handleSelectSession/
+  // handleNewSession 在 setState 前直接写 ref（消灭 useEffect 镜像 126–151ms 滞后窗口）；
+  // 本 useEffect 镜像保留作兜底（防未来新增 setCurrentSessionId 调用点漏写 ref）
   const currentSessionIdRef = useRef<string | null>(null)
   useEffect(() => {
     // [GAP1] mirror 埋点——赋值前读 ref 即旧值（from）
@@ -81,14 +85,18 @@ export function useAIChat(): UseAIChatReturn {
   // 找同 index」会把第二轮任务的新卡原地覆盖到第一轮旧卡上（新检索卡从不出现）。
   // Phase 31（31-03，D-01/D-04）：归属过滤——attributeToolResultSession（31-02 契约）归因
   // payload.sessionId 优先 / legacy 回退在途回复会话 / null 按当前会话渲染（保既有行为）。
-  // 归属 = 当前显示会话（或 legacy 无在途回复）→ 上屏；异会话且回复在途 → 暂存（切回渲染）；
-  // 异会话且无在途回复（孤儿事件）→ 丢弃，防孤儿暂存与 DB 恢复重复。
+  // Phase 31（31-05，FIX-02 候选③）：在途回合载荷**无条件全量入暂存**（与 live 上屏并行，
+  // 不再只暂存「切走后到达」的卡——31-04 真机裁决：切走前已上屏的卡仅存内存 messages，
+  // 切回被 DB history 整体替换后丢失，stash 恒 0 锤实）。切回统一 mergeStashedCards
+  // 幂等合并（stepIndex 重放更新同一卡 + legacy 五键判重），多轮往返不丢不重；
+  // 归属 = 当前显示会话（或 legacy 无在途回复）→ 上屏；异会话且非在途（孤儿事件）→
+  // 丢弃，防孤儿暂存与 DB 恢复重复。
   useEffect(() => {
     const unsubscribe = window.api.ai.onToolResult((payload: unknown) => {
       if (!isValidToolResultPayload(payload)) return
       const owner = attributeToolResultSession(payload, replySessionIdRef.current)
       // [GAP1] card 埋点——纯读取；decision 表达式仅复述下方分支条件（render=当前/legacy 上屏、
-      // stash=异会话在途暂存、drop=异会话无在途孤儿丢弃），不参与控制流
+      // stash=在途回合载荷入暂存（与 render 并行）、drop=异会话无在途孤儿丢弃），不参与控制流
       gap1Log('card', {
         owner,
         ref: currentSessionIdRef.current,
@@ -98,14 +106,16 @@ export function useAIChat(): UseAIChatReturn {
         status: payload.status,
         decision: owner === null || owner === currentSessionIdRef.current ? 'render' : (replySessionIdRef.current !== null ? 'stash' : 'drop')
       })
-      if (owner === null || owner === currentSessionIdRef.current) {
-        setMessages((prev) => applyStepCardToMessages(prev, payload))
-        return
-      }
-      if (replySessionIdRef.current !== null) {
+      // 31-05 候选③：载荷属于在途回合（owner = 在途回复归属会话）→ 无论当前显示哪个会话，
+      // 按到达顺序 append 进该会话暂存（get-or-create）——live 上屏与暂存记录并行发生
+      if (replySessionIdRef.current !== null && owner === replySessionIdRef.current) {
         const stashed = stashedStepCardsRef.current.get(owner)
         if (stashed) stashed.push(payload)
         else stashedStepCardsRef.current.set(owner, [payload])
+      }
+      if (owner === null || owner === currentSessionIdRef.current) {
+        setMessages((prev) => applyStepCardToMessages(prev, payload))
+        return
       }
     })
     return unsubscribe
@@ -175,6 +185,9 @@ export function useAIChat(): UseAIChatReturn {
       // [GAP1] new-session 埋点（createSession 返回后）
       gap1Log('new-session', { id: session.id })
       setSessions((prev) => [session, ...prev])
+      // Phase 31（31-05，WR-01 硬化）：ref 同步先行（同 handleSelectSession 模式——
+      // createSession await 期间用户可并发切换会话，ref 立即反映最新归属）
+      currentSessionIdRef.current = session.id
       setCurrentSessionId(session.id)
       setMessages([])
       setPendingConfirm(null)
@@ -187,18 +200,22 @@ export function useAIChat(): UseAIChatReturn {
   const handleSelectSession = useCallback(async (sessionId: string) => {
     // [GAP1] select-enter 埋点（setCurrentSessionId 调用之前）
     gap1Log('select-enter', { target: sessionId, ref: currentSessionIdRef.current })
-    setCurrentSessionId((cur) => {
-      if (sessionId === cur) return cur
-      return sessionId
-    })
-    // Phase 31（31-03，D-05②）：判重读 ref 镜像最新值（与上方函数式判重同语义——
-    // 并发切换下闭包快照已陈旧，ref 经 useEffect 镜像保持最新）
+    // Phase 31（31-05，WR-01 硬化）：ref 同步先行——判重与赋值合并为对 ref 的同步读写
+    //（31-04 实测 useEffect 镜像滞后 126–151ms，虽本轮零内容经窗口泄漏，仍消灭比较窗口；
+    // setState 随后，:61 useEffect 镜像保留兜底防未来新增 setState 点）
     if (sessionId === currentSessionIdRef.current) return
+    currentSessionIdRef.current = sessionId
+    setCurrentSessionId(sessionId)
     setPendingConfirm(null)
     const msgs = await window.api.ai.getSessionMessages(sessionId)
-    // [GAP1] select-resolved 埋点——ref !== sid 即候选①（镜像滞后）/乱序 resolve 直接证据；
+    // [GAP1] select-resolved 埋点——ref !== sid 即乱序 resolve/快速连点直接证据；
     // lastRole ≠ 'user' 配合复现时序是候选②（提问未落库）的证据面
     gap1Log('select-resolved', { sid: sessionId, ref: currentSessionIdRef.current, msgsCount: msgs.length, lastRole: msgs[msgs.length - 1]?.role ?? 'none' })
+    // Phase 31（31-05，WR-01 硬化）：post-await 陈旧性守卫——getSessionMessages 返回后
+    // ref ≠ 目标会话即放弃本次 setMessages（同时覆盖镜像滞后窗口、乱序 resolve、快速连点
+    // 三场景——最后一次 select 胜出；其下的暂存合并与清未读随之跳过是正确行为，后续真正的
+    // select 会做）
+    if (currentSessionIdRef.current !== sessionId) return
     // 28-06 R2 缺陷⑥：历史恢复消费 meta（此前整体丢弃）——meta.steps 重建步骤卡消息、
     // meta.sources/tier/noRealtimeData/backfillNotes 复原 agentMeta 徽章行，与实时路径同构
     setMessages(msgs.flatMap((m) => historyMessageToChatMsgs({
@@ -208,14 +225,15 @@ export function useAIChat(): UseAIChatReturn {
       createdAt: m.createdAt,
       meta: m.meta,
     })))
-    // Phase 31（31-03，D-04）：回复进行中切回原会话——合并暂存步骤卡（已到达的卡立即渲染，
-    // 后续新卡经 onToolResult 归属过滤实时追加）；回复完成后 finishReply 已弃暂存，get 为空自然跳过
+    // Phase 31（31-05，候选③）：回复进行中切回原会话——mergeStashedCards 幂等合并暂存
+    // 步骤卡（在途回合载荷全量暂存：切走前已上屏 + 切走后到达，切回完整重建不重复）；
+    // **回合存活期不删暂存条目**（多次往返靠幂等防重复）——弃暂存只保留在 finishReply
+    // 与 handleDeleteSession 两处；回复完成后 finishReply 已弃暂存，get 为空自然跳过
     const stashed = stashedStepCardsRef.current.get(sessionId)
-    // [GAP1] stash-merge 埋点——切回时 stashed=0/缺失而切走前有已渲染卡 = 候选③（切走前卡不进暂存）证据
+    // [GAP1] stash-merge 埋点——31-05 后切回在途回合会话 stashed 应 ≥ 切走前已上屏卡数
     gap1Log('stash-merge', { sid: sessionId, stashed: stashed?.length ?? 0 })
     if (stashed && stashed.length > 0) {
-      setMessages((prev) => stashed.reduce((acc, p) => applyStepCardToMessages(acc, p), prev))
-      stashedStepCardsRef.current.delete(sessionId)
+      setMessages((prev) => mergeStashedCards(prev, stashed))
     }
     // Phase 31（31-03，D-03）：点入即清未读角标（无在场未读时保持引用不变，避免无谓重渲染）
     setUnreadSessionIds((prev) => {
@@ -224,7 +242,7 @@ export function useAIChat(): UseAIChatReturn {
       next.delete(sessionId)
       return next
     })
-  }, [currentSessionId])
+  }, [])
 
   const handleDeleteSession = useCallback(async (sessionId: string) => {
     try {
@@ -329,7 +347,10 @@ export function useAIChat(): UseAIChatReturn {
 
     const userMsg: ChatMsg = { role: 'user', content: text }
     const newMessages = [...messages, userMsg]
-    setMessages(newMessages)
+    // Phase 31（31-05，WR-01 对齐）：用户消息 append 函数式化——与 onToolResult 事件订阅
+    // 的函数式更新同语义（发送同渲染周期内并发到达的步骤卡不被整体替换覆盖）；
+    // chat() 入参仍用发送时刻闭包快照 newMessages（不追加在途卡，语义不变）
+    setMessages((prev) => [...prev, userMsg])
     setInput('')
     setLoading(true)
 

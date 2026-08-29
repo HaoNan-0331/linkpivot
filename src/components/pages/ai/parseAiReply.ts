@@ -11,6 +11,10 @@ import type { AgentMeta, AgentSourceItem, AgentStepStatus, AgentTierName, ChatMs
  * （typeof / Array.isArray），禁止 `as` 裸断言；非法载荷（含畸形 confirm_required）
  * 一律降级 plain，不进入 confirm 分支——确认流不可能被畸形 JSON 伪造触发。
  * 解析失败降级普通文本不崩（沿 ExperienceTab formatTs 降级先例）。
+ *
+ * Phase 31（31-05，FIX-02 GAP-1 候选③）：新增 mergeStashedCards——在途回合步骤卡
+ * 载荷全量暂存的切回幂等合并（stepIndex 定位重放 + legacy 五键判重），多轮往返
+ * 切换不丢卡不重复；回合终态仍以 DB meta.steps 重建为准（D-04）。
  */
 
 export type ParsedAiReply =
@@ -316,6 +320,40 @@ export function applyStepCardToMessages(
     }
   }
   return [...prev, { role: 'assistant', content: '', toolResult: payload }]
+}
+
+/**
+ * Phase 31（31-05，FIX-02 候选③ / D-04）：切回归属会话时的暂存步骤卡幂等合并纯函数。
+ *
+ * 缺陷根因（31-04 裁决 CONFIRMED）：31-03 的 onToolResult 只暂存「切走后到达」的卡——
+ * 切走前已实时上屏的卡仅存在于内存 messages，handleSelectSession 以 DB history 整体
+ * 替换后即丢失（回合未结束 DB 无 meta.steps 无从重建，真机 stash-merge stashed:0 锤实）。
+ * 31-05 起在途回合载荷无条件全量入暂存（与 live 上屏并行），切回统一经本函数合并：
+ * - 含 stepIndex 载荷经 applyStepCardToMessages 定位更新/追加——同 index 重放更新
+ *   同一张卡，天然幂等（任意次数 A→B→A 往返不增卡、不丢终态）；
+ * - 无 stepIndex（legacy MCP tool_result）先按 server+tool+argsJson+resultJson+status
+ *   判重扫 prev，已含同键卡片则跳过（重放不产重复卡）。
+ * 回合存活期暂存不删（多次往返靠幂等防重复），finishReply/handleDeleteSession 统一
+ * 弃暂存，完成态以 DB meta.steps 重建为准（D-04 语义不变）。
+ */
+export function mergeStashedCards(prev: ChatMsg[], payloads: ToolResultMessage[]): ChatMsg[] {
+  if (payloads.length === 0) return prev
+  return payloads.reduce((acc, p) => {
+    if (typeof p.stepIndex === 'number') {
+      return applyStepCardToMessages(acc, p)
+    }
+    const duplicated = acc.some(
+      (m) =>
+        m.toolResult !== undefined &&
+        m.toolResult.server === p.server &&
+        m.toolResult.tool === p.tool &&
+        m.toolResult.argsJson === p.argsJson &&
+        m.toolResult.resultJson === p.resultJson &&
+        m.toolResult.status === p.status
+    )
+    if (duplicated) return acc
+    return applyStepCardToMessages(acc, p)
+  }, prev)
 }
 
 export function parseAiReply(raw: string): ParsedAiReply {
