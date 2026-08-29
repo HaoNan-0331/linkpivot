@@ -15,7 +15,8 @@
     "electron:build": "npm run rebuild:native && npm run build && electron-builder",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:electron": "cross-env ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/electron.exe node_modules/vitest/vitest.mjs run --config vitest.electron.config.ts"
+    "test:electron": "cross-env ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/electron.exe node_modules/vitest/vitest.mjs run --config vitest.electron.config.ts",
+    "audit:tokens": "node scripts/audit-tokens.mjs"
   },
   "dependencies": {
     "@ant-design/icons": "^6.2.2",

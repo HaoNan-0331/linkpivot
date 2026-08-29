@@ -11,9 +11,14 @@ export default function TerminalWindow() {
 
     const terminal = new Terminal({
       cursorBlink: true,
+      // xterm option 不吃 CSS 变量——传 D-04 代码栈字面值（与 src/styles/fonts.css 的
+      // --nt-font-family-code 同上游同串；无裸 monospace 尾巴，中文回落雅黑非宋体）
       fontSize: 14,
-      fontFamily: 'Consolas, "Courier New", monospace',
+      fontFamily:
+        "'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas, 'Liberation Mono', Menlo, Courier, 'PingFang SC', 'Microsoft YaHei'",
       theme: {
+        // 终端语义色：字面值锚定 --nt-specific-terminal-bg（tokens.css）；
+        // 本文件在 audit:tokens 豁免清单内（UI-SPEC §十 Q6 / §九）
         background: '#1e1e1e',
         foreground: '#d4d4d4',
         cursor: '#d4d4d4',

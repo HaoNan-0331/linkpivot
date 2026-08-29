@@ -6,6 +6,9 @@
   <title>终端</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    /* Phase 33：#1e1e1e = --nt-specific-terminal-bg（src/styles/tokens.css）终端语义底色。
+       保留字面值不改 var()——Vite 模块 CSS 注入晚于 html 内联 style 首帧，改 var 有首帧闪烁风险
+       （UI-SPEC §十 Q6 裁决；本文件不在 audit:tokens 扫描面内） */
     html, body, #root { width: 100%; height: 100%; background: #1e1e1e; }
   </style>
 </head>
