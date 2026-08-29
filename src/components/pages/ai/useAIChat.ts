@@ -2,8 +2,8 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { message } from 'antd'
 import type { ChatSession } from '@/types/ai'
 import type { ConfirmDraftsResult } from '@/types/experience'
-import type { UseAIChatReturn, DeviceOption, ChatMsg, ConfirmData } from './types'
-import { parseAiReply, parsedToMessages, isValidToolResultPayload, historyMessageToChatMsgs, applyStepCardToMessages } from './parseAiReply'
+import type { UseAIChatReturn, DeviceOption, ChatMsg, ConfirmData, ToolResultMessage } from './types'
+import { parseAiReply, parsedToMessages, isValidToolResultPayload, historyMessageToChatMsgs, applyStepCardToMessages, attributeToolResultSession } from './parseAiReply'
 
 /**
  * useAIChat —— AIPage page-local 会话态自定义 hook（FE-01 / D-5-1）。
@@ -44,6 +44,23 @@ export function useAIChat(): UseAIChatReturn {
   const [reviewInitialDraftIds, setReviewInitialDraftIds] = useState<string[]>([])
   const [pendingDraftCount, setPendingDraftCount] = useState(0)
 
+  // ===== Phase 31（31-03，FIX-02 会话切换竞态）新增态与 ref（照上方 confirmInFlight/pendingConfirmRef 双轨先例）=====
+  // D-01/D-04：在途回复归属会话双轨——ref 供事件/终态同步读最新值，state 供 D-02 他会在途回复提示条消费
+  const [replySessionId, setReplySessionId] = useState<string | null>(null)
+  const replySessionIdRef = useRef<string | null>(null)
+  // D-04：异会话步骤卡暂存——回复进行中切走时按归属会话暂存（切回合并渲染，见 handleSelectSession）；
+  // 回复完成 finishReply 弃之（以 DB 落库 + meta.steps 重建恢复为准，防两路重复）
+  const stashedStepCardsRef = useRef<Map<string, ToolResultMessage[]>>(new Map())
+  // D-05①：新建会话 IPC 在途双轨——同步 ref 锁根治连点双发 + state 驱动新建按钮 loading+disabled
+  const [newSessionInFlight, setNewSessionInFlight] = useState(false)
+  const newSessionInFlightRef = useRef(false)
+  // D-03：未读会话集合（回复完成且用户已切走 → 会话列表小点，点入即清）——更新一律 new Set 引用替换
+  const [unreadSessionIds, setUnreadSessionIds] = useState<Set<string>>(new Set())
+  // D-01/D-05②：currentSessionId ref 镜像——此后「读最新会话 id」一律走此 ref，不信闭包快照
+  //（照 pendingConfirmRef :67-68 useEffect 镜像先例）
+  const currentSessionIdRef = useRef<string | null>(null)
+  useEffect(() => { currentSessionIdRef.current = currentSessionId }, [currentSessionId])
+
   // Phase 22（22-05，D-03）：main→renderer `ai:toolResult` 事件订阅（22-03 下发契约，
   // 每次 MCP 工具调用完成后推送——含确认后执行分支，故必须走事件而非 chat 响应体）。
   // T-22-16 fail-closed：payload 为 unknown，逐字段校验失败整条丢弃（不降级展示、不入对话流）。
@@ -53,10 +70,23 @@ export function useAIChat(): UseAIChatReturn {
   // 28-06 R7：定位逻辑收敛为 applyStepCardToMessages 纯函数——扫描止于最近一条 user 消息
   // （本轮边界）。stepIndex 每轮 chat() 从 0 重数，跨轮同 index 是不同卡片；旧「整列表倒序
   // 找同 index」会把第二轮任务的新卡原地覆盖到第一轮旧卡上（新检索卡从不出现）。
+  // Phase 31（31-03，D-01/D-04）：归属过滤——attributeToolResultSession（31-02 契约）归因
+  // payload.sessionId 优先 / legacy 回退在途回复会话 / null 按当前会话渲染（保既有行为）。
+  // 归属 = 当前显示会话（或 legacy 无在途回复）→ 上屏；异会话且回复在途 → 暂存（切回渲染）；
+  // 异会话且无在途回复（孤儿事件）→ 丢弃，防孤儿暂存与 DB 恢复重复。
   useEffect(() => {
     const unsubscribe = window.api.ai.onToolResult((payload: unknown) => {
       if (!isValidToolResultPayload(payload)) return
-      setMessages((prev) => applyStepCardToMessages(prev, payload))
+      const owner = attributeToolResultSession(payload, replySessionIdRef.current)
+      if (owner === null || owner === currentSessionIdRef.current) {
+        setMessages((prev) => applyStepCardToMessages(prev, payload))
+        return
+      }
+      if (replySessionIdRef.current !== null) {
+        const stashed = stashedStepCardsRef.current.get(owner)
+        if (stashed) stashed.push(payload)
+        else stashedStepCardsRef.current.set(owner, [payload])
+      }
     })
     return unsubscribe
   }, [])
@@ -73,9 +103,33 @@ export function useAIChat(): UseAIChatReturn {
     }
   }, [])
 
+  // Phase 31（31-03，FIX-02）：回复统一终态 helper——所有回复终态（handleSend answer/异常、
+  // handleConfirm 终态、handleStop）必经此处：
+  // ① 清在途回复归属（ref + state 双轨置空）；
+  // ② 弃该会话暂存步骤卡（D-04：完成时刻以 DB 落库 + getSessionMessages/meta.steps 重建恢复为准，
+  //   防暂存与 DB 恢复两路重复渲染）；
+  // ③ 完成时用户已切走（currentSessionIdRef ≠ 归属会话）→ 会话列表未读角标（D-03）。
+  // handleSend 的 confirm_required 分支【不】调——确认续跑未完，归属 ref 必须存活跨 handleConfirm。
+  const finishReply = useCallback(() => {
+    const sid = replySessionIdRef.current
+    if (sid === null) return
+    replySessionIdRef.current = null
+    setReplySessionId(null)
+    stashedStepCardsRef.current.delete(sid)
+    if (currentSessionIdRef.current !== sid) {
+      setUnreadSessionIds((prev) => {
+        const next = new Set(prev)
+        next.add(sid)
+        return next
+      })
+    }
+  }, [])
+
   const loadSessions = useCallback(async () => {    const list = await window.api.ai.listSessions()
     setSessions(list)
-    if (!currentSessionId) {
+    // Phase 31（31-03，D-05②）：await listSessions() 期间 currentSessionId 闭包值是旧快照
+    //（并发切换/新建后未刷新）——改读 ref 镜像最新值判空，防重复选中/重复建会话
+    if (!currentSessionIdRef.current) {
       if (list.length > 0) {
         // Load most recent session
         await handleSelectSession(list[0].id)
@@ -87,12 +141,23 @@ export function useAIChat(): UseAIChatReturn {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentSessionId])
 
+  // Phase 31（31-03，D-05①）：同步 ref 锁根治「回复进行中点新建偶发建两个」——同渲染周期
+  // 第二次点击（含 StrictMode 双调用）同步跳过（照 confirmInFlightRef WR-01 先例）；
+  // state 双轨驱动新建按钮在途禁用视觉；try/finally 保证异常路径也双释放。
   const handleNewSession = useCallback(async () => {
-    const session = await window.api.ai.createSession('新对话')
-    setSessions((prev) => [session, ...prev])
-    setCurrentSessionId(session.id)
-    setMessages([])
-    setPendingConfirm(null)
+    if (newSessionInFlightRef.current) return
+    newSessionInFlightRef.current = true
+    setNewSessionInFlight(true)
+    try {
+      const session = await window.api.ai.createSession('新对话')
+      setSessions((prev) => [session, ...prev])
+      setCurrentSessionId(session.id)
+      setMessages([])
+      setPendingConfirm(null)
+    } finally {
+      newSessionInFlightRef.current = false
+      setNewSessionInFlight(false)
+    }
   }, [])
 
   const handleSelectSession = useCallback(async (sessionId: string) => {
@@ -100,7 +165,9 @@ export function useAIChat(): UseAIChatReturn {
       if (sessionId === cur) return cur
       return sessionId
     })
-    if (sessionId === currentSessionId) return
+    // Phase 31（31-03，D-05②）：判重读 ref 镜像最新值（与上方函数式判重同语义——
+    // 并发切换下闭包快照已陈旧，ref 经 useEffect 镜像保持最新）
+    if (sessionId === currentSessionIdRef.current) return
     setPendingConfirm(null)
     const msgs = await window.api.ai.getSessionMessages(sessionId)
     // 28-06 R2 缺陷⑥：历史恢复消费 meta（此前整体丢弃）——meta.steps 重建步骤卡消息、
@@ -112,6 +179,20 @@ export function useAIChat(): UseAIChatReturn {
       createdAt: m.createdAt,
       meta: m.meta,
     })))
+    // Phase 31（31-03，D-04）：回复进行中切回原会话——合并暂存步骤卡（已到达的卡立即渲染，
+    // 后续新卡经 onToolResult 归属过滤实时追加）；回复完成后 finishReply 已弃暂存，get 为空自然跳过
+    const stashed = stashedStepCardsRef.current.get(sessionId)
+    if (stashed && stashed.length > 0) {
+      setMessages((prev) => stashed.reduce((acc, p) => applyStepCardToMessages(acc, p), prev))
+      stashedStepCardsRef.current.delete(sessionId)
+    }
+    // Phase 31（31-03，D-03）：点入即清未读角标（无在场未读时保持引用不变，避免无谓重渲染）
+    setUnreadSessionIds((prev) => {
+      if (!prev.has(sessionId)) return prev
+      const next = new Set(prev)
+      next.delete(sessionId)
+      return next
+    })
   }, [currentSessionId])
 
   const handleDeleteSession = useCallback(async (sessionId: string) => {
@@ -123,19 +204,29 @@ export function useAIChat(): UseAIChatReturn {
       message.error('操作失败，数据已回滚无变化：' + (e instanceof Error ? e.message : String(e)))
       return
     }
-    setSessions((prev) => {
-      const remaining = prev.filter((s) => s.id !== sessionId)
-      if (sessionId === currentSessionId) {
-        // Current session deleted, switch to first remaining or create new
-        if (remaining.length > 0) {
-          void handleSelectSession(remaining[0].id)
-        } else {
-          void handleNewSession()
-        }
-      }
-      return remaining
+    // Phase 31（31-03，D-05③）：updater 纯化——原 updater 内嵌 handleSelectSession/
+    // handleNewSession 副作用，StrictMode 双调用即双发（偶发重复建两个会话的根因之一）。
+    // 决策依据移到 updater 之外：基于渲染态 sessions 算 remaining，副作用平铺在 setSessions
+    // 之后（照 handleConfirm 副作用平铺先例）。
+    const remaining = sessions.filter((s) => s.id !== sessionId)
+    setSessions((prev) => prev.filter((s) => s.id !== sessionId))
+    // Phase 31（31-03）：清理被删会话的暂存步骤卡与未读角标残留
+    stashedStepCardsRef.current.delete(sessionId)
+    setUnreadSessionIds((prev) => {
+      if (!prev.has(sessionId)) return prev
+      const next = new Set(prev)
+      next.delete(sessionId)
+      return next
     })
-  }, [currentSessionId, handleSelectSession, handleNewSession])
+    if (sessionId === currentSessionIdRef.current) {
+      // Current session deleted, switch to first remaining or create new
+      if (remaining.length > 0) {
+        void handleSelectSession(remaining[0].id)
+      } else {
+        void handleNewSession()
+      }
+    }
+  }, [sessions, handleSelectSession, handleNewSession])
 
   // loadData: 迁移自 AIPage.tsx:52，参数 hasConfig 由编排层（getConfig 后）传入
   const loadData = useCallback(async (hasConfig: boolean) => {
@@ -184,12 +275,24 @@ export function useAIChat(): UseAIChatReturn {
       return
     }
     setLoading(false)
-    setMessages((prev) => [...prev, { role: 'assistant', content: '已停止——任务中断，不生成总结；已执行步骤保留在上方' }])
-  }, [loading])
+    // Phase 31（31-03，D-01）：归属守卫——已停止消息仅归属会话可见（切走时 main 侧已落库，
+    // 切回经 history 恢复）；停止即回复终态，finishReply 统一清理（与 handleSend AbortError
+    // catch 路径的 finishReply 幂等双保险——ref 空判直接 return）
+    if (replySessionIdRef.current === currentSessionIdRef.current) {
+      setMessages((prev) => [...prev, { role: 'assistant', content: '已停止——任务中断，不生成总结；已执行步骤保留在上方' }])
+    }
+    finishReply()
+  }, [loading, finishReply])
 
   const handleSend = useCallback(async () => {
     const text = input.trim()
     if (!text || loading || !currentSessionId) return
+
+    // Phase 31（31-03，D-01）：发送时刻锁定归属会话——post-await 一切上屏/落标题以
+    // sendingSessionId 为键；replySessionIdRef 同时供 onToolResult 归因与 D-02 提示条消费
+    const sendingSessionId = currentSessionId
+    replySessionIdRef.current = sendingSessionId
+    setReplySessionId(sendingSessionId)
 
     const userMsg: ChatMsg = { role: 'user', content: text }
     const newMessages = [...messages, userMsg]
@@ -201,20 +304,25 @@ export function useAIChat(): UseAIChatReturn {
       const reply = await window.api.ai.chat(
         newMessages.map((m) => ({ role: m.role, content: m.content })),
         selectedDevices.length > 0 ? selectedDevices : undefined,
-        currentSessionId
+        sendingSessionId
       )
 
       // Auto title: update session title from first user message
+      // Phase 31（31-03）：auto title 归属发送会话（sendingSessionId）——await 期间用户切换
+      // 会话后标题不随 currentSessionId 漂移写到别的会话（裁量附带修复；messages.length === 0
+      // 发送前快照判断保留）
       if (messages.length === 0) {
         const title = text.length > 20 ? text.substring(0, 20) + '...' : text
-        void window.api.ai.updateSessionTitle(currentSessionId, title)
-        setSessions((prev) => prev.map((s) => s.id === currentSessionId ? { ...s, title } : s))
+        void window.api.ai.updateSessionTitle(sendingSessionId, title)
+        setSessions((prev) => prev.map((s) => s.id === sendingSessionId ? { ...s, title } : s))
       }
 
       // Phase 19 REN-02：AI 应答解析收敛为纯函数 parseAiReply（原 :154-200 内联段语义逐字迁移：
       // confirm_required 提前返回 / kb·exp 引用归一 + session 拆分，P14 unknown 边界校验）
       const parsed = parseAiReply(reply)
       if (parsed.kind === 'confirm') {
+        // Phase 31（31-03）：跨会话也弹窗（防确认死锁：切走后弹窗仍在，确认链路不断）；
+        // 不 finishReply——归属 ref 存活跨 handleConfirm；loading 终由 handleConfirm 释放
         setPendingConfirm(parsed.confirm)
         setLoading(false)
         return
@@ -223,8 +331,13 @@ export function useAIChat(): UseAIChatReturn {
       // ai:toolResult 事件已按 prev 追加过工具结果卡片，基于发送前 newMessages snapshot
       // 的整体替换会把卡片整批丢弃（D-03 核心交付在主发送路径不可见）。与 handleConfirm 对齐。
       if (parsed.kind === 'answer' || parsed.kind === 'toolResult' || parsed.kind === 'plain') {
-        setMessages((prev) => [...prev, ...parsedToMessages(parsed)])
+        // Phase 31（31-03，D-01）：归属守卫——仅归属会话仍是当前显示会话才上屏（切走则跳过：
+        // DB 已落库，切回经 history 恢复，不串话）；setLoading(false) 不被守卫包裹（全局锁必释放，D-02）
+        if (replySessionIdRef.current === currentSessionIdRef.current) {
+          setMessages((prev) => [...prev, ...parsedToMessages(parsed)])
+        }
         setLoading(false)
+        finishReply()
         return
       }
     } catch (e: unknown) {
@@ -232,17 +345,22 @@ export function useAIChat(): UseAIChatReturn {
       // 双保险：万一 AbortError 仍逃逸到 renderer，不弹「错误: ...aborted」误导条
       const isAbort = e instanceof DOMException && e.name === 'AbortError'
         || /aborted|用户已停止/i.test(e instanceof Error ? e.message : String(e))
-      if (isAbort) {
-        setMessages((prev) => prev.some((m) => m.content.includes('已停止——任务中断'))
-          ? prev
-          : [...prev, { role: 'assistant', content: '已停止——任务中断，不生成总结；已执行步骤保留在上方' }])
-      } else {
-        const errMsg = `错误: ${e instanceof Error ? e.message : String(e)}`
-        setMessages((prev) => [...prev, { role: 'assistant', content: errMsg }])
+      // Phase 31（31-03，D-01）：同款归属守卫——错误/中断条仅归属会话可见
+      if (replySessionIdRef.current === currentSessionIdRef.current) {
+        if (isAbort) {
+          setMessages((prev) => prev.some((m) => m.content.includes('已停止——任务中断'))
+            ? prev
+            : [...prev, { role: 'assistant', content: '已停止——任务中断，不生成总结；已执行步骤保留在上方' }])
+        } else {
+          const errMsg = `错误: ${e instanceof Error ? e.message : String(e)}`
+          setMessages((prev) => [...prev, { role: 'assistant', content: errMsg }])
+        }
       }
     }
+    // 全部异常/终态统一出口：全局锁无条件释放 + 回复结题（confirm 分支上方已 return，不会到此）
     setLoading(false)
-  }, [input, loading, currentSessionId, messages, selectedDevices])
+    finishReply()
+  }, [input, loading, currentSessionId, messages, selectedDevices, finishReply])
 
   const handleConfirm = useCallback(async (approved: boolean) => {
     if (!pendingConfirm || !currentSessionId) return
@@ -267,14 +385,19 @@ export function useAIChat(): UseAIChatReturn {
         return // 不 setLoading(false)——保持 loading 等待下一次用户确认
       }
       // CR-01 fix：与 handleSend 共用 parsedToMessages（函数式追加语义单一来源）
-      setMessages((prev) => [...prev, ...parsedToMessages(parsed)])
+      // Phase 31（31-03，D-01）：归属守卫——确认续跑结果仅归属会话可见（切走则跳过上屏，
+      // DB 已落库切回经 history 恢复）
+      if (replySessionIdRef.current === currentSessionIdRef.current) {
+        setMessages((prev) => [...prev, ...parsedToMessages(parsed)])
+      }
     } catch (e: unknown) {
       message.error(e instanceof Error ? e.message : String(e))
     }
     confirmInFlightRef.current = false // WR-01 fix：释放同步锁（正常 + 异常路径均到此）
     setConfirmInFlight(false) // Phase 14-02：IPC 完成（含异常）释放视觉锁
     setLoading(false)
-  }, [pendingConfirm, currentSessionId])
+    finishReply() // Phase 31（31-03）：确认终态统一结题（上方 confirm 再弹分支已 return 不结题）
+  }, [pendingConfirm, currentSessionId, finishReply])
 
   // Phase 8 Plan 03：经验总结（点「经验总结」按钮 → experience:summarizeSession IPC）
   // SC1：empty/demoMode 提示不强产；SC5：source_session_id 幂等可重复点击；
@@ -337,6 +460,10 @@ export function useAIChat(): UseAIChatReturn {
     loading,
     pendingConfirm,
     confirmInFlight, // Phase 14-02：confirm IPC 在途视觉锁（CommandConfirmModal 按钮 loading+disabled）
+    // Phase 31（31-03，FIX-02）：D-02 在途回复归属会话 / D-03 未读角标 / D-05① 新建在途
+    replySessionId,
+    unreadSessionIds,
+    newSessionInFlight,
     setSelectedDevices,
     setInput,
     loadData,

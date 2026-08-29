@@ -151,6 +151,14 @@ export interface UseAIChatReturn {
   pendingConfirm: ConfirmData | null
   // Phase 14 Plan 02：confirm IPC 在途视觉锁（CommandConfirmModal 按钮 loading+disabled 消费）
   confirmInFlight: boolean
+  // Phase 31（31-03，D-02）：在途回复归属会话——非空且 ≠ currentSessionId 时
+  // ChatInput 显示「AI 正在其他会话回答中」提示条（输入全局锁的语义化提示）
+  replySessionId: string | null
+  // Phase 31（31-03，D-03）：回复完成且用户已切走的会话集合——ChatSessionList 未读小点，
+  // 点入该会话即清除（微信未读心智：知道哪有新内容但不打扰）
+  unreadSessionIds: Set<string>
+  // Phase 31（31-03，D-05①）：新建会话 IPC 在途——新建按钮 loading+disabled（防连点双建）
+  newSessionInFlight: boolean
   setSelectedDevices: (ids: string[]) => void
   setInput: (v: string) => void
   loadData: (hasConfig: boolean) => Promise<void>
