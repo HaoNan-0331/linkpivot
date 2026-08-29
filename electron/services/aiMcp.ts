@@ -8,8 +8,8 @@
  * parseMcpToolCalls fail-closed 解析 [MCP_TOOL_CALL] 标记、runMcpCall 单次工具调用执行
  * （60s 硬超时 + 审计 + tool_result 载荷下发）。
  * 依赖方向：ToolResultPayload 契约被 aiChat / aiAgentLoop 消费——本模块先于两者就位是
- * D-06 P2 排序依据；AgentStep 以 import type 过渡引用 './ai'（agent 段 Phase 32 P3 搬至
- * aiAgent* 后改向，type-only 编译后擦除，零运行时环）。
+ * D-06 P2 排序依据；AgentStep 自 Phase 32 P3 起 import type 直连 './aiAgentState'
+ * （type-only 编译后擦除，零运行时环；P2 的 './ai' 过渡引用已清零）。
  * MK 形态：模块级 let MK + setAiMcpMasterKey 启动注入（buildMcpContexts 设备级
  * env_json_enc 解密消费），由 ai.ts setAiMasterKey 链式调用（Shared Pattern 2）。
  */
@@ -24,7 +24,7 @@ import type { EnvMetaEntry } from './mcpPackageValidator'
 import { sanitizeEnvMeta } from './mcpPackageValidator'
 import { McpPackageSwapGuard, packageSwappingError } from './mcpPackageSwapGuard'
 import { updateLogStatus, appendLogAiResponse } from './aiExecLogger'
-import type { AgentStep } from './ai'
+import type { AgentStep } from './aiAgentState'
 
 let MK = ''
 export function setAiMcpMasterKey(key: string) {

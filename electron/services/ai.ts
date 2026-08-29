@@ -1,5 +1,4 @@
 import { v4 as uuidv4 } from 'uuid'
-import { getDatabase } from '../database/connection'
 import { isCommandAllowed } from './commandSafety'
 import { checkMcpArgs, type GuardHit } from './privilegeGuard'
 import { createLog, updateLogStatus, updateLogGuardOutcome, appendLogAiResponse, getLogs, setAiExecLoggerMasterKey, reconcilePendingGuardOutcomes } from './aiExecLogger'
@@ -30,6 +29,15 @@ import {
   buildAgentMeta, buildExpContextText, isMalformedCommandReply, buildExpAnswerPayload,
   mergeExpRefs, mergeKbRefs, wrapAgentFinalPayload, runEvidenceBackfill, deviceTypeLabel,
 } from './aiPayload'
+import {
+  AGENT_TOKEN_BUDGET, DEFAULT_AGENT_RETRY_BUDGET, createAgentLoopState, pushDeviceSource,
+  getAgentMaxRounds, getAgentBurnoutCount, getAgentCooldownSecs,
+  type AgentStep, type AgentLoopState, type McpLoopCtx, type McpLoopResult,
+} from './aiAgentState'
+import {
+  stripMcpMarkers, stripExpKbSearchMarkers, stripCmdMarkersWithNotice,
+  MCP_PARSE_FAIL_TEXT, MCP_UNAVAILABLE_TOOL_PROMPT, MCP_FORMAT_RETRY_PROMPT,
+} from './aiAgentParse'
 
 export function setAiMasterKey(key: string) {
   setAiExecLoggerMasterKey(key)
@@ -90,313 +98,34 @@ export {
   wrapAgentFinalPayload, runEvidenceBackfill, deviceTypeLabel,
 } from './aiPayload'
 
-/**
- * 28-06 缺陷④（用户需求）：mcp_max_rounds 子限全链路退役——MCP 连续调用不再受
- * 「子限 mcp_max_rounds（默认 5）」钳制，MCP 步骤本就入 state.steps，统一受
- * agent_max_rounds 步数硬顶约束（D-13 诚实收尾路径不变）。DB 列 ai_config.mcp_max_rounds
- * 保留不清除不迁移（向后兼容红线，只是不再读）；getMcpMaxRounds/setMcpMaxRounds 及
- * mcpRoundLimitPrompt、设置页 McpRoundsInput、IPC/preload 暴露一并退役。
- *
- * Phase 28（AGENT-04，D-04）：agent 循环硬顶三参数——步数上限/熔断次数/冷却时长。
- * token 预算为内部硬顶（28-03）不暴露设置页。三参数照 mcp_max_rounds 同款
- * get（fail-safe 回退默认）/set（非法拒绝落库显式回错）模式。
- * DB getter 经 _setAiDbGetter 注入（测试解耦，aiExecLogger 先例），生产默认 getDatabase。
- */
-export const DEFAULT_AGENT_MAX_ROUNDS = 12
-export const AGENT_MAX_ROUNDS_UPPER_BOUND = 30
-export const DEFAULT_AGENT_BURNOUT_COUNT = 2
-export const AGENT_BURNOUT_COUNT_UPPER_BOUND = 5
-export const DEFAULT_AGENT_COOLDOWN_SECS = 60
-export const AGENT_COOLDOWN_SECS_LOWER_BOUND = 10
-export const AGENT_COOLDOWN_SECS_UPPER_BOUND = 600
+// ---------- Agent state（Phase 32 / D-01 / D-02 / D-05：agent 循环参数与状态构造域已机械
+// 搬移至 aiAgentState.ts——四重硬顶参数（7 常量）+ 三参数 get/set 与 agentDbGetter/
+// _setAiDbGetter 测试注入口（经 barrel 保 tests/electron/services/aiAgentLimits.test.ts
+// 等调用路径零改动）+ AgentStep/SourceRecord/AgentLoopState 类型 + createAgentLoopState；
+// McpLoopCtx/McpLoopState/McpLoopResult 自循环段随迁（AgentLoopState extends McpLoopState
+// 同文件最内聚）；此处 re-export 保消费方 import 路径零改动） ----------
 
-let agentDbGetter: () => ReturnType<typeof getDatabase> = getDatabase
+export {
+  DEFAULT_AGENT_MAX_ROUNDS, AGENT_MAX_ROUNDS_UPPER_BOUND,
+  DEFAULT_AGENT_BURNOUT_COUNT, AGENT_BURNOUT_COUNT_UPPER_BOUND,
+  DEFAULT_AGENT_COOLDOWN_SECS, AGENT_COOLDOWN_SECS_LOWER_BOUND, AGENT_COOLDOWN_SECS_UPPER_BOUND,
+  _setAiDbGetter,
+  getAgentMaxRounds, setAgentMaxRounds, getAgentBurnoutCount, setAgentBurnoutCount,
+  getAgentCooldownSecs, setAgentCooldownSecs,
+  AGENT_TOKEN_BUDGET, DEFAULT_AGENT_RETRY_BUDGET,
+  createAgentLoopState, pushDeviceSource,
+} from './aiAgentState'
+export type { AgentStep, SourceRecord, McpLoopCtx, McpLoopResult } from './aiAgentState'
 
-/** 测试注入口：内存库替换生产单例（仅 agent 三参数 get/set 使用，不影响其余 ai.ts 读库路径） */
-export function _setAiDbGetter(getter: () => ReturnType<typeof getDatabase>): void {
-  agentDbGetter = getter
-}
+// ---------- Agent parse（Phase 32 / D-01 / D-02 / D-05：key 归一 + marker 文本解析纯函数群
+// 已机械搬移至 aiAgentParse.ts——privilegeGuard 式零依赖纯函数（normalizeAgentKey/三个
+// strip 函数）；MCP 三提示词常量原为内部 const，因循环主体段跨文件消费加 export（纪律 #7
+// tsc 证明）；此处 re-export 保消费方 import 路径零改动） ----------
 
-/** 读 ai_config.agent_max_rounds；NULL/非整数/<1/>30（含列缺失异常）一律回退 12（fail-safe） */
-export function getAgentMaxRounds(): number {
-  try {
-    const row = agentDbGetter()
-      .prepare('SELECT agent_max_rounds FROM ai_config LIMIT 1')
-      .get() as { agent_max_rounds?: number | null } | undefined
-    const v = Number(row?.agent_max_rounds)
-    if (!Number.isInteger(v) || v < 1 || v > AGENT_MAX_ROUNDS_UPPER_BOUND) {
-      return DEFAULT_AGENT_MAX_ROUNDS
-    }
-    return v
-  } catch {
-    return DEFAULT_AGENT_MAX_ROUNDS
-  }
-}
-
-/** 设置页写入口：仅收纳 1-30 整数，非法值拒绝落库（不静默钳制，错误显式回传 UI） */
-export function setAgentMaxRounds(rounds: number): { success: boolean; error?: string } {
-  if (!Number.isInteger(rounds) || rounds < 1 || rounds > AGENT_MAX_ROUNDS_UPPER_BOUND) {
-    return { success: false, error: `Agent 步数上限必须在 1-${AGENT_MAX_ROUNDS_UPPER_BOUND} 之间` }
-  }
-  agentDbGetter().prepare('UPDATE ai_config SET agent_max_rounds = ?').run(rounds)
-  return { success: true }
-}
-
-/** 读 ai_config.agent_burnout_count；NULL/非整数/<1/>5（含列缺失异常）一律回退 2（fail-safe） */
-export function getAgentBurnoutCount(): number {
-  try {
-    const row = agentDbGetter()
-      .prepare('SELECT agent_burnout_count FROM ai_config LIMIT 1')
-      .get() as { agent_burnout_count?: number | null } | undefined
-    const v = Number(row?.agent_burnout_count)
-    if (!Number.isInteger(v) || v < 1 || v > AGENT_BURNOUT_COUNT_UPPER_BOUND) {
-      return DEFAULT_AGENT_BURNOUT_COUNT
-    }
-    return v
-  } catch {
-    return DEFAULT_AGENT_BURNOUT_COUNT
-  }
-}
-
-/** 设置页写入口：仅收纳 1-5 整数，非法值拒绝落库 */
-export function setAgentBurnoutCount(count: number): { success: boolean; error?: string } {
-  if (!Number.isInteger(count) || count < 1 || count > AGENT_BURNOUT_COUNT_UPPER_BOUND) {
-    return { success: false, error: `Agent 熔断次数必须在 1-${AGENT_BURNOUT_COUNT_UPPER_BOUND} 之间` }
-  }
-  agentDbGetter().prepare('UPDATE ai_config SET agent_burnout_count = ?').run(count)
-  return { success: true }
-}
-
-/** 读 ai_config.agent_cooldown_secs；NULL/非整数/<10/>600（含列缺失异常）一律回退 60（fail-safe） */
-export function getAgentCooldownSecs(): number {
-  try {
-    const row = agentDbGetter()
-      .prepare('SELECT agent_cooldown_secs FROM ai_config LIMIT 1')
-      .get() as { agent_cooldown_secs?: number | null } | undefined
-    const v = Number(row?.agent_cooldown_secs)
-    if (!Number.isInteger(v) || v < AGENT_COOLDOWN_SECS_LOWER_BOUND || v > AGENT_COOLDOWN_SECS_UPPER_BOUND) {
-      return DEFAULT_AGENT_COOLDOWN_SECS
-    }
-    return v
-  } catch {
-    return DEFAULT_AGENT_COOLDOWN_SECS
-  }
-}
-
-/** 设置页写入口：仅收纳 10-600 整数，非法值拒绝落库 */
-export function setAgentCooldownSecs(secs: number): { success: boolean; error?: string } {
-  if (!Number.isInteger(secs) || secs < AGENT_COOLDOWN_SECS_LOWER_BOUND || secs > AGENT_COOLDOWN_SECS_UPPER_BOUND) {
-    return { success: false, error: `Agent 冷却时长必须在 ${AGENT_COOLDOWN_SECS_LOWER_BOUND}-${AGENT_COOLDOWN_SECS_UPPER_BOUND} 秒之间` }
-  }
-  agentDbGetter().prepare('UPDATE ai_config SET agent_cooldown_secs = ?').run(secs)
-  return { success: true }
-}
-
-// ---------- Phase 28（AGENT-04/06，28-03）：AgentLoopState 循环状态对象 ----------
-
-/** agent 循环内部 token 预算硬顶（估算口径，不暴露设置页——D-04 裁决） */
-export const AGENT_TOKEN_BUDGET = 200000
-
-/** 每 key 默认重试预算（D-14：失败限次静默重试，超限转「需人工处理」） */
-export const DEFAULT_AGENT_RETRY_BUDGET = 2
-
-/** 循环步骤轨迹（只存 deviceName/command/输出摘要，绝不缓存明文凭证——Pitfall 5） */
-export interface AgentStep {
-  stepIndex: number
-  actionType: 'cmd' | 'kb' | 'exp' | 'mcp'
-  status: 'running' | 'done' | 'failed' | 'retrying' | 'burned' | 'cooldown' | 'interrupted'
-  deviceName?: string
-  command?: string
-  /** 28-06 R2 缺陷①：kb/exp 步骤的检索词（步骤卡 argsJson 数据源） */
-  query?: string
-  outputSummary?: string
-  /**
-   * 28-06 R6 增强 a：分档预取步骤标志——预取在循环前完成，硬顶计数按 state.rounds
-   * （回注轮数），预取步天然不占 agent_max_rounds 步数 N；renderer 据此加「[预取]」前缀。
-   */
-  prefetched?: boolean
-  /**
-   * 28-06 R8：后置证据补查步骤标志——runEvidenceBackfill 收尾按 TIER_RETRIEVAL_PLAN
-   * 补查缺席源（真实检索），同样不占步数硬顶；renderer 据此加「[补查]」前缀。
-   */
-  backfilled?: boolean
-}
-
-/** 来源轨迹（D-09：由代码层按执行轨迹生成，prompt 文本不参与来源判定） */
-export interface SourceRecord {
-  kind: 'kb' | 'exp' | 'device' | 'mcp'
-  title: string
-  summary?: string
-  refId?: string
-}
-
-/**
- * 28-06 R2 缺陷②：device 来源按 deviceId 判重入栈——同设备多条命令（version+vlan）
- * 只计一条设备来源；kb/exp 按条目不去重（不同文档/经验条目是真实来源数）。
- */
-function pushDeviceSource(state: AgentLoopState, deviceName: string, deviceId: string): void {
-  if (state.sources.some((s) => s.kind === 'device' && s.refId === deviceId)) return
-  state.sources.push({ kind: 'device', title: deviceName, refId: deviceId })
-}
-
-/**
- * Phase 28（28-03，Pitfall 1 结构性修复）：agent 循环可变状态对象化——steps/sources/
- * failureCounts/cooldowns/tokenUsed/retryBudgets 并入状态对象，随确认批次（pendingBatches）
- * 按引用携带续跑，confirm 模式（默认 exec_mode）每步确认后不再丢轨迹。wrapupPrompted
- * 为 D-13 诚实收尾一次性标志（挂起续跑不复位防死循环）。
- */
-export interface AgentLoopState extends McpLoopState {
-  steps: AgentStep[]
-  sources: SourceRecord[]
-  /** key = 归一化串（normalizeAgentKey 产出），值 = 连续失败次数（成功清零） */
-  failureCounts: Map<string, number>
-  /** key = `deviceId:command`，值 = 冷却到期时间戳（D-15：仅本循环内生效） */
-  cooldowns: Map<string, number>
-  /** 累计 token（网关 usage 优先，估算 fallback）——超 AGENT_TOKEN_BUDGET 触发 D-13 收尾 */
-  tokenUsed: number
-  /** key = 归一化串，值 = 剩余重试次数（默认 DEFAULT_AGENT_RETRY_BUDGET） */
-  retryBudgets: Map<string, number>
-  wrapupPrompted?: boolean
-  /** 28-04（AGENT-05）：用户中断硬停标志（D-06 立即中止不总结）——meta_enc/落库回看用 */
-  hardStop?: 'user_cancel'
-  /** 28-04（AGENT-03）：收尾证据补查的知情记录（零命中/设备未查提示），随 payload/meta 持久化 */
-  backfillNotes?: string[]
-  /**
-   * Phase 28（28-05，D-08 步骤级推送）：步骤轨迹 → ai:toolResult 扩展载荷推送回调。
-   * chat() 构造 state 后注入（ctx.emitToolResult 包装）；pendingBatches 按引用携带 agentState，
-   * confirm 续跑推送不断链。旧 renderer 校验链（isValidToolResultPayload）只认基础字段，天然兼容。
-   */
-  emitStep?: (step: AgentStep) => void
-}
-
-export function createAgentLoopState(): AgentLoopState {
-  return {
-    rounds: 0,
-    extra: [],
-    steps: [],
-    sources: [],
-    failureCounts: new Map(),
-    cooldowns: new Map(),
-    tokenUsed: 0,
-    retryBudgets: new Map(),
-  }
-}
-
-/**
- * 参数归一化（熔断/重试 key）：JSON 对象按 key 排序后 stringify + trim（{b:2,a:1} 与
- * {a:1,b:2} 同 key）；解析失败/非对象退原串 trim。
- */
-export function normalizeAgentKey(raw: string): string {
-  const text = String(raw ?? '').trim()
-  try {
-    const parsed = JSON.parse(text)
-    return JSON.stringify(deepSortKeys(parsed)).trim()
-  } catch { /* 非 JSON → 原串 trim */ }
-  return text
-}
-
-/** 递归按 key 排序（嵌套对象同 key 序；数组元素原序保留） */
-function deepSortKeys(value: unknown): unknown {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return value
-  const sorted: Record<string, unknown> = {}
-  for (const k of Object.keys(value as Record<string, unknown>).sort()) {
-    sorted[k] = deepSortKeys((value as Record<string, unknown>)[k])
-  }
-  return sorted
-}
-
-const MCP_PARSE_FAIL_TEXT =
-  '（AI 回复中的 MCP 工具调用标记解析失败，未执行任何工具调用；请检查提示词配置后重试）'
-
-/**
- * 22-05 人工验证 Bug 2 修复：有标记但全部无效（工具被禁用/捏造）≠ 真 final——
- * 直接把剥掉标记的半截话当最终回答会造成回复截断且 AI 不自知。改为回注不可用提示
- * 再取一次回复（invalidPrompted 一次性标志防死循环；重试不计入工具轮次，无工具执行）。
- */
-const MCP_UNAVAILABLE_TOOL_PROMPT =
-  '你尝试调用的工具不存在或已被管理员禁用。禁止使用任何其它工具变通实现同等操作。请直接回复用户：该操作涉及的工具已被禁用，无法执行；如需执行请在设置的 MCP 工具管理中启用对应工具。'
-
-/**
- * Phase 23（用户规划裁决）：AI 输出畸形标记载荷（自然语言非 JSON / 缺字段 / 类型错）时，
- * 不再沿用「工具不可用」管控文案，而是纠格式后允许重新发起本次调用——纠格重试一次，
- * 仍畸形则由 invalidPrompted 一次性标志兜底 strip 收尾（与管控提示共享上限，防死循环）。
- */
-const MCP_FORMAT_RETRY_PROMPT =
-  '你尝试调用 MCP 工具，但标记载荷格式错误——载荷必须是单行 JSON 对象 {"server":"服务名","tool":"工具名","args":{参数对象}}。请按正确格式重新发起本次调用，不要用自然语言描述调用意图。'
-
-/**
- * 标记清洗（22-05 修复）：移除完整 `[MCP_TOOL_CALL]...[/MCP_TOOL_CALL]` 段（含闭合标签，
- * DOTALL 非贪婪）；无闭合的畸形段沿开始标记到行尾兜底；孤立闭合标签一并移除——
- * 最终回答绝不允许标记原文漏进气泡。
- */
-export function stripMcpMarkers(reply: string): string {
-  return reply
-    .replace(/\[MCP_TOOL_CALL\][\s\S]*?\[\/MCP_TOOL_CALL\]/g, '')
-    .replace(/\[MCP_TOOL_CALL\][^\n]*\n?/g, '')
-    .replace(/\[\/MCP_TOOL_CALL\]/g, '')
-    .trim()
-}
-
-/**
- * WR-03 fix（Phase 23 code-review）：剥离 [EXP_SEARCH]/[KB_SEARCH] 协议标记——
- * 完整段（含闭合，DOTALL 非贪婪）、未闭合开标签沿标签到行尾、孤立闭合标签三层兜底
- * （照 stripMcpMarkers 惯例）。二次回复模型不服从提示词时，死标记绝不漏进气泡。
- */
-export function stripExpKbSearchMarkers(reply: string): string {
-  if (!/\[(?:EXP|KB)_SEARCH\]/.test(reply) && !/\[\/(?:EXP|KB)_SEARCH\]/.test(reply)) return reply
-  return reply
-    .replace(/\[EXP_SEARCH\][\s\S]*?\[\/EXP_SEARCH\]/g, '')
-    .replace(/\[KB_SEARCH\][\s\S]*?\[\/KB_SEARCH\]/g, '')
-    .replace(/\[(?:EXP|KB)_SEARCH\][^\n]*\n?/g, '')
-    .replace(/\[\/(?:EXP|KB)_SEARCH\]/g, '')
-    .trim()
-}
-
-/**
- * WR-06 fix（Phase 22 code-review）：剥离 [CMD(:设备名)]...[/CMD] 协议标记（保留
- * 命令体文本供参考），未闭合开标签沿标签到行尾一并移除、孤立闭合标签移除；
- * 命中标记时追加「未执行的命令请求」提示——混合协议收尾回复绝不带标记原文进气泡。
- */
-export function stripCmdMarkersWithNotice(reply: string): string {
-  if (!/\[CMD/.test(reply)) return reply
-  const stripped = reply
-    .replace(/\[CMD(?::[^\]]*)?\]([\s\S]*?)\[\/CMD\]/g, (_m, cmd: string) => cmd.trim())
-    .replace(/\[CMD(?::[^\]]*)?\][^\n]*\n?/g, '')
-    .replace(/\[\/CMD\]/g, '')
-    .trim()
-  return `${stripped}\n\n（注意：以上回复中包含未执行的命令请求，已剥离命令标记；如需执行请重新发送指令让 AI 单独输出命令。）`
-}
-
-/** 循环共享上下文（chat() 构造；确认挂起后经 pendingBatches 原样带回复跑） */
-export interface McpLoopCtx {
-  fullMessages: Array<{ role: string; content: string }>
-  config: Record<string, string>
-  execMode: ExecMode
-  deviceNames: string[]
-  mcpContexts: McpCallContext[]
-  emitToolResult?: (p: ToolResultPayload) => void
-  sessionId: string | null
-  expReferences: Array<{ exp_id: string; title: string; source_session_id: string | null; unsupported: boolean }>
-  /** Phase 28（28-03）：agent 循环 CMD 动作解析目标/K 检索 deviceIds/KB 来源累计 */
-  targetDevices?: any[]
-  deviceIds?: string[]
-  kbReferences?: Array<{ docTitle: string; chunkTitle: string; docId: string }>
-  /** Phase 28（28-04）：分档分类结果与用户原话（证据补查检索关键词 / meta 溯源） */
-  tier?: AgentTier
-  userMessage?: string
-  /** Phase 28（28-04，AGENT-05/D-06）：用户停止中断信号（ai:cancelChat → AbortController） */
-  signal?: AbortSignal
-}
-
-/** 循环可变状态（轮次计数 + 累积回注消息；确认批次按引用携带续跑） */
-interface McpLoopState {
-  rounds: number
-  extra: Array<{ role: string; content: string }>
-}
-
-type McpLoopResult =
-  | { kind: 'final'; reply: string }
-  | { kind: 'confirm_required'; payload: string; count: number }
+export {
+  normalizeAgentKey, stripMcpMarkers, stripExpKbSearchMarkers, stripCmdMarkersWithNotice,
+  MCP_PARSE_FAIL_TEXT, MCP_UNAVAILABLE_TOOL_PROMPT, MCP_FORMAT_RETRY_PROMPT,
+} from './aiAgentParse'
 
 /** 一轮工具结果回注 user 消息（结果只进 user-role，绝不进 system prompt，T-22-08） */
 function mcpResultsUserMessage(resultsText: string): string {

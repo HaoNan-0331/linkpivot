@@ -22,7 +22,7 @@ import { retrieveForAnswer } from './experienceRetrieval'
 import { callAI } from './aiClient'
 import { verifySourcesEvidence } from './agentRetrieval'
 import type { AgentTier } from './agentRouter'
-import type { AgentStep, SourceRecord, AgentLoopState, McpLoopCtx } from './ai'
+import type { AgentStep, SourceRecord, AgentLoopState, McpLoopCtx } from './aiAgentState'
 import { pushTaggedRetrievalStep, buildKbRoundContext, stripAllAgentMarkers } from './ai'
 
 // ---------- Phase 11 experience references helpers ----------
