@@ -71,6 +71,8 @@ export default function AIPage() {
         onSelect={chat.handleSelectSession}
         onNew={chat.handleNewSession}
         onDelete={chat.handleDeleteSession}
+        unreadSessionIds={chat.unreadSessionIds}
+        newSessionInFlight={chat.newSessionInFlight}
       />
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: 16, minWidth: 0 }}>
         {/* Header（编排层归属，issue 3）：设备选择经 hook 消费。
@@ -96,6 +98,7 @@ export default function AIPage() {
           canSummarize={chat.canSummarize}
           pendingDraftCount={chat.pendingDraftCount}
           onOpenReview={chat.openReviewFromBadge}
+          aiReplyElsewhere={chat.loading && chat.replySessionId !== null && chat.replySessionId !== chat.currentSessionId}
         />
       </div>
       <CommandConfirmModal pendingConfirm={chat.pendingConfirm} onConfirm={chat.handleConfirm} confirmInFlight={chat.confirmInFlight} />

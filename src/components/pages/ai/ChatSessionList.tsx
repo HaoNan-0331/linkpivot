@@ -8,9 +8,11 @@ interface ChatSessionListProps {
   onSelect: (id: string) => void
   onNew: () => void
   onDelete: (id: string) => void
+  unreadSessionIds?: Set<string>   // Phase 31 D-03：未读会话集合（回复完成且已切走——组件只渲染小点，点入即清在 useAIChat）
+  newSessionInFlight?: boolean     // Phase 31 D-05①：新建会话 IPC 在途（按钮 loading+disabled，防连点双建）
 }
 
-export default function ChatSessionList({ sessions, currentSessionId, onSelect, onNew, onDelete }: ChatSessionListProps) {
+export default function ChatSessionList({ sessions, currentSessionId, onSelect, onNew, onDelete, unreadSessionIds, newSessionInFlight }: ChatSessionListProps) {
   return (
     <div style={{
       width: 220,
@@ -20,7 +22,7 @@ export default function ChatSessionList({ sessions, currentSessionId, onSelect, 
       flexShrink: 0,
     }}>
       <div style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0' }}>
-        <Button block icon={<PlusOutlined />} onClick={onNew}>
+        <Button block icon={<PlusOutlined />} onClick={onNew} loading={newSessionInFlight} disabled={newSessionInFlight}>
           新建会话
         </Button>
       </div>
@@ -43,6 +45,11 @@ export default function ChatSessionList({ sessions, currentSessionId, onSelect, 
             onMouseEnter={(e) => { if (session.id !== currentSessionId) (e.currentTarget.style.background = '#fafafa') }}
             onMouseLeave={(e) => { if (session.id !== currentSessionId) (e.currentTarget.style.background = 'transparent') }}
           >
+            {/* Phase 31 D-03：未读小点（微信未读心智——知道哪有新内容但不打扰）；当前会话不显示
+                （正在看的会话无未读语义），与 :36 选中蓝 borderLeft 同色系 */}
+            {unreadSessionIds?.has(session.id) && session.id !== currentSessionId && (
+              <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#1890ff', flexShrink: 0, marginRight: 6 }} />
+            )}
             <div style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {session.title}
             </div>
