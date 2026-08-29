@@ -13,9 +13,9 @@
  * 依赖方向（单向为主）：aiAgentState（类型/常量/三参数）+ aiAgentParse（strip 函数/
  * 提示词常量）+ aiExec（guard/执行链）+ aiMcp（runMcpCall/解析）+ aiClient（callAI）+
  * aiPayload（引用合并/上下文文本）。
- * 例外环声明（Shared Pattern 6 先例）：pendingBatches 自 './ai' 值引用（confirm 批次
- * 存储属 chat 编排域，P4 随 aiChat 迁移）——调用时点晚于模块加载，CJS/ESM 双安全；
- * aiPayload 反向引用本模块三函数（P2 过渡值引用随本文件改向），同为运行时晚期环。
+ * 例外环声明（Shared Pattern 6 先例）：pendingBatches 自 './aiChat' 值引用（confirm 批次
+ * 存储属 chat 编排域，Phase 32 P4 已随 aiChat 落位）——调用时点晚于模块加载，
+ * CJS/ESM 双安全；aiPayload 反向引用本模块三函数（P2 过渡值引用随本文件改向），同为运行时晚期环。
  */
 
 import { v4 as uuidv4 } from 'uuid'
@@ -49,7 +49,7 @@ import {
   stripMcpMarkers, stripExpKbSearchMarkers,
   MCP_PARSE_FAIL_TEXT, MCP_UNAVAILABLE_TOOL_PROMPT, MCP_FORMAT_RETRY_PROMPT,
 } from './aiAgentParse'
-import { pendingBatches } from './ai'
+import { pendingBatches } from './aiChat'
 
 /** 一轮工具结果回注 user 消息（结果只进 user-role，绝不进 system prompt，T-22-08） */
 function mcpResultsUserMessage(resultsText: string): string {
