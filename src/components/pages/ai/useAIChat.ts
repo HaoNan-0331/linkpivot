@@ -5,6 +5,11 @@ import type { ConfirmDraftsResult } from '@/types/experience'
 import type { UseAIChatReturn, DeviceOption, ChatMsg, ConfirmData, ToolResultMessage } from './types'
 import { parseAiReply, parsedToMessages, isValidToolResultPayload, historyMessageToChatMsgs, applyStepCardToMessages, attributeToolResultSession } from './parseAiReply'
 
+// [GAP1] 31-04 临时取证埋点——31-05 Task 4 移除。
+// 纯 console 观测：只记 sessionId/条数/角色/枚举/布尔/时间戳（performance.now 同源时钟，可全局排序），
+// 严禁记录消息文本/argsJson/resultJson/设备名/凭证；埋点调用不参与任何守卫分支的求值结果。
+const gap1Log = (tag: string, data: Record<string, unknown>) => console.log('[GAP1]', tag, JSON.stringify(data), 't=' + performance.now().toFixed(1))
+
 /**
  * useAIChat —— AIPage page-local 会话态自定义 hook（FE-01 / D-5-1）。
  *
@@ -59,7 +64,11 @@ export function useAIChat(): UseAIChatReturn {
   // D-01/D-05②：currentSessionId ref 镜像——此后「读最新会话 id」一律走此 ref，不信闭包快照
   //（照 pendingConfirmRef :67-68 useEffect 镜像先例）
   const currentSessionIdRef = useRef<string | null>(null)
-  useEffect(() => { currentSessionIdRef.current = currentSessionId }, [currentSessionId])
+  useEffect(() => {
+    // [GAP1] mirror 埋点——赋值前读 ref 即旧值（from）
+    gap1Log('mirror', { from: currentSessionIdRef.current, to: currentSessionId })
+    currentSessionIdRef.current = currentSessionId
+  }, [currentSessionId])
 
   // Phase 22（22-05，D-03）：main→renderer `ai:toolResult` 事件订阅（22-03 下发契约，
   // 每次 MCP 工具调用完成后推送——含确认后执行分支，故必须走事件而非 chat 响应体）。
@@ -78,6 +87,17 @@ export function useAIChat(): UseAIChatReturn {
     const unsubscribe = window.api.ai.onToolResult((payload: unknown) => {
       if (!isValidToolResultPayload(payload)) return
       const owner = attributeToolResultSession(payload, replySessionIdRef.current)
+      // [GAP1] card 埋点——纯读取；decision 表达式仅复述下方分支条件（render=当前/legacy 上屏、
+      // stash=异会话在途暂存、drop=异会话无在途孤儿丢弃），不参与控制流
+      gap1Log('card', {
+        owner,
+        ref: currentSessionIdRef.current,
+        reply: replySessionIdRef.current,
+        payloadSid: payload.sessionId ?? 'none',
+        step: payload.stepIndex ?? 'none',
+        status: payload.status,
+        decision: owner === null || owner === currentSessionIdRef.current ? 'render' : (replySessionIdRef.current !== null ? 'stash' : 'drop')
+      })
       if (owner === null || owner === currentSessionIdRef.current) {
         setMessages((prev) => applyStepCardToMessages(prev, payload))
         return
@@ -113,6 +133,8 @@ export function useAIChat(): UseAIChatReturn {
   const finishReply = useCallback(() => {
     const sid = replySessionIdRef.current
     if (sid === null) return
+    // [GAP1] finish 埋点
+    gap1Log('finish', { sid, ref: currentSessionIdRef.current, unread: currentSessionIdRef.current !== sid })
     replySessionIdRef.current = null
     setReplySessionId(null)
     stashedStepCardsRef.current.delete(sid)
@@ -150,6 +172,8 @@ export function useAIChat(): UseAIChatReturn {
     setNewSessionInFlight(true)
     try {
       const session = await window.api.ai.createSession('新对话')
+      // [GAP1] new-session 埋点（createSession 返回后）
+      gap1Log('new-session', { id: session.id })
       setSessions((prev) => [session, ...prev])
       setCurrentSessionId(session.id)
       setMessages([])
@@ -161,6 +185,8 @@ export function useAIChat(): UseAIChatReturn {
   }, [])
 
   const handleSelectSession = useCallback(async (sessionId: string) => {
+    // [GAP1] select-enter 埋点（setCurrentSessionId 调用之前）
+    gap1Log('select-enter', { target: sessionId, ref: currentSessionIdRef.current })
     setCurrentSessionId((cur) => {
       if (sessionId === cur) return cur
       return sessionId
@@ -170,6 +196,9 @@ export function useAIChat(): UseAIChatReturn {
     if (sessionId === currentSessionIdRef.current) return
     setPendingConfirm(null)
     const msgs = await window.api.ai.getSessionMessages(sessionId)
+    // [GAP1] select-resolved 埋点——ref !== sid 即候选①（镜像滞后）/乱序 resolve 直接证据；
+    // lastRole ≠ 'user' 配合复现时序是候选②（提问未落库）的证据面
+    gap1Log('select-resolved', { sid: sessionId, ref: currentSessionIdRef.current, msgsCount: msgs.length, lastRole: msgs[msgs.length - 1]?.role ?? 'none' })
     // 28-06 R2 缺陷⑥：历史恢复消费 meta（此前整体丢弃）——meta.steps 重建步骤卡消息、
     // meta.sources/tier/noRealtimeData/backfillNotes 复原 agentMeta 徽章行，与实时路径同构
     setMessages(msgs.flatMap((m) => historyMessageToChatMsgs({
@@ -182,6 +211,8 @@ export function useAIChat(): UseAIChatReturn {
     // Phase 31（31-03，D-04）：回复进行中切回原会话——合并暂存步骤卡（已到达的卡立即渲染，
     // 后续新卡经 onToolResult 归属过滤实时追加）；回复完成后 finishReply 已弃暂存，get 为空自然跳过
     const stashed = stashedStepCardsRef.current.get(sessionId)
+    // [GAP1] stash-merge 埋点——切回时 stashed=0/缺失而切走前有已渲染卡 = 候选③（切走前卡不进暂存）证据
+    gap1Log('stash-merge', { sid: sessionId, stashed: stashed?.length ?? 0 })
     if (stashed && stashed.length > 0) {
       setMessages((prev) => stashed.reduce((acc, p) => applyStepCardToMessages(acc, p), prev))
       stashedStepCardsRef.current.delete(sessionId)
@@ -293,6 +324,8 @@ export function useAIChat(): UseAIChatReturn {
     const sendingSessionId = currentSessionId
     replySessionIdRef.current = sendingSessionId
     setReplySessionId(sendingSessionId)
+    // [GAP1] send 埋点（sendingSessionId 锁定后）
+    gap1Log('send', { sid: sendingSessionId })
 
     const userMsg: ChatMsg = { role: 'user', content: text }
     const newMessages = [...messages, userMsg]
@@ -331,6 +364,8 @@ export function useAIChat(): UseAIChatReturn {
       // ai:toolResult 事件已按 prev 追加过工具结果卡片，基于发送前 newMessages snapshot
       // 的整体替换会把卡片整批丢弃（D-03 核心交付在主发送路径不可见）。与 handleConfirm 对齐。
       if (parsed.kind === 'answer' || parsed.kind === 'toolResult' || parsed.kind === 'plain') {
+        // [GAP1] reply-guard 埋点（answer 路径）——visible=true 但用户实际在看别的会话 = 候选①串话直接证据
+        gap1Log('reply-guard', { reply: replySessionIdRef.current, ref: currentSessionIdRef.current, visible: replySessionIdRef.current === currentSessionIdRef.current, path: 'answer' })
         // Phase 31（31-03，D-01）：归属守卫——仅归属会话仍是当前显示会话才上屏（切走则跳过：
         // DB 已落库，切回经 history 恢复，不串话）；setLoading(false) 不被守卫包裹（全局锁必释放，D-02）
         if (replySessionIdRef.current === currentSessionIdRef.current) {
@@ -346,6 +381,8 @@ export function useAIChat(): UseAIChatReturn {
       const isAbort = e instanceof DOMException && e.name === 'AbortError'
         || /aborted|用户已停止/i.test(e instanceof Error ? e.message : String(e))
       // Phase 31（31-03，D-01）：同款归属守卫——错误/中断条仅归属会话可见
+      // [GAP1] reply-guard 埋点（catch 路径）
+      gap1Log('reply-guard', { reply: replySessionIdRef.current, ref: currentSessionIdRef.current, visible: replySessionIdRef.current === currentSessionIdRef.current, path: 'catch' })
       if (replySessionIdRef.current === currentSessionIdRef.current) {
         if (isAbort) {
           setMessages((prev) => prev.some((m) => m.content.includes('已停止——任务中断'))
