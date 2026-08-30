@@ -53,7 +53,7 @@ export default function DeviceSelector({
 
   const panel = (
     <div style={{ width: 320 }}>
-      <div style={{ fontWeight: 500, marginBottom: 6, fontSize: 13 }}>选择目标设备</div>
+      <div style={{ fontWeight: 500, marginBottom: 6, fontSize: 'var(--nt-font-xs-13-font-size)' }}>选择目标设备</div>
       <Input
         allowClear
         size="small"
@@ -66,30 +66,30 @@ export default function DeviceSelector({
         style={{
           maxHeight: 200,
           overflowY: 'auto',
-          border: '1px solid #d9d9d9',
+          border: '1px solid var(--nt-alias-border-l4)',
           borderRadius: 6,
           padding: '4px 8px'
         }}
       >
         {filtered.length === 0 && (
-          <div style={{ color: '#999', fontSize: 12, padding: '6px 0' }}>无匹配设备</div>
+          <div style={{ color: 'var(--nt-alias-label-tertiary)', fontSize: 'var(--nt-font-xxs-12-font-size)', padding: '6px 0' }}>无匹配设备</div>
         )}
         {filtered.map((d) => {
           const checked = selectedDevices.includes(d.id)
           return (
             <div key={d.id} style={{ display: 'flex', alignItems: 'center', padding: '2px 0' }}>
               <Checkbox checked={checked} onChange={(e) => toggle(d.id, e.target.checked)}>
-                <span style={{ fontSize: 13 }}>{d.name}</span>
+                <span style={{ fontSize: 'var(--nt-font-xs-13-font-size)' }}>{d.name}</span>
               </Checkbox>
               <span style={{ marginLeft: 'auto', whiteSpace: 'nowrap' }}>
                 {(d.capabilities.hasSSH || d.capabilities.hasTelnet) && (
-                  <Tag color="green" style={{ marginLeft: 6, fontSize: 11, marginRight: 0 }}>可执行</Tag>
+                  <Tag color="green" style={{ marginLeft: 6, fontSize: 'var(--nt-font-xxxs-11-font-size)', marginRight: 0 }}>可执行</Tag>
                 )}
                 {d.capabilities.hasMcp && (
-                  <Tag color="blue" style={{ marginLeft: 6, fontSize: 11, marginRight: 0 }}>可调MCP</Tag>
+                  <Tag color="blue" style={{ marginLeft: 6, fontSize: 'var(--nt-font-xxxs-11-font-size)', marginRight: 0 }}>可调MCP</Tag>
                 )}
                 {!d.capabilities.hasSSH && !d.capabilities.hasTelnet && !d.capabilities.hasMcp && (
-                  <Tag style={{ marginLeft: 6, fontSize: 11, marginRight: 0 }}>仅问答</Tag>
+                  <Tag style={{ marginLeft: 6, fontSize: 'var(--nt-font-xxxs-11-font-size)', marginRight: 0 }}>仅问答</Tag>
                 )}
               </span>
             </div>
@@ -97,7 +97,7 @@ export default function DeviceSelector({
         })}
       </div>
       {selectedDevices.length > 10 && (
-        <Tag color="warning" style={{ marginTop: 4, fontSize: 11 }}>
+        <Tag color="warning" style={{ marginTop: 4, fontSize: 'var(--nt-font-xxxs-11-font-size)' }}>
           设备较多，AI 回答质量可能下降
         </Tag>
       )}
@@ -116,10 +116,10 @@ export default function DeviceSelector({
         style={{
           maxWidth: 360,
           padding: '4px 10px',
-          border: '1px solid #d9d9d9',
+          border: '1px solid var(--nt-alias-border-l4)',
           borderRadius: 6,
-          fontSize: 13,
-          color: selectedNames.length > 0 ? 'rgba(0,0,0,0.88)' : '#999',
+          fontSize: 'var(--nt-font-xs-13-font-size)',
+          color: selectedNames.length > 0 ? 'var(--nt-alias-label-primary)' : 'var(--nt-alias-label-tertiary)',
           cursor: 'pointer',
           whiteSpace: 'nowrap',
           overflow: 'hidden',

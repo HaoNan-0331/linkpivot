@@ -89,7 +89,7 @@ function AIExecLogTab() {
                   ? '暂无越权记录——AI 命令未触发任何越权规则'
                   : `「${outcomeFilter}」筛选档暂无匹配记录（越权记录共 ${guardLogs.length} 条）`}
                 <br />
-                <span style={{ color: '#999', fontSize: 12 }}>
+                <span style={{ color: 'var(--nt-alias-label-tertiary)', fontSize: 'var(--nt-font-xxs-12-font-size)' }}>
                   当 AI 命令目标超出对话设备集或发生跳转时，会在此留下确认记录；未点「确认执行」的一切中断均记为用户取消
                 </span>
               </span>
@@ -146,7 +146,7 @@ function AIExecLogTab() {
                 <span>
                   {(record.guardHits ?? []).map((h, i) => (
                     <Tooltip key={i} title={h.explanation}>
-                      <Tag color={h.level === 'red' ? 'red' : 'gold'} style={{ fontSize: 13 }}>{h.ruleId}</Tag>
+                      <Tag color={h.level === 'red' ? 'red' : 'gold'} style={{ fontSize: 'var(--nt-font-xs-13-font-size)' }}>{h.ruleId}</Tag>
                     </Tooltip>
                   ))}
                 </span>
@@ -216,15 +216,15 @@ function AIExecLogTab() {
                 {detailLog.mode === 'auto' ? '自动（越权命令仍强制打断确认）' : detailLog.mode === 'smart' ? '智能' : '确认'}
               </Tag>
               {detailLog.mode === 'auto' && detailLog.guardHits && detailLog.guardHits.length > 0 && (
-                <span style={{ color: '#999', fontSize: 12, marginLeft: 4 }}>auto 模式拦截记录</span>
+                <span style={{ color: 'var(--nt-alias-label-tertiary)', fontSize: 'var(--nt-font-xxs-12-font-size)', marginLeft: 4 }}>auto 模式拦截记录</span>
               )}
             </div>
             <div style={{ marginBottom: 8 }}>
               <strong>发送给 AI 的 Prompt:</strong>
             </div>
             <pre style={{
-              background: '#f5f5f5', padding: 12, borderRadius: 4,
-              fontSize: 12, maxHeight: 200, overflow: 'auto',
+              background: 'var(--nt-alias-bg-module-platform)', padding: 12, borderRadius: 4,
+              fontSize: 'var(--nt-font-xxs-12-font-size)', maxHeight: 200, overflow: 'auto',
               whiteSpace: 'pre-wrap', wordBreak: 'break-word',
             }}>
               {detailLog.promptText || '(空)'}
@@ -233,8 +233,8 @@ function AIExecLogTab() {
               <strong>AI 原始响应:</strong>
             </div>
             <pre style={{
-              background: '#f5f5f5', padding: 12, borderRadius: 4,
-              fontSize: 12, maxHeight: 200, overflow: 'auto',
+              background: 'var(--nt-alias-bg-module-platform)', padding: 12, borderRadius: 4,
+              fontSize: 'var(--nt-font-xxs-12-font-size)', maxHeight: 200, overflow: 'auto',
               whiteSpace: 'pre-wrap', wordBreak: 'break-word',
             }}>
               {detailLog.aiResponse || '(空)'}
@@ -333,7 +333,7 @@ function AISystemLogTab() {
               <strong>设备:</strong> {detailLog.deviceNames}
             </div>
             {detailLog.errorMessage && (
-              <div style={{ marginBottom: 12, color: '#ff4d4f' }}>
+              <div style={{ marginBottom: 12, color: 'var(--nt-alias-state-error-primary)' }}>
                 <strong>错误:</strong> {detailLog.errorMessage}
               </div>
             )}
@@ -341,8 +341,8 @@ function AISystemLogTab() {
               <strong>发送给 AI 的 Prompt:</strong>
             </div>
             <pre style={{
-              background: '#f5f5f5', padding: 12, borderRadius: 4,
-              fontSize: 12, maxHeight: 200, overflow: 'auto',
+              background: 'var(--nt-alias-bg-module-platform)', padding: 12, borderRadius: 4,
+              fontSize: 'var(--nt-font-xxs-12-font-size)', maxHeight: 200, overflow: 'auto',
               whiteSpace: 'pre-wrap', wordBreak: 'break-word',
             }}>
               {detailLog.promptText || '(空)'}
@@ -351,8 +351,8 @@ function AISystemLogTab() {
               <strong>AI 原始响应:</strong>
             </div>
             <pre style={{
-              background: '#f5f5f5', padding: 12, borderRadius: 4,
-              fontSize: 12, maxHeight: 200, overflow: 'auto',
+              background: 'var(--nt-alias-bg-module-platform)', padding: 12, borderRadius: 4,
+              fontSize: 'var(--nt-font-xxs-12-font-size)', maxHeight: 200, overflow: 'auto',
               whiteSpace: 'pre-wrap', wordBreak: 'break-word',
             }}>
               {detailLog.aiResponse || '(空)'}
@@ -363,8 +363,8 @@ function AISystemLogTab() {
                   <strong>解析结果:</strong>
                 </div>
                 <pre style={{
-                  background: '#f0fff0', padding: 12, borderRadius: 4,
-                  fontSize: 12, maxHeight: 200, overflow: 'auto',
+                  background: 'var(--nt-alias-state-success-tertiary)', padding: 12, borderRadius: 4,
+                  fontSize: 'var(--nt-font-xxs-12-font-size)', maxHeight: 200, overflow: 'auto',
                   whiteSpace: 'pre-wrap', wordBreak: 'break-word',
                 }}>
                   {detailLog.parsedResult}
@@ -382,7 +382,7 @@ function AISystemLogTab() {
 
 export default function LogAuditPage() {
   return (
-    <div style={{ padding: 16, height: '100%', overflow: 'auto' }}>
+    <div className="nt-scroll-stable" style={{ padding: 16, height: '100%', overflow: 'auto' }}>
       <Tabs
         defaultActiveKey="exec"
         items={[

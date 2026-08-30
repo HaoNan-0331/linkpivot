@@ -84,12 +84,12 @@ export default function ToolResultCard({ data }: ToolResultCardProps) {
   return (
     <div
       style={{
-        background: '#fafafa',
-        border: stepMeta?.redBorder ? '1px solid #cf1322' : '1px solid #e8e8e8',
+        background: 'var(--nt-alias-markdown-code-block)',
+        border: stepMeta?.redBorder ? '1px solid var(--nt-static-red-900)' : '1px solid var(--nt-alias-border-l2)',
         borderRadius: 8,
         padding: '8px 12px',
-        fontSize: 13,
-        lineHeight: 1.6,
+        fontSize: 'var(--nt-font-xs-13-font-size)',
+        lineHeight: 'var(--nt-font-xs-13-line-height)',
         maxWidth: '100%',
       }}
     >
@@ -99,7 +99,7 @@ export default function ToolResultCard({ data }: ToolResultCardProps) {
         style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}
         onClick={() => setExpanded((v) => !v)}
       >
-        {expanded ? <DownOutlined style={{ fontSize: 11, color: '#999' }} /> : <RightOutlined style={{ fontSize: 11, color: '#999' }} />}
+        {expanded ? <DownOutlined style={{ fontSize: 11, color: 'var(--nt-alias-label-tertiary)' }} /> : <RightOutlined style={{ fontSize: 11, color: 'var(--nt-alias-label-tertiary)' }} />}
         <strong style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {stepMeta ? stepActionLabel(data) : `${data.tool} · ${data.deviceName}`}
         </strong>
@@ -116,19 +116,19 @@ export default function ToolResultCard({ data }: ToolResultCardProps) {
       {/* 展开区：调用参数 + 失败原因 + 原始结果（点击头行展开后才可见） */}
       {expanded && (
         <div>
-          {!stepMeta && <div style={{ color: '#999', fontSize: 12, marginTop: 6 }}>{data.server}</div>}
+          {!stepMeta && <div style={{ color: 'var(--nt-alias-label-tertiary)', fontSize: 'var(--nt-font-xxs-12-font-size)', marginTop: 6 }}>{data.server}</div>}
 
           {/* 调用参数：JSON 原文 monospace */}
           <div style={{ marginTop: 8 }}>
-            <span style={{ color: '#666' }}>调用参数：</span>
+            <span style={{ color: 'var(--nt-alias-label-secondary)' }}>调用参数：</span>
             <div
               style={{
-                background: '#f5f5f5',
+                background: 'var(--nt-alias-bg-module-platform)',
                 padding: 12,
                 borderRadius: 4,
                 marginTop: 4,
-                fontFamily: 'Consolas, Monaco, "Courier New", monospace',
-                fontSize: 13,
+                fontFamily: 'var(--nt-font-family-code)',
+                fontSize: 'var(--nt-font-xs-13-font-size)',
                 whiteSpace: 'pre-wrap',
                 wordBreak: 'break-all',
               }}
@@ -139,27 +139,27 @@ export default function ToolResultCard({ data }: ToolResultCardProps) {
 
           {/* 失败/超时态：人话原因 + 原始错误（UI-SPEC Error state 逐字文案） */}
           {data.status !== 'success' && (
-            <div style={{ marginTop: 8, color: '#cf1322' }}>
+            <div style={{ marginTop: 8, color: 'var(--nt-static-red-900)' }}>
               调用失败：{data.status === 'timeout' ? TIMEOUT_REASON : data.errorText || '未知原因'}
-              （<span style={{ fontFamily: 'Consolas, Monaco, "Courier New", monospace' }}>{rawErrorText}</span>）。
+              （<span style={{ fontFamily: 'var(--nt-font-family-code)' }}>{rawErrorText}</span>）。
               对话可继续，可让 AI 重试或换用其他方式。
             </div>
           )}
 
           {/* 原始结果：结构化 JSON 展示 + 截断提示 */}
           <div style={{ marginTop: 8 }}>
-            <span style={{ color: '#666' }}>原始结果：</span>
+            <span style={{ color: 'var(--nt-alias-label-secondary)' }}>原始结果：</span>
             {truncatedTo !== null && (
-              <div style={{ color: '#999', fontSize: 12, marginTop: 2 }}>结果过长，已截断至 {truncatedTo} 字符</div>
+              <div style={{ color: 'var(--nt-alias-label-tertiary)', fontSize: 'var(--nt-font-xxs-12-font-size)', marginTop: 2 }}>结果过长，已截断至 {truncatedTo} 字符</div>
             )}
             <div
               style={{
-                background: '#f5f5f5',
+                background: 'var(--nt-alias-bg-module-platform)',
                 padding: 12,
                 borderRadius: 4,
                 marginTop: 4,
-                fontFamily: 'Consolas, Monaco, "Courier New", monospace',
-                fontSize: 13,
+                fontFamily: 'var(--nt-font-family-code)',
+                fontSize: 'var(--nt-font-xs-13-font-size)',
                 whiteSpace: 'pre-wrap',
                 wordBreak: 'break-all',
               }}
