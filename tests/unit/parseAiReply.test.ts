@@ -505,3 +505,73 @@ describe('31 FIX-02（31-05）：mergeStashedCards 暂存幂等合并（多轮�
     expect(mergeStashedCards(prev, [])).toBe(prev)
   })
 })
+
+// ---------- Phase 34 review CR-01：parseAgentMeta 空 sources 零轨迹合法态 ----------
+// main 侧 buildAgentMeta 零轨迹时产出 { sources: [], tier, noRealtimeData: true } 且恒带
+// sources 键落 meta_enc（electron 套件零轨迹用例锚死）。此前 `Array.isArray(p.sources)` 早退
+// 把空数组与「非空但全畸形项」混判——历史恢复（historyMessageToChatMsgs → parseAgentMeta）
+// 零轨迹消息的 tier / noRealtimeData / hardStop / backfillNotes 全部丢失。此处锁死两分支语义：
+// - 空 sources = 零轨迹合法态：放行走 tier/noRealtimeData/hardStop/backfillNotes 分支
+// - 非空但全畸形 = 真畸形：fail-closed 整批丢弃（原语义不变）
+describe('34 review CR-01：parseAgentMeta 空 sources 零轨迹合法态', () => {
+  it('history meta { sources: [], tier, noRealtimeData }——产出含两字段的 meta（分档/无源 Tag 不丢）', async () => {
+    const { historyMessageToChatMsgs } = await import('@/components/pages/ai/parseAiReply')
+    const out = historyMessageToChatMsgs({
+      id: 'm-cr1-a',
+      role: 'assistant',
+      content: '答',
+      meta: { sources: [], tier: 'knowledge', noRealtimeData: true },
+    })
+    expect(out).toHaveLength(1)
+    expect(out[0].agentMeta).toEqual({ sources: [], tier: 'knowledge', noRealtimeData: true })
+  })
+
+  it('history meta { sources: [], hardStop }——零步停止黄条恢复（D-13 场景）', async () => {
+    const { historyMessageToChatMsgs } = await import('@/components/pages/ai/parseAiReply')
+    const out = historyMessageToChatMsgs({
+      role: 'assistant',
+      content: '',
+      meta: { sources: [], hardStop: 'user_cancel' },
+    })
+    expect(out[0].agentMeta).toEqual({ sources: [], hardStop: 'user_cancel' })
+  })
+
+  it('history meta { sources: [], backfillNotes }——补查知情记录恢复（AGENT-03）', async () => {
+    const { historyMessageToChatMsgs } = await import('@/components/pages/ai/parseAiReply')
+    const out = historyMessageToChatMsgs({
+      role: 'assistant',
+      content: '答',
+      meta: { sources: [], backfillNotes: ['知识库未命中，已自动补查经验库'] },
+    })
+    expect(out[0].agentMeta).toEqual({ sources: [], backfillNotes: ['知识库未命中，已自动补查经验库'] })
+  })
+
+  it('agent_answer live 路径携带空 sources + tier——parseAiReply 产出 agentMeta（三入口同语义）', () => {
+    const r = parseAiReply(JSON.stringify({
+      type: 'agent_answer', content: 'c', sources: [], tier: 'configQuery', noRealtimeData: true,
+    }))
+    expect(r.kind).toBe('answer')
+    if (r.kind !== 'answer') return
+    expect(r.agentMeta).toEqual({ sources: [], tier: 'configQuery', noRealtimeData: true })
+  })
+
+  it('非空但全畸形 sources——仍 fail-closed 整批丢弃 meta（真畸形分支语义不变）', async () => {
+    const { historyMessageToChatMsgs } = await import('@/components/pages/ai/parseAiReply')
+    const out = historyMessageToChatMsgs({
+      role: 'assistant',
+      content: 'c',
+      meta: { sources: ['garbage', null, { kind: 'hack', title: 1 }], tier: 'knowledge' },
+    })
+    expect(out[0].agentMeta).toBeUndefined()
+  })
+
+  it('空 sources 且无任何有效附属字段——meta 仍为 undefined（不产空壳 meta）', async () => {
+    const { historyMessageToChatMsgs } = await import('@/components/pages/ai/parseAiReply')
+    const out = historyMessageToChatMsgs({
+      role: 'assistant',
+      content: 'c',
+      meta: { sources: [] },
+    })
+    expect(out[0].agentMeta).toBeUndefined()
+  })
+})

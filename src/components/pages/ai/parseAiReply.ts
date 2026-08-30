@@ -69,7 +69,12 @@ function parseAgentMeta(p: Record<string, unknown>): AgentMeta | undefined {
     })
     if (sources.length > 0) meta = { sources }
   }
-  if (meta === undefined && Array.isArray(p.sources)) return undefined
+  // Phase 34 review CR-01：空 sources 数组是 main 侧 buildAgentMeta 零轨迹的合法形态
+  // （{ sources: [], tier, noRealtimeData: true }，tests/electron aiAgentLoop 零轨迹用例锚死），
+  // 不得与「非空数组但全畸形项」（真畸形，fail-closed 整批丢弃）混判——否则历史恢复路径
+  // （historyMessageToChatMsgs → 本函数）零轨迹消息的 tier / noRealtimeData / hardStop /
+  // backfillNotes 全部丢失（切会话再切回分档 Tag / 无源灰 Tag / 停止黄条不渲染）。
+  if (meta === undefined && Array.isArray(p.sources) && p.sources.length > 0) return undefined
   if (p.tier !== undefined) {
     if (!(AGENT_TIER_NAMES as readonly string[]).includes(p.tier as string)) return undefined
     meta = { sources: [], ...(meta ?? {}) , tier: p.tier as AgentTierName }
