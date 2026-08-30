@@ -111,7 +111,7 @@ export default function NetworkTab({ api }: NetworkTabProps) {
     { title: '网关', dataIndex: 'gateway', key: 'gateway' },
     {
       title: '来源', dataIndex: 'isAutoDiscovered', key: 'source',
-      render: (v: boolean) => v ? <span style={{ color: '#1890ff' }}>自动发现</span> : '手动添加'
+      render: (v: boolean) => v ? <span style={{ color: 'var(--nt-alias-state-business-primary)' }}>自动发现</span> : '手动添加'
     },
     {
       title: '操作', key: 'actions',
@@ -133,7 +133,7 @@ export default function NetworkTab({ api }: NetworkTabProps) {
     { title: '厂商', dataIndex: 'macVendor', key: 'macVendor' },
     {
       title: '状态', dataIndex: 'status', key: 'status',
-      render: (v: string) => <span style={{ color: v === 'used' ? '#52c41a' : '#999' }}>{v === 'used' ? '已使用' : '弃用'}</span>
+      render: (v: string) => <span style={{ color: v === 'used' ? 'var(--nt-alias-state-success-primary)' : 'var(--nt-alias-label-tertiary)' }}>{v === 'used' ? '已使用' : '弃用'}</span>
     },
     { title: '接口', dataIndex: 'interface', key: 'interface' },
     { title: '设备', dataIndex: 'deviceName', key: 'deviceName' },
@@ -152,7 +152,7 @@ export default function NetworkTab({ api }: NetworkTabProps) {
         <Col span={10}>
           <Table dataSource={segments} columns={segColumns} rowKey="id" size="small"
             loading={loading} pagination={false}
-            onRow={(record) => ({ onClick: () => selectSegment(record.id), style: { cursor: 'pointer', background: selectedId === record.id ? '#e6f7ff' : undefined } })}
+            onRow={(record) => ({ onClick: () => selectSegment(record.id), style: { cursor: 'pointer', background: selectedId === record.id ? 'var(--nt-alias-state-business-tertiary)' : undefined } })}
           />
         </Col>
         <Col span={14}>
@@ -160,8 +160,8 @@ export default function NetworkTab({ api }: NetworkTabProps) {
             <>
               <Row gutter={16} style={{ marginBottom: 16 }}>
                 <Col span={6}><Statistic title="总IP" value={ipUsage.total} /></Col>
-                <Col span={6}><Statistic title="已使用" value={ipUsage.used} valueStyle={{ color: '#52c41a' }} /></Col>
-                <Col span={6}><Statistic title="可用" value={ipUsage.available} valueStyle={{ color: '#1890ff' }} /></Col>
+                <Col span={6}><Statistic title="已使用" value={ipUsage.used} valueStyle={{ color: 'var(--nt-alias-state-success-primary)' }} /></Col>
+                <Col span={6}><Statistic title="可用" value={ipUsage.available} valueStyle={{ color: 'var(--nt-alias-state-business-primary)' }} /></Col>
                 <Col span={6}><Statistic title="使用率" value={ipUsage.usagePercent} suffix="%" /></Col>
               </Row>
               <div style={{ marginBottom: 8, display: 'flex', gap: 8 }}>
@@ -176,7 +176,7 @@ export default function NetworkTab({ api }: NetworkTabProps) {
                 pagination={{ pageSize: 20, showTotal: rangeShowTotal }} />
             </>
           ) : (
-            <Card><span style={{ color: '#999' }}>请选择一个网段查看 IP 详情</span></Card>
+            <Card><span style={{ color: 'var(--nt-alias-label-tertiary)' }}>请选择一个网段查看 IP 详情</span></Card>
           )}
         </Col>
       </Row>

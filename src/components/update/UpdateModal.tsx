@@ -117,7 +117,7 @@ export default function UpdateModal() {
       {modalPhase === 'info' && (
         <>
           <div>
-            <Text strong style={{ fontSize: 16 }}>
+            <Text strong style={{ fontSize: 'var(--nt-font-base-16-font-size)' }}>
               新版本 v{version}
             </Text>
             <Text type="secondary">（当前 v{appVersion}）</Text>
@@ -125,7 +125,7 @@ export default function UpdateModal() {
           <div style={{ marginTop: 12 }}>
             <Text>更新内容：</Text>
           </div>
-          <div style={{ background: '#f5f5f5', maxHeight: 200, overflow: 'auto', padding: 12, marginTop: 4 }}>
+          <div style={{ background: 'var(--nt-alias-bg-module-platform)', maxHeight: 200, overflow: 'auto', padding: 12, marginTop: 4 }}>
             {cleanNotes ? (
               <Paragraph style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }}>{cleanNotes}</Paragraph>
             ) : (
@@ -149,7 +149,7 @@ export default function UpdateModal() {
                   <Radio value="forever">永久</Radio>
                 </Radio.Group>
                 <div>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
+                  <Text type="secondary" style={{ fontSize: 'var(--nt-font-xxs-12-font-size)' }}>
                     关闭窗口后将按所选档位暂停自动提醒
                   </Text>
                 </div>
@@ -157,7 +157,7 @@ export default function UpdateModal() {
             )}
           </div>
           <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8 }}>
-            <Link style={{ fontSize: 12 }} onClick={handleSkip}>
+            <Link style={{ fontSize: 'var(--nt-font-xxs-12-font-size)' }} onClick={handleSkip}>
               跳过此版本
             </Link>
             <Button type="primary" onClick={handleDownload}>
@@ -169,7 +169,7 @@ export default function UpdateModal() {
       {modalPhase === 'progress' && (
         <>
           <Progress percent={percent} />
-          <Text type="secondary" style={{ fontSize: 12 }}>
+          <Text type="secondary" style={{ fontSize: 'var(--nt-font-xxs-12-font-size)' }}>
             已下载 {fmtMB(progress?.transferred)} / {fmtMB(progress?.total)}（{percent}%）
           </Text>
           <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>

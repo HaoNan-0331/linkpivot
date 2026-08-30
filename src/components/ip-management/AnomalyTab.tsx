@@ -156,7 +156,7 @@ export default function AnomalyTab({ api }: AnomalyTabProps) {
     <div>
       <Row gutter={16} style={{ marginBottom: 16 }}>
         <Col span={5}><Card size="small"><Statistic title="总事件" value={stats.total} /></Card></Col>
-        <Col span={5}><Card size="small"><Statistic title="未确认" value={stats.unacknowledged} valueStyle={{ color: '#cf1322' }} /></Card></Col>
+        <Col span={5}><Card size="small"><Statistic title="未确认" value={stats.unacknowledged} valueStyle={{ color: 'var(--nt-static-red-900)' }} /></Card></Col>
         <Col span={5}><Card size="small"><Statistic title="MAC变化" value={stats.macChanged} /></Card></Col>
         <Col span={5}><Card size="small"><Statistic title="新IP" value={stats.newIp} /></Card></Col>
         <Col span={4}><Card size="small"><Statistic title="IP重用" value={stats.ipReused} /></Card></Col>
@@ -192,7 +192,7 @@ export default function AnomalyTab({ api }: AnomalyTabProps) {
             <>
               <div style={{ marginBottom: 8 }}>
                 <Button icon={<PlusOutlined />} onClick={() => setAddExcludeOpen(true)}>添加排除规则</Button>
-                <span style={{ marginLeft: 8, color: '#999' }}>支持 IP、CIDR(192.168.1.0/24)、通配符(192.168.1.*)</span>
+                <span style={{ marginLeft: 8, color: 'var(--nt-alias-label-tertiary)' }}>支持 IP、CIDR(192.168.1.0/24)、通配符(192.168.1.*)</span>
               </div>
               <Table dataSource={excludedIPs} columns={excludeColumns} rowKey="id" size="small" pagination={false} />
             </>

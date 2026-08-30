@@ -160,7 +160,7 @@ export default function OuiTab({ api }: OuiTabProps) {
 
       {/* 批量导入弹窗 */}
       <Modal title="批量导入 OUI" open={importOpen} onOk={batchImport} onCancel={() => setImportOpen(false)} width={500}>
-        <p style={{ color: '#999', marginBottom: 8 }}>每行格式: OUI前缀,厂商名称 (如: 001122,Huawei)</p>
+        <p style={{ color: 'var(--nt-alias-label-tertiary)', marginBottom: 8 }}>每行格式: OUI前缀,厂商名称 (如: 001122,Huawei)</p>
         <Input.TextArea rows={10} value={importText} onChange={e => setImportText(e.target.value)}
           placeholder="001122,Huawei&#10;00:11:22,Cisco&#10;334455,H3C" />
       </Modal>
