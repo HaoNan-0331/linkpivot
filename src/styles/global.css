@@ -35,3 +35,13 @@ body .ant-modal .ant-modal-container {
 body .ant-message .ant-message-notice {
   border-radius: 14px;
 }
+
+/* Phase 33 / D-05（33-04）：拓扑 MiniMap 节点色 token 化。reactflow 将 nodeColor/nodeStrokeColor
+   渲染为 rect 的 SVG presentation attribute，而 Chromium 属性位不解析 var()（回落为黑色填充/
+   描边消失）——故 TopologyCanvas 移除两 prop，由本规则承载 token（CSS 规则优先级恒高于
+   presentation attribute）。nodeColor 旧浅蓝沿 33-02 映射先例迁 state-business-tertiary，
+   nodeStrokeColor 旧灰沿 33-03 映射先例迁 label-secondary。 */
+.react-flow__minimap-node {
+  fill: var(--nt-alias-state-business-tertiary);
+  stroke: var(--nt-alias-label-secondary);
+}

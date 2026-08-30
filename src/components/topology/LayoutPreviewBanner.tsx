@@ -18,14 +18,14 @@ function LayoutPreviewBanner({ visible, onSave, onUndo }: LayoutPreviewBannerPro
         left: '50%',
         transform: 'translateX(-50%)',
         zIndex: 10,
-        background: '#fff',
+        background: 'var(--nt-alias-bg-base)',
         padding: '8px 16px',
         borderRadius: '0 0 6px 6px',
-        boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+        boxShadow: 'var(--nt-shadow-lv3)',
       }}
     >
       <Space size={8}>
-        <span style={{ fontSize: 12, color: '#666' }}>已生成布局预览，可直接拖拽微调</span>
+        <span style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', color: 'var(--nt-alias-label-secondary)' }}>已生成布局预览，可直接拖拽微调</span>
         <Button type="primary" size="small" onClick={onSave}>
           保存布局
         </Button>

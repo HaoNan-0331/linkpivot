@@ -36,7 +36,7 @@ const DEFAULT_EDGE_OPTIONS = { type: 'edgeWithInterfaces' } as const
 const noop = () => {}
 
 // Phase 26 / D-13：ViewportCenterReporter——store 消费必须在 <ReactFlow> children 内
-// （StoreContext 仅向 children 提供，组件 body 层 useStore 会 throw error#001）。
+// （StoreContext 仅向 children 提供，组件 body 层 useStore 会 throw error 001）。
 // 写入父组件 ref 不触发重渲染；订阅 3 个原始值，重渲染成本可忽略。
 function ViewportCenterReporter({ viewportCenterRef }: { viewportCenterRef?: { current: { x: number; y: number } } }) {
   const transform = useStore((s) => s.transform)
@@ -287,11 +287,11 @@ export default function TopologyCanvas({
         nodeDragThreshold={1}
       >
         <Controls />
-        <MiniMap
-          nodeStrokeColor="#888"
-          nodeColor="#e6f7ff"
-          nodeBorderRadius={8}
-        />
+        {/* Phase 33 / D-05（33-04）：MiniMap 节点色迁 token——reactflow 把 nodeColor/nodeStrokeColor
+            渲染为 rect 的 SVG presentation attribute，而 Chromium 属性位不解析 var()（会回落成
+            黑色填充/描边消失），故移除两 prop 改由 global.css 的 .react-flow__minimap-node 规则
+            承载（CSS 规则优先级恒高于 presentation attribute，var() 在规则内合法生效）。 */}
+        <MiniMap nodeBorderRadius={8} />
         <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
         <ViewportCenterReporter viewportCenterRef={viewportCenterRef} />
         <AlignmentGuides guides={guides} />

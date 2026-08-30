@@ -103,8 +103,8 @@ function TopologyToolbar({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 12px' }}>
       <div
         style={{
-          fontSize: 11,
-          color: '#999',
+          fontSize: 'var(--nt-font-xxxs-11-font-size)',
+          color: 'var(--nt-alias-label-tertiary)',
           textTransform: 'uppercase',
           letterSpacing: 1,
           marginBottom: 2,

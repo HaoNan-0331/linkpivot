@@ -18,7 +18,7 @@ const KNOWN_TOPOLOGY_KEYS = new Set(['id', 'name', 'nodes', 'edges', 'status', '
 let warnedUnknownTopologyKeys = false
 
 // Phase 26 / 26-04 round 3 P-B：节点 width/height 固化——历史持久化节点无显式尺寸时
-// RF 每帧重复测量并循环发 dimension changes（reactflow #3925 官方确认拖拽卡顿根因），
+// RF 每帧重复测量并循环发 dimension changes（reactflow issue 3925 官方确认拖拽卡顿根因），
 // 组装时按布局算法常量（80/60）补默认尺寸，消除受控模式尺寸循环 diff
 function normalizeNodeSizes(nodes: TopologyNode[]): TopologyNode[] {
   return nodes.map((n) =>

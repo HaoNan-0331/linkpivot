@@ -88,10 +88,10 @@ function SelectionToolbarBase({
         top: screenY,
         transform: 'translate(-50%, -100%)',
         zIndex: 10,
-        background: '#fff',
+        background: 'var(--nt-alias-bg-base)',
         padding: '4px 8px',
         borderRadius: 6,
-        boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+        boxShadow: 'var(--nt-shadow-lv3)',
       }}
     >
       {isNodeSelected && (
