@@ -3,8 +3,18 @@
 // 期望值以抽取前 useAIChat handleSend :154-200 / handleConfirm :222-238 行为为基准推导。
 // 真机 AI 日志实样：执行时无法从应用内读路径导出（日志列加密不可直读），按 D-07 以构造样静态兜底覆盖。
 // vitest plain node 入口（npm test），纯函数断言无 DOM 无 mock。
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { parseAiReply } from '@/components/pages/ai/parseAiReply'
+
+// CR-02 渲染兜底用例需导入 ToolResultCard.tsx（组件模块）——mock 掉重量级图标包
+// （@ant-design/icons CJS 全量索引冷加载可达数十秒，会超默认 5s 测试超时）。
+// 本文件其余用例不经该依赖，mock 仅作用于 ToolResultCard 导入链。
+vi.mock('@ant-design/icons', () => ({
+  CodeOutlined: () => null,
+  BookOutlined: () => null,
+  FileSearchOutlined: () => null,
+  ToolOutlined: () => null,
+}))
 
 describe('parseAiReply 四类边界（D-10）', () => {
   it('普通文本（非 JSON）——降级 plain 不崩，content 原样', () => {
@@ -573,5 +583,81 @@ describe('34 review CR-01：parseAgentMeta 空 sources 零轨迹合法态', () =
       meta: { sources: [] },
     })
     expect(out[0].agentMeta).toBeUndefined()
+  })
+})
+
+// ---------- Phase 34 review CR-02：tool_result 扩展字段逐字段校验 + 渲染兜底 ----------
+// AI 回复原文不可信（T-19-06）：越枚举 stepStatus 此前经 { ...p } 裸透传，ToolResultCard
+// STEP_STATUS_META 查表 undefined → meta.dotState 抛 TypeError → App 级 ErrorBoundary
+// 整应用崩溃。双层防线锁死：① 谓词层（isValidToolResultPayload）畸形整条拒绝；
+// ② 渲染层（ToolResultCard resolveStatusVisual）越枚举兜底 failed 视觉不崩（防御纵深）。
+describe('34 review CR-02：tool_result 扩展字段逐字段校验 + resolveStatusVisual 兜底', () => {
+  const base = {
+    type: 'tool_result',
+    server: 'agent',
+    tool: '命令执行',
+    deviceName: 'SW-Core',
+    argsJson: 'display version',
+    resultJson: '{"ok":true}',
+    status: 'success',
+  }
+
+  it('合法扩展字段全量（stepStatus/actionType/stepIndex/errorText/prefetched/backfilled/sessionId）——校验通过 + parseAiReply 产出 toolResult', async () => {
+    const mod = await import('@/components/pages/ai/parseAiReply')
+    const full = {
+      ...base,
+      status: 'failed' as const,
+      stepStatus: 'failed' as const,
+      actionType: 'cmd' as const,
+      stepIndex: 0,
+      errorText: '命令失败',
+      prefetched: true,
+      backfilled: true,
+      sessionId: 's1',
+    }
+    expect(mod.isValidToolResultPayload(full)).toBe(true)
+    const r = parseAiReply(JSON.stringify(full))
+    expect(r.kind).toBe('toolResult')
+    if (r.kind !== 'toolResult') return
+    expect(r.toolResult.stepStatus).toBe('failed')
+    expect(r.toolResult.errorText).toBe('命令失败')
+    expect(r.toolResult.prefetched).toBe(true)
+  })
+
+  it('越枚举/类型错的扩展字段——整条拒绝 fail-closed（parseAiReply 同步降级 plain 不进 tool 分支）', () => {
+    const bad: Array<Record<string, unknown>> = [
+      { ...base, stepStatus: 'hacked' },
+      { ...base, stepStatus: 'DONE' },
+      { ...base, actionType: 'escape' },
+      { ...base, stepIndex: '0' },
+      { ...base, errorText: 123 },
+      { ...base, prefetched: 'yes' },
+      { ...base, backfilled: 1 },
+    ]
+    for (const b of bad) {
+      expect(parseAiReply(JSON.stringify(b)).kind).toBe('plain')
+    }
+  })
+
+  it('无扩展字段（legacy 22-03 基础载荷）——放行不拒绝（向后兼容）', () => {
+    expect(parseAiReply(JSON.stringify(base)).kind).toBe('toolResult')
+  })
+
+  it('resolveStatusVisual 越枚举 stepStatus 兜底 failed 视觉——不 undefined 不崩（防御纵深，谓词漏网也不崩）', async () => {
+    const { resolveStatusVisual } = await import('@/components/pages/ai/ToolResultCard')
+    // 运行时越枚举值模拟「谓词漏网」载荷（类型层只能 as 断言构造）
+    const leaked = { ...base, stepStatus: 'hacked' } as Parameters<typeof resolveStatusVisual>[0]
+    const v = resolveStatusVisual(leaked)
+    expect(v.dotState).toBe('failed')
+    expect(v.label).toBe('失败')
+    expect(v.sweep).toBe(false)
+    // 合法枚举仍查表命中——兜底不改变合法路径视觉
+    const ok = resolveStatusVisual({ ...base, stepStatus: 'running', actionType: 'cmd' } as Parameters<typeof resolveStatusVisual>[0])
+    expect(ok.label).toBe('执行中')
+    expect(ok.sweep).toBe(true)
+    // 旧 MCP 载荷（无 stepStatus）按 status 补映射路径不受影响
+    const legacy = resolveStatusVisual({ ...base, status: 'timeout' } as Parameters<typeof resolveStatusVisual>[0])
+    expect(legacy.label).toBe('超时')
+    expect(legacy.dotState).toBe('failed')
   })
 })

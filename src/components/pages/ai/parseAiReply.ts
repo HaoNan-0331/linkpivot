@@ -89,6 +89,14 @@ function parseAgentMeta(p: Record<string, unknown>): AgentMeta | undefined {
 
 const TOOL_RESULT_STATUSES = ['success', 'failed', 'timeout'] as const
 
+// agent 步骤扩展字段枚举（Phase 28/31，与 main 侧 AgentStep 契约 / types.ts
+// AgentStepStatus·actionType 逐字对齐）。isValidToolResultPayload 谓词与
+// stepToToolResultMessage 历史重建共用同一份枚举源（单一事实源，防两处漂移）。
+const AGENT_STEP_ACTION_TYPES = ['cmd', 'kb', 'exp', 'mcp'] as const
+const AGENT_STEP_STATUS_VALUES: readonly AgentStepStatus[] = [
+  'running', 'done', 'failed', 'retrying', 'burned', 'cooldown', 'interrupted',
+]
+
 /**
  * tool_result 载荷逐字段 unknown 校验（Phase 22 / 22-05，T-22-16 fail-closed）。
  * 消费方有二：parseAiReply 字符串解析分支 + useAIChat `ai:toolResult` 事件订阅
@@ -108,7 +116,18 @@ export function isValidToolResultPayload(v: unknown): v is ToolResultMessage {
     (TOOL_RESULT_STATUSES as readonly string[]).includes(p.status) &&
     // Phase 31（31-02，FIX-02 D-01）：归属会话标识可选字段——在场即校验、缺失放行
     // （legacy 载荷兼容，照 guardInfo 先例；畸形非 string 整条丢弃 fail-closed，T-31-03）
-    (p.sessionId === undefined || isStr(p.sessionId))
+    (p.sessionId === undefined || isStr(p.sessionId)) &&
+    // Phase 34 review CR-02：Phase 28/31 agent 步骤扩展字段纳入逐字段校验（T-22-16 fail-closed）。
+    // AI 回复原文不可信（T-19-06）：越枚举 stepStatus 此前裸透传（{ ...p }），ToolResultCard
+    // STEP_STATUS_META 查表 undefined → meta.dotState 抛 TypeError → App 级 ErrorBoundary
+    // 整应用崩溃；errorText 非 string 真值同理（firstLine 内 split 抛错）。在场即校验、
+    // 缺失放行（legacy 22-03 基础载荷兼容），畸形整条丢弃（渲染层另有 resolveStatusVisual 兜底纵深）。
+    (p.stepStatus === undefined || (isStr(p.stepStatus) && (AGENT_STEP_STATUS_VALUES as readonly string[]).includes(p.stepStatus))) &&
+    (p.actionType === undefined || (isStr(p.actionType) && (AGENT_STEP_ACTION_TYPES as readonly string[]).includes(p.actionType))) &&
+    (p.stepIndex === undefined || typeof p.stepIndex === 'number') &&
+    (p.errorText === undefined || isStr(p.errorText)) &&
+    (p.prefetched === undefined || typeof p.prefetched === 'boolean') &&
+    (p.backfilled === undefined || typeof p.backfilled === 'boolean')
   )
 }
 
@@ -232,11 +251,6 @@ function normalizeReference(r: unknown): ReferenceItem[] {
 // meta.steps → toolResult 步骤卡消息（stepStatus 用落库终态，重建 payload 与 main 侧
 // agentStepToToolResultPayload 同构）；meta.sources/tier/noRealtimeData/backfillNotes →
 // agentMeta（复用 parseAgentMeta fail-closed 校验）。畸形 steps 项逐条丢弃不降级整批。
-const AGENT_STEP_ACTION_TYPES = ['cmd', 'kb', 'exp', 'mcp'] as const
-const AGENT_STEP_STATUS_VALUES: readonly AgentStepStatus[] = [
-  'running', 'done', 'failed', 'retrying', 'burned', 'cooldown', 'interrupted',
-]
-
 function stepToToolResultMessage(s: unknown): ToolResultMessage | undefined {
   if (s === null || typeof s !== 'object') return undefined
   const o = s as Record<string, unknown>

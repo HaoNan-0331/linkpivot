@@ -52,8 +52,13 @@ const STEP_STATUS_META: Record<AgentStepStatus, StepStatusVisualMeta> = {
 // D-05 统一视觉解析：stepStatus 在场查 v2 表；旧 MCP payload 无 stepStatus 时按
 // status 补映射（success → done 视觉「完成」/ timeout → failed 视觉「超时」/
 // failed → failed 视觉「失败」）。一套渲染路径，无第二分支 Tag 渲染。
-function resolveStatusVisual(data: ToolResultMessage): StepStatusVisualMeta {
-  if (data.stepStatus !== undefined) return STEP_STATUS_META[data.stepStatus]
+// 导出供纯函数层单测锁定兜底语义（renderer 无组件测试工具链，照 parseAiReply 纯函数先例）。
+export function resolveStatusVisual(data: ToolResultMessage): StepStatusVisualMeta {
+  // Phase 34 review CR-02 防御纵深：stepStatus 越枚举时 STEP_STATUS_META 查表得
+  // undefined，此前 meta.dotState 读取抛 TypeError → App 级 ErrorBoundary 整应用崩溃。
+  // 谓词层已拦（isValidToolResultPayload 六字段校验），此处 ?? 兜底降级 failed 视觉
+  // ——future 扩展字段再漏网也不崩，仅呈现失败态。
+  if (data.stepStatus !== undefined) return STEP_STATUS_META[data.stepStatus] ?? STEP_STATUS_META.failed
   if (data.status === 'success') return { ...STEP_STATUS_META.done, label: '完成' }
   if (data.status === 'timeout') return { ...STEP_STATUS_META.failed, label: '超时' }
   return { ...STEP_STATUS_META.failed, label: '失败' }
