@@ -155,6 +155,9 @@ export function wrapAgentFinalPayload(
  * - 补查命中 → user-role 回注 + 一次 callAI 收尾（结果只进 user 消息，T-22-08）；
  * - 补查零命中/失败/设备源未查 → 知情记录落 state.backfillNotes（随 payload/meta_enc 持久化，D-11），
  *   不追加 LLM 轮、不改写回复正文（既有回复文本契约零污染）。
+ * 同词已查守卫（260830 quick）：预取已用同 kind + 同 query 检索过且未命中的源（status 非 failed）
+ * 跳过重复检索——本地确定性 FTS 同词重跑结果必然相同，改为注入「已检索未命中」事实告知；
+ * failed 步骤不算已查过（保留一次重试），AI 主动检索词（≠ 用户消息）与未查过的源照常补查。
  * 用户中断（hardStop）后不再发起任何 LLM 调用（D-06 立即中止不总结）。
  */
 export async function runEvidenceBackfill(
@@ -167,10 +170,34 @@ export async function runEvidenceBackfill(
   const verify = verifySourcesEvidence({ tier, sources: state.sources })
   if (verify.missing.length === 0) return reply
   const query = sanitizeUntrusted(ctx.userMessage ?? '', 500)
+  // 260830 quick：同词已查守卫的规范化比对键——对齐 pushTaggedRetrievalStep 的步骤存储形态
+  // （sanitizeUntrusted(query, 200)，neutralize + 200 截断），预取/tagged 补查步骤卡的 query 以
+  // 该形态落 state.steps，守卫按同形态比对（幂等链：sanitize_200(sanitize_500(x)) === sanitize_200(x)）
+  const canonicalQuery = sanitizeUntrusted(query, 200)
   const sections: string[] = []
   let hasNewEvidence = false
   for (const kind of verify.missing) {
+    // 260830 quick（同词已查守卫）：该源已用同 kind + 同 query 检索过且未命中 → 不再重复检索
+    // （真机 UAT：[补查] 卡 query 与 [预取] 一模一样，本地确定性 FTS 同词重跑结果必然相同，
+    // 纯浪费多余检索 + 重复卡 + 重复「未命中」文本）。比对口径：
+    // - 双形态比对覆盖两类存储——tagged 步骤（预取/补查/二段式）存 sanitize 200 形态，
+    //   pushAgentStep 循环步存原始串（短查询两者相等）；s.query 为 undefined 时 === 自然 false；
+    // - status === 'failed' 的步骤不算已查过——检索失败保留补查一次重试（根因要求③）；
+    // - 「未命中」推断成立性：该 kind 在 verify.missing 里 ⇒ sources 无该 kind ⇒ 此前同 query
+    //   检索必然未命中入 sources（预取命中会无条件 push sources，aiChat.ts 预取注入段）；
+    // - kind='device' 时 actionType 永不匹配（AgentStep actionType 无 'device' 值），守卫恒
+    //   false，device 分支行为不变。
+    const alreadySearched = state.steps.some(
+      (s) => s.actionType === kind && s.status !== 'failed' && (s.query === query || s.query === canonicalQuery)
+    )
     if (kind === 'exp') {
+      // 跳过路径只落事实告知（→ backfillNotes → meta_enc）：不 pushTaggedRetrievalStep（避免
+      // 又一张重复卡）、不置 hasNewEvidence（不追加 LLM 轮）——与既有「补查零命中」路径的
+      // 持久化语义完全同构，28-04 反幻觉兜底（fail-closed 知情记录）不回退
+      if (alreadySearched) {
+        sections.push(`【系统补查·经验库】经验库已检索过（关键词: "${query}"）未命中，不再重复检索。`)
+        continue
+      }
       try {
         const retrieval = await retrieveForAnswer({ userMessage: query, deviceIds: ctx.deviceIds })
         const injected = retrieval?.injected ?? []
@@ -195,6 +222,11 @@ export async function runEvidenceBackfill(
         sections.push('【系统补查·经验库】经验库补查失败。')
       }
     } else if (kind === 'kb') {
+      // 同 exp 跳过语义（见上 exp 分支注释）：不建卡不加轮，事实告知随 backfillNotes → meta_enc 持久化
+      if (alreadySearched) {
+        sections.push(`【系统补查·知识库】知识库已检索过（关键词: "${query}"）未命中，不再重复检索。`)
+        continue
+      }
       try {
         const rows = (await kbSearch(query, ctx.deviceIds, 5)).rows ?? []
         // 28-06 R8：kb 补查同样生成步骤卡（与 exp 补查同构）
