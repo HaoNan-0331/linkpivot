@@ -70,7 +70,7 @@ export default function McpToolManageDrawer({ open, onClose, config }: Props) {
   const columns: ColumnsType<McpToolCacheDto> = [
     {
       title: '工具名', dataIndex: 'name', width: 180,
-      render: (v: string) => <code style={{ fontFamily: 'monospace', fontSize: 13 }}>{v}</code>,
+      render: (v: string) => <code style={{ fontFamily: 'var(--nt-font-family-code)', fontSize: 'var(--nt-font-xs-13-font-size)' }}>{v}</code>,
     },
     {
       title: '描述', dataIndex: 'description', ellipsis: true,
@@ -117,7 +117,7 @@ export default function McpToolManageDrawer({ open, onClose, config }: Props) {
           description={
             <div>
               <div style={{ fontWeight: 600 }}>暂无工具清单</div>
-              <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 4 }}>
+              <div style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', color: 'var(--nt-alias-label-secondary)', marginTop: 4 }}>
                 工具清单来自最近一次连接测试的结果。请先返回配置列表点「测试」，成功后再回来管理工具。
               </div>
             </div>

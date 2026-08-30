@@ -149,7 +149,7 @@ export default function AboutTab() {
         </div>
         <div style={{ marginTop: 4 }}>
           <Text type="secondary">当前版本</Text>{' '}
-          <Text strong style={{ fontSize: 20 }}>
+          <Text strong style={{ fontSize: 'var(--nt-font-l-20-font-size)' }}>
             v{appVersion}
           </Text>
         </div>
@@ -164,7 +164,7 @@ export default function AboutTab() {
             检查更新
           </Button>
         )}
-        <Text type="secondary" style={{ fontSize: 12 }}>
+        <Text type="secondary" style={{ fontSize: 'var(--nt-font-xxs-12-font-size)' }}>
           {statusLineText(status)}
         </Text>
       </div>

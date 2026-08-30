@@ -228,7 +228,7 @@ export default function DeviceEnvCards({
             title={(
               <Space size={8} wrap>
                 <Text strong>{c.name}</Text>
-                <Text type="secondary" style={{ fontSize: 12, fontWeight: 'normal' }}>{c.model ?? '型号未知'}</Text>
+                <Text type="secondary" style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', fontWeight: 'normal' }}>{c.model ?? '型号未知'}</Text>
                 {c.matchReason != null && <Tag color="purple" style={{ marginInlineEnd: 0 }}>匹配：{c.matchReason}</Tag>}
               </Space>
             )}
@@ -271,7 +271,7 @@ export default function DeviceEnvCards({
                 label: (
                   <Space size={6}>
                     <span>{o.name}</span>
-                    <span style={{ fontSize: 12, color: '#8c8c8c' }}>{o.model ?? '型号未知'}</span>
+                    <span style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', color: 'var(--nt-alias-label-secondary)' }}>{o.model ?? '型号未知'}</span>
                     {o.matchReason != null && <Tag color="purple" style={{ marginInlineEnd: 0 }}>匹配：{o.matchReason}</Tag>}
                   </Space>
                 ),

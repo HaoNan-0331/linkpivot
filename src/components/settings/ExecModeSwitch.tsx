@@ -102,7 +102,7 @@ export default function ExecModeSwitch() {
         open={modalOpen}
         title={
           <Space>
-            <ExclamationCircleOutlined style={{ color: '#faad14' }} />
+            <ExclamationCircleOutlined style={{ color: 'var(--nt-alias-state-warn-primary)' }} />
             切换到自动执行模式
           </Space>
         }
@@ -111,7 +111,7 @@ export default function ExecModeSwitch() {
         onOk={handleConfirmModal}
         onCancel={() => setModalOpen(false)}
       >
-        <div style={{ marginBottom: 16, color: '#666' }}>
+        <div style={{ marginBottom: 16, color: 'var(--nt-alias-label-secondary)' }}>
           自动执行模式下，白名单内的命令将由 AI 直接在设备上执行，无需人工确认。
           <br />
           MCP 工具调用也将免确认直接在设备上执行。

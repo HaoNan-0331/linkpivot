@@ -53,12 +53,12 @@ export default function CommandWhitelistEditor() {
 
   return (
     <Card title="命令白名单" size="small">
-      <div style={{ marginBottom: 12, color: '#888', fontSize: 13 }}>
+      <div style={{ marginBottom: 12, color: 'var(--nt-alias-label-secondary)', fontSize: 'var(--nt-font-xs-13-font-size)' }}>
         白名单中的命令模式允许 AI 自动执行，无需人工确认。支持通配符，如 show *
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16, minHeight: 32 }}>
         {whitelist.length === 0 && (
-          <span style={{ color: '#bfbfbf' }}>暂无白名单命令</span>
+          <span style={{ color: 'var(--nt-alias-label-caption)' }}>暂无白名单命令</span>
         )}
         {whitelist.map((item) => (
           <Tag
@@ -66,7 +66,7 @@ export default function CommandWhitelistEditor() {
             closable
             closeIcon={<CloseOutlined />}
             onClose={() => handleRemove(item)}
-            style={{ fontSize: 13, padding: '2px 8px' }}
+            style={{ fontSize: 'var(--nt-font-xs-13-font-size)', padding: '2px 8px' }}
           >
             {item}
           </Tag>
