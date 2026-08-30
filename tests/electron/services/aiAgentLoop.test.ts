@@ -19,6 +19,9 @@ const { FakeClient } = vi.hoisted(() => {
     static count = 0
     /** true = exec 阶段失败（execOne 捕获 → success:false 不 reject 整批） */
     static fail = false
+    /** true = connect 阶段同步 throw（首条 reject 整批——260830 confirm 续跑 catch 补卡测试用；
+     *  区别于 fail = exec 阶段失败填 success:false 不 reject 整批） */
+    static connectThrow = false
     /** exec stream data 事件下发的命令输出（空 = 无输出只有 close） */
     static output = ''
     constructor() {
@@ -28,7 +31,11 @@ const { FakeClient } = vi.hoisted(() => {
       if (ev === 'ready') setTimeout(cb, 0)
       return this
     }
-    connect() { /* no-op */ }
+    connect() {
+      // 260830 quick：connect 阶段同步 throw → aiExec runOne try 兜底 reject →
+      // 首条命令 reject 整批（aiExec.ts:172-186 权威语义）
+      if (FakeClient.connectThrow) throw new Error('mock connect throw')
+    }
     end() { /* no-op */ }
     destroy() { /* no-op */ }
     exec(_cmd: string, cb: (err: Error | null, s?: any) => void) {
@@ -263,6 +270,7 @@ beforeEach(() => {
   setAiMasterKey(MK)
   FakeClient.count = 0
   FakeClient.fail = false
+  FakeClient.connectThrow = false
   FakeClient.output = ''
   vi.mocked(kbSearch).mockReset()
   vi.mocked(kbSearch).mockResolvedValue({ rows: [] } as any)
@@ -1480,5 +1488,60 @@ describe('31-05 候选②：chat() 入口持久化用户消息（WR-04 option a�
     const rows = sessionRows('sess-entry-3')
     expect(rows.filter((r) => r.role === 'user')).toHaveLength(1)
     expect(rows.filter((r) => r.role === 'assistant' && r.content.includes('等待确认'))).toHaveLength(1)
+  })
+})
+
+// ---------- 260830 quick：confirm 续跑执行段步骤卡时序（running 先行 + throw 补 failed 卡） ----------
+// 缺陷①：pushAgentStep 原在 executeCommandsOnDevice 之后 → SSH 建连期间界面无 running 卡
+// （确认后几十秒无扫光，建卡即终态）；缺陷②：executeCommandsOnDevice throw（如 SSH 连接超时）
+// 时 catch 只 updateLogStatus + cmdResults.push，不建卡不 settle → 失败卡完全缺失。
+// 修复对齐 aiAgentLoop.ts runCmdSteps auto 直执时序：先建卡（emit running）→ 执行 → settle 终态。
+
+describe('260830 quick：confirm 续跑执行段步骤卡时序', () => {
+  it('缺陷①：running 卡在 SSH 连接建立前 emit（execCountAtEmit=0），done 卡在执行后（=1）', async () => {
+    db.prepare("UPDATE ai_config SET exec_mode = 'confirm'").run()
+    allowCmd()
+    queueReplies('[CMD:dev1]display version[/CMD]', '续跑收尾')
+    // emit 回调内同步取 FakeClient.count：pushAgentStep 的 running emit 严格先于
+    // runOne 内 new Client()（beforeEach 已归零；confirm 前 chat 不产生连接；1 条命令恰 1 次连接）
+    const emitted: any[] = []
+    const emit = (p: any) => emitted.push({ ...p, execCountAtEmit: FakeClient.count })
+    const out1 = await chat([{ role: 'user', content: '查版本' }], ['dev1'], null, emit)
+    expect(JSON.parse(out1).type).toBe('confirm_required')
+    const final = await confirmCommand(JSON.parse(out1).execId, true)
+    const payload = JSON.parse(final)
+    expect(payload.content).toBe('续跑收尾')
+    // running 卡恰 1 张且 emit 时 SSH 连接尚未建立（修复前 pushAgentStep 在执行后才推 → 此处=1）
+    const running = emitted.filter((p) => p.actionType === 'cmd' && p.stepStatus === 'running')
+    expect(running).toHaveLength(1)
+    expect(running[0].execCountAtEmit).toBe(0)
+    // done 卡恰 1 张且 emit 时命令已执行（1 条命令恰 1 次连接）
+    const done = emitted.filter((p) => p.actionType === 'cmd' && p.stepStatus === 'done')
+    expect(done).toHaveLength(1)
+    expect(done[0].execCountAtEmit).toBe(1)
+    // meta 轨迹不断链：最终 payload.steps 含 cmd done 步
+    expect(payload.steps.some((s: any) => s.actionType === 'cmd' && s.status === 'done')).toBe(true)
+  })
+
+  it('缺陷②：executeCommandsOnDevice throw（SSH 连接失败）→ 每命令一张 failed 卡 + outputSummary 落错误文本', async () => {
+    db.prepare("UPDATE ai_config SET exec_mode = 'confirm'").run()
+    allowCmd()
+    // 关键区分：connectThrow 走「connect 阶段同步 throw → 首条 reject 整批 → confirmCommand catch」
+    // 路径；FakeClient.fail 走「exec 阶段失败 → success:false 结果分支」（后者既有分支已覆盖，勿混用）
+    FakeClient.connectThrow = true
+    queueReplies('[CMD:dev1]display version[/CMD]', '失败总结')
+    const emitted: any[] = []
+    const out1 = await chat([{ role: 'user', content: '查版本' }], ['dev1'], null, (p) => emitted.push(p))
+    expect(JSON.parse(out1).type).toBe('confirm_required')
+    const final = await confirmCommand(JSON.parse(out1).execId, true)
+    const payload = JSON.parse(final)
+    // failed 卡恰 1 张；resultJson（=step.outputSummary）含错误文本
+    const failed = emitted.filter((p) => p.actionType === 'cmd' && p.stepStatus === 'failed')
+    expect(failed).toHaveLength(1)
+    expect(failed[0].resultJson).toContain('执行失败')
+    expect(failed[0].resultJson).toContain('mock connect throw')
+    // cmdResults 回注链不断：第二笔 callAI 被消费，最终回复照常送达
+    expect(payload.content).toBe('失败总结')
+    expect(payload.steps.some((s: any) => s.actionType === 'cmd' && s.status === 'failed')).toBe(true)
   })
 })
