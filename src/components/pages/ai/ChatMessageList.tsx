@@ -1,11 +1,13 @@
 import { useRef, useEffect, useState } from 'react'
-import { Spin, Tag, Button, Popover } from 'antd'
-import { RobotOutlined, UserOutlined, BookOutlined } from '@ant-design/icons'
+import { Tag, Button, Popover } from 'antd'
+import { RobotOutlined, BookOutlined } from '@ant-design/icons'
 import type { AgentSourceItem, AgentTierName, ChatMsg, ReferenceItem } from './types'
 import type { Experience } from '@/types/experience'
 import ExperienceDetailModal from '../../knowledge/ExperienceDetailModal'
 import SessionMessagesModal from './SessionMessagesModal'
 import ToolResultCard from './ToolResultCard'
+import AssistantMarkdown from './AssistantMarkdown'
+import { formatChatTime } from './formatChatTime'
 
 interface ChatMessageListProps {
   messages: ChatMsg[]
@@ -205,43 +207,56 @@ export default function ChatMessageList({ messages, loading, agentRunning, onSto
           纵向 rhythm 16px 由列 gap 接管（消息包装 marginBottom 移除）；水平居中交给列公式，
           滚动区自身不加侧 padding */}
       <div className="nt-chat-column">
-      {messages.map((msg, idx) => (
+      {messages.map((msg, idx) => {
+        // Phase 34（34-02，D-07/D-08）：时间戳三档格式化（缺场 fail-open 空串 → 不渲染）
+        const timeText = formatChatTime(msg.createdAt)
         // Phase 22（22-05，D-03）：tool_result 消息渲染结构化卡片——次级块视觉，
-        // 不套 AI 气泡样式（卡片与 AI 解读气泡分离，T-22-18）
-        msg.toolResult ? (
-          <div key={msg.id || idx} style={{ display: 'flex', justifyContent: 'flex-start' }}>
-            <ToolResultCard data={msg.toolResult} />
-          </div>
-        ) : (
-        <div
-          key={msg.id || idx}
-          style={{
-            display: 'flex',
-            justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start',
-          }}
-        >
-          {/* Phase 33（33-02，D-05）：气泡三色迁 token。用户侧浅蓝气泡（--nt-specific-bubble）
-              配 label-primary 深色正文——plan 原映射 label-primary-foreground（白）在浅蓝底上
-              对比度不可读（Rule 1 偏差，详见 33-02-SUMMARY）；Phase 34 对话区专项再精修 */}
-          <div style={{
-            maxWidth: '70%',
-            padding: '8px 12px',
-            borderRadius: 8,
-            background: msg.role === 'user' ? 'var(--nt-specific-bubble)' : 'var(--nt-alias-bg-base)',
-            color: msg.role === 'user' ? 'var(--nt-alias-label-primary)' : 'var(--nt-alias-label-primary)',
-            border: msg.role === 'user' ? 'none' : '1px solid var(--nt-alias-border-l2)',
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-word',
-            fontSize: 'var(--nt-font-s-14-font-size)',
-            lineHeight: 'var(--nt-font-s-14-line-height)',
-          }}>
-            <div style={{ marginBottom: 4, display: 'flex', alignItems: 'center' }}>
-              {msg.role === 'user' ? <UserOutlined /> : <RobotOutlined />}
-              <span style={{ marginLeft: 4, fontWeight: 500 }}>
-                {msg.role === 'user' ? '我' : 'AI'}
-              </span>
-              {/* D-12 分档标签：气泡右上角小 Tag，Popover 列本档预取清单（payload tier 字段驱动） */}
-              {msg.role === 'assistant' && msg.agentMeta?.tier && (
+        // 不套 AI 气泡样式（卡片与 AI 解读气泡分离，T-22-18；34-03 职域本 plan 不动）
+        if (msg.toolResult) {
+          return (
+            <div key={msg.id || idx} style={{ display: 'flex', justifyContent: 'flex-start' }}>
+              <ToolResultCard data={msg.toolResult} />
+            </div>
+          )
+        }
+        // Phase 34（34-02，SC2/UI-04）：用户消息不对称气泡——右对齐列 + r22 品牌淡蓝底 +
+        // 纯文本正文（不经 markdown，dsh 用户气泡为纯文本语义）+ 16/24 正文字号；
+        // 头像/「我」前缀行移除（不对称形态本身区分角色）；时间戳气泡外下方常显（D-07）
+        if (msg.role === 'user') {
+          return (
+            <div key={msg.id || idx} style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+              <div style={{
+                maxWidth: 'min(525px, 82%)',
+                padding: '10px 16px',
+                borderRadius: 22,
+                background: 'var(--nt-specific-bubble)',
+                color: 'var(--nt-alias-label-primary)',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                fontSize: 'var(--nt-font-base-16-font-size)',
+                lineHeight: 'var(--nt-font-base-16-line-height)',
+              }}>
+                {msg.content}
+              </div>
+              {timeText !== '' && (
+                <div style={{ alignSelf: 'flex-end', marginTop: 2, fontSize: 'var(--nt-font-xxs-12-font-size)', lineHeight: 'var(--nt-font-xxs-12-line-height)', color: 'var(--nt-alias-label-tertiary)', fontVariantNumeric: 'tabular-nums' }}>
+                  {timeText}
+                </div>
+              )}
+            </div>
+          )
+        }
+        // Phase 34（34-02，SC2/UI-04）：助手回复全宽裸 markdown（无边框/无底色/无圆角容器，
+        // 33-02 的 border-l2 卡壳与灰底移除）；附属块自上而下 = 分档 Tag → hardStop 黄条 →
+        // references 参考来源 → agentMeta 徽章行（今日 DOM 相对顺序在正文之后延续，交互零改）；
+        // 时间戳附属块之后末尾常显（D-07）
+        return (
+          <div key={msg.id || idx}>
+            <AssistantMarkdown content={msg.content} />
+            {/* D-12 分档标签：Popover 列本档预取清单（payload tier 字段驱动，
+                TIER_LABELS/TIER_PREFETCH_LIST 逻辑与文案零改；自原头像行迁至附属块区首位） */}
+            {msg.agentMeta?.tier && (
+              <div style={{ marginTop: 8 }}>
                 <Popover
                   title={`${TIER_LABELS[msg.agentMeta.tier]}档预取数据源`}
                   content={
@@ -250,51 +265,66 @@ export default function ChatMessageList({ messages, loading, agentRunning, onSto
                     </div>
                   }
                 >
-                  <Tag style={{ marginLeft: 'auto', fontSize: 'var(--nt-font-xxs-12-font-size)', cursor: 'pointer', marginRight: 0 }}>
+                  <Tag style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', cursor: 'pointer', marginRight: 0 }}>
                     {TIER_LABELS[msg.agentMeta.tier]}
                   </Tag>
                 </Popover>
-              )}
-            </div>
-            {/* D-13/D-06 硬顶诚实收尾：用户停止系统级黄底提示条（代码层 hardStop 标志驱动） */}
-            {msg.role === 'assistant' && msg.agentMeta?.hardStop === 'user_cancel' && (
-              <div
-                style={{
-                  background: 'var(--nt-alias-state-warn-tertiary)',
-                  border: '1px solid var(--nt-alias-state-warn-secondary)',
-                  borderRadius: 4,
-                  padding: '4px 8px',
-                  fontSize: 'var(--nt-font-xxs-12-font-size)',
-                  color: 'var(--nt-alias-state-warn-label)',
-                  marginBottom: 4,
-                }}
-              >
-                任务进行中被手动停止，未生成总结；已执行步骤保留在上方。
               </div>
             )}
-            {msg.content}
-            {msg.role === 'assistant' && msg.references && msg.references.length > 0 && (
+            {/* D-13/D-06 硬顶诚实收尾：用户停止系统级黄底提示条（代码层 hardStop 标志驱动，逐字逐样式保留） */}
+            {msg.agentMeta?.hardStop === 'user_cancel' && (
+              <div style={{ marginTop: 8 }}>
+                <div
+                  style={{
+                    background: 'var(--nt-alias-state-warn-tertiary)',
+                    border: '1px solid var(--nt-alias-state-warn-secondary)',
+                    borderRadius: 4,
+                    padding: '4px 8px',
+                    fontSize: 'var(--nt-font-xxs-12-font-size)',
+                    color: 'var(--nt-alias-state-warn-label)',
+                    marginBottom: 4,
+                  }}
+                >
+                  任务进行中被手动停止，未生成总结；已执行步骤保留在上方。
+                </div>
+              </div>
+            )}
+            {msg.references && msg.references.length > 0 && (
               <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed var(--nt-alias-border-l2)' }}>
                 <div style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', color: 'var(--nt-alias-label-tertiary)', marginBottom: 4 }}>参考来源：</div>
                 {msg.references.map((ref, ri) => renderRef(ref, ri))}
               </div>
             )}
-            {msg.role === 'assistant' && renderAgentMeta(msg, idx)}
-          </div>
-        </div>
-        )
-      ))}
-      {loading && (
-        <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
-          <div style={{ padding: '8px 12px', background: 'var(--nt-alias-bg-base)', borderRadius: 8, border: '1px solid var(--nt-alias-border-l2)' }}>
-            <Spin size="small" /> <span style={{ marginLeft: 8, color: 'var(--nt-alias-label-tertiary)' }}>思考中...</span>
-            {/* Phase 28（28-05，D-06）：agent 任务运行中常驻「停止」——立即中止，无二次确认 */}
-            {agentRunning && onStop && (
-              <Button danger size="small" style={{ marginLeft: 12 }} onClick={onStop}>
-                停止
-              </Button>
+            {renderAgentMeta(msg, idx)}
+            {timeText !== '' && (
+              <div style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', lineHeight: 'var(--nt-font-xxs-12-line-height)', color: 'var(--nt-alias-label-tertiary)', fontVariantNumeric: 'tabular-nums' }}>
+                {timeText}
+              </div>
             )}
           </div>
+        )
+      })}
+      {/* Phase 34（34-02，SC2）：思考中指示改 26px 单行 shimmer 扫字（.nt-turn-status，
+          ai-chat.css §2 契约；字号 14/22 wt500 沿 34-UI-SPEC §三 s-14 strong 档）。
+          Phase 28（28-05，D-06）：agent 任务运行中常驻「停止」——立即中止，无二次确认
+          （逻辑与挂位零改；31-04 根因④归属门控条件在 AIPage 侧，零改） */}
+      {loading && (
+        <div style={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center' }}>
+          <span
+            className="nt-turn-status"
+            style={{
+              fontSize: 'var(--nt-font-s-14-font-size)',
+              lineHeight: 'var(--nt-font-s-14-line-height)',
+              fontWeight: 'var(--nt-font-s-14-strong-font-weight)',
+            }}
+          >
+            思考中…
+          </span>
+          {agentRunning && onStop && (
+            <Button danger size="small" style={{ marginLeft: 12 }} onClick={onStop}>
+              停止
+            </Button>
+          )}
         </div>
       )}
       <div ref={chatEndRef} />
