@@ -18,15 +18,29 @@ interface ChatInputProps {
 
 export default function ChatInput({ value, loading, onChange, onSend, summarizing, onSummarize, canSummarize, pendingDraftCount, onOpenReview, aiReplyElsewhere }: ChatInputProps) {
   return (
-    <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column' }}>
+    <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
       {/* Phase 31 D-02：他会在途回复提示条——回复归属其他会话时告知用户输入为何禁用
-          （disabled={loading} 全局锁机制原样保留，不改造 cancelChatControllers） */}
+          （disabled={loading} 全局锁机制原样保留，不改造 cancelChatControllers）。
+          Phase 34（34-01，SC1）：提示条与输入行同挂 .nt-chat-card 卡层宽 min(780px,100cqi-32px)；
+          视觉采 dsh notice 形态（12/18 + interactive-bg-hover 底 r8，文案逐字保留） */}
       {aiReplyElsewhere && (
-        <div style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', color: 'var(--nt-alias-label-tertiary)', paddingBottom: 4 }}>
+        <div
+          className="nt-chat-card"
+          style={{
+            width: '100%',
+            fontSize: 'var(--nt-font-xxs-12-font-size)',
+            lineHeight: 'var(--nt-font-xxs-12-line-height)',
+            color: 'var(--nt-alias-label-secondary)',
+            background: 'var(--nt-alias-interactive-bg-hover)',
+            borderRadius: 8,
+            padding: '4px 8px',
+          }}
+        >
           AI 正在其他会话回答中，输入已临时锁定
         </div>
       )}
-      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+      {/* Phase 34（34-01，SC1）：输入行卡层——.nt-chat-card 同宽居中（与审批面板互斥渲染位同层） */}
+      <div className="nt-chat-card" style={{ display: 'flex', gap: 8, alignItems: 'flex-end', width: '100%' }}>
         <TextArea
           value={value}
           onChange={(e) => onChange(e.target.value)}

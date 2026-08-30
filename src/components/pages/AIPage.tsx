@@ -74,7 +74,9 @@ export default function AIPage() {
         unreadSessionIds={chat.unreadSessionIds}
         newSessionInFlight={chat.newSessionInFlight}
       />
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: 16, minWidth: 0 }}>
+      {/* Phase 34（34-01，SC1/UI-04）：对话列容器挂 .nt-chat-container——container-type: inline-size
+          容器查询基准 + 三枚宽度契约变量（ai-chat.css），正文列/输入卡两公式以 100cqi 消费 */}
+      <div className="nt-chat-container" style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: 16, minWidth: 0 }}>
         {/* Header（编排层归属，issue 3）：设备选择经 hook 消费。
             Phase 23（DSL-01/D-01/D-02/D-09）：Select 替换为 DeviceSelector
             （全设备平铺 + 搜索过滤 + 三档能力 Tag 并列 + >10 台软警告）。 */}

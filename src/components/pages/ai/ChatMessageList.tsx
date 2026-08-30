@@ -187,22 +187,29 @@ export default function ChatMessageList({ messages, loading, agentRunning, onSto
     <div className="nt-scroll-stable" style={{
       flex: 1,
       overflowY: 'auto',
-      border: '1px solid var(--nt-alias-border-l2)',
-      borderRadius: 8,
-      padding: 16,
-      background: 'var(--nt-alias-markdown-code-block)',
+      padding: '16px 0',
+      background: 'var(--nt-alias-bg-base)',
+      display: 'flex',
+      flexDirection: 'column',
     }}>
+      {/* Phase 34（34-01，SC1）：空态真居中——flex:1 占满滚动区余高（文案逐字保留，34-UI-SPEC §九） */}
       {messages.length === 0 && (
-        <div style={{ textAlign: 'center', color: 'var(--nt-alias-label-caption)', paddingTop: 60 }}>
-          <RobotOutlined style={{ fontSize: 40, marginBottom: 8 }} />
-          <div>向 AI 助手提问，选择设备后可查询设备信息</div>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 240 }}>
+          <div style={{ textAlign: 'center', color: 'var(--nt-alias-label-caption)' }}>
+            <RobotOutlined style={{ fontSize: 40, marginBottom: 8 }} />
+            <div>向 AI 助手提问，选择设备后可查询设备信息</div>
+          </div>
         </div>
       )}
+      {/* Phase 34（34-01，SC1）：正文列包装——min(748px,100cqi-64px) 居中（ai-chat.css），
+          纵向 rhythm 16px 由列 gap 接管（消息包装 marginBottom 移除）；水平居中交给列公式，
+          滚动区自身不加侧 padding */}
+      <div className="nt-chat-column">
       {messages.map((msg, idx) => (
         // Phase 22（22-05，D-03）：tool_result 消息渲染结构化卡片——次级块视觉，
         // 不套 AI 气泡样式（卡片与 AI 解读气泡分离，T-22-18）
         msg.toolResult ? (
-          <div key={msg.id || idx} style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 12 }}>
+          <div key={msg.id || idx} style={{ display: 'flex', justifyContent: 'flex-start' }}>
             <ToolResultCard data={msg.toolResult} />
           </div>
         ) : (
@@ -211,7 +218,6 @@ export default function ChatMessageList({ messages, loading, agentRunning, onSto
           style={{
             display: 'flex',
             justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start',
-            marginBottom: 12,
           }}
         >
           {/* Phase 33（33-02，D-05）：气泡三色迁 token。用户侧浅蓝气泡（--nt-specific-bubble）
@@ -279,7 +285,7 @@ export default function ChatMessageList({ messages, loading, agentRunning, onSto
         )
       ))}
       {loading && (
-        <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 12 }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
           <div style={{ padding: '8px 12px', background: 'var(--nt-alias-bg-base)', borderRadius: 8, border: '1px solid var(--nt-alias-border-l2)' }}>
             <Spin size="small" /> <span style={{ marginLeft: 8, color: 'var(--nt-alias-label-tertiary)' }}>思考中...</span>
             {/* Phase 28（28-05，D-06）：agent 任务运行中常驻「停止」——立即中止，无二次确认 */}
@@ -292,6 +298,7 @@ export default function ChatMessageList({ messages, loading, agentRunning, onSto
         </div>
       )}
       <div ref={chatEndRef} />
+      </div>
       {/* Phase 11 RETRIEVE-03 D-11-12：复用 Phase 10 ExperienceDetailModal + Phase 9 SessionMessagesModal */}
       <ExperienceDetailModal open={detailOpen} experience={detailExp} onClose={() => setDetailOpen(false)} />
       <SessionMessagesModal open={sessionModalOpen} sessionId={sessionModalId} onClose={() => setSessionModalOpen(false)} />
