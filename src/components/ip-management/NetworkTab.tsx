@@ -151,7 +151,7 @@ export default function NetworkTab({ api }: NetworkTabProps) {
       <Row gutter={16}>
         <Col span={10}>
           <Table dataSource={segments} columns={segColumns} rowKey="id" size="small"
-            loading={loading} pagination={false}
+            loading={loading} pagination={false} scroll={{ x: 'max-content' }}
             onRow={(record) => ({ onClick: () => selectSegment(record.id), style: { cursor: 'pointer', background: selectedId === record.id ? 'var(--nt-alias-state-business-tertiary)' : undefined } })}
           />
         </Col>
@@ -173,7 +173,7 @@ export default function NetworkTab({ api }: NetworkTabProps) {
               <TruncatedAlert truncated={ipEnvelope.truncated} shown={ipDetails.length} total={ipEnvelope.total}
                 guidance="当前网段 IP 超出单次加载上限，可点击右上方「导出」获取该网段完整 IP 清单（CSV）" />
               <Table dataSource={ipDetails} columns={ipColumns} rowKey="ip" size="small"
-                pagination={{ pageSize: 20, showTotal: rangeShowTotal }} />
+                pagination={{ pageSize: 20, showTotal: rangeShowTotal }} scroll={{ x: 'max-content' }} />
             </>
           ) : (
             <Card><span style={{ color: 'var(--nt-alias-label-tertiary)' }}>请选择一个网段查看 IP 详情</span></Card>
