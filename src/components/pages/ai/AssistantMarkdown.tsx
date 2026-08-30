@@ -128,6 +128,12 @@ const MD_COMPONENTS: Components = {
   p({ children }) {
     return <p style={PARAGRAPH_STYLE}>{children}</p>
   },
+  img({ alt }) {
+    // Rule 2 加固（34-02）：markdown 图片不在验收渲染子集（34-UI-SPEC §6.1），且默认
+    // 渲染 <img> 会对任意 http/https 自动发起被动网络请求（非点击门控，绕开威胁模型的
+    // openExternalSafe 外开通道）——降级为 alt 纯文本呈现，零请求面
+    return <span style={{ color: 'var(--nt-alias-label-secondary)' }}>[图片{alt ? `：${alt}` : ''}]</span>
+  },
   li({ children }) {
     return <li style={PARAGRAPH_STYLE}>{children}</li>
   },
