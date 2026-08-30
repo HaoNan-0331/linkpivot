@@ -15,22 +15,22 @@ export default function EnvKeyMetaList({ envKeys, envMeta }: {
       {envKeys.map((k) => {
         const m = envMeta?.[k]
         if (m == null) {
-          return <code key={k} style={{ fontFamily: 'monospace', fontSize: 13 }}>{k}</code>
+          return <code key={k} style={{ fontFamily: 'var(--nt-font-family-code)', fontSize: 'var(--nt-font-xs-13-font-size)' }}>{k}</code>
         }
         return (
           <div
             key={k}
-            style={{ fontSize: 13, display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}
+            style={{ fontSize: 'var(--nt-font-xs-13-font-size)', display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}
           >
-            <code style={{ fontFamily: 'monospace', fontSize: 13 }}>{k}</code>
+            <code style={{ fontFamily: 'var(--nt-font-family-code)', fontSize: 'var(--nt-font-xs-13-font-size)' }}>{k}</code>
             <span style={{ fontWeight: 600 }}>{m.label}</span>
             {m.required === true && <Tag color="red" style={{ marginInlineEnd: 0 }}>必填</Tag>}
             {m.default != null && <Tag style={{ marginInlineEnd: 0 }}>默认 {m.default}</Tag>}
             {m.description != null && (
-              <span style={{ fontSize: 12, color: '#8c8c8c' }}>{m.description}</span>
+              <span style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', color: 'var(--nt-alias-label-secondary)' }}>{m.description}</span>
             )}
             {m.example != null && (
-              <span style={{ fontSize: 12, color: '#8c8c8c' }}>示例：{m.example}</span>
+              <span style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', color: 'var(--nt-alias-label-secondary)' }}>示例：{m.example}</span>
             )}
           </div>
         )

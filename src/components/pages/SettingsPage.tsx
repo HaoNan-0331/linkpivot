@@ -171,7 +171,7 @@ export default function SettingsPage() {
         </Form>
       </Card>
       <Card title="多模态模型配置" size="small" style={{ marginBottom: 16 }}>
-        <p style={{ color: '#999', fontSize: 12, marginTop: 0 }}>用于知识库图片识别。未配置时，图片功能将降级（图片仅存储不生成描述）。</p>
+        <p style={{ color: 'var(--nt-alias-label-tertiary)', fontSize: 'var(--nt-font-xxs-12-font-size)', marginTop: 0 }}>用于知识库图片识别。未配置时，图片功能将降级（图片仅存储不生成描述）。</p>
         <Form form={form} layout="vertical">
           <Form.Item label="Base URL" name="visionBaseUrl">
             <Input placeholder="留空则使用上方 AI 模型的 Base URL" />
@@ -209,13 +209,13 @@ export default function SettingsPage() {
           <Col><InputNumber min={5} max={1440} value={schedulerConfig.intervalMinutes || 60} onChange={handleIntervalChange} style={{ width: 100 }} /></Col>
           <Col><span>ARP 保留天数:</span></Col>
           <Col><InputNumber min={0} max={3650} value={retentionDraft ?? schedulerConfig.retentionDays ?? 90} onChange={setRetentionDraft} onBlur={commitRetention} onPressEnter={commitRetention} style={{ width: 100 }} /></Col>
-          <Col><span style={{ color: '#999' }}>0=永不删除</span></Col>
+          <Col><span style={{ color: 'var(--nt-alias-label-tertiary)' }}>0=永不删除</span></Col>
           <Col><Button icon={<PlayCircleOutlined />} onClick={handleRunNow} loading={schedulerLoading}>立即运行</Button></Col>
         </Row>
-        <div style={{ marginTop: 12, color: '#666' }}>
+        <div style={{ marginTop: 12, color: 'var(--nt-alias-label-secondary)' }}>
           {schedulerConfig.lastRun && <span>上次运行: {schedulerConfig.lastRun} | </span>}
           {schedulerConfig.nextRun && <span>下次运行: {schedulerConfig.nextRun}</span>}
-          {schedulerStatus.isTaskRunning && <span style={{ color: '#1890ff', marginLeft: 8 }}>正在运行中...</span>}
+          {schedulerStatus.isTaskRunning && <span style={{ color: 'var(--nt-alias-state-business-primary)', marginLeft: 8 }}>正在运行中...</span>}
         </div>
       </Card>
       <Card title="数据库管理" size="small" style={{ marginBottom: 16 }}>

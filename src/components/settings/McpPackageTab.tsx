@@ -43,7 +43,7 @@ function genTestId(): string {
 /** 指纹 monospace 展示块 */
 function FingerprintBlock({ sha }: { sha: string }) {
   return (
-    <pre style={{ fontFamily: 'monospace', fontSize: 13, background: '#fafafa', padding: 8, borderRadius: 4, overflow: 'auto', margin: '4px 0 0', wordBreak: 'break-all' }}>
+    <pre style={{ fontFamily: 'var(--nt-font-family-code)', fontSize: 'var(--nt-font-xs-13-font-size)', background: 'var(--nt-alias-markdown-code-block)', padding: 8, borderRadius: 4, overflow: 'auto', margin: '4px 0 0', wordBreak: 'break-all' }}>
       {sha}
     </pre>
   )
@@ -298,12 +298,12 @@ export default function McpPackageTab({ onPackagesChanged }: { onPackagesChanged
           return (
             <div key={id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
               {ok
-                ? <CheckCircleOutlined style={{ color: '#389e0d', fontSize: 16, lineHeight: '22px' }} />
-                : <CloseCircleOutlined style={{ color: '#ff4d4f', fontSize: 16, lineHeight: '22px' }} />}
+                ? <CheckCircleOutlined style={{ color: 'var(--nt-alias-state-success-primary)', fontSize: 16, lineHeight: '22px' }} />
+                : <CloseCircleOutlined style={{ color: 'var(--nt-alias-state-error-primary)', fontSize: 16, lineHeight: '22px' }} />}
               <div>
                 <Text strong>{VECTOR_LABELS[id]}</Text>
                 {!ok && v?.reason && (
-                  <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 2 }}>
+                  <div style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', color: 'var(--nt-alias-label-secondary)', marginTop: 2 }}>
                     {VECTOR_LABELS[id]}未通过：{v.reason}。可联系包作者修正后重新打包。
                   </div>
                 )}
@@ -316,7 +316,7 @@ export default function McpPackageTab({ onPackagesChanged }: { onPackagesChanged
   }
 
   const toolColumns: ColumnsType<{ name: string; description: string; readOnlyHint?: boolean }> = [
-    { title: '名称', dataIndex: 'name', width: 220, render: (v: string) => <code style={{ fontFamily: 'monospace', fontSize: 13 }}>{v}</code> },
+    { title: '名称', dataIndex: 'name', width: 220, render: (v: string) => <code style={{ fontFamily: 'var(--nt-font-family-code)', fontSize: 'var(--nt-font-xs-13-font-size)' }}>{v}</code> },
     { title: '描述', dataIndex: 'description', ellipsis: true },
     {
       title: '', width: 80,
@@ -337,7 +337,7 @@ export default function McpPackageTab({ onPackagesChanged }: { onPackagesChanged
         </Space>
       ),
     },
-    { title: '版本', dataIndex: 'version', width: 90, render: (v: string | null) => <code style={{ fontFamily: 'monospace', fontSize: 13 }}>{v ?? '—'}</code> },
+    { title: '版本', dataIndex: 'version', width: 90, render: (v: string | null) => <code style={{ fontFamily: 'var(--nt-font-family-code)', fontSize: 'var(--nt-font-xs-13-font-size)' }}>{v ?? '—'}</code> },
     { title: '运行时', dataIndex: 'runtime', width: 90, render: (v: 'node' | 'python') => <Tag color={v === 'node' ? 'blue' : 'purple'}>{v}</Tag> },
     { title: '工具数', dataIndex: 'toolCount', width: 70 },
     {
@@ -409,7 +409,7 @@ export default function McpPackageTab({ onPackagesChanged }: { onPackagesChanged
             description={
               <div>
                 <div style={{ fontWeight: 600 }}>还没有导入 MCP 包</div>
-                <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 4 }}>
+                <div style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', color: 'var(--nt-alias-label-secondary)', marginTop: 4 }}>
                   MCP 包（.mcpb）是打包好的设备操控工具集，一个产品一个包。
                   <Button type="link" size="small" style={{ padding: 0 }} onClick={openWizard}>导入包</Button>
                   校验通过后即可在新建配置时选用。
@@ -507,7 +507,7 @@ export default function McpPackageTab({ onPackagesChanged }: { onPackagesChanged
                 <Text strong>将启动</Text>
                 <div style={{ marginTop: 4, display: 'flex', gap: 8, alignItems: 'center' }}>
                   <Tag color={detail.runtime === 'node' ? 'blue' : 'purple'}>{detail.runtime}</Tag>
-                  <code style={{ fontFamily: 'monospace', fontSize: 13 }}>{detail.runtime === 'node' ? 'node' : 'python/python.exe'} {detail.entry}</code>
+                  <code style={{ fontFamily: 'var(--nt-font-family-code)', fontSize: 'var(--nt-font-xs-13-font-size)' }}>{detail.runtime === 'node' ? 'node' : 'python/python.exe'} {detail.entry}</code>
                 </div>
               </div>
               <div>
@@ -614,16 +614,16 @@ export default function McpPackageTab({ onPackagesChanged }: { onPackagesChanged
             </div>
             <div>
               <Text strong>env 键清单</Text>
-              <ul style={{ margin: '8px 0 0', paddingLeft: 20, fontSize: 13 }}>
-                {outcome.diff.env.kept.map((k) => <li key={`k-${k}`}><code style={{ fontFamily: 'monospace', fontSize: 13 }}>{k}</code>{detail?.envMeta?.[k] ? `（${detail.envMeta[k].label}）` : ''} — 保留</li>)}
-                {outcome.diff.env.added.map((k) => <li key={`a-${k}`}><code style={{ fontFamily: 'monospace', fontSize: 13 }}>{k}</code>{detail?.envMeta?.[k] ? `（${detail.envMeta[k].label}）` : ''} — 新增（绑定设备时补填值）</li>)}
-                {outcome.diff.env.removed.map((k) => <li key={`r-${k}`}><code style={{ fontFamily: 'monospace', fontSize: 13 }}>{k}</code> — 删除</li>)}
+              <ul style={{ margin: '8px 0 0', paddingLeft: 20, fontSize: 'var(--nt-font-xs-13-font-size)' }}>
+                {outcome.diff.env.kept.map((k) => <li key={`k-${k}`}><code style={{ fontFamily: 'var(--nt-font-family-code)', fontSize: 'var(--nt-font-xs-13-font-size)' }}>{k}</code>{detail?.envMeta?.[k] ? `（${detail.envMeta[k].label}）` : ''} — 保留</li>)}
+                {outcome.diff.env.added.map((k) => <li key={`a-${k}`}><code style={{ fontFamily: 'var(--nt-font-family-code)', fontSize: 'var(--nt-font-xs-13-font-size)' }}>{k}</code>{detail?.envMeta?.[k] ? `（${detail.envMeta[k].label}）` : ''} — 新增（绑定设备时补填值）</li>)}
+                {outcome.diff.env.removed.map((k) => <li key={`r-${k}`}><code style={{ fontFamily: 'var(--nt-font-family-code)', fontSize: 'var(--nt-font-xs-13-font-size)' }}>{k}</code> — 删除</li>)}
               </ul>
             </div>
             {(outcome.diff.toolsAdded.length > 0 || outcome.diff.toolsRemoved.length > 0) && (
               <div>
                 <Text strong>工具变化</Text>
-                <div style={{ marginTop: 4, fontSize: 13 }}>
+                <div style={{ marginTop: 4, fontSize: 'var(--nt-font-xs-13-font-size)' }}>
                   {outcome.diff.toolsAdded.length > 0 && <div>新增：{outcome.diff.toolsAdded.join('、')}</div>}
                   {outcome.diff.toolsRemoved.length > 0 && <div>移除：{outcome.diff.toolsRemoved.join('、')}</div>}
                 </div>
@@ -653,8 +653,8 @@ export default function McpPackageTab({ onPackagesChanged }: { onPackagesChanged
                 pagination={false} scroll={{ y: 320 }}
                 dataSource={fpDetail.fingerprintFiles}
                 columns={[
-                  { title: '路径', dataIndex: 'path', ellipsis: true, render: (v: string) => <code style={{ fontFamily: 'monospace', fontSize: 13 }}>{v}</code> },
-                  { title: 'SHA-256', dataIndex: 'sha256', ellipsis: true, render: (v: string) => <code style={{ fontFamily: 'monospace', fontSize: 13 }}>{v.slice(0, 16)}…</code> },
+                  { title: '路径', dataIndex: 'path', ellipsis: true, render: (v: string) => <code style={{ fontFamily: 'var(--nt-font-family-code)', fontSize: 'var(--nt-font-xs-13-font-size)' }}>{v}</code> },
+                  { title: 'SHA-256', dataIndex: 'sha256', ellipsis: true, render: (v: string) => <code style={{ fontFamily: 'var(--nt-font-family-code)', fontSize: 'var(--nt-font-xs-13-font-size)' }}>{v.slice(0, 16)}…</code> },
                 ]}
               />
             </div>
@@ -667,7 +667,7 @@ export default function McpPackageTab({ onPackagesChanged }: { onPackagesChanged
         open={deleteTarget != null}
         title={
           <Space>
-            <WarningOutlined style={{ color: '#faad14' }} />
+            <WarningOutlined style={{ color: 'var(--nt-alias-state-warn-primary)' }} />
             删除包「{deleteTarget?.name ?? ''}」
           </Space>
         }
@@ -685,9 +685,9 @@ export default function McpPackageTab({ onPackagesChanged }: { onPackagesChanged
                 ? deleteImpact.configs.map((c) => <li key={c.id}>删除配置「{c.name}」（含 {c.deviceCount} 台设备绑定）</li>)
                 : <li>该包没有关联配置，无级联影响</li>}
               {deleteImpact.configs.length > 0 && <li>解绑设备共 {deleteImpact.totalDevices} 台</li>}
-              <li>删除包文件目录：<code style={{ fontFamily: 'monospace', fontSize: 13 }}>{deleteImpact.dirPath}</code></li>
+              <li>删除包文件目录：<code style={{ fontFamily: 'var(--nt-font-family-code)', fontSize: 'var(--nt-font-xs-13-font-size)' }}>{deleteImpact.dirPath}</code></li>
             </ul>
-            <div style={{ color: '#595959' }}>此操作不可撤销。请在下方输入包名原文「{deleteTarget?.name}」确认。</div>
+            <div style={{ color: 'var(--nt-alias-label-secondary)' }}>此操作不可撤销。请在下方输入包名原文「{deleteTarget?.name}」确认。</div>
             <Input
               value={deleteInput}
               onChange={(e) => setDeleteInput(e.target.value)}
