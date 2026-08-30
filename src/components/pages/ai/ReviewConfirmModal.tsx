@@ -197,7 +197,7 @@ export default function ReviewConfirmModal({
             <div
               style={{
                 width: 360,
-                borderRight: '1px solid #eee',
+                borderRight: '1px solid var(--nt-alias-border-l2)',
                 paddingRight: 16,
                 overflowY: 'auto',
                 maxHeight: 480,
@@ -215,8 +215,8 @@ export default function ReviewConfirmModal({
                       padding: 8,
                       marginBottom: 4,
                       cursor: 'pointer',
-                      background: selectedExpId === d.id ? '#e6f4ff' : '#fff',
-                      border: blocking ? '1px solid #ff4d4f' : '1px solid #d9d9d9',
+                      background: selectedExpId === d.id ? 'var(--nt-alias-state-business-tertiary)' : 'var(--nt-alias-bg-base)',
+                      border: blocking ? '1px solid var(--nt-alias-state-error-primary)' : '1px solid var(--nt-alias-border-l4)',
                       borderRadius: 4,
                     }}
                   >
@@ -243,7 +243,7 @@ export default function ReviewConfirmModal({
                     </div>
                     {d.duplicate_of_exp_id && dec?.action === 'adopt' && (
                       <Checkbox
-                        style={{ marginTop: 4, fontSize: 12 }}
+                        style={{ marginTop: 4, fontSize: 'var(--nt-font-xxs-12-font-size)' }}
                         checked={dec.supersedeOld}
                         onChange={(e) => updateDecision(d.id, { supersedeOld: e.target.checked })}
                       >

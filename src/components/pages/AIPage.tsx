@@ -55,8 +55,8 @@ export default function AIPage() {
   if (!hasConfig) {
     return (
       <div style={{ textAlign: 'center', paddingTop: 100 }}>
-        <ExclamationCircleOutlined style={{ fontSize: 48, color: '#faad14', marginBottom: 16 }} />
-        <div style={{ fontSize: 16, color: '#666' }}>
+        <ExclamationCircleOutlined style={{ fontSize: 48, color: 'var(--nt-alias-state-warn-primary)', marginBottom: 16 }} />
+        <div style={{ fontSize: 'var(--nt-font-base-16-font-size)', color: 'var(--nt-alias-label-secondary)' }}>
           请先在「系统设置」中配置 AI 服务参数
         </div>
       </div>

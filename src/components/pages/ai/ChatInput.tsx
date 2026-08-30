@@ -22,7 +22,7 @@ export default function ChatInput({ value, loading, onChange, onSend, summarizin
       {/* Phase 31 D-02：他会在途回复提示条——回复归属其他会话时告知用户输入为何禁用
           （disabled={loading} 全局锁机制原样保留，不改造 cancelChatControllers） */}
       {aiReplyElsewhere && (
-        <div style={{ fontSize: 12, color: '#999', paddingBottom: 4 }}>
+        <div style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', color: 'var(--nt-alias-label-tertiary)', paddingBottom: 4 }}>
           AI 正在其他会话回答中，输入已临时锁定
         </div>
       )}
@@ -50,7 +50,7 @@ export default function ChatInput({ value, loading, onChange, onSend, summarizin
           发送
         </Button>
         {onSummarize && (
-          <Badge count={pendingDraftCount ?? 0} offset={[-4, 4]} color="#faad14">
+          <Badge count={pendingDraftCount ?? 0} offset={[-4, 4]} color="var(--nt-alias-state-warn-primary)">
             <Button
               icon={<ThunderboltOutlined />}
               onClick={onSummarize}

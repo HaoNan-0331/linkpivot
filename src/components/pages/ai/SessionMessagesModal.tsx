@@ -58,8 +58,8 @@ export default function SessionMessagesModal({ open, sessionId, onClose }: Sessi
                   whiteSpace: 'pre-wrap',
                   maxHeight: 60,
                   overflowY: 'auto',
-                  fontSize: 13,
-                  background: '#f5f5f5',
+                  fontSize: 'var(--nt-font-xs-13-font-size)',
+                  background: 'var(--nt-alias-bg-module-platform)',
                   padding: 8,
                   borderRadius: 4,
                 }}
