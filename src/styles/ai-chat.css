@@ -1,0 +1,234 @@
+/* Phase 34 / UI-04/05/06（34-UI-SPEC §五 宽度契约 / §七 动效 / §八 载体裁决）：
+   AI 对话区专项全局样式——本 phase 唯一新增样式文件，后续 plan（34-02/03/04）纯消费。
+   源出处（dsh 直读留痕，2026-08-30 全文读取，见 34-UI-SPEC 头部）：
+   - ConversationRoot.module.css（宽度契约变量）/ chat/ChatView.module.css（列宽/容器查询/扫字）
+   - chat/MessageItem.tsx + .module.css（用户气泡）/ chat/AssistantMarkdown.module.css（裸 markdown）
+   - chat/MessageIconActions.module.css + use-calendar-day.ts（时间机制）
+   - skeleton/InputBar.module.css（输入卡）/ skeleton/ApprovalPanel.tsx + .module.css（审批面板）
+   - ui-tool/.../ToolRow.tsx + .module.css（单行工具卡 + 扫光 + IN/OUT 卡滚动条内缩）
+   - ui-primitives/DisclosureRow.tsx + .module.css（展开交互）
+   - ui-primitives/StateDot.module.css（状态点）
+   视觉数值以 34-UI-SPEC 为权威，禁回读 dsh 改值；本文件只承载无法内联的规则
+   （容器查询/keyframes/伪元素/media query），组件主体仍走内联 style 消费 var(--nt-*)。 */
+
+/* ⚠ load-bearing 红线 1（code review 视违反为红灯）：
+   --nt-chat-* 组件作用域宽度变量不入 tokens.css 三层体系——宽度是布局变量非设计
+   token（dsh 同款裁决，34-UI-SPEC §5.1）。tokens.css 只收设计语义色/字/影；
+   布局几何常量随 .nt-chat-container 声明就近落位。 */
+
+/* ⚠ load-bearing 红线 2：本文件禁 hex / rgb 函数色值字面量——只准 var(--nt-*) 引用与
+   结构值（尺寸/时长/opacity/百分比），维持 audit:tokens 四查全零基线
+   （34-UI-SPEC §八：审计命令 --include 不含 .css，但零字面量仍为裁决要求）。 */
+
+/* ===== 1. 宽度契约（SC1 / UI-04，34-UI-SPEC §5.1） ===== */
+/* 对话列容器（AIPage Header/消息区/输入挂点的共同 flex 父级）：
+   container-type: inline-size 使 100cqi 以该盒宽为基准（非视口）——
+   正文列与输入卡是兄弟子树同享一基准；Phase 35 三栏拖拽改中间栏宽时 cqi 天然跟随。 */
+.nt-chat-container {
+  container-type: inline-size;
+  --nt-chat-content-width: 748px;
+  --nt-chat-composer-extra: 32px;
+  --nt-chat-side-clearance: 16px;
+}
+
+/* 消息滚动区内正文列（气泡 / markdown / 工具卡容器）：
+   可用宽不足时按 min(748px, 100cqi - 64px) 连续收缩，水平居中；
+   纵向 rhythm 16px 由本列 gap 承担（消息包装不再自带 marginBottom）。 */
+.nt-chat-column {
+  width: 100%;
+  max-width: min(var(--nt-chat-content-width), calc(100cqi - 64px));
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* 卡片层（ChatInput 输入卡 / UI-06 审批面板卡，互斥渲染同一挂点）。
+   不变量（SC1 验收核心）：任意可用宽度下 卡宽 − 列宽 ≡ 32px
+   （宽态 780−748；窄态 (W−32)−(W−64)）。 */
+.nt-chat-card {
+  width: 100%;
+  max-width: min(calc(var(--nt-chat-content-width) + var(--nt-chat-composer-extra)), calc(100cqi - 32px));
+  margin: 0 auto;
+}
+
+/* ===== 2. 思考中扫字（34-UI-SPEC §七，dsh turnStatus 同款） ===== */
+.nt-turn-status {
+  height: 26px;
+  display: flex;
+  align-items: center;
+  background: linear-gradient(90deg, var(--nt-static-deepseek-500), var(--nt-static-deepseek-200), var(--nt-static-deepseek-500));
+  background-size: 250% 100%;
+  background-position: 100% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: nt-turn-status-shimmer 1.8s linear infinite;
+}
+
+@keyframes nt-turn-status-shimmer {
+  to {
+    background-position: 0 0;
+  }
+}
+
+/* ===== 3. 工具卡扫光（SC3 / UI-05，34-UI-SPEC §七——仅 running/retrying 挂 data-sweep） ===== */
+.nt-tool-row {
+  height: 24px;
+  position: relative;
+  overflow: hidden;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.nt-tool-row[data-sweep='true']::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 300px;
+  left: -300px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--nt-alias-bg-base) 60%, transparent), transparent);
+  animation: nt-tool-row-sweep 2.6s ease-out infinite;
+  pointer-events: none;
+}
+
+@keyframes nt-tool-row-sweep {
+  0% {
+    left: -300px;
+  }
+  90%, 100% {
+    left: 100%;
+  }
+}
+
+/* ===== 4. StateDot 终态状态点（34-UI-SPEC §四——16px 槽内 ::before 光环 + ::after 内核） ===== */
+.nt-state-dot {
+  position: relative;
+  width: 16px;
+  height: 16px;
+}
+
+/* 同色光环：背景色经 data-state 驱动的组件作用域变量，opacity 0.10 铺满 */
+.nt-state-dot::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--nt-state-dot-color, transparent);
+  opacity: 0.10;
+}
+
+/* 内核实心（inset 20%） */
+.nt-state-dot::after {
+  content: '';
+  position: absolute;
+  inset: 20%;
+  border-radius: 50%;
+  background: var(--nt-state-dot-color, transparent);
+}
+
+.nt-state-dot[data-state='success'] {
+  --nt-state-dot-color: var(--nt-alias-state-success-primary);
+}
+
+.nt-state-dot[data-state='failed'] {
+  --nt-state-dot-color: var(--nt-alias-state-error-primary);
+}
+
+.nt-state-dot[data-state='warn'] {
+  --nt-state-dot-color: var(--nt-alias-state-warn-primary);
+}
+
+/* ===== 5. hover 淡切（100ms ease——dot 淡出 / 右箭头 .nt-tool-preview 淡入） ===== */
+/* 箭头 DOM 由 34-03 Task 1 槽①渲染（16px relative 包装内与 dot 兄弟并列、absolute
+   inset 0）——本 CSS 只管 opacity 两态，禁在 CSS 侧另行定位。 */
+.nt-state-dot,
+.nt-tool-preview {
+  transition: opacity var(--nt-transition-duration-fast) ease;
+}
+
+.nt-tool-preview {
+  opacity: 0;
+}
+
+.nt-tool-row:hover .nt-state-dot {
+  opacity: 0;
+}
+
+.nt-tool-row:hover .nt-tool-preview {
+  opacity: 1;
+}
+
+/* ===== 6. sr-only 工具类（扫光 aria-hidden 配套的屏幕阅读器状态文本） ===== */
+.nt-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ===== 7. IO 卡滚动条内缩（34-UI-SPEC §6.2——dsh ioSection 同款圆角内浮） ===== */
+/* thumb 2px 透明边 + background-clip 内缩出圆角内浮观感；track 上下 margin 6px
+   使滚动条两端不贴边。⚠ 沿 scrollbar.css 红线 1：禁在此声明非 auto 的
+   scrollbar-width / scrollbar-color，否则 Chromium 丢弃全部 webkit 规则。 */
+.nt-io-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.nt-io-scroll::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 4px;
+  background-clip: padding-box;
+  background-color: var(--nt-scrollbar-thumb);
+}
+
+.nt-io-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: var(--nt-scrollbar-thumb-hover);
+}
+
+.nt-io-scroll::-webkit-scrollbar-track {
+  margin: 6px 0;
+  background: transparent;
+}
+
+/* ===== 8. 审批滚动区（34-UI-SPEC §6.3）——重绑 l2 滚动条对 ===== */
+/* 照 scrollbar.css 层级重绑机制：elevated surface 容器上重绑 thumb 变量为 l2 对。 */
+.nt-approve-scroll {
+  --nt-scrollbar-thumb: var(--nt-alias-scrollbar-bg-l2);
+  --nt-scrollbar-thumb-hover: var(--nt-alias-scrollbar-hover-l2);
+}
+
+/* ===== 9. 审批拒绝按钮 hover 变红（SC4——静止态无红，hover 才红） ===== */
+.nt-approve-reject {
+  transition:
+    background-color var(--nt-transition-duration-fast) ease,
+    color var(--nt-transition-duration-fast) ease,
+    border-color var(--nt-transition-duration-fast) ease;
+}
+
+.nt-approve-reject:hover:not(:disabled) {
+  background: var(--nt-alias-interactive-bg-hover-danger);
+  color: var(--nt-alias-state-error-primary);
+  border-color: transparent;
+}
+
+/* ===== 10. 动效降级（prefers-reduced-motion: reduce） ===== */
+@media (prefers-reduced-motion: reduce) {
+  .nt-tool-row[data-sweep='true']::after {
+    animation: none;
+  }
+
+  .nt-turn-status {
+    animation: none;
+    background: none;
+    color: var(--nt-alias-label-secondary);
+  }
+}

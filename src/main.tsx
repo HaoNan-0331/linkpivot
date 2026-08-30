@@ -9,6 +9,7 @@ import './styles/global.css'
 import './styles/tokens.css'
 import './styles/fonts.css'
 import './styles/scrollbar.css'
+import './styles/ai-chat.css'
 import 'reactflow/dist/style.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
