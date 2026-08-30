@@ -159,10 +159,10 @@ export default function NetworkTab({ api }: NetworkTabProps) {
           {ipUsage ? (
             <>
               <Row gutter={16} style={{ marginBottom: 16 }}>
-                <Col span={6}><Statistic title="总IP" value={ipUsage.total} /></Col>
-                <Col span={6}><Statistic title="已使用" value={ipUsage.used} valueStyle={{ color: 'var(--nt-alias-state-success-primary)' }} /></Col>
-                <Col span={6}><Statistic title="可用" value={ipUsage.available} valueStyle={{ color: 'var(--nt-alias-state-business-primary)' }} /></Col>
-                <Col span={6}><Statistic title="使用率" value={ipUsage.usagePercent} suffix="%" /></Col>
+                <Col span={6}><div style={{ background: 'var(--nt-alias-bg-module-platform)', padding: '12px 16px', borderRadius: 8 }}><Statistic title="总IP" value={ipUsage.total} /></div></Col>
+                <Col span={6}><div style={{ background: 'var(--nt-alias-bg-module-platform)', padding: '12px 16px', borderRadius: 8 }}><Statistic title="已使用" value={ipUsage.used} valueStyle={{ color: 'var(--nt-alias-state-success-primary)' }} /></div></Col>
+                <Col span={6}><div style={{ background: 'var(--nt-alias-bg-module-platform)', padding: '12px 16px', borderRadius: 8 }}><Statistic title="可用" value={ipUsage.available} valueStyle={{ color: 'var(--nt-alias-state-business-primary)' }} /></div></Col>
+                <Col span={6}><div style={{ background: 'var(--nt-alias-bg-module-platform)', padding: '12px 16px', borderRadius: 8 }}><Statistic title="使用率" value={ipUsage.usagePercent} suffix="%" /></div></Col>
               </Row>
               <div style={{ marginBottom: 8, display: 'flex', gap: 8 }}>
                 <Input placeholder="搜索 IP" value={searchIp} onChange={e => setSearchIp(e.target.value)} onPressEnter={searchIPs} prefix={<SearchOutlined />} style={{ width: 200 }} />
