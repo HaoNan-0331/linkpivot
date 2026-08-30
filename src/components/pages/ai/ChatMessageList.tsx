@@ -85,8 +85,8 @@ export default function ChatMessageList({ messages, loading, agentRunning, onSto
   const renderRef = (ref: ReferenceItem, ri: number) => {
     if (ref.kind === 'kb') {
       return (
-        <div key={ri} style={{ fontSize: 12, color: '#666', lineHeight: 1.8 }}>
-          <BookOutlined style={{ marginRight: 4, color: '#1890ff' }} />
+        <div key={ri} style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', color: 'var(--nt-alias-label-secondary)', lineHeight: 'var(--nt-font-xxs-12-line-height)' }}>
+          <BookOutlined style={{ marginRight: 4, color: 'var(--nt-alias-state-business-primary)' }} />
           {ref.docTitle} — {ref.chunkTitle}
         </div>
       )
@@ -95,13 +95,13 @@ export default function ChatMessageList({ messages, loading, agentRunning, onSto
       return (
         <div
           key={ri}
-          style={{ fontSize: 12, color: '#1890ff', lineHeight: 1.8, cursor: 'pointer' }}
+          style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', color: 'var(--nt-alias-state-business-primary)', lineHeight: 'var(--nt-font-xxs-12-line-height)', cursor: 'pointer' }}
           title="点击查看经验详情"
           onClick={() => openExperience(ref.expId)}
         >
           📖 {ref.title}
           {ref.unsupported && (
-            <Tag color="warning" style={{ marginLeft: 6, fontSize: 11 }}>⚠ 命令已失支持</Tag>
+            <Tag color="warning" style={{ marginLeft: 6, fontSize: 'var(--nt-font-xxxs-11-font-size)' }}>⚠ 命令已失支持</Tag>
           )}
         </div>
       )
@@ -110,7 +110,7 @@ export default function ChatMessageList({ messages, loading, agentRunning, onSto
     return (
       <div
         key={ri}
-        style={{ fontSize: 12, color: '#1890ff', lineHeight: 1.8, cursor: 'pointer' }}
+        style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', color: 'var(--nt-alias-state-business-primary)', lineHeight: 'var(--nt-font-xxs-12-line-height)', cursor: 'pointer' }}
         title="点击查看原始会话"
         onClick={() => openSession(ref.sessionId)}
       >
@@ -130,11 +130,11 @@ export default function ChatMessageList({ messages, loading, agentRunning, onSto
       .map((k) => ({ kind: k, items: meta.sources.filter((s) => s.kind === k) }))
       .filter((g) => g.items.length > 0) // N=0 的类型不显示徽章（UI-SPEC）
     return (
-      <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed #e8e8e8' }}>
+      <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed var(--nt-alias-border-l2)' }}>
         {badgeKinds.map((g) => (
           <Tag
             key={g.kind}
-            style={{ cursor: 'pointer', fontSize: 12 }}
+            style={{ cursor: 'pointer', fontSize: 'var(--nt-font-xxs-12-font-size)' }}
             onClick={() =>
               setExpandedSources((prev) => {
                 const next = new Set(prev)
@@ -148,7 +148,7 @@ export default function ChatMessageList({ messages, loading, agentRunning, onSto
           </Tag>
         ))}
         {/* D-11 无源声明：零检索零执行固定灰 Tag——只由 payload 布尔驱动，正文字符串不可触发 */}
-        {meta.noRealtimeData === true && <Tag style={{ fontSize: 12 }}>未查询实时数据</Tag>}
+        {meta.noRealtimeData === true && <Tag style={{ fontSize: 'var(--nt-font-xxs-12-font-size)' }}>未查询实时数据</Tag>}
         {expanded && (
           <div style={{ marginTop: 4 }}>
             {badgeKinds.flatMap((g) =>
@@ -156,9 +156,9 @@ export default function ChatMessageList({ messages, loading, agentRunning, onSto
                 <div
                   key={`${g.kind}-${si}`}
                   style={{
-                    fontSize: 12,
-                    lineHeight: 1.8,
-                    color: s.kind === 'exp' && s.refId ? '#1890ff' : '#666',
+                    fontSize: 'var(--nt-font-xxs-12-font-size)',
+                    lineHeight: 'var(--nt-font-xxs-12-line-height)',
+                    color: s.kind === 'exp' && s.refId ? 'var(--nt-alias-state-business-primary)' : 'var(--nt-alias-label-secondary)',
                     cursor: s.kind === 'exp' && s.refId ? 'pointer' : 'default',
                   }}
                   title={s.kind === 'exp' && s.refId ? '点击查看经验详情' : undefined}
@@ -175,7 +175,7 @@ export default function ChatMessageList({ messages, loading, agentRunning, onSto
         )}
         {/* 28-04（AGENT-03）：补查知情记录（零命中/设备未查），结构化通道非正文改写 */}
         {meta.backfillNotes && meta.backfillNotes.length > 0 && (
-          <div style={{ fontSize: 12, color: '#999', lineHeight: 1.5, marginTop: 4 }}>
+          <div style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', color: 'var(--nt-alias-label-tertiary)', lineHeight: 'var(--nt-font-xxs-12-line-height)', marginTop: 4 }}>
             {meta.backfillNotes.map((n, ni) => <div key={ni}>{n}</div>)}
           </div>
         )}
@@ -184,16 +184,16 @@ export default function ChatMessageList({ messages, loading, agentRunning, onSto
   }
 
   return (
-    <div style={{
+    <div className="nt-scroll-stable" style={{
       flex: 1,
       overflowY: 'auto',
-      border: '1px solid #f0f0f0',
+      border: '1px solid var(--nt-alias-border-l2)',
       borderRadius: 8,
       padding: 16,
-      background: '#fafafa',
+      background: 'var(--nt-alias-markdown-code-block)',
     }}>
       {messages.length === 0 && (
-        <div style={{ textAlign: 'center', color: '#bfbfbf', paddingTop: 60 }}>
+        <div style={{ textAlign: 'center', color: 'var(--nt-alias-label-caption)', paddingTop: 60 }}>
           <RobotOutlined style={{ fontSize: 40, marginBottom: 8 }} />
           <div>向 AI 助手提问，选择设备后可查询设备信息</div>
         </div>
@@ -214,17 +214,20 @@ export default function ChatMessageList({ messages, loading, agentRunning, onSto
             marginBottom: 12,
           }}
         >
+          {/* Phase 33（33-02，D-05）：气泡三色迁 token。用户侧浅蓝气泡（--nt-specific-bubble）
+              配 label-primary 深色正文——plan 原映射 label-primary-foreground（白）在浅蓝底上
+              对比度不可读（Rule 1 偏差，详见 33-02-SUMMARY）；Phase 34 对话区专项再精修 */}
           <div style={{
             maxWidth: '70%',
             padding: '8px 12px',
             borderRadius: 8,
-            background: msg.role === 'user' ? '#1677ff' : '#fff',
-            color: msg.role === 'user' ? '#fff' : '#333',
-            border: msg.role === 'user' ? 'none' : '1px solid #e8e8e8',
+            background: msg.role === 'user' ? 'var(--nt-specific-bubble)' : 'var(--nt-alias-bg-base)',
+            color: msg.role === 'user' ? 'var(--nt-alias-label-primary)' : 'var(--nt-alias-label-primary)',
+            border: msg.role === 'user' ? 'none' : '1px solid var(--nt-alias-border-l2)',
             whiteSpace: 'pre-wrap',
             wordBreak: 'break-word',
-            fontSize: 14,
-            lineHeight: 1.6,
+            fontSize: 'var(--nt-font-s-14-font-size)',
+            lineHeight: 'var(--nt-font-s-14-line-height)',
           }}>
             <div style={{ marginBottom: 4, display: 'flex', alignItems: 'center' }}>
               {msg.role === 'user' ? <UserOutlined /> : <RobotOutlined />}
@@ -236,12 +239,12 @@ export default function ChatMessageList({ messages, loading, agentRunning, onSto
                 <Popover
                   title={`${TIER_LABELS[msg.agentMeta.tier]}档预取数据源`}
                   content={
-                    <div style={{ fontSize: 12 }}>
+                    <div style={{ fontSize: 'var(--nt-font-xxs-12-font-size)' }}>
                       本档已预取：{TIER_PREFETCH_LIST[msg.agentMeta.tier].join('、')}
                     </div>
                   }
                 >
-                  <Tag style={{ marginLeft: 'auto', fontSize: 12, cursor: 'pointer', marginRight: 0 }}>
+                  <Tag style={{ marginLeft: 'auto', fontSize: 'var(--nt-font-xxs-12-font-size)', cursor: 'pointer', marginRight: 0 }}>
                     {TIER_LABELS[msg.agentMeta.tier]}
                   </Tag>
                 </Popover>
@@ -251,12 +254,12 @@ export default function ChatMessageList({ messages, loading, agentRunning, onSto
             {msg.role === 'assistant' && msg.agentMeta?.hardStop === 'user_cancel' && (
               <div
                 style={{
-                  background: '#fffbe6',
-                  border: '1px solid #ffe58f',
+                  background: 'var(--nt-alias-state-warn-tertiary)',
+                  border: '1px solid var(--nt-alias-state-warn-secondary)',
                   borderRadius: 4,
                   padding: '4px 8px',
-                  fontSize: 12,
-                  color: '#8c6d1f',
+                  fontSize: 'var(--nt-font-xxs-12-font-size)',
+                  color: 'var(--nt-alias-state-warn-label)',
                   marginBottom: 4,
                 }}
               >
@@ -265,8 +268,8 @@ export default function ChatMessageList({ messages, loading, agentRunning, onSto
             )}
             {msg.content}
             {msg.role === 'assistant' && msg.references && msg.references.length > 0 && (
-              <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed #e8e8e8' }}>
-                <div style={{ fontSize: 12, color: '#999', marginBottom: 4 }}>参考来源：</div>
+              <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed var(--nt-alias-border-l2)' }}>
+                <div style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', color: 'var(--nt-alias-label-tertiary)', marginBottom: 4 }}>参考来源：</div>
                 {msg.references.map((ref, ri) => renderRef(ref, ri))}
               </div>
             )}
@@ -277,8 +280,8 @@ export default function ChatMessageList({ messages, loading, agentRunning, onSto
       ))}
       {loading && (
         <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 12 }}>
-          <div style={{ padding: '8px 12px', background: '#fff', borderRadius: 8, border: '1px solid #e8e8e8' }}>
-            <Spin size="small" /> <span style={{ marginLeft: 8, color: '#999' }}>思考中...</span>
+          <div style={{ padding: '8px 12px', background: 'var(--nt-alias-bg-base)', borderRadius: 8, border: '1px solid var(--nt-alias-border-l2)' }}>
+            <Spin size="small" /> <span style={{ marginLeft: 8, color: 'var(--nt-alias-label-tertiary)' }}>思考中...</span>
             {/* Phase 28（28-05，D-06）：agent 任务运行中常驻「停止」——立即中止，无二次确认 */}
             {agentRunning && onStop && (
               <Button danger size="small" style={{ marginLeft: 12 }} onClick={onStop}>

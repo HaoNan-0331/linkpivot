@@ -31,29 +31,29 @@ function GuardBody({ guardInfo, commands, aiExplanation, rejectedCommands }: {
     : null
   return (
     <div>
-      <p><WarningOutlined style={{ color: '#faad14', marginRight: 4 }} />AI 命令命中 {guardInfo.hits.length} 条安全规则，请核对目标后确认：</p>
+      <p><WarningOutlined style={{ color: 'var(--nt-alias-state-warn-primary)', marginRight: 4 }} />AI 命令命中 {guardInfo.hits.length} 条安全规则，请核对目标后确认：</p>
       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-        <div style={{ flex: 1, background: '#f5f5f5', padding: 16, borderRadius: 4 }}>
-          <div style={{ fontSize: 13, fontWeight: 600 }}>预期目标</div>
-          <div style={{ fontSize: 13, marginTop: 4 }}>{guardInfo.expectedTarget}</div>
-          <div style={{ color: '#999', fontSize: 12, marginTop: 4 }}>对话选中</div>
+        <div style={{ flex: 1, background: 'var(--nt-alias-bg-module-platform)', padding: 16, borderRadius: 4 }}>
+          <div style={{ fontSize: 'var(--nt-font-xs-13-font-size)', fontWeight: 600 }}>预期目标</div>
+          <div style={{ fontSize: 'var(--nt-font-xs-13-font-size)', marginTop: 4 }}>{guardInfo.expectedTarget}</div>
+          <div style={{ color: 'var(--nt-alias-label-tertiary)', fontSize: 'var(--nt-font-xxs-12-font-size)', marginTop: 4 }}>对话选中</div>
         </div>
-        <div style={{ flex: 1, background: '#f5f5f5', padding: 16, borderRadius: 4 }}>
-          <div style={{ fontSize: 13, fontWeight: 600 }}>实际目标</div>
-          <div style={{ fontSize: 13, marginTop: 4 }}>{guardInfo.hits[0]?.target}</div>
-          <div style={{ color: '#999', fontSize: 12, marginTop: 4 }}>{guardInfo.hits[0]?.explanation}</div>
+        <div style={{ flex: 1, background: 'var(--nt-alias-bg-module-platform)', padding: 16, borderRadius: 4 }}>
+          <div style={{ fontSize: 'var(--nt-font-xs-13-font-size)', fontWeight: 600 }}>实际目标</div>
+          <div style={{ fontSize: 'var(--nt-font-xs-13-font-size)', marginTop: 4 }}>{guardInfo.hits[0]?.target}</div>
+          <div style={{ color: 'var(--nt-alias-label-tertiary)', fontSize: 'var(--nt-font-xxs-12-font-size)', marginTop: 4 }}>{guardInfo.hits[0]?.explanation}</div>
         </div>
       </div>
       <div style={{ marginTop: 12 }}>
         {guardInfo.hits.map((h, i) => (
           <div key={i} style={{ marginBottom: 8 }}>
-            <Tag color={h.level === 'red' ? 'red' : 'gold'} style={{ fontSize: 13 }}>{h.ruleId}</Tag>
-            <span style={{ fontSize: 14 }}>{h.explanation}</span>
+            <Tag color={h.level === 'red' ? 'red' : 'gold'} style={{ fontSize: 'var(--nt-font-xs-13-font-size)' }}>{h.ruleId}</Tag>
+            <span style={{ fontSize: 'var(--nt-font-s-14-font-size)' }}>{h.explanation}</span>
             {/* Phase 27 checkpoint：每条 hit 下方附来源命令原文（索引缺失时跳过） */}
             {hasMap && idxArr![i] != null && commands[idxArr![i]] && (
               <div style={{
-                background: '#fff1f0', padding: 8, borderRadius: 4, marginTop: 4,
-                fontFamily: 'monospace', fontSize: 13,
+                background: 'var(--nt-static-red-50)', padding: 8, borderRadius: 4, marginTop: 4,
+                fontFamily: 'var(--nt-font-family-code)', fontSize: 'var(--nt-font-xs-13-font-size)',
                 whiteSpace: 'pre', overflowX: 'auto',
               }}>
                 [{commands[idxArr![i]].deviceName}] {commands[idxArr![i]].command}
@@ -67,12 +67,12 @@ function GuardBody({ guardInfo, commands, aiExplanation, rejectedCommands }: {
       {normalCommands ? (
         normalCommands.length > 0 && (
           <div style={{ marginTop: 12 }}>
-            <div style={{ color: '#999', fontSize: 12, borderBottom: '1px solid #f0f0f0', paddingBottom: 4, marginBottom: 8 }}>
+            <div style={{ color: 'var(--nt-alias-label-tertiary)', fontSize: 'var(--nt-font-xxs-12-font-size)', borderBottom: '1px solid var(--nt-alias-border-l2)', paddingBottom: 4, marginBottom: 8 }}>
               常规命令（无越权风险）
             </div>
             {normalCommands.map((cmd, i) => (
               <div key={i} style={{ marginBottom: 6, overflowX: 'auto' }}>
-                <Tag color="blue" style={{ fontSize: 13 }}>
+                <Tag color="blue" style={{ fontSize: 'var(--nt-font-xs-13-font-size)' }}>
                   [{cmd.deviceName}] {cmd.command}
                 </Tag>
               </div>
@@ -84,8 +84,8 @@ function GuardBody({ guardInfo, commands, aiExplanation, rejectedCommands }: {
           <p style={{ marginTop: 12 }}><strong>命令原文:</strong></p>
           {commands.map((cmd, i) => (
             <div key={i} style={{
-              background: '#f5f5f5', padding: 12, borderRadius: 4, marginBottom: 6,
-              fontFamily: 'monospace', fontSize: 13,
+              background: 'var(--nt-alias-bg-module-platform)', padding: 12, borderRadius: 4, marginBottom: 6,
+              fontFamily: 'var(--nt-font-family-code)', fontSize: 'var(--nt-font-xs-13-font-size)',
               whiteSpace: 'pre', overflowX: 'auto',
             }}>
               [{cmd.deviceName}] {cmd.command}
@@ -95,22 +95,22 @@ function GuardBody({ guardInfo, commands, aiExplanation, rejectedCommands }: {
       )}
       {rejectedCommands && rejectedCommands.length > 0 && (
         <div style={{ marginTop: 12 }}>
-          <div style={{ color: '#999', fontSize: 12, borderBottom: '1px solid #f0f0f0', paddingBottom: 4, marginBottom: 8 }}>
+          <div style={{ color: 'var(--nt-alias-label-tertiary)', fontSize: 'var(--nt-font-xxs-12-font-size)', borderBottom: '1px solid var(--nt-alias-border-l2)', paddingBottom: 4, marginBottom: 8 }}>
             已拒绝命令（{rejectedCommands.length} 条，不会执行）
           </div>
           {rejectedCommands.map((r, i) => (
             <div key={i} style={{ marginBottom: 4 }}>
               <div style={{ overflowX: 'auto' }}>
-                <Tag color="red" style={{ fontSize: 13 }}>{r.command}</Tag>
+                <Tag color="red" style={{ fontSize: 'var(--nt-font-xs-13-font-size)' }}>{r.command}</Tag>
               </div>
-              <span style={{ color: '#999', fontSize: 12 }}>{r.reason}</span>
+              <span style={{ color: 'var(--nt-alias-label-tertiary)', fontSize: 'var(--nt-font-xxs-12-font-size)' }}>{r.reason}</span>
             </div>
           ))}
         </div>
       )}
-      <div style={{ background: '#f5f5f5', padding: 12, borderRadius: 4, marginTop: 12 }}>
+      <div style={{ background: 'var(--nt-alias-bg-module-platform)', padding: 12, borderRadius: 4, marginTop: 12 }}>
         <strong>AI 说明:</strong>
-        <div style={{ marginTop: 4, whiteSpace: 'pre-wrap', maxHeight: 200, overflowY: 'auto', fontSize: 13 }}>
+        <div style={{ marginTop: 4, whiteSpace: 'pre-wrap', maxHeight: 200, overflowY: 'auto', fontSize: 'var(--nt-font-xs-13-font-size)' }}>
           {aiExplanation}
         </div>
       </div>
@@ -125,7 +125,7 @@ export default function CommandConfirmModal({ pendingConfirm, onConfirm, confirm
       open={!!pendingConfirm}
       title={guardInfo
         ? <span>
-            <WarningOutlined style={{ color: '#faad14', marginRight: 8 }} />
+            <WarningOutlined style={{ color: 'var(--nt-alias-state-warn-primary)', marginRight: 8 }} />
             越权确认{guardInfo.hitCommandIndexes && guardInfo.hitCommandIndexes.length === guardInfo.hits.length
               ? `（${new Set(guardInfo.hitCommandIndexes).size} 条命中 / 共 ${pendingConfirm?.commands?.length || 0} 条命令）`
               : ''}
@@ -160,7 +160,7 @@ export default function CommandConfirmModal({ pendingConfirm, onConfirm, confirm
           <p><strong>待执行命令:</strong></p>
           {pendingConfirm.commands.map((cmd, i) => (
             <div key={i} style={{ marginBottom: 6, overflowX: 'auto' }}>
-              <Tag color="blue" style={{ fontSize: 13 }}>
+              <Tag color="blue" style={{ fontSize: 'var(--nt-font-xs-13-font-size)' }}>
                 [{cmd.deviceName}] {cmd.command}
               </Tag>
             </div>
@@ -171,16 +171,16 @@ export default function CommandConfirmModal({ pendingConfirm, onConfirm, confirm
               {pendingConfirm.rejectedCommands.map((r, i) => (
                 <div key={i} style={{ marginBottom: 4 }}>
                   <div style={{ overflowX: 'auto' }}>
-                    <Tag color="red" style={{ fontSize: 13 }}>{r.command}</Tag>
+                    <Tag color="red" style={{ fontSize: 'var(--nt-font-xs-13-font-size)' }}>{r.command}</Tag>
                   </div>
-                  <span style={{ color: '#999', fontSize: 12 }}>{r.reason}</span>
+                  <span style={{ color: 'var(--nt-alias-label-tertiary)', fontSize: 'var(--nt-font-xxs-12-font-size)' }}>{r.reason}</span>
                 </div>
               ))}
             </>
           )}
-          <div style={{ background: '#f5f5f5', padding: 12, borderRadius: 4, marginTop: 12 }}>
+          <div style={{ background: 'var(--nt-alias-bg-module-platform)', padding: 12, borderRadius: 4, marginTop: 12 }}>
             <strong>AI 说明:</strong>
-            <div style={{ marginTop: 4, whiteSpace: 'pre-wrap', maxHeight: 200, overflowY: 'auto', fontSize: 13 }}>
+            <div style={{ marginTop: 4, whiteSpace: 'pre-wrap', maxHeight: 200, overflowY: 'auto', fontSize: 'var(--nt-font-xs-13-font-size)' }}>
               {pendingConfirm.aiExplanation}
             </div>
           </div>
