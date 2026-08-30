@@ -78,12 +78,16 @@ export default function EdgeWithInterfaces({
 
   return (
     <>
+      {/* Phase 33 / D-05（33-04 特批）：连线色迁场景层 static token，属性位 var() 写法（plan 明文形态）。
+          注：reactflow 基础 CSS 已在 .react-flow__edge-path 上定义同值 stroke 且 CSS 规则恒优先于
+          SVG presentation attribute——本属性位迁移前后均为兜底位，实际绘制色由 reactflow CSS 承载，
+          选中态/更新态描边规则不受影响，画布零行为变化。 */}
       <path
         id={id}
         d={edgePath}
         style={style}
         className="react-flow__edge-path"
-        stroke="#b1b1b7"
+        stroke="var(--nt-static-neutral-bluish-300)"
         strokeWidth={1.5}
         fill="none"
       />
@@ -93,12 +97,12 @@ export default function EdgeWithInterfaces({
             style={{
               position: 'absolute',
               transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
-              fontSize: 10,
-              color: '#666',
-              background: '#fff',
+              fontSize: 'var(--nt-font-xxxs-11-font-size)',
+              color: 'var(--nt-alias-label-secondary)',
+              background: 'var(--nt-alias-bg-base)',
               padding: '1px 4px',
               borderRadius: 3,
-              border: '1px solid #e8e8e8',
+              border: '1px solid var(--nt-alias-border-l2)',
               pointerEvents: 'none',
               whiteSpace: 'nowrap',
             }}
