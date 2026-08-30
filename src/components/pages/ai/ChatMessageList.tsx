@@ -211,11 +211,12 @@ export default function ChatMessageList({ messages, loading, agentRunning, onSto
         // Phase 34（34-02，D-07/D-08）：时间戳三档格式化（缺场 fail-open 空串 → 不渲染）
         const timeText = formatChatTime(msg.createdAt)
         // Phase 22（22-05，D-03）：tool_result 消息渲染结构化卡片——次级块视觉，
-        // 不套 AI 气泡样式（卡片与 AI 解读气泡分离，T-22-18；34-03 职域本 plan 不动）
+        // 不套 AI 气泡样式（卡片与 AI 解读气泡分离，T-22-18）；Phase 34（34-03，
+        // D-10）：传宿主 ChatMsg.createdAt 作 24px 单行卡行尾时间戳数据源
         if (msg.toolResult) {
           return (
             <div key={msg.id || idx} style={{ display: 'flex', justifyContent: 'flex-start' }}>
-              <ToolResultCard data={msg.toolResult} />
+              <ToolResultCard data={msg.toolResult} createdAt={msg.createdAt} />
             </div>
           )
         }
