@@ -1,7 +1,8 @@
 import { useEffect } from 'react'
-import { Layout } from 'antd'
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import Sidebar from './Sidebar'
+import AppFrameResizer from './appframe/AppFrameResizer'
+import DetailsPanel from './appframe/DetailsPanel'
 import TopologyPage from './pages/TopologyPage'
 import DevicesPage from './pages/DevicesPage'
 import IpManagementPage from './pages/IpManagementPage'
@@ -11,8 +12,6 @@ import SettingsPage from './pages/SettingsPage'
 import KnowledgeBasePage from './pages/KnowledgeBasePage'
 import UpdateModal from './update/UpdateModal'
 import { useUpdateStore } from '../stores/updateStore'
-
-const { Sider, Content } = Layout
 
 /**
  * Phase 30（30-04，D-03/D-05）：登录后主界面 mount 一次性拉取升级状态（渲染 null 不占布局）。
@@ -50,34 +49,44 @@ function UpdateBootstrap() {
   return null
 }
 
+/**
+ * Phase 35（UI-07，D-04/D-05/D-08）：AppFrame 三栏主骨架——sidebar 200px 固定 | center 弹性 | details 可拖可折叠。
+ * 布局几何全部由 appframe.css 的 .nt-appframe-* 类承载（35-01 已落库），本文件除平移的
+ * sidebar 头部内联样式外零新增内联样式、零色值字面量。
+ *
+ * 红线 1（Pattern 3 拖拽隔离）：本组件不订阅 appFrame 宽度态 store——宽度态消费者仅
+ * AppFrameResizer / DetailsPanel 两组件，拖拽期间 Routes 子树零重渲染。
+ * 红线 2（D-04 划界）：切页卸载行为与旧骨架一致，无 keep-alive（deferred 项不做）。
+ * 红线 3（SC2）：details 子树永不条件渲染由 DetailsPanel 内保证（折叠仅样式隐藏，子树不卸载）。
+ */
 export default function MainLayout() {
   return (
     <HashRouter>
-      <Layout style={{ height: '100vh' }}>
-        <Sider width={200} theme="light" style={{ overflow: 'auto' }}>
+      <div className="nt-appframe">
+        <aside className="nt-appframe-sidebar">
           <div style={{ height: 48, display: 'flex', alignItems: 'center', justifyContent: 'center', borderBottom: '1px solid var(--nt-alias-border-l2)' }}>
             <strong>拓扑管理</strong>
           </div>
           <Sidebar />
-        </Sider>
-        <Layout>
-          <Content style={{ height: '100%', overflow: 'auto' }}>
-            <Routes>
-              <Route path="/" element={<Navigate to="/topology" replace />} />
-              <Route path="/topology" element={<TopologyPage />} />
-              <Route path="/devices" element={<DevicesPage />} />
-              <Route path="/ip-management" element={<IpManagementPage />} />
-              <Route path="/ai" element={<AIPage />} />
-              <Route path="/knowledge-base" element={<KnowledgeBasePage />} />
-              <Route path="/logs" element={<LogAuditPage />} />
-              <Route path="/settings" element={<SettingsPage />} />
-            </Routes>
-          </Content>
-        </Layout>
-        {/* Phase 30（30-04）：升级弹窗常驻（Modal portal 挂 body）+ 启动一次性状态拉取 */}
-        <UpdateBootstrap />
-        <UpdateModal />
-      </Layout>
+        </aside>
+        <main className="nt-appframe-center">
+          <Routes>
+            <Route path="/" element={<Navigate to="/topology" replace />} />
+            <Route path="/topology" element={<TopologyPage />} />
+            <Route path="/devices" element={<DevicesPage />} />
+            <Route path="/ip-management" element={<IpManagementPage />} />
+            <Route path="/ai" element={<AIPage />} />
+            <Route path="/knowledge-base" element={<KnowledgeBasePage />} />
+            <Route path="/logs" element={<LogAuditPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+          </Routes>
+        </main>
+        <AppFrameResizer />
+        <DetailsPanel />
+      </div>
+      {/* Phase 30（30-04）：升级弹窗常驻（Modal portal 挂 body）+ 启动一次性状态拉取 */}
+      <UpdateBootstrap />
+      <UpdateModal />
     </HashRouter>
   )
 }
