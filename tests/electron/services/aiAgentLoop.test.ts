@@ -1046,6 +1046,11 @@ describe('28-06 R6 增强 a：分档预取生成步骤卡（过程可见，不�
     const preCard = restored.find((m) => m.toolResult?.prefetched === true)
     expect(preCard).toBeTruthy()
     expect(preCard!.toolResult!.stepStatus).toBe('done')
+    // Phase 34（34-01，D-07/D-10）：历史重建步骤卡宿主行继承本体消息 DB createdAt（非 now）
+    const stepRow = restored.find((m) => m.toolResult)
+    expect(stepRow).toBeTruthy()
+    expect(typeof stepRow!.createdAt).toBe('string')
+    expect(stepRow!.createdAt).toBe(last.createdAt)
   })
 })
 

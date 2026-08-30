@@ -299,7 +299,7 @@ export function useAIChat(): UseAIChatReturn {
     // 切回经 history 恢复）；停止即回复终态，finishReply 统一清理（与 handleSend AbortError
     // catch 路径的 finishReply 幂等双保险——ref 空判直接 return）
     if (replySessionIdRef.current === currentSessionIdRef.current) {
-      setMessages((prev) => [...prev, { role: 'assistant', content: '已停止——任务中断，不生成总结；已执行步骤保留在上方' }])
+      setMessages((prev) => [...prev, { role: 'assistant', content: '已停止——任务中断，不生成总结；已执行步骤保留在上方', createdAt: new Date().toISOString() }])
     }
     finishReply()
   }, [loading, finishReply])
@@ -314,7 +314,8 @@ export function useAIChat(): UseAIChatReturn {
     replySessionIdRef.current = sendingSessionId
     setReplySessionId(sendingSessionId)
 
-    const userMsg: ChatMsg = { role: 'user', content: text }
+    // Phase 34（34-01，D-07/D-10）：renderer 新产消息统一补 createdAt（ISO，零 main/IPC 改动）
+    const userMsg: ChatMsg = { role: 'user', content: text, createdAt: new Date().toISOString() }
     const newMessages = [...messages, userMsg]
     // Phase 31（31-05，WR-01 对齐）：用户消息 append 函数式化——与 onToolResult 事件订阅
     // 的函数式更新同语义（发送同渲染周期内并发到达的步骤卡不被整体替换覆盖）；
@@ -373,10 +374,10 @@ export function useAIChat(): UseAIChatReturn {
         if (isAbort) {
           setMessages((prev) => prev.some((m) => m.content.includes('已停止——任务中断'))
             ? prev
-            : [...prev, { role: 'assistant', content: '已停止——任务中断，不生成总结；已执行步骤保留在上方' }])
+            : [...prev, { role: 'assistant', content: '已停止——任务中断，不生成总结；已执行步骤保留在上方', createdAt: new Date().toISOString() }])
         } else {
           const errMsg = `错误: ${e instanceof Error ? e.message : String(e)}`
-          setMessages((prev) => [...prev, { role: 'assistant', content: errMsg }])
+          setMessages((prev) => [...prev, { role: 'assistant', content: errMsg, createdAt: new Date().toISOString() }])
         }
       }
     }

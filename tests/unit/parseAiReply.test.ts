@@ -318,8 +318,54 @@ describe('parsedToMessages 函数式追加语义（CR-01）', () => {
     expect(parsedToMessages(parseAiReply(JSON.stringify({
       type: 'tool_result', server: 's', tool: 't', deviceName: 'd',
       argsJson: '{}', resultJson: '', status: 'success',
-    })))).toEqual([{ role: 'assistant', content: '', toolResult: expect.objectContaining({ tool: 't' }) }])
-    expect(parsedToMessages(parseAiReply('纯文本'))).toEqual([{ role: 'assistant', content: '纯文本' }])
+    })))).toEqual([{ role: 'assistant', content: '', toolResult: expect.objectContaining({ tool: 't' }), createdAt: expect.any(String) }])
+    expect(parsedToMessages(parseAiReply('纯文本'))).toEqual([{ role: 'assistant', content: '纯文本', createdAt: expect.any(String) }])
+  })
+})
+
+// ---------- Phase 34（34-01，D-07/D-10）：createdAt 补设契约 ----------
+// renderer 新产消息（含在途工具卡宿主行）都携带 createdAt（ISO）；历史恢复的
+// 步骤卡继承本体消息 DB 时间（非 now）。缺场历史消息渲染端判空跳过（fail-open）。
+describe('34-01 时间戳数据链：createdAt 补设（D-07/D-10）', () => {
+  it('parsedToMessages answer 变体也携带 createdAt 字符串', async () => {
+    const { parsedToMessages } = await import('@/components/pages/ai/parseAiReply')
+    const rows = parsedToMessages(parseAiReply(JSON.stringify({ type: 'kb_answer', content: '答', references: [] })))
+    expect(rows).toHaveLength(1)
+    expect(typeof rows[0].createdAt).toBe('string')
+    expect(rows[0].createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/)
+  })
+
+  it('append 的步骤卡宿主行携带 createdAt 字符串（applyStepCardToMessages 两 append 点）', async () => {
+    const { applyStepCardToMessages } = await import('@/components/pages/ai/parseAiReply')
+    const withIdx = {
+      type: 'tool_result' as const, server: 'agent', tool: '命令执行', deviceName: 'SW-Core',
+      argsJson: 'display version', resultJson: 'ok', status: 'success' as const, stepIndex: 0,
+    }
+    const legacy = {
+      type: 'tool_result' as const, server: 'srv', tool: 't', deviceName: 'd',
+      argsJson: '{}', resultJson: 'ok', status: 'success' as const,
+    }
+    const out1 = applyStepCardToMessages([{ role: 'user', content: 'q' }], withIdx)
+    expect(typeof out1[1].createdAt).toBe('string')
+    expect(out1[1].createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+    const out2 = applyStepCardToMessages([{ role: 'user', content: 'q' }], legacy)
+    expect(typeof out2[1].createdAt).toBe('string')
+    expect(out2[1].createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+  })
+
+  it('history steps 分支的步骤卡行继承本体消息 m.createdAt（非 now）', async () => {
+    const { historyMessageToChatMsgs } = await import('@/components/pages/ai/parseAiReply')
+    const dbTime = '2026-08-29 23:00:00'
+    const out = historyMessageToChatMsgs({
+      id: 'm1',
+      role: 'assistant',
+      content: '最终回答',
+      createdAt: dbTime,
+      meta: { steps: [{ actionType: 'cmd', stepIndex: 0, status: 'done', command: 'display version', outputSummary: 'ok' }] },
+    })
+    expect(out).toHaveLength(2) // 步骤卡行 + 本体行
+    expect(out[0].createdAt).toBe(dbTime) // 步骤卡继承 DB 时间
+    expect(out[1].createdAt).toBe(dbTime) // 本体携带 DB 时间
   })
 })
 

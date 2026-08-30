@@ -32,17 +32,20 @@ export type ParsedAiReply =
 export function parsedToMessages(parsed: ParsedAiReply): Array<{
   role: 'assistant'
   content: string
+  createdAt?: string
   references?: ReferenceItem[]
   toolResult?: ToolResultMessage
   agentMeta?: AgentMeta
 }> {
+  // Phase 34（34-01，D-07/D-10）：renderer 新产消息统一补 createdAt（ISO）——
+  // 时间戳常显数据源；缺场历史消息渲染端判空跳过（fail-open）
   if (parsed.kind === 'answer') {
-    return [{ role: 'assistant', content: parsed.content, references: parsed.references, agentMeta: parsed.agentMeta }]
+    return [{ role: 'assistant', content: parsed.content, references: parsed.references, agentMeta: parsed.agentMeta, createdAt: new Date().toISOString() }]
   }
   if (parsed.kind === 'toolResult') {
-    return [{ role: 'assistant', content: '', toolResult: parsed.toolResult }]
+    return [{ role: 'assistant', content: '', toolResult: parsed.toolResult, createdAt: new Date().toISOString() }]
   }
-  return [{ role: 'assistant', content: parsed.content }]
+  return [{ role: 'assistant', content: parsed.content, createdAt: new Date().toISOString() }]
 }
 
 const isStr = (v: unknown): v is string => typeof v === 'string'
@@ -279,7 +282,9 @@ export function historyMessageToChatMsgs(m: {
   if (Array.isArray(m.meta.steps)) {
     for (const s of m.meta.steps) {
       const tr = stepToToolResultMessage(s)
-      if (tr) out.push({ role: 'assistant', content: '', toolResult: tr })
+      // Phase 34（34-01，D-07/D-10）：历史重建步骤卡继承本体消息 DB 时间（非 now）——
+      // 历史重建时间语义正确；实时在途卡走 applyStepCardToMessages 的 now 补设
+      if (tr) out.push({ role: 'assistant', content: '', toolResult: tr, createdAt: m.createdAt })
     }
   }
   const agentMeta = parseAgentMeta(m.meta)
@@ -307,7 +312,7 @@ export function applyStepCardToMessages(
   payload: ToolResultMessage
 ): ChatMsg[] {
   if (typeof payload.stepIndex !== 'number') {
-    return [...prev, { role: 'assistant', content: '', toolResult: payload }]
+    return [...prev, { role: 'assistant', content: '', toolResult: payload, createdAt: new Date().toISOString() }]
   }
   for (let i = prev.length - 1; i >= 0; i--) {
     const m = prev[i]
@@ -319,7 +324,7 @@ export function applyStepCardToMessages(
       return next
     }
   }
-  return [...prev, { role: 'assistant', content: '', toolResult: payload }]
+  return [...prev, { role: 'assistant', content: '', toolResult: payload, createdAt: new Date().toISOString() }]
 }
 
 /**
