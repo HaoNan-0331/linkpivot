@@ -1,0 +1,109 @@
+/* Phase 35 / UI-07（35-RESEARCH Code Examples · appframe.css 骨架底版逐条落）：
+   AppFrame 三栏可拖拽骨架全局样式——本文件承载无法内联的规则
+   （media query / 伪态 :hover / transition），组件主体仍走内联 style 消费 var(--nt-*)。
+   本 plan（35-01）仅落库样式契约，无任何 DOM 匹配新类——应用行为零变化；
+   35-02 MainLayout 重写后开始消费。 */
+
+/* ⚠ load-bearing 红线 1：本文件禁 hex / rgb 函数色值字面量——只准 var(--nt-*) 引用与
+   结构值（尺寸/时长/百分比），维持 audit:tokens 四查全零基线
+   （审计命令 --include 不含 .css，但零字面量仍为裁决要求，ai-chat.css 红线 2 同款）。 */
+
+/* ⚠ load-bearing 红线 2：沿 scrollbar.css 红线 1——禁在此声明非 auto 的
+   scrollbar-width / scrollbar-color，否则 Chromium 丢弃全部 webkit 规则。
+   center 的 overflow:auto 自动继承全局 8px 滚动条形态，零动作。 */
+
+/* 裁定注记 1（RESEARCH Open Question 2 终裁）：sidebar 背景本期取
+   --nt-alias-bg-layer-1 纯白（骨架改造观感零突变，降低目检回归变量）；
+   --nt-specific-sidebar-fill 淡蓝灰留给后续质感 phase 连带暗色双态一并开。 */
+
+/* 裁定注记 2（Pitfall 8）：后续 phase 给 details 填 React Flow 类组件时，
+   折叠宽 0 会触发 RF error004 警告（父容器需宽高）——内容设计须容忍宽 0 不炸。 */
+
+/* ===== 1. 三栏骨架容器 ===== */
+.nt-appframe {
+  display: flex;
+  height: 100vh;
+}
+
+/* sidebar：固定 200px 不参与拖拽（D-05 导航内容不需要变宽） */
+.nt-appframe-sidebar {
+  flex: none;
+  width: 200px;
+  height: 100%;
+  overflow: auto;
+  border-right: 1px solid var(--nt-alias-border-l2);
+  background: var(--nt-alias-bg-layer-1);
+}
+
+/* center：中栏弹性。
+   ⚠ min-width: 0 是 Pitfall 1 红线——flex 子项默认 min-width: auto，
+   宽内容（NetworkTab 的 scroll x max-content 表格）会顶死中栏使其收不小，
+   details 拖宽时把整个骨架撑爆横向滚动。必写，不可删。 */
+.nt-appframe-center {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  overflow: auto;
+}
+
+/* ===== 2. 拖拽把手（UI-07 字面：8px 全高命中区，折叠态也在场——否则没法点开） ===== */
+.nt-appframe-resizer {
+  flex: none;
+  width: 8px;
+  position: relative;
+  z-index: 1;
+  cursor: col-resize;
+  user-select: none;
+  touch-action: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 12×32 可视 pill 与命中区分离（pointer-events:none 由本规则承载）：
+   左右各溢出命中条 2px 纯视觉，hover/拖拽态由父条选择器驱动变色。 */
+.nt-appframe-resizer-pill {
+  width: 12px;
+  height: 32px;
+  border-radius: 6px;
+  pointer-events: none;
+  background: var(--nt-alias-label-dimmed);
+  transition: background-color var(--nt-transition-duration-fast) ease;
+}
+
+.nt-appframe-resizer:hover .nt-appframe-resizer-pill,
+.nt-appframe-resizer[data-dragging='true'] .nt-appframe-resizer-pill {
+  background: var(--nt-alias-label-caption);
+}
+
+/* ===== 3. details 栏（SC2 折叠保挂载） ===== */
+.nt-appframe-details {
+  flex: none;
+  height: 100%;
+  overflow: hidden;
+  border-left: 1px solid var(--nt-alias-border-l2);
+  background: var(--nt-alias-bg-layer-1);
+  transition: width var(--nt-transition-duration) ease;
+}
+
+/* 拖拽跟手不走缓动（宽度以缓动追赶指针，手感发粘出错位）——
+   Phase 26 D-04 同款设计语言：拖动件零 transition 零延迟跟指针。 */
+.nt-appframe-details[data-dragging='true'] {
+  transition: none;
+}
+
+/* 折叠：visibility 隐藏移出 tab 序 + 连 border 一起隐藏；width 由 inline style 归 0。
+   ⚠ SC2 红线：禁改条件渲染（{!collapsed && ...} 会 unmount 丢 React Flow 状态）——
+   只能样式隐藏，React 子树永不条件渲染（reactflow 内建 resize 只更 width/height
+   不动 transform，前提是 React 层不卸载子树）。 */
+.nt-appframe-details[data-collapsed='true'] {
+  visibility: hidden;
+}
+
+/* ===== 4. 动效降级（SC3，ai-chat.css §10 同构，纯 CSS 零 JS 分支） ===== */
+@media (prefers-reduced-motion: reduce) {
+  .nt-appframe-details,
+  .nt-appframe-resizer-pill {
+    transition: none;
+  }
+}
