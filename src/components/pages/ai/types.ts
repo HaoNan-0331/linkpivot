@@ -115,12 +115,12 @@ export interface ConfirmData {
   type: 'confirm_required'
   execId: string
   // Phase 27（27-04，D-05）：越权命中批次可选携带 guardInfo——存在时
-  // CommandConfirmModal 切「越权确认」形态；历史/普通 confirm 无此字段渲染路径零变化
+  // ApprovalPanel 切「越权确认」形态；历史/普通 confirm 无此字段渲染路径零变化
   guardInfo?: {
     expectedTarget: string
     hits: GuardHitInfo[]
     // Phase 27 checkpoint：hit ↔ commands 索引映射（长度 = hits.length，元素 = 来源命令下标）。
-    // 可选——历史/异常 payload 无此字段时 CommandConfirmModal 降级为现状全量命令列表
+    // 可选——历史/异常 payload 无此字段时 ApprovalPanel 降级为现状全量命令列表
     hitCommandIndexes?: number[]
   }
   // Phase 22（22-05）：MCP 工具确认复用本协议，commands 元素可携带可选
@@ -149,7 +149,7 @@ export interface UseAIChatReturn {
   input: string
   loading: boolean
   pendingConfirm: ConfirmData | null
-  // Phase 14 Plan 02：confirm IPC 在途视觉锁（CommandConfirmModal 按钮 loading+disabled 消费）
+  // Phase 14 Plan 02：confirm IPC 在途视觉锁（ApprovalPanel 按钮 loading+disabled 消费）
   confirmInFlight: boolean
   // Phase 31（31-03，D-02）：在途回复归属会话——非空且 ≠ currentSessionId 时
   // ChatInput 显示「AI 正在其他会话回答中」提示条（输入全局锁的语义化提示）

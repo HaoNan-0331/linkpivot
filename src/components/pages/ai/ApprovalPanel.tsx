@@ -11,11 +11,11 @@ interface ApprovalPanelProps {
 
 /**
  * Phase 34（34-04，SC4 / UI-06）：危险命令内联审批面板（dsh ApprovalPanel 同构）。
- * pendingConfirm 在场时接管 ChatInput 挂点（互斥渲染，useAIChat 零改），替代 CommandConfirmModal 弹层。
+ * pendingConfirm 在场时接管 ChatInput 挂点（互斥渲染，useAIChat 零改），替代既有确认弹层（原 Modal 形态已随本 plan 摘除，git 历史可溯）。
  * 面板结构：琥珀警示头条「等待审批」→ 336px 封顶可滚动命令区（tabIndex=0 键盘可达）
  * → 卡级固定右对齐按钮行（长命令不把按钮推出视口）。
  *
- * 三条红线（自 27-04 CommandConfirmModal 随迁移延续）：
+ * 三条红线（自 27-04 原确认弹窗随迁移延续）：
  * - D-04 / T-27-12：本面板不得提供任何绕过确认门或快捷扩权的入口——
  *   onConfirm(false)/onConfirm(true) 双按钮为唯一动作出口。
  * - 分色契约（27-UI-SPEC，禁改）：red=GUARD-02/03 越权级、gold=GUARD-01 白名单外；
@@ -24,7 +24,7 @@ interface ApprovalPanelProps {
  */
 
 // Phase 27（27-04，GUARD-04 D-05）：越权确认形态渲染块。
-// Phase 34（34-04）：自 CommandConfirmModal :18-119 全量迁入（inline style 逐段照搬、文案逐字）；
+// Phase 34（34-04）：自原确认弹窗 GuardBody 全量迁入（inline style 逐段照搬、文案逐字）；
 // 末尾「AI 说明:」块不再自带独立 200px 滚动——aiExplanation 已上提为面板 headline 区。
 // checkpoint fix（27 期）：rejectedCommands 展示为越权形态必备块——混批中白名单拒绝的命令
 // 对用户不可见，"共 N 条命令"计数不含被拒项易误读为 AI 只发了一条。

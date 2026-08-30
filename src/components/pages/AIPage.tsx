@@ -6,7 +6,7 @@ import DeviceSelector from './ai/DeviceSelector'
 import ChatSessionList from './ai/ChatSessionList'
 import ChatMessageList from './ai/ChatMessageList'
 import ChatInput from './ai/ChatInput'
-import CommandConfirmModal from './ai/CommandConfirmModal'
+import ApprovalPanel from './ai/ApprovalPanel'
 import ReviewConfirmModal from './ai/ReviewConfirmModal'
 
 const { Title } = Typography
@@ -100,20 +100,31 @@ export default function AIPage() {
           agentRunning={chat.agentRunning}
           onStop={chat.handleStop}
         />
-        <ChatInput
-          value={chat.input}
-          loading={chat.loading}
-          onChange={chat.setInput}
-          onSend={chat.handleSend}
-          summarizing={chat.summarizing}
-          onSummarize={chat.handleSummarize}
-          canSummarize={chat.canSummarize}
-          pendingDraftCount={chat.pendingDraftCount}
-          onOpenReview={chat.openReviewFromBadge}
-          aiReplyElsewhere={chat.loading && chat.replySessionId !== null && chat.replySessionId !== chat.currentSessionId}
-        />
+        {/* Phase 34（34-04，SC4/UI-06）：输入挂点互斥渲染——pendingConfirm 在场时内联审批面板
+            接管 ChatInput 挂点（同宽 .nt-chat-card 层），原确认弹层渲染点移除（SC4）。
+            pendingConfirm 为全局状态（非会话作用域），31-03「跨会话也弹窗」防确认死锁语义
+            经互斥渲染天然延续；useAIChat 审批状态机零改（只换呈现组件）。 */}
+        {chat.pendingConfirm ? (
+          <ApprovalPanel
+            pendingConfirm={chat.pendingConfirm}
+            onConfirm={chat.handleConfirm}
+            confirmInFlight={chat.confirmInFlight}
+          />
+        ) : (
+          <ChatInput
+            value={chat.input}
+            loading={chat.loading}
+            onChange={chat.setInput}
+            onSend={chat.handleSend}
+            summarizing={chat.summarizing}
+            onSummarize={chat.handleSummarize}
+            canSummarize={chat.canSummarize}
+            pendingDraftCount={chat.pendingDraftCount}
+            onOpenReview={chat.openReviewFromBadge}
+            aiReplyElsewhere={chat.loading && chat.replySessionId !== null && chat.replySessionId !== chat.currentSessionId}
+          />
+        )}
       </div>
-      <CommandConfirmModal pendingConfirm={chat.pendingConfirm} onConfirm={chat.handleConfirm} confirmInFlight={chat.confirmInFlight} />
       <ReviewConfirmModal
         open={chat.reviewOpen}
         onClose={() => chat.setReviewOpen(false)}

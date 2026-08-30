@@ -383,7 +383,7 @@ export function parseAiReply(raw: string): ParsedAiReply {
       aiExplanation: p.aiExplanation,
       // Phase 27 checkpoint fix：越权命中信息透传——此前白名单式挑字段丢弃 guardInfo，
       // 弹窗永远渲染普通「命令执行确认」形态（main 侧 hits 已落库但 renderer 不可见）。
-      // 谓词已校验形状与 level 枚举；hitCommandIndexes 缺失由 CommandConfirmModal 降级全量列表。
+      // 谓词已校验形状与 level 枚举；hitCommandIndexes 缺失由 ApprovalPanel 降级全量列表。
       ...(p.guardInfo !== undefined ? { guardInfo: p.guardInfo } : {}),
       commands: p.commands.map((c) => ({
         deviceName: c.deviceName,

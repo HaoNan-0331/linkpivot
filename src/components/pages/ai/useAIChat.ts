@@ -32,7 +32,7 @@ export function useAIChat(): UseAIChatReturn {
   const [pendingConfirm, setPendingConfirm] = useState<ConfirmData | null>(null)
   // Phase 14 Plan 02：confirm IPC 在途视觉锁（FIX-02 #1 视觉层增强）
   // 与既有 setPendingConfirm(null) 关窗锁双保险——关窗锁防重复 IPC 主防线不变，
-  // confirmInFlight 仅控制 CommandConfirmModal 按钮 loading+disabled 给用户在途反馈
+  // confirmInFlight 仅控制 ApprovalPanel 按钮 loading+disabled 给用户在途反馈
   const [confirmInFlight, setConfirmInFlight] = useState(false)
   // WR-01 fix（code-review）：useRef 同步锁根治连点竞态——React state（confirmInFlight）异步刷新，
   // 同渲染周期连点第二次时 confirmInFlight 仍为 false（未刷新）→ 通过守卫发起重复 IPC（main 兜底 confirmCommand
@@ -483,7 +483,7 @@ export function useAIChat(): UseAIChatReturn {
     input,
     loading,
     pendingConfirm,
-    confirmInFlight, // Phase 14-02：confirm IPC 在途视觉锁（CommandConfirmModal 按钮 loading+disabled）
+    confirmInFlight, // Phase 14-02：confirm IPC 在途视觉锁（ApprovalPanel 按钮 loading+disabled）
     // Phase 31（31-03，FIX-02）：D-02 在途回复归属会话 / D-03 未读角标 / D-05① 新建在途
     replySessionId,
     unreadSessionIds,
