@@ -14,9 +14,9 @@ const CATEGORY_OPTIONS = [
 ]
 
 const FILE_TYPE_ICONS: Record<string, React.ReactNode> = {
-  txt: <FileTextOutlined style={{ color: '#666' }} />,
-  pdf: <FilePdfOutlined style={{ color: '#f5222d' }} />,
-  docx: <FileWordOutlined style={{ color: '#1890ff' }} />,
+  txt: <FileTextOutlined style={{ color: 'var(--nt-alias-label-secondary)' }} />,
+  pdf: <FilePdfOutlined style={{ color: 'var(--nt-alias-state-error-primary)' }} />,
+  docx: <FileWordOutlined style={{ color: 'var(--nt-alias-state-business-primary)' }} />,
 }
 
 const STATUS_MAP: Record<string, { color: string; text: string }> = {
@@ -65,7 +65,7 @@ function ChunkContent({ content, images }: { content: string; images: KbImage[] 
 
   return (
     <>
-      <div style={{ whiteSpace: 'pre-wrap', maxHeight: 300, overflow: 'auto', fontSize: 13, color: '#333', lineHeight: 1.8 }}>
+      <div style={{ whiteSpace: 'pre-wrap', maxHeight: 300, overflow: 'auto', fontSize: 'var(--nt-font-xs-13-font-size)', color: 'var(--nt-alias-label-primary)', lineHeight: 'var(--nt-font-xs-13-line-height)' }}>
         {parts.map((part, i) => {
           const match = part.match(/^\[图片(\d+)\]$/)
           if (match) {
@@ -77,20 +77,20 @@ function ChunkContent({ content, images }: { content: string; images: KbImage[] 
                 <span key={i} style={{ display: 'inline-block', verticalAlign: 'middle', margin: '4px 2px', cursor: 'pointer' }}
                   onClick={() => setPreviewImg(imgDataMap[img.id])}>
                   <img src={imgDataMap[img.id]} alt={img.description || `图片${imgNum}`}
-                    style={{ maxWidth: 280, maxHeight: 180, borderRadius: 4, border: '1px solid #e8e8e8' }} />
+                    style={{ maxWidth: 280, maxHeight: 180, borderRadius: 4, border: '1px solid var(--nt-alias-border-l2)' }} />
                 </span>
               )
             }
-            return <span key={i} style={{ color: '#999', fontSize: 12, background: '#f5f5f5', padding: '2px 6px', borderRadius: 4 }}>{part}</span>
+            return <span key={i} style={{ color: 'var(--nt-alias-label-tertiary)', fontSize: 'var(--nt-font-xxs-12-font-size)', background: 'var(--nt-alias-bg-module-platform)', padding: '2px 6px', borderRadius: 4 }}>{part}</span>
           }
           return <span key={i}>{part}</span>
         })}
       </div>
       {previewImg && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'var(--nt-alias-bg-mask-photo)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
           onClick={() => setPreviewImg(null)}>
-          <img src={previewImg} alt="预览" style={{ maxWidth: '90vw', maxHeight: '90vh', borderRadius: 8, boxShadow: '0 4px 20px rgba(0,0,0,0.4)' }} />
-          <div style={{ position: 'absolute', top: 20, right: 30, color: '#fff', fontSize: 28, cursor: 'pointer' }} onClick={() => setPreviewImg(null)}>✕</div>
+          <img src={previewImg} alt="预览" style={{ maxWidth: '90vw', maxHeight: '90vh', borderRadius: 8, boxShadow: 'var(--nt-shadow-lv3)' }} />
+          <div style={{ position: 'absolute', top: 20, right: 30, color: 'var(--nt-alias-label-primary-foreground)', fontSize: 'var(--nt-font-xl-24-font-size)', cursor: 'pointer' }} onClick={() => setPreviewImg(null)}>✕</div>
         </div>
       )}
     </>
@@ -350,7 +350,7 @@ export default function KnowledgeBasePage() {
           <div>
             <Tag color={s.color}>{s.text}</Tag>
             {status === 'error' && record.error_message && (
-              <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 2 }}>{record.error_message}</div>
+              <div style={{ color: 'var(--nt-alias-state-error-primary)', fontSize: 'var(--nt-font-xxs-12-font-size)', marginTop: 2 }}>{record.error_message}</div>
             )}
           </div>
         )
@@ -480,7 +480,7 @@ export default function KnowledgeBasePage() {
                 <Space>
                   <Tag color="blue">#{i + 1}</Tag>
                   <span style={{ fontWeight: 600 }}>{r.title || '无标题'}</span>
-                  <span style={{ color: '#999' }}>来自: {r.document?.title}</span>
+                  <span style={{ color: 'var(--nt-alias-label-tertiary)' }}>来自: {r.document?.title}</span>
                 </Space>
               }>
                 <ChunkContent content={r.content || ''} images={r.images || []} />
@@ -536,7 +536,7 @@ export default function KnowledgeBasePage() {
                     ) : (
                       <span style={{ fontWeight: 600 }}>{c.title || '无标题'}</span>
                     )}
-                    <span style={{ color: '#999' }}>{c.char_count}字</span>
+                    <span style={{ color: 'var(--nt-alias-label-tertiary)' }}>{c.char_count}字</span>
                   </Space>
                 }
                 extra={
@@ -564,7 +564,7 @@ export default function KnowledgeBasePage() {
                   <ChunkContent content={c.content || ''} images={c.images || []} />
                 )}
               </Card>
-            )) : <p style={{ color: '#999' }}>暂无分块数据</p>}
+            )) : <p style={{ color: 'var(--nt-alias-label-tertiary)' }}>暂无分块数据</p>}
           </div>
         )}
       </Modal>

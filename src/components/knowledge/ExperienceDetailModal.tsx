@@ -121,7 +121,7 @@ export default function ExperienceDetailModal({
       width={900}
     >
       <Space style={{ marginBottom: 12 }} wrap>
-        <span style={{ fontSize: 16, fontWeight: 600 }}>{exp.title}</span>
+        <span style={{ fontSize: 'var(--nt-font-base-16-font-size)', fontWeight: 600 }}>{exp.title}</span>
         <Tag color={valid ? 'success' : 'default'}>{valid ? '有效' : '已失效'}</Tag>
         <Tag color="blue">{CATEGORY_LABEL[cat]}</Tag>
         {cat === 'troubleshooting' && sevTag && (
@@ -159,13 +159,13 @@ export default function ExperienceDetailModal({
           <span><strong>复用次数：</strong>{exp.reuse_count}</span>
           <span>
             <strong>最后验证：</strong>
-            {exp.last_verified_at ? formatTs(exp.last_verified_at) : <span style={{ color: '#999' }}>未验证</span>}
+            {exp.last_verified_at ? formatTs(exp.last_verified_at) : <span style={{ color: 'var(--nt-alias-label-tertiary)' }}>未验证</span>}
           </span>
           <span>
             <strong>有效期：</strong>
             {formatTs(exp.valid_at) || '—'} ~{' '}
             {exp.invalid_at ? (
-              <span style={{ color: '#ff4d4f' }}>{formatTs(exp.invalid_at)}</span>
+              <span style={{ color: 'var(--nt-alias-state-error-primary)' }}>{formatTs(exp.invalid_at)}</span>
             ) : (
               '至今'
             )}
@@ -180,7 +180,7 @@ export default function ExperienceDetailModal({
           whiteSpace: 'pre-wrap',
           maxHeight: 400,
           overflow: 'auto',
-          background: '#fafafa',
+          background: 'var(--nt-alias-markdown-code-block)',
           padding: 12,
           borderRadius: 4,
           marginBottom: 12,

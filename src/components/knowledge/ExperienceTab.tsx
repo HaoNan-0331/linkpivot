@@ -315,11 +315,11 @@ export default function ExperienceTab() {
       width: 90,
       render: (_: unknown, record: Experience) => {
         if (record.category !== 'troubleshooting') {
-          return <span style={{ color: '#999' }}>—</span>
+          return <span style={{ color: 'var(--nt-alias-label-tertiary)' }}>—</span>
         }
         const sev = record.severity ?? record.attrs?.severity ?? null
         const tag = sev ? SEVERITY_TAG[sev] : null
-        return tag ? <Tag color={tag.color}>{tag.label}</Tag> : <span style={{ color: '#999' }}>—</span>
+        return tag ? <Tag color={tag.color}>{tag.label}</Tag> : <span style={{ color: 'var(--nt-alias-label-tertiary)' }}>—</span>
       },
     },
     {
@@ -328,7 +328,7 @@ export default function ExperienceTab() {
       key: 'tags',
       render: (tags: string[] | undefined) => {
         const arr = tags ?? []
-        if (arr.length === 0) return <span style={{ color: '#999' }}>—</span>
+        if (arr.length === 0) return <span style={{ color: 'var(--nt-alias-label-tertiary)' }}>—</span>
         const shown = arr.slice(0, 3)
         const rest = arr.length - shown.length
         return (
@@ -375,7 +375,7 @@ export default function ExperienceTab() {
         if (record.invalid_at && invalid) {
           return (
             <span>
-              {start} ~ <span style={{ color: '#ff4d4f' }}>{formatTs(record.invalid_at)}</span>
+              {start} ~ <span style={{ color: 'var(--nt-alias-state-error-primary)' }}>{formatTs(record.invalid_at)}</span>
             </span>
           )
         }
@@ -391,7 +391,7 @@ export default function ExperienceTab() {
         ts ? (
           formatTs(ts)
         ) : (
-          <span style={{ color: '#999' }}>未验证</span>
+          <span style={{ color: 'var(--nt-alias-label-tertiary)' }}>未验证</span>
         ),
     },
     {
