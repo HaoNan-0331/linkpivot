@@ -278,16 +278,21 @@ export async function confirmCommand(
       }
       continue
     }
+    // 260830 quick：confirm 续跑步骤卡时序对齐 aiAgentLoop runCmdSteps auto 直执——先建卡
+    // （入栈即 emit running 卡，SSH 建连期间界面可见执行中扫光）再执行；
+    // executeCommandsOnDevice throw 时 catch 内对已建卡补 failed 终态。legacy 无
+    // agentLoop 批次 steps=null 零行为变化。steps 声明在 try 外——catch 块要引用。
+    const steps = batch.agentLoop
+      ? cmds.map((c) => pushAgentStep(batch.agentLoop!.agentState, 'cmd', { deviceName: c.deviceName, command: c.command }))
+      : null
     try {
       const execResults = await executeCommandsOnDevice(device, cmds.map(c => c.command), {
         guardApproved: batch.guardApproved === true,
       })
       for (let i = 0; i < cmds.length; i++) {
         const r = execResults[i]
-        // 28-04：确认执行路径同样入 steps/sources 轨迹（D-09 代码层溯源）
-        const step = batch.agentLoop
-          ? pushAgentStep(batch.agentLoop.agentState, 'cmd', { deviceName: cmds[i].deviceName, command: cmds[i].command })
-          : null
+        // 28-04：确认执行路径同样入 steps/sources 轨迹（D-09 代码层溯源；260830 建卡已前置到执行前）
+        const step = steps ? steps[i] : null
         if (r && r.success) {
           updateLogStatus(cmds[i].logId, 'executed')
           if (step) {
@@ -313,9 +318,17 @@ export async function confirmCommand(
         }
       }
     } catch (err: any) {
-      for (const cmd of cmds) {
-        updateLogStatus(cmd.logId, 'failed')
-        cmdResults.push({ deviceName: cmd.deviceName, cmd: cmd.command, output: `执行失败: ${err.message}`, status: 'failed' })
+      for (let i = 0; i < cmds.length; i++) {
+        updateLogStatus(cmds[i].logId, 'failed')
+        // 260830 quick 缺陷②：throw（如 SSH 连接超时）时已建卡补 failed 终态 + outputSummary
+        // 落错误文本（与 auto 路径 catch 三连同构；T-q-01：err.message 过 sanitizeUntrusted
+        // 截断清洗后才进步骤卡/LLM 回注，不裸进 UI/prompt）
+        const step = steps ? steps[i] : null
+        if (step) {
+          step.outputSummary = sanitizeUntrusted(`执行失败: ${err.message}`, 200)
+          settleAgentStep(step, 'failed', batch.agentLoop!.agentState)
+        }
+        cmdResults.push({ deviceName: cmds[i].deviceName, cmd: cmds[i].command, output: `执行失败: ${err.message}`, status: 'failed' })
       }
     }
   }
