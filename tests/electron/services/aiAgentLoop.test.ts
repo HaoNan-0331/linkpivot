@@ -169,6 +169,9 @@ import { historyMessageToChatMsgs } from '../../../src/components/pages/ai/parse
 import { isCommandAllowed } from '../../../electron/services/commandSafety'
 import { search as kbSearch } from '../../../electron/services/knowledgeBaseService'
 import { createLog as createLogMock, updateLogStatus as updateLogStatusMock } from '../../../electron/services/aiExecLogger'
+// 260830 quick：runEvidenceBackfill 直连 import（ai.ts barrel 不导出该函数，Phase 32 纪律 #6——
+// 与上方 commandSafety/knowledgeBaseService 直连 import 先例一致）
+import { runEvidenceBackfill } from '../../../electron/services/aiPayload'
 
 // ---------- Task 1: AgentLoopState 底座（归一化 + usage 计量） ----------
 
@@ -539,25 +542,34 @@ describe('28-04 Task 1: 分档强制预取 + 后置证据校验 + agent_answer p
     expect(buildAgentMeta(state, 'troubleshoot').noRealtimeData).toBe(false)
   })
 
-  it('troubleshoot 档缺 exp → 收尾自动补查一次并回注（AGENT-03 证据闭环）', async () => {
-    // 预取 exp 零命中（第一次调用），收尾补查命中（第二次调用）
-    retrieveForAnswerMock
-      .mockResolvedValueOnce({ injected: [] })
-      .mockResolvedValue(EXP_HIT)
-    const fetchMock = queueReplies('初步分析', '补查后总结')
-    const out = await chat([{ role: 'user', content: '网络故障排查' }], undefined, null)
-    // 预取（callAI 前）+ 补查各一次检索
-    expect(retrieveForAnswerMock).toHaveBeenCalledTimes(2)
-    // 补查命中 → 追加一次 callAI 回注补查结果
-    expect(fetchMock.mock.calls.length).toBe(2)
-    const second = reqMsgs(fetchMock, 1)
-    expect(second.some((m: any) => m.role === 'user' && m.content.includes('系统补查经验库命中'))).toBe(true)
-    const payload = JSON.parse(out)
-    // 补查 exp 引用并入 → exp_answer 契约 + meta（sources 含补查 exp 溯源）
-    expect(payload.type).toBe('exp_answer')
-    expect(payload.tier).toBe('troubleshoot')
-    expect(payload.sources.some((s: any) => s.kind === 'exp')).toBe(true)
-    expect(payload.noRealtimeData).toBe(false)
+  it('troubleshoot 预取 exp 同词未命中 → 补查跳过重复检索：检索恰 1 次、零补查卡、backfillNotes 载已检索未命中', async () => {
+    // 260830 quick：预取已用同词（用户消息）检索过且未命中 → 收尾补查不再重复检索
+    // （本地确定性 FTS 同词重跑结果必然相同）——零补查卡、零补查回注轮、事实告知落 backfillNotes
+    retrieveForAnswerMock.mockResolvedValue({ injected: [] })
+    const payloads: any[] = []
+    const fetchMock = queueReplies('初步分析')
+    const out = await chat([{ role: 'user', content: '网络故障排查' }], undefined, 'sess-u56-skip', (p) => payloads.push(p))
+    // 全程检索恰 1 次（修复前 2：预取 + 补查同词重复）
+    expect(retrieveForAnswerMock).toHaveBeenCalledTimes(1)
+    // 跳过不置 hasNewEvidence → 无补查回注轮
+    expect(fetchMock.mock.calls.length).toBe(1)
+    // 零轨迹纯文本契约不变（不把普通问答变 JSON）
+    expect(out).toBe('初步分析')
+    // exp 预取卡恰 1 张、零补查卡
+    expect(payloads.filter((p) => p.actionType === 'exp' && p.prefetched === true)).toHaveLength(1)
+    expect(payloads.filter((p) => p.backfilled === true)).toHaveLength(0)
+    // meta_enc：exp 步骤恰 1 且 prefetched、无 backfilled 步骤、backfillNotes 载「已检索未命中」事实告知
+    const row = db.prepare(
+      "SELECT meta_enc FROM chat_history WHERE role='assistant' AND session_id=? ORDER BY created_at DESC LIMIT 1"
+    ).get('sess-u56-skip') as any
+    const meta = JSON.parse(decField(row.meta_enc, MK) as string)
+    expect(meta.tier).toBe('troubleshoot')
+    expect(meta.steps.filter((s: any) => s.actionType === 'exp')).toHaveLength(1)
+    expect(meta.steps.filter((s: any) => s.actionType === 'exp')[0].prefetched).toBe(true)
+    expect(meta.steps.some((s: any) => s.backfilled === true)).toBe(false)
+    expect(meta.backfillNotes.some((n: string) => n.includes('已检索过'))).toBe(true)
+    expect(meta.backfillNotes.some((n: string) => n.includes('未命中'))).toBe(true)
+    expect(meta.backfillNotes.some((n: string) => n.includes('不再重复检索'))).toBe(true)
   })
 
   it('补查零命中：不加 LLM 轮，知情落 meta_enc（backfillNotes），零轨迹回复正文不变（纯文本契约）', async () => {
@@ -565,6 +577,8 @@ describe('28-04 Task 1: 分档强制预取 + 后置证据校验 + agent_answer p
     const fetchMock = queueReplies('直接回答')
     const out = await chat([{ role: 'user', content: '网络故障排查' }], undefined, 'sess-zero')
     expect(fetchMock.mock.calls.length).toBe(1)
+    // 预取 1 次（同 query 已查过 → 补查跳过）
+    expect(retrieveForAnswerMock).toHaveBeenCalledTimes(1)
     // 零检索零执行 → 纯文本原样返回（不把普通问答变 JSON），无源标签经 meta_enc 持久化
     expect(out).toBe('直接回答')
     const row = db.prepare(
@@ -572,7 +586,8 @@ describe('28-04 Task 1: 分档强制预取 + 后置证据校验 + agent_answer p
     ).get('sess-zero') as any
     const meta = JSON.parse(decField(row.meta_enc, MK) as string)
     expect(meta.noRealtimeData).toBe(true)
-    expect(meta.backfillNotes.some((n: string) => n.includes('无相关内容'))).toBe(true)
+    // 260830 quick：同词已查 → 补查跳过，事实告知文案为「不再重复检索」
+    expect(meta.backfillNotes.some((n: string) => n.includes('不再重复检索'))).toBe(true)
   })
 
   it('systemPrompt 追加三源冲突指令（D-10：内联 ⚠ + 末尾冲突清单，禁止静默取舍）', async () => {
@@ -1292,43 +1307,33 @@ describe('28-06 R2 缺陷③：confirm 续跑阶段停止有效（signal 贯穿�
 // ---------- 28-06 R8：后置证据补查步骤卡 + 检索路径卡片覆盖审计 ----------
 
 describe('28-06 R8：后置证据补查生成步骤卡（真实检索过程可见）', () => {
-  it('troubleshoot 档预取双零命中 → 补查 exp 命中 + kb 未命中：补查卡 backfilled 标志、命中/未命中如实、stepIndex 唯一、meta 持久化', async () => {
-    // 预取 exp/kb 双零命中（第 1 次检索），补查 exp 命中（第 2 次）、kb 仍零命中
-    retrieveForAnswerMock
-      .mockResolvedValueOnce({ injected: [] })
-      .mockResolvedValue(EXP_HIT)
+  it('troubleshoot 预取双零命中 → 补查双源跳过：预取卡 2 张、零补查卡、stepIndex 唯一、backfillNotes 双源告知', async () => {
+    // 260830 quick：exp/kb 预取同词双零命中 → 补查双源均不再重复检索（预取卡即真实检索轨迹）
+    retrieveForAnswerMock.mockResolvedValue({ injected: [] })
+    vi.mocked(kbSearch).mockResolvedValue({ rows: [] } as any)
     const payloads: any[] = []
-    // 预取零命中 → 引导 AI 换词；AI 纯文本收尾不换词 → 补查（callAI：首答 + 补查回注）
-    const fetchMock = queueReplies('初步分析', '补查后总结')
-    await chat([{ role: 'user', content: '网络故障排查' }], undefined, 'sess-r8-a', (p) => payloads.push(p))
-    // 补查命中 → 追加回注轮
-    expect(fetchMock.mock.calls.length).toBe(2)
-    // 预取卡 2 张（exp/kb 未命中）+ 补查卡 2 张（exp 命中 / kb 未命中）全部 emit
-    const preCards = payloads.filter((p) => p.prefetched === true)
-    expect(preCards).toHaveLength(2)
-    const backfillExp = payloads.find((p) => p.backfilled === true && p.actionType === 'exp' && p.stepStatus === 'done')
-    const backfillKb = payloads.find((p) => p.backfilled === true && p.actionType === 'kb' && p.stepStatus === 'done')
-    expect(backfillExp).toBeTruthy()
-    expect(backfillExp.resultJson).toContain('命中 1 条')
-    expect(backfillExp.resultJson).toContain('ARP 排查')
-    expect(backfillKb).toBeTruthy()
-    expect(backfillKb.resultJson).toContain('未命中')
+    const fetchMock = queueReplies('初步分析')
+    await chat([{ role: 'user', content: '网络故障排查' }], undefined, 'sess-u56-skip2', (p) => payloads.push(p))
+    // 双源跳过 → 不追加 LLM 轮（无补查回注）
+    expect(fetchMock.mock.calls.length).toBe(1)
+    // 预取卡 2 张（exp/kb 未命中）+ 零补查卡
+    expect(payloads.filter((p) => p.prefetched === true)).toHaveLength(2)
+    expect(payloads.filter((p) => p.backfilled === true)).toHaveLength(0)
     // stepIndex 全序列唯一（renderer 同构模拟零互覆）
     const cards = simulateRendererCards(payloads)
     const idxes = cards.map((c) => c.stepIndex)
     expect(new Set(idxes).size).toBe(idxes.length)
-    expect(cards.filter((c) => c.backfilled)).toHaveLength(2)
-    // 补查步随 meta_enc 持久化（历史恢复可见）+ renderer 透传 backfilled 标志
-    const msgs = getSessionMessages('sess-r8-a')
-    const last = msgs[msgs.length - 1]
-    expect(last.meta?.steps.some((s: any) => s.backfilled === true)).toBe(true)
-    const restored = historyMessageToChatMsgs({
-      id: last.id, role: 'assistant', content: last.content, createdAt: last.createdAt, meta: last.meta,
-    })
-    expect(restored.some((m) => m.toolResult?.backfilled === true)).toBe(true)
+    // 补查跳过事实随 meta_enc 持久化：无 backfilled 步骤 + 双源「不再重复检索」告知
+    const row = db.prepare(
+      "SELECT meta_enc FROM chat_history WHERE role='assistant' AND session_id=? ORDER BY created_at DESC LIMIT 1"
+    ).get('sess-u56-skip2') as any
+    const meta = JSON.parse(decField(row.meta_enc, MK) as string)
+    expect(meta.steps.some((s: any) => s.backfilled === true)).toBe(false)
+    expect(meta.backfillNotes.some((n: string) => n.includes('经验库已检索过'))).toBe(true)
+    expect(meta.backfillNotes.some((n: string) => n.includes('知识库已检索过'))).toBe(true)
   })
 
-  it('补查步不占步数硬顶：agent_max_rounds=1 下补查卡在场，收尾仍报「第 1 步」', async () => {
+  it('补查跳过零补查卡且不占步数硬顶：agent_max_rounds=1 下收尾仍报「第 1 步」', async () => {
     allowCmd()
     db.prepare('UPDATE ai_config SET agent_max_rounds = 1').run()
     retrieveForAnswerMock.mockResolvedValue(EXP_HIT)
@@ -1342,7 +1347,10 @@ describe('28-06 R8：后置证据补查生成步骤卡（真实检索过程可�
     const wrapMsg = reqMsgs(fetchMock, 2).filter((m: any) => m.role === 'user').pop()
     expect(wrapMsg.content).toContain('第 1 步')
     const payload = JSON.parse(out)
-    expect(payload.steps.some((s: any) => s.backfilled === true)).toBe(true)
+    // 260830 quick：kb 预取同词未命中 → 补查跳过（零补查卡），步数硬顶语义不变
+    expect(payload.steps.some((s: any) => s.backfilled === true)).toBe(false)
+    // kb 预取 1 次（同 query 已查过 → 补查跳过）
+    expect(vi.mocked(kbSearch)).toHaveBeenCalledTimes(1)
   })
 
   it('inspection 档补查源与分档一致：plan 不含 kb → kbSearch 零调用、零 kb 卡（补查只按 TIER_RETRIEVAL_PLAN）', async () => {
@@ -1350,11 +1358,12 @@ describe('28-06 R8：后置证据补查生成步骤卡（真实检索过程可�
     const payloads: any[] = []
     queueReplies('巡检总结')
     await chat([{ role: 'user', content: '帮我巡检一遍网络情况' }], undefined, null, (p) => payloads.push(p))
-    // inspection plan = [exp, device]：exp 预取一次，kb 全链路零检索
-    expect(retrieveForAnswerMock).toHaveBeenCalledTimes(2) // 预取 + 补查（exp 缺席补一次）
+    // inspection plan = [exp, device]：exp 预取 1 次（同 query 已查过 → 补查跳过），kb 全链路零检索
+    expect(retrieveForAnswerMock).toHaveBeenCalledTimes(1)
     expect(vi.mocked(kbSearch)).not.toHaveBeenCalled()
     expect(payloads.some((p) => p.actionType === 'kb')).toBe(false)
-    expect(payloads.some((p) => p.backfilled === true && p.actionType === 'exp')).toBe(true)
+    expect(payloads.some((p) => p.backfilled === true && p.actionType === 'exp')).toBe(false)
+    expect(payloads.some((p) => p.backfilled === true)).toBe(false)
   })
 })
 
@@ -1543,5 +1552,75 @@ describe('260830 quick：confirm 续跑执行段步骤卡时序', () => {
     // cmdResults 回注链不断：第二笔 callAI 被消费，最终回复照常送达
     expect(payload.content).toBe('失败总结')
     expect(payload.steps.some((s: any) => s.actionType === 'cmd' && s.status === 'failed')).toBe(true)
+  })
+})
+
+// ---------- 260830 quick：补查同词已查守卫（runEvidenceBackfill 直连单测） ----------
+// 预取同 kind + 同 query 已检索且未命中 → 补查跳过重复检索；failed 重试 / 不同 query / 未查过
+// 三条既有路径零回归。闭环锚选 inspection 档（plan=[exp,device]，device 分支只加核验 note
+// 不检索）——单检索源隔离，直连验证守卫语义不经 chat() 全链。
+
+describe('260830 quick：补查同词已查守卫（runEvidenceBackfill 直连单测）', () => {
+  /** McpLoopCtx 最小构造（runEvidenceBackfill 只消费 userMessage/deviceIds/config/fullMessages/expReferences） */
+  function makeCtx(userMessage: string): any {
+    return {
+      fullMessages: [{ role: 'user', content: userMessage }],
+      config: { baseUrl: 'http://x', apiKey: 'k', modelName: 'm' },
+      execMode: 'auto',
+      deviceNames: [],
+      mcpContexts: [],
+      sessionId: null,
+      expReferences: [],
+      userMessage,
+    }
+  }
+
+  it('steps 无 exp 步骤 → 照常补查：检索执行 + 补查卡 + 命中注入 + 二次 callAI 收尾（AGENT-03 闭环回归锚）', async () => {
+    const state = createAgentLoopState()
+    // 预置一条 kb 不同 query done 步——守卫按 kind+query 双条件，kb 步不遮 exp 补查
+    state.steps.push({ stepIndex: 0, actionType: 'kb', status: 'done', query: 'ARP 异常', outputSummary: '知识库未命中' } as any)
+    const ctx = makeCtx('网络故障排查')
+    retrieveForAnswerMock.mockResolvedValueOnce(EXP_HIT)
+    const fetchMock = queueReplies('补查后总结')
+    const out = await runEvidenceBackfill(ctx, state, 'inspection', '初步分析')
+    expect(out).toBe('补查后总结')
+    expect(retrieveForAnswerMock).toHaveBeenCalledTimes(1)
+    expect(retrieveForAnswerMock).toHaveBeenCalledWith({ userMessage: '网络故障排查', deviceIds: undefined })
+    // 补查卡：steps 末位 backfilled exp done（命中概要如实）
+    const last = state.steps[state.steps.length - 1]
+    expect(last.actionType).toBe('exp')
+    expect(last.status).toBe('done')
+    expect(last.backfilled).toBe(true)
+    expect(String(last.outputSummary)).toContain('命中 1 条')
+    // 命中注入：expReferences 合并 + 二次 callAI 回注 user 消息含补查命中文本
+    expect(ctx.expReferences).toHaveLength(1)
+    const userMsg = reqMsgs(fetchMock, 0).filter((m: any) => m.role === 'user').pop()
+    expect(userMsg.content).toContain('系统补查经验库命中')
+  })
+
+  it('同 query failed 步骤不视为已查过 → 补查重试一次（真实检索未命中路径，非跳过告知）', async () => {
+    const state = createAgentLoopState()
+    state.steps.push({ stepIndex: 0, actionType: 'exp', status: 'failed', query: '网络故障排查', outputSummary: '经验库检索失败' } as any)
+    const ctx = makeCtx('网络故障排查')
+    retrieveForAnswerMock.mockResolvedValue({ injected: [] })
+    queueReplies('未期轮') // 零新证据不应消费任何 callAI
+    const out = await runEvidenceBackfill(ctx, state, 'inspection', '初步分析')
+    expect(out).toBe('初步分析')
+    expect(retrieveForAnswerMock).toHaveBeenCalledTimes(1)
+    // 补查重试建 backfilled exp 卡（未命中如实）
+    expect(state.steps.filter((s) => s.backfilled === true && s.actionType === 'exp')).toHaveLength(1)
+    expect(state.backfillNotes?.some((n) => n.includes('无相关内容'))).toBe(true)
+  })
+
+  it('不同 query 已查（AI 主动检索词）→ 守卫不命中，照常补查', async () => {
+    const state = createAgentLoopState()
+    state.steps.push({ stepIndex: 0, actionType: 'exp', status: 'done', query: 'ARP 异常', outputSummary: '经验库未命中' } as any)
+    const ctx = makeCtx('网络故障排查')
+    retrieveForAnswerMock.mockResolvedValue({ injected: [] })
+    queueReplies('未期轮')
+    const out = await runEvidenceBackfill(ctx, state, 'inspection', '初步分析')
+    expect(out).toBe('初步分析')
+    expect(retrieveForAnswerMock).toHaveBeenCalledTimes(1)
+    expect(state.backfillNotes?.some((n) => n.includes('无相关内容'))).toBe(true)
   })
 })
