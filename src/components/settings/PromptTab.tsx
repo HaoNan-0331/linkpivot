@@ -11,11 +11,11 @@ const { Text, Paragraph } = Typography
 // 登出（renderer 重载）或应用重启自然失效（T-20-09）。
 let gatePassedInSession = false
 
-// UI-SPEC Diff 配色（Word 修订模式风格，行内连续）
-const DIFF_REMOVE_BG = '#fff1f0'
-const DIFF_REMOVE_FG = '#cf1322'
-const DIFF_ADD_BG = '#f6ffed'
-const DIFF_ADD_FG = '#389e0d'
+// UI-SPEC Diff 配色（Word 修订模式风格，行内连续）——Phase 33 D-05：色值迁 --nt-* token
+const DIFF_REMOVE_BG = 'var(--nt-static-red-50)'
+const DIFF_REMOVE_FG = 'var(--nt-static-red-900)'
+const DIFF_ADD_BG = 'var(--nt-alias-state-success-tertiary)'
+const DIFF_ADD_FG = 'var(--nt-alias-state-success-primary)'
 
 const ipcErrMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
@@ -260,23 +260,23 @@ export default function PromptTab({ refreshKey = 0 }: { refreshKey?: number }) {
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
       {entry.conflict && (
         <Tooltip title="官方默认已更新，需要处理">
-          <Badge color="#faad14" />
+          <Badge color="var(--nt-alias-state-warn-primary)" />
         </Tooltip>
       )}
       <Text strong>{entry.id}</Text>
-      <Tag style={{ fontSize: 12 }}>官方 v{entry.version}</Tag>
+      <Tag style={{ fontSize: 'var(--nt-font-xxs-12-font-size)' }}>官方 v{entry.version}</Tag>
       {entry.overrideContent != null && entry.basedOnVersion != null && (
-        <Tag color="orange" style={{ fontSize: 12 }}>基于 v{entry.basedOnVersion} 修改</Tag>
+        <Tag color="orange" style={{ fontSize: 'var(--nt-font-xxs-12-font-size)' }}>基于 v{entry.basedOnVersion} 修改</Tag>
       )}
       {entry.safetyCritical && (
         <Tooltip title="⚠ 安全关键——修改可能影响命令确认与注入防护，请谨慎">
-          <Text type="danger" style={{ fontSize: 12 }}>
+          <Text type="danger" style={{ fontSize: 'var(--nt-font-xxs-12-font-size)' }}>
             <WarningOutlined style={{ marginRight: 4 }} />
             安全关键——修改可能影响命令确认与注入防护，请谨慎
           </Text>
         </Tooltip>
       )}
-      <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>{entry.description}</Text>
+      <Text type="secondary" style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', marginLeft: 8 }}>{entry.description}</Text>
     </span>
   )
 
@@ -310,13 +310,13 @@ export default function PromptTab({ refreshKey = 0 }: { refreshKey?: number }) {
       <Collapse
         items={grouped.map(([group, list]) => ({
           key: group,
-          label: <Text strong style={{ fontSize: 16 }}>{group}</Text>,
+          label: <Text strong style={{ fontSize: 'var(--nt-font-base-16-font-size)' }}>{group}</Text>,
           children: (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
               {list.map((entry) => (
                 <Card key={entry.id} size="small" title={entryHeader(entry)}>
                   <Paragraph
-                    style={{ whiteSpace: 'pre-wrap', fontSize: 13, marginBottom: 8, color: '#595959' }}
+                    style={{ whiteSpace: 'pre-wrap', fontSize: 'var(--nt-font-xs-13-font-size)', marginBottom: 8, color: 'var(--nt-alias-label-secondary)' }}
                     ellipsis={{ rows: 3, expandable: true, symbol: '展开全文' }}
                   >
                     {entry.overrideContent ?? entry.defaultContent}
@@ -344,7 +344,7 @@ export default function PromptTab({ refreshKey = 0 }: { refreshKey?: number }) {
         open={gateOpen}
         title={
           <Space>
-            <WarningOutlined style={{ color: '#faad14' }} />
+            <WarningOutlined style={{ color: 'var(--nt-alias-state-warn-primary)' }} />
             修改 AI 提示词有风险
           </Space>
         }
@@ -353,12 +353,12 @@ export default function PromptTab({ refreshKey = 0 }: { refreshKey?: number }) {
         onOk={passGate}
         onCancel={() => { setGateOpen(false); setGateInput(''); setGateError(null); setPendingEntry(null) }}
       >
-        <div style={{ padding: '8px 0', color: '#595959' }}>
+        <div style={{ padding: '8px 0', color: 'var(--nt-alias-label-secondary)' }}>
           AI 提示词控制助手的行为方式。改错可能导致 AI 回复异常、误判命令，极端情况下需要恢复默认才能修复。请在下方输入「我已知晓风险」继续。
         </div>
         <div style={{ marginBottom: 12 }}>
-          <Text type="secondary" style={{ fontSize: 12 }}>原文展示：</Text>
-          <code style={{ fontFamily: 'monospace', fontSize: 13, background: '#f5f5f5', padding: '2px 6px' }}>我已知晓风险</code>
+          <Text type="secondary" style={{ fontSize: 'var(--nt-font-xxs-12-font-size)' }}>原文展示：</Text>
+          <code style={{ fontFamily: 'var(--nt-font-family-code)', fontSize: 'var(--nt-font-xs-13-font-size)', background: 'var(--nt-alias-bg-module-platform)', padding: '2px 6px' }}>我已知晓风险</code>
         </div>
         <Input
           value={gateInput}
@@ -367,7 +367,7 @@ export default function PromptTab({ refreshKey = 0 }: { refreshKey?: number }) {
           onPressEnter={passGate}
           status={gateError ? 'error' : undefined}
         />
-        {gateError && <Text type="danger" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>{gateError}</Text>}
+        {gateError && <Text type="danger" style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', display: 'block', marginTop: 4 }}>{gateError}</Text>}
       </Modal>
 
       {/* 冲突三选 Modal（D-01/D-02） */}
@@ -394,26 +394,26 @@ export default function PromptTab({ refreshKey = 0 }: { refreshKey?: number }) {
           <Text strong>手动合并</Text>（在编辑器里把两边改动合到一起）
         </Paragraph>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', marginBottom: 8 }}>
-          <Text style={{ fontSize: 12 }}>
+          <Text style={{ fontSize: 'var(--nt-font-xxs-12-font-size)' }}>
             <span style={{ background: DIFF_REMOVE_BG, color: DIFF_REMOVE_FG, padding: '0 4px', fontWeight: 600 }}>红底加粗</span>
             {' '}你的版本独有（将被替换）
           </Text>
-          <Text style={{ fontSize: 12 }}>
+          <Text style={{ fontSize: 'var(--nt-font-xxs-12-font-size)' }}>
             <span style={{ background: DIFF_ADD_BG, color: DIFF_ADD_FG, padding: '0 4px', fontWeight: 600 }}>绿底加粗</span>
             {' '}官方新默认新增
           </Text>
-          <Text type="secondary" style={{ fontSize: 12 }}>共 {conflictChanges} 处变化</Text>
+          <Text type="secondary" style={{ fontSize: 'var(--nt-font-xxs-12-font-size)' }}>共 {conflictChanges} 处变化</Text>
           <Switch size="small" checked={diffOnlyChanges} onChange={setDiffOnlyChanges} />
-          <Text type="secondary" style={{ fontSize: 12 }}>仅看变化</Text>
+          <Text type="secondary" style={{ fontSize: 'var(--nt-font-xxs-12-font-size)' }}>仅看变化</Text>
         </div>
         <div
           style={{
-            border: '1px solid #f0f0f0',
+            border: '1px solid var(--nt-alias-border-l2)',
             borderRadius: 4,
             padding: 8,
-            fontFamily: 'monospace',
-            fontSize: 13,
-            lineHeight: 1.6,
+            fontFamily: 'var(--nt-font-family-code)',
+            fontSize: 'var(--nt-font-xs-13-font-size)',
+            lineHeight: 'var(--nt-font-xs-13-line-height)',
             whiteSpace: 'pre-wrap',
             wordBreak: 'break-all',
             maxHeight: 360,
@@ -423,7 +423,7 @@ export default function PromptTab({ refreshKey = 0 }: { refreshKey?: number }) {
           {conflictDiffView.map((seg, i) => {
             if (seg.omitted != null) {
               return (
-                <span key={i} style={{ color: '#bfbfbf', fontStyle: 'italic', fontSize: 12 }}>
+                <span key={i} style={{ color: 'var(--nt-alias-label-caption)', fontStyle: 'italic', fontSize: 'var(--nt-font-xxs-12-font-size)' }}>
                   {`\n……（省略 ${seg.omitted} 字相同内容）……\n`}
                 </span>
               )
@@ -470,10 +470,10 @@ export default function PromptTab({ refreshKey = 0 }: { refreshKey?: number }) {
             style={{ marginBottom: 12 }}
             items={[{
               key: 'default',
-              label: <Text type="secondary" style={{ fontSize: 12 }}>官方默认值（v{editing.version}）对照 — 点开展开</Text>,
+              label: <Text type="secondary" style={{ fontSize: 'var(--nt-font-xxs-12-font-size)' }}>官方默认值（v{editing.version}）对照 — 点开展开</Text>,
               children: (
                 <Paragraph
-                  style={{ whiteSpace: 'pre-wrap', fontSize: 12, color: '#595959', fontFamily: 'monospace', marginBottom: 0 }}
+                  style={{ whiteSpace: 'pre-wrap', fontSize: 'var(--nt-font-xxs-12-font-size)', color: 'var(--nt-alias-label-secondary)', fontFamily: 'var(--nt-font-family-code)', marginBottom: 0 }}
                   ellipsis={{ rows: 4, expandable: true, symbol: '展开全文' }}
                 >
                   {editing.defaultContent}
@@ -488,24 +488,24 @@ export default function PromptTab({ refreshKey = 0 }: { refreshKey?: number }) {
               ref={textAreaRef}
               value={editContent}
               onChange={(e) => setEditContent(e.target.value)}
-              style={{ fontSize: 13, fontFamily: 'monospace' }}
+              style={{ fontSize: 'var(--nt-font-xs-13-font-size)', fontFamily: 'var(--nt-font-family-code)' }}
               autoSize={{ minRows: 18, maxRows: 28 }}
             />
           </div>
-          <div style={{ width: 240, flexShrink: 0, border: '1px solid #f0f0f0', borderRadius: 4, padding: 8, maxHeight: 480, overflow: 'auto' }}>
-            <Text type="secondary" style={{ fontSize: 12 }}>变量（点击插入光标处）</Text>
+          <div style={{ width: 240, flexShrink: 0, border: '1px solid var(--nt-alias-border-l2)', borderRadius: 4, padding: 8, maxHeight: 480, overflow: 'auto' }}>
+            <Text type="secondary" style={{ fontSize: 'var(--nt-font-xxs-12-font-size)' }}>变量（点击插入光标处）</Text>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
               {varDocs.map((v) => (
-                <div key={v.name} style={{ padding: 8, background: '#fafafa', borderRadius: 4 }}>
-                  <a onClick={() => insertVar(v.name)} style={{ fontFamily: 'monospace', fontSize: 13 }}>{`{{${v.name}}}`}</a>
+                <div key={v.name} style={{ padding: 8, background: 'var(--nt-alias-markdown-code-block)', borderRadius: 4 }}>
+                  <a onClick={() => insertVar(v.name)} style={{ fontFamily: 'var(--nt-font-family-code)', fontSize: 'var(--nt-font-xs-13-font-size)' }}>{`{{${v.name}}}`}</a>
                   {v.required
-                    ? <Tag color="red" style={{ marginLeft: 4, fontSize: 12 }}>必需</Tag>
-                    : <Tag style={{ marginLeft: 4, fontSize: 12 }}>可选</Tag>}
-                  {v.desc && <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 2 }}>{v.desc}</div>}
+                    ? <Tag color="red" style={{ marginLeft: 4, fontSize: 'var(--nt-font-xxs-12-font-size)' }}>必需</Tag>
+                    : <Tag style={{ marginLeft: 4, fontSize: 'var(--nt-font-xxs-12-font-size)' }}>可选</Tag>}
+                  {v.desc && <div style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', color: 'var(--nt-alias-label-secondary)', marginTop: 2 }}>{v.desc}</div>}
                 </div>
               ))}
               {editing && varDocs.length === 0 && (
-                <Text type="secondary" style={{ fontSize: 12 }}>此条目无占位变量</Text>
+                <Text type="secondary" style={{ fontSize: 'var(--nt-font-xxs-12-font-size)' }}>此条目无占位变量</Text>
               )}
             </div>
           </div>

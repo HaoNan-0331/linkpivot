@@ -90,7 +90,7 @@ function TestPanel({ state, onCancel }: { state: TestState; onCancel: () => void
         message="连接失败"
         description={
           <div>
-            <div>{state.result.error.reason}（<code style={{ fontFamily: 'monospace', fontSize: 13 }}>{state.result.error.code}{state.result.error.errno != null ? ` / ${String(state.result.error.errno)}` : ''}</code>）。可检查命令/地址与凭证后重试。</div>
+            <div>{state.result.error.reason}（<code style={{ fontFamily: 'var(--nt-font-family-code)', fontSize: 'var(--nt-font-xs-13-font-size)' }}>{state.result.error.code}{state.result.error.errno != null ? ` / ${String(state.result.error.errno)}` : ''}</code>）。可检查命令/地址与凭证后重试。</div>
           </div>
         }
       />
@@ -102,7 +102,7 @@ function TestPanel({ state, onCancel }: { state: TestState; onCancel: () => void
 /** 成功结果：工具表格 + 行点击抽屉（D-08） */
 function TestSuccessPanel({ result, onOpenTool }: { result: Extract<McpTestResultDto, { ok: true }>; onOpenTool: (t: McpToolInfoDto) => void }) {
   const toolColumns: ColumnsType<McpToolInfoDto> = [
-    { title: '名称', dataIndex: 'name', width: 220, render: (v: string) => <code style={{ fontFamily: 'monospace', fontSize: 13 }}>{v}</code> },
+    { title: '名称', dataIndex: 'name', width: 220, render: (v: string) => <code style={{ fontFamily: 'var(--nt-font-family-code)', fontSize: 'var(--nt-font-xs-13-font-size)' }}>{v}</code> },
     { title: '描述', dataIndex: 'description', ellipsis: true },
     {
       title: '', width: 80,
@@ -139,13 +139,13 @@ function ToolDrawer({ tool, onClose }: { tool: McpToolInfoDto | null; onClose: (
           </div>
           <div>
             <Text strong>参数 schema</Text>
-            <pre style={{ fontFamily: 'monospace', fontSize: 13, background: '#fafafa', padding: 8, borderRadius: 4, overflow: 'auto', margin: '4px 0 0' }}>
+            <pre style={{ fontFamily: 'var(--nt-font-family-code)', fontSize: 'var(--nt-font-xs-13-font-size)', background: 'var(--nt-alias-markdown-code-block)', padding: 8, borderRadius: 4, overflow: 'auto', margin: '4px 0 0' }}>
               {JSON.stringify(tool.inputSchema ?? {}, null, 2)}
             </pre>
           </div>
           <div>
             <Text strong>完整元数据</Text>
-            <pre style={{ fontFamily: 'monospace', fontSize: 13, background: '#fafafa', padding: 8, borderRadius: 4, overflow: 'auto', margin: '4px 0 0' }}>
+            <pre style={{ fontFamily: 'var(--nt-font-family-code)', fontSize: 'var(--nt-font-xs-13-font-size)', background: 'var(--nt-alias-markdown-code-block)', padding: 8, borderRadius: 4, overflow: 'auto', margin: '4px 0 0' }}>
               {JSON.stringify({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema, annotations: tool.annotations }, null, 2)}
             </pre>
           </div>
@@ -662,7 +662,7 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
       title: '最近测试', width: 190, ellipsis: true,
       render: (_: unknown, r: McpConfigDto) => {
         if (r.lastTestStatus === 'success') {
-          return <Text style={{ color: '#389e0d' }}>成功 · {r.lastTestToolCount ?? 0} 个工具 · {relativeTime(r.lastTestAt)}</Text>
+          return <Text style={{ color: 'var(--nt-alias-state-success-primary)' }}>成功 · {r.lastTestToolCount ?? 0} 个工具 · {relativeTime(r.lastTestAt)}</Text>
         }
         if (r.lastTestStatus === 'failed') {
           return <Text type="danger">失败 · {relativeTime(r.lastTestAt)}</Text>
@@ -765,7 +765,7 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
             description={
               <div>
                 <div style={{ fontWeight: 600 }}>还没有 MCP 配置</div>
-                <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 4 }}>
+                <div style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', color: 'var(--nt-alias-label-secondary)', marginTop: 4 }}>
                   MCP 配置用于让 AI 通过标准协议操控设备管理界面。点击「新建配置」，填入服务程序或地址并绑定设备即可开始。
                 </div>
               </div>
@@ -825,12 +825,12 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
                   value={form.commandOrUrl}
                   onChange={(e) => setForm((f) => ({ ...f, commandOrUrl: e.target.value }))}
                   placeholder="如 npx 或完整程序路径"
-                  style={{ marginTop: 4, fontFamily: 'monospace', fontSize: 13 }}
+                  style={{ marginTop: 4, fontFamily: 'var(--nt-font-family-code)', fontSize: 'var(--nt-font-xs-13-font-size)' }}
                 />
               </div>
               <div>
                 <Text strong>参数</Text>
-                <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 2 }}>逐个添加，输入后按回车确认</div>
+                <div style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', color: 'var(--nt-alias-label-secondary)', marginTop: 2 }}>逐个添加，输入后按回车确认</div>
                 <Select
                   mode="tags"
                   value={form.args}
@@ -850,16 +850,16 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
                   value={form.commandOrUrl}
                   onChange={(e) => setForm((f) => ({ ...f, commandOrUrl: e.target.value }))}
                   placeholder="如 https://example.com/mcp"
-                  style={{ marginTop: 4, fontFamily: 'monospace', fontSize: 13 }}
+                  style={{ marginTop: 4, fontFamily: 'var(--nt-font-family-code)', fontSize: 'var(--nt-font-xs-13-font-size)' }}
                 />
               </div>
               <div>
                 <Text strong>认证令牌（选填）</Text>
-                <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 2 }}>
+                <div style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', color: 'var(--nt-alias-label-secondary)', marginTop: 2 }}>
                   仅支持「静态 Bearer 令牌」：填写后会自动放入请求头 Authorization 中发给对方服务，暂不支持 OAuth 动态授权。若对方服务用网址参数认证（如地址里带 ?key=xxx），直接把 key 保留在服务地址里即可，本框留空。
                 </div>
                 {form.credentialMasked && !clearCred && (
-                  <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 2 }}>
+                  <div style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', color: 'var(--nt-alias-label-secondary)', marginTop: 2 }}>
                     当前已保存：{form.credentialMasked}（留空 = 不修改）
                     <Button type="link" size="small" danger style={{ padding: 0, marginLeft: 8 }} onClick={() => setClearCred(true)}>
                       清除已保存令牌
@@ -867,7 +867,7 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
                   </div>
                 )}
                 {clearCred && (
-                  <div style={{ fontSize: 12, color: '#d46b08', marginTop: 2 }}>
+                  <div style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', color: 'var(--nt-alias-state-warn-label)', marginTop: 2 }}>
                     保存后将清除已保存的令牌
                     <Button type="link" size="small" style={{ padding: 0, marginLeft: 8 }} onClick={() => setClearCred(false)}>
                       撤销清除（保留原令牌）
@@ -888,7 +888,7 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
             // 29-06（D-16）/29-09 Gap-4：新建与编辑统一——逐台设备卡片 + 卡内独立 env（行驱动键集合）
             <div>
               <Text strong>绑定设备与环境变量</Text>
-              <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 2 }}>
+              <div style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', color: 'var(--nt-alias-label-secondary)', marginTop: 2 }}>
                 每台绑定设备各一组环境变量（互不影响）；一台设备只能绑定一个 MCP 配置。凭证性质值只回显末 4 位，未修改不会重新保存。
               </div>
               <div style={{ marginTop: 8 }}>
@@ -929,7 +929,7 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
                       <Card size="small" style={{ marginTop: 8 }}>
                         <Space direction="vertical" size={4}>
                           {pkg.disabled && (
-                            <div style={{ color: '#d46b08' }}>
+                            <div style={{ color: 'var(--nt-alias-state-warn-label)' }}>
                               该包当前已被禁用（重新导入校验后方可恢复）——AI 调用与测试暂不可用，仍可在此补填/校验设备环境变量
                             </div>
                           )}
@@ -938,7 +938,7 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
                           <div>环境变量：{pkg.envKeys.length > 0
                             ? <EnvKeyMetaList envKeys={pkg.envKeys} envMeta={pkg.envMeta} />
                             : <Text type="secondary">该包未声明环境变量，可按需自定义</Text>}</div>
-                          <div style={{ fontSize: 12, color: '#8c8c8c' }}>入口：<code style={{ fontFamily: 'monospace', fontSize: 13 }}>{pkg.entry}</code>（{pkg.runtime}）</div>
+                          <div style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', color: 'var(--nt-alias-label-secondary)' }}>入口：<code style={{ fontFamily: 'var(--nt-font-family-code)', fontSize: 'var(--nt-font-xs-13-font-size)' }}>{pkg.entry}</code>（{pkg.runtime}）</div>
                         </Space>
                       </Card>
                     )}
@@ -947,7 +947,7 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
               </div>
               <div>
                 <Text strong>绑定设备与环境变量</Text>
-                <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 2 }}>
+                <div style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', color: 'var(--nt-alias-label-secondary)', marginTop: 2 }}>
                   每台绑定设备各一组环境变量（互不影响）；一台设备只能绑定一个 MCP 配置。
                 </div>
                 <div style={{ marginTop: 8 }}>
@@ -970,7 +970,7 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
           ) : (
           <div>
             <Text strong>绑定设备</Text>
-            <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 2 }}>一台设备只能绑定一个 MCP 配置</div>
+            <div style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', color: 'var(--nt-alias-label-secondary)', marginTop: 2 }}>一台设备只能绑定一个 MCP 配置</div>
             <Select
               mode="multiple"
               value={form.deviceIds}
@@ -989,7 +989,7 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
               optionRender={(option) => {
                 const owner = deviceIdOwner(option.value as string, form.id)
                 return owner != null
-                  ? <Tooltip title={`已绑配置 ${owner}`}><span style={{ color: '#bfbfbf' }}>{option.label}（已绑配置 {owner}）</span></Tooltip>
+                  ? <Tooltip title={`已绑配置 ${owner}`}><span style={{ color: 'var(--nt-alias-label-caption)' }}>{option.label}（已绑配置 {owner}）</span></Tooltip>
                   : <span>{option.label}</span>
               }}
             />
@@ -1015,7 +1015,7 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
         open={gateOpen}
         title={
           <Space>
-            <WarningOutlined style={{ color: '#faad14' }} />
+            <WarningOutlined style={{ color: 'var(--nt-alias-state-warn-primary)' }} />
             确认在本机启动程序
           </Space>
         }
@@ -1024,12 +1024,12 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
         onOk={passGate}
         onCancel={() => { setGateOpen(false); setGateInput(''); setGateError(null) }}
       >
-        <div style={{ padding: '8px 0', color: '#595959' }}>
+        <div style={{ padding: '8px 0', color: 'var(--nt-alias-label-secondary)' }}>
           本地程序 (stdio) 类型的配置保存后，连接时将在此电脑上启动你所填写的程序，并由它连接设备。请确认程序来源可信。请在下方输入「我已知晓风险」继续。
         </div>
         <div style={{ marginBottom: 12 }}>
-          <Text type="secondary" style={{ fontSize: 12 }}>原文展示：</Text>
-          <code style={{ fontFamily: 'monospace', fontSize: 13, background: '#f5f5f5', padding: '2px 6px' }}>我已知晓风险</code>
+          <Text type="secondary" style={{ fontSize: 'var(--nt-font-xxs-12-font-size)' }}>原文展示：</Text>
+          <code style={{ fontFamily: 'var(--nt-font-family-code)', fontSize: 'var(--nt-font-xs-13-font-size)', background: 'var(--nt-alias-bg-module-platform)', padding: '2px 6px' }}>我已知晓风险</code>
         </div>
         <Input
           value={gateInput}
@@ -1038,8 +1038,8 @@ export default function McpTab({ refreshKey = 0 }: { refreshKey?: number }) {
           onPressEnter={passGate}
           status={gateError ? 'error' : undefined}
         />
-        {gateError && <Text type="danger" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>{gateError}</Text>}
-        <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 8 }}>每次新建本地程序 (stdio) 配置都会再次确认；编辑已有配置不触发；网络服务 (http) 类型不触发此确认。</div>
+        {gateError && <Text type="danger" style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', display: 'block', marginTop: 4 }}>{gateError}</Text>}
+        <div style={{ fontSize: 'var(--nt-font-xxs-12-font-size)', color: 'var(--nt-alias-label-secondary)', marginTop: 8 }}>每次新建本地程序 (stdio) 配置都会再次确认；编辑已有配置不触发；网络服务 (http) 类型不触发此确认。</div>
       </Modal>
 
       <ToolDrawer tool={drawerTool} onClose={() => setDrawerTool(null)} />
