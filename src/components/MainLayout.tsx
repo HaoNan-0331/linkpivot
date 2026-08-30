@@ -55,7 +55,7 @@ export default function MainLayout() {
     <HashRouter>
       <Layout style={{ height: '100vh' }}>
         <Sider width={200} theme="light" style={{ overflow: 'auto' }}>
-          <div style={{ height: 48, display: 'flex', alignItems: 'center', justifyContent: 'center', borderBottom: '1px solid #f0f0f0' }}>
+          <div style={{ height: 48, display: 'flex', alignItems: 'center', justifyContent: 'center', borderBottom: '1px solid var(--nt-alias-border-l2)' }}>
             <strong>拓扑管理</strong>
           </div>
           <Sidebar />

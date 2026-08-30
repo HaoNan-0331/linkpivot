@@ -29,7 +29,7 @@ export default function Login() {
   }
 
   return (
-    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#f0f2f5' }}>
+    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: 'var(--nt-alias-bg-module-platform)' }}>
       <Card style={{ width: 400 }}>
         <Title level={3} style={{ textAlign: 'center' }}>灵枢</Title>
         <Form form={form} onFinish={onFinish}>

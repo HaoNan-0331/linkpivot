@@ -93,7 +93,7 @@ export default function DuplicateNamesModal({ open, onClose, onChanged }: Props)
         <div style={{ textAlign: 'center', padding: 32 }}><Spin /></div>
       ) : cleared ? (
         <div style={{ padding: '24px 0', textAlign: 'center' }}>
-          <Text strong style={{ color: '#52c41a', fontSize: 16 }}>唯一防护已启用 ✓</Text>
+          <Text strong style={{ color: 'var(--nt-alias-state-success-primary)', fontSize: 'var(--nt-font-base-16-font-size)' }}>唯一防护已启用 ✓</Text>
           <div style={{ marginTop: 8 }}>
             <Text type="secondary">所有重名已处理，数据库唯一索引已自动建立，后续同名保存将被拦截。</Text>
           </div>
