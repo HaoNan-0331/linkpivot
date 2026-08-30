@@ -130,10 +130,13 @@ body {
   --nt-alias-border-l3: rgba(0, 0, 0, 0.12);
   --nt-alias-border-l4: rgba(0, 0, 0, 0.16);
 
-  /* ---- alias 层 · brand 组 4 项（含 Figma 导出怪名照搬不改名） ---- */
+  /* ---- alias 层 · brand 组 4 项（含 Figma 导出怪名照搬不改名） ----
+     D-03 决策变更（2026-08-29 用户真机目检后拍板）：主操作色回退 antd 原蓝 #1677ff。
+     仅「主操作填充」槽位改蓝（hover/active 派生走 antd 蓝族自动生成）；
+     brand-text / brand-primary-invert / label 系槽位语义为「正文/主文字」，保持近黑不变。 */
   --nt-alias-brand-primary-invert: var(--nt-static-neutral-bluish-1000);
   --nt-alias-brand-primary-new-colorprimary-new-color: rgb(65, 118, 230);
-  --nt-alias-brand-primary: var(--nt-static-neutral-bluish-1000);
+  --nt-alias-brand-primary: rgb(22, 119, 255);
   --nt-alias-brand-text: var(--nt-static-neutral-bluish-1000);
 
   /* ---- alias 层 · button 组 15 项 ---- */
@@ -148,6 +151,8 @@ body {
   --nt-alias-button-info-hover: var(--nt-static-deepseek-400);
   --nt-alias-button-primary-dimmed: var(--nt-static-neutral-bluish-100);
   --nt-alias-button-primary-fill: var(--nt-alias-brand-primary);
+  /* D-03 变更注记：主操作色改蓝后此 hover 槽位仍持 dsh 灰档原值（旧近黑主的派生 hover）；
+     主操作按钮 hover 现行走 antd 蓝族派生，自研消费此槽位时再裁决是否重绑蓝族 */
   --nt-alias-button-primary-hover: var(--nt-static-neutral-bluish-750);
   --nt-alias-button-tool-bar-fill-invisible: rgba(31, 31, 31, 0.36);
   --nt-alias-button-tool-bar-fill: rgba(84, 85, 87, 0.5);
@@ -324,7 +329,8 @@ body[data-nt-theme] {
   --nt-alias-border-l4: rgba(255, 255, 255, 0.2);
   --nt-alias-brand-primary-invert: var(--nt-static-neutral-bluish-50);
   --nt-alias-brand-primary-new-colorprimary-new-color: var(--nt-static-deepseek-450);
-  --nt-alias-brand-primary: var(--nt-static-neutral-bluish-50);
+  /* D-03 决策变更随迁：主操作填充槽位与亮色块同改蓝（暗块机制预留，UI-F01 开双态时复验） */
+  --nt-alias-brand-primary: rgb(22, 119, 255);
   --nt-alias-brand-text: var(--nt-static-neutral-bluish-50);
   --nt-alias-button-contrast-fill: var(--nt-static-neutral-bluish-50);
   --nt-alias-button-elevated-fill: var(--nt-static-neutral-bluish-750);

@@ -1,6 +1,8 @@
 // Phase 33 / UI-02+UI-03（33-UI-SPEC §六映射契约表 + §3.4 AntD 字体映射）。
 // 本文件与 src/styles/tokens.css 是「同 dsh 上游的两份拷贝」，靠注释交叉引用锚定一致性：
-//   - 近黑主色 = 蓝灰主族最深档 rgb(15, 17, 21)（tokens.css brand 组同名项）
+//   - 主操作色 = antd 原蓝 rgb(22, 119, 255) / #1677ff（D-03 决策变更：2026-08-29 用户真机
+//     目检后拍板，由近黑 rgb(15, 17, 21) 回退 antd 原蓝；hover/active 派生由 fast-color 蓝族自动生成）
+//   - 正文/主文字色 base 仍为近黑 rgb(15, 17, 21)（colorTextBase）
 //   - 信息蓝 = 品牌蓝 500 档 rgb(65, 118, 230)；成功/警示/危险 = green-500 / amber-500 / red-600
 //   - 阴影三 token 全指 lv3 字面值（与 tokens.css 阴影段一字不差，见 SHADOW_LV3）
 //   - 字体双栈与 fonts.css 同上游逐字同串（正文栈含雅黑，代码栈无裸 monospace 尾巴）
@@ -18,7 +20,8 @@ const SHADOW_LV3 =
 export const ntTheme: ThemeConfig = {
   token: {
     // —— 色板 seed（必须字面值）——
-    colorPrimary: 'rgb(15, 17, 21)',
+    // 主操作色 = antd 原蓝 #1677ff（D-03 决策变更，tokens.css brand 组主操作填充槽位同值）
+    colorPrimary: 'rgb(22, 119, 255)',
     colorInfo: 'rgb(65, 118, 230)',
     colorSuccess: 'rgb(34, 197, 94)',
     colorWarning: 'rgb(245, 158, 11)',
