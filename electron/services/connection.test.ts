@@ -20,6 +20,10 @@ import path from 'path'
  *     SSH config 经真 buildSSHConnectConfig 输出断言（更接近 D-09 集成意图）
  *   - electron 顶层 import（BrowserWindow，仅 openTerminal 路径触）在 plain node 下为
  *     path 字符串具名导入，加载不报错，无需 vi.mock('electron')
+ *
+ * Phase 36（36-05 checkpoint 用户裁决，Q1 变更）：testDeviceConnection 改全通道并行探测——
+ * 返回形态 `{ success, message, channels[] }`（channels 固定序逐通道结果）；既有用例断言
+ * 已适配（改断言不删用例），多通道聚合行为见文末 describe 块。
  */
 
 // ---- Mock：ssh2 Client（真 class，telnetRouting.ts:27-37 逐字范式） ----
@@ -104,19 +108,21 @@ function makeDevice(over: Record<string, unknown> = {}) {
   }
   // Phase 36（36-03）：getDeviceById 现形态为 channels 子表投影——resolveChannelView 从
   // 目标通道行取凭证/resolution，mock 设备同步携带同名通道行（凭证与顶层字段同值）。
-  return {
-    ...base,
-    channels: [{
-      channel: base.connectionType,
-      port: base.port,
-      username: base.username,
-      password: base.password,
-      sshKeyPath: base.sshKeyPath,
-      sshKeyContent: base.sshKeyContent,
-      webUrl: base.webUrl,
-      resolution: null,
-    }],
-  }
+  // Phase 36（36-05 Q1 变更）：over.channels 显式给定（多通道/零通道用例）时直用，
+  // 否则按 base.connectionType 合成单通道行（既有单通道用例行为不变）。
+  const channels = Array.isArray(over.channels)
+    ? (over.channels as unknown[])
+    : [{
+        channel: base.connectionType,
+        port: base.port,
+        username: base.username,
+        password: base.password,
+        sshKeyPath: base.sshKeyPath,
+        sshKeyContent: base.sshKeyContent,
+        webUrl: base.webUrl,
+        resolution: null,
+      }]
+  return { ...base, channels }
 }
 
 /** ssh mock client 已注册的事件回调（testDeviceConnection 同步注册 on('ready')/on('error')） */
@@ -143,6 +149,7 @@ describe('testDeviceConnection — 四分流 + 优先级 + 错误映射集成（
     await expect(testDeviceConnection('missing')).resolves.toEqual({
       success: false,
       message: '设备不存在',
+      channels: [],
     })
   })
 
@@ -155,6 +162,7 @@ describe('testDeviceConnection — 四分流 + 优先级 + 错误映射集成（
     await expect(testDeviceConnection('dev-1')).resolves.toEqual({
       success: true,
       message: `Web 端口可达 (127.0.0.1:${srv.port})`,
+      channels: [{ channel: 'web', success: true, message: `Web 端口可达 (127.0.0.1:${srv.port})` }],
     })
   })
 
@@ -163,6 +171,7 @@ describe('testDeviceConnection — 四分流 + 优先级 + 错误映射集成（
     await expect(testDeviceConnection('dev-1')).resolves.toEqual({
       success: false,
       message: '未配置 Web URL',
+      channels: [{ channel: 'web', success: false, message: '未配置 Web URL' }],
     })
   })
 
@@ -171,6 +180,7 @@ describe('testDeviceConnection — 四分流 + 优先级 + 错误映射集成（
     await expect(testDeviceConnection('dev-1')).resolves.toEqual({
       success: false,
       message: '无效的 URL',
+      channels: [{ channel: 'web', success: false, message: '无效的 URL' }],
     })
     // 取舍说明：https 无端口默认 443 逻辑不强测真连（环境相关——本机 443 可能被占/被防火墙拦），
     // 以 http 显式端口覆盖为主；默认端口分支由 tests/unit/ 纯函数单测覆盖。
@@ -184,6 +194,7 @@ describe('testDeviceConnection — 四分流 + 优先级 + 错误映射集成（
     await expect(testDeviceConnection('dev-1')).resolves.toEqual({
       success: true,
       message: 'Telnet 连接成功 (127.0.0.1:23)',
+      channels: [{ channel: 'telnet', success: true, message: 'Telnet 连接成功 (127.0.0.1:23)' }],
     })
   })
 
@@ -194,6 +205,7 @@ describe('testDeviceConnection — 四分流 + 优先级 + 错误映射集成（
     await expect(testDeviceConnection('dev-1')).resolves.toEqual({
       success: true,
       message: `Telnet 连接成功 (127.0.0.1:${srv.port})`,
+      channels: [{ channel: 'telnet', success: true, message: `Telnet 连接成功 (127.0.0.1:${srv.port})` }],
     })
   })
 
@@ -204,6 +216,7 @@ describe('testDeviceConnection — 四分流 + 优先级 + 错误映射集成（
     await expect(testDeviceConnection('dev-1')).resolves.toEqual({
       success: true,
       message: `RDP 端口可达 (127.0.0.1:${srv.port})`,
+      channels: [{ channel: 'rdp', success: true, message: `RDP 端口可达 (127.0.0.1:${srv.port})` }],
     })
   })
 
@@ -214,16 +227,20 @@ describe('testDeviceConnection — 四分流 + 优先级 + 错误映射集成（
     await expect(testDeviceConnection('dev-1')).resolves.toEqual({
       success: false,
       message: '连接被拒绝',
+      channels: [{ channel: 'telnet', success: false, message: '连接被拒绝' }],
     })
   })
 
-  it('ssh 分流：connectionType 其他值走 else SSH 分支（connection.ts:225-227）', async () => {
+  it('枚举外通道行（DB CHECK 外值，防御）：serial 行滤除 → 零有效通道统一「该设备未配置登录通道」，不触发任何探活客户端', async () => {
+    // 36-05 Q1 变更：旧「else 走 SSH 兜底」随全通道探测消亡——DB CHECK(channel IN (...))
+    // 保证枚举外行不可能落库，此处锁防御语义：滤除后零有效通道 = 未配置登录通道
     getDeviceByIdMock.mockReturnValue(makeDevice({ connectionType: 'serial' }))
-    const p = testDeviceConnection('dev-1')
-    expect(sshClientCtor).toHaveBeenCalledTimes(1)
-    expect(sshClientConnect).toHaveBeenCalledTimes(1)
-    handlers.error(new Error('connect ECONNREFUSED 127.0.0.1:22'))
-    await expect(p).resolves.toEqual({ success: false, message: '连接被拒绝' })
+    await expect(testDeviceConnection('dev-1')).resolves.toEqual({
+      success: false,
+      message: '该设备未配置登录通道',
+      channels: [],
+    })
+    expect(sshClientCtor).not.toHaveBeenCalled()
   })
 
   it('ssh 优先级：sshKeyContent 最先 —— privateKey 为 Buffer（真 buildSSHConnectConfig 输出）且无 password；探活 readyTimeout 8000（P10 禁抹平）', async () => {
@@ -290,6 +307,7 @@ describe('testDeviceConnection — 四分流 + 优先级 + 错误映射集成（
     await expect(p).resolves.toEqual({
       success: true,
       message: 'SSH 连接成功 (127.0.0.1:2222)',
+      channels: [{ channel: 'ssh', success: true, message: 'SSH 连接成功 (127.0.0.1:2222)' }],
     })
     expect(sshClientEnd).toHaveBeenCalledTimes(1)
   })
@@ -302,6 +320,7 @@ describe('testDeviceConnection — 四分流 + 优先级 + 错误映射集成（
     await expect(p).resolves.toEqual({
       success: false,
       message: '认证失败(用户名/密码/密钥错误)',
+      channels: [{ channel: 'ssh', success: false, message: '认证失败(用户名/密码/密钥错误)' }],
     })
   })
 
@@ -309,7 +328,7 @@ describe('testDeviceConnection — 四分流 + 优先级 + 错误映射集成（
     getDeviceByIdMock.mockReturnValue(makeDevice({ port: 2222 }))
     const p = testDeviceConnection('dev-1')
     handlers.error(new Error('connect ECONNREFUSED 127.0.0.1:2222'))
-    await expect(p).resolves.toEqual({ success: false, message: '连接被拒绝' })
+    await expect(p).resolves.toEqual({ success: false, message: '连接被拒绝', channels: [{ channel: 'ssh', success: false, message: '连接被拒绝' }] })
   })
 
   it('ssh error 双关键词（errno 词 + All configured）：errno 先判怪癖 —— 认证阶段网络中断的包装错误仍报网络错误（characterization，15-REVIEW WR-01 优先级）', async () => {
@@ -317,7 +336,7 @@ describe('testDeviceConnection — 四分流 + 优先级 + 错误映射集成（
     const p = testDeviceConnection('dev-1')
     // 怪癖注释标记：mapSshProbeError 实际顺序 errno 词先判——双关键词消息不会把「主机不可达」误读为「密码错误」
     handlers.error(new Error('connect EHOSTUNREACH during All configured authentication methods'))
-    await expect(p).resolves.toEqual({ success: false, message: '主机不可达' })
+    await expect(p).resolves.toEqual({ success: false, message: '主机不可达', channels: [{ channel: 'ssh', success: false, message: '主机不可达' }] })
   })
 
   it('ssh 超时：10s timer 兜底 → 连接超时 (ip:port) + client.end 被调', async () => {
@@ -328,7 +347,93 @@ describe('testDeviceConnection — 四分流 + 优先级 + 错误映射集成（
     await expect(p).resolves.toEqual({
       success: false,
       message: '连接超时 (127.0.0.1:2222)',
+      channels: [{ channel: 'ssh', success: false, message: '连接超时 (127.0.0.1:2222)' }],
     })
     expect(sshClientEnd).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('testDeviceConnection 全通道并行探测（36-05 checkpoint 用户裁决，Q1 变更）', () => {
+  it('四通道全配：并行探测全过 → 固定序 ssh/telnet/web/rdp + 聚合 success + 4/4 文案', async () => {
+    const tel = await listenLoopback(0); loopbackHandles.push(tel)
+    const web = await listenLoopback(0); loopbackHandles.push(web)
+    const rdp = await listenLoopback(0); loopbackHandles.push(rdp)
+    // 设备行乱序（rdp/ssh/web/telnet）——输出必须固定序（UI 一屏呈现稳定序）
+    getDeviceByIdMock.mockReturnValue(makeDevice({
+      channels: [
+        { channel: 'rdp', port: rdp.port },
+        { channel: 'ssh', port: 2222 },
+        { channel: 'web', webUrl: `http://127.0.0.1:${web.port}/` },
+        { channel: 'telnet', port: tel.port },
+      ],
+    }))
+    const p = testDeviceConnection('dev-1')
+    // 并行启动：async 函数体首个 await 前同步注册 SSH 探活（无需先 await）
+    expect(sshClientCtor).toHaveBeenCalledTimes(1)
+    handlers.ready()
+    const r = await p
+    expect(r.success).toBe(true)
+    expect(r.message).toBe('4/4 通道连接成功')
+    expect(r.channels.map((c) => c.channel)).toEqual(['ssh', 'telnet', 'web', 'rdp'])
+    expect(r.channels[0]).toEqual({ channel: 'ssh', success: true, message: 'SSH 连接成功 (127.0.0.1:2222)' })
+    expect(r.channels[1]).toEqual({ channel: 'telnet', success: true, message: `Telnet 连接成功 (127.0.0.1:${tel.port})` })
+    expect(r.channels[2]).toEqual({ channel: 'web', success: true, message: `Web 端口可达 (127.0.0.1:${web.port})` })
+    expect(r.channels[3]).toEqual({ channel: 'rdp', success: true, message: `RDP 端口可达 (127.0.0.1:${rdp.port})` })
+  })
+
+  it('部分失败：telnet 可达 + web 未监听 → 聚合 success:false + 1/2 文案 + 逐通道结果', async () => {
+    const tel = await listenLoopback(0); loopbackHandles.push(tel)
+    const freePort = await reserveFreePort()
+    getDeviceByIdMock.mockReturnValue(makeDevice({
+      channels: [
+        { channel: 'web', webUrl: `http://127.0.0.1:${freePort}/` },
+        { channel: 'telnet', port: tel.port },
+      ],
+    }))
+    await expect(testDeviceConnection('dev-1')).resolves.toEqual({
+      success: false,
+      message: '1/2 通道连接成功',
+      channels: [
+        { channel: 'telnet', success: true, message: `Telnet 连接成功 (127.0.0.1:${tel.port})` },
+        { channel: 'web', success: false, message: '连接被拒绝' },
+      ],
+    })
+  })
+
+  it('probe 异常隔离：ssh 通道 sshKeyPath 指向不存在文件（buildSSHConnectConfig fs throw）→ 该通道「探测失败」不拖垮 telnet 结果', async () => {
+    // Rule 2：旧形态整单 reject（UI 走 catch 分支）——多通道下会吞掉其余通道结果，必须按通道隔离
+    const tel = await listenLoopback(0); loopbackHandles.push(tel)
+    getDeviceByIdMock.mockReturnValue(makeDevice({
+      channels: [
+        { channel: 'ssh', sshKeyPath: path.join(os.tmpdir(), `nt-not-exist-key-${Date.now()}`) },
+        { channel: 'telnet', port: tel.port },
+      ],
+    }))
+    const r = await testDeviceConnection('dev-1')
+    expect(r.success).toBe(false)
+    expect(r.message).toBe('1/2 通道连接成功')
+    expect(r.channels[0].channel).toBe('ssh')
+    expect(r.channels[0].success).toBe(false)
+    expect(r.channels[0].message).toContain('探测失败')
+    expect(r.channels[1]).toEqual({ channel: 'telnet', success: true, message: `Telnet 连接成功 (127.0.0.1:${tel.port})` })
+  })
+
+  it('零通道：channels 空数组 → 保持单一失败契约「该设备未配置登录通道」+ channels: []（UI-SPEC §九）', async () => {
+    getDeviceByIdMock.mockReturnValue(makeDevice({ channels: [] }))
+    await expect(testDeviceConnection('dev-1')).resolves.toEqual({
+      success: false,
+      message: '该设备未配置登录通道',
+      channels: [],
+    })
+  })
+
+  it('单通道聚合 message = 该通道文案（UX 等价旧版——DevicesPage 单通道仍走 message 形态的服务层前提）', async () => {
+    const srv = await listenLoopback(0); loopbackHandles.push(srv)
+    getDeviceByIdMock.mockReturnValue(makeDevice({
+      channels: [{ channel: 'telnet', port: srv.port }],
+    }))
+    const r = await testDeviceConnection('dev-1')
+    expect(r.message).toBe(`Telnet 连接成功 (127.0.0.1:${srv.port})`)
+    expect(r.message).toBe(r.channels[0].message)
   })
 })

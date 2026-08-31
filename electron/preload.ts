@@ -39,6 +39,8 @@ const api = {
       ipcRenderer.on(`connection:data:${sid}`, (_e, data) => cb(data))
     },
     write: (sid: string, data: string) => ipcRenderer.invoke('connection:write', sid, data),
+    // Phase 36（36-05 checkpoint 用户裁决，Q1 变更）：test 返回全通道探测聚合
+    //（channels 逐通道 {success,message} + 聚合 success；签名/通道名不变，类型见 electron.d.ts）
     test: (deviceId: string) => ipcRenderer.invoke('connection:test', deviceId),
   },
   ai: {

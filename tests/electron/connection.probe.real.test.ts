@@ -218,7 +218,11 @@ describe('connection 真路径 — 凭证 + 探活 + D-08 加密底线', () => {
       channels: [{ channel: 'ssh', enabled: true, port: ssh.port, username: expectedUser, password: expectedPassword }],
     })
     const r = await testDeviceConnection(dev.id)
-    expect(r).toEqual({ success: true, message: `SSH 连接成功 (127.0.0.1:${ssh.port})` })
+    expect(r).toEqual({
+      success: true,
+      message: `SSH 连接成功 (127.0.0.1:${ssh.port})`,
+      channels: [{ channel: 'ssh', success: true, message: `SSH 连接成功 (127.0.0.1:${ssh.port})` }],
+    })
   })
 
   it('密钥对能连（D-10）：现场生成密钥对 → sshKeyContent 走 buildSSHConnectConfig privateKey 分支真路径', async () => {
@@ -246,7 +250,11 @@ describe('connection 真路径 — 凭证 + 探活 + D-08 加密底线', () => {
     const r = await testDeviceConnection(dev.id)
     // D-10 核心断言：用户看到的报错提示正确（ssh2 'All configured authentication methods failed'
     // 经真 mapSshProbeError AUTH 分支映射，文案逐字对齐 sshConfig.ts）
-    expect(r).toEqual({ success: false, message: '认证失败(用户名/密码/密钥错误)' })
+    expect(r).toEqual({
+      success: false,
+      message: '认证失败(用户名/密码/密钥错误)',
+      channels: [{ channel: 'ssh', success: false, message: '认证失败(用户名/密码/密钥错误)' }],
+    })
   })
 
   it('D-08 凭证加密底线：device_credentials 凭证列经真实 encField 加密落库（v2: 密文非明文 + 解密回读一致）', () => {
@@ -303,7 +311,11 @@ describe('connection 真路径 — 凭证 + 探活 + D-08 加密底线', () => {
         channels: [{ channel: 'telnet', enabled: true, port: tel.port, username: 'a', password: 'test-telnet-pw' }],
       })
       const r = await testDeviceConnection(dev.id)
-      expect(r).toEqual({ success: true, message: `Telnet 连接成功 (127.0.0.1:${tel.port})` })
+      expect(r).toEqual({
+        success: true,
+        message: `Telnet 连接成功 (127.0.0.1:${tel.port})`,
+        channels: [{ channel: 'telnet', success: true, message: `Telnet 连接成功 (127.0.0.1:${tel.port})` }],
+      })
     } finally {
       await tel.close()
     }

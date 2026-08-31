@@ -74,19 +74,22 @@ function resolveChannelView(deviceId: string, channel?: string): ChannelViewResu
   if (!resolved) return { error: 'no-channel' }
   const row = channels.find((c) => c.channel === resolved)
   if (!row) throw new Error(`该设备未配置${resolved}通道`)
+  return { view: buildChannelView(device, row) }
+}
+
+/** 通道行 → 平铺凭证视图（36-05 起双消费：resolveChannelView 单通道定位 / testDeviceConnection 全通道探测共用单一来源） */
+function buildChannelView(device: any, row: any): DeviceInfo {
   return {
-    view: {
-      ...device,
-      connectionType: resolved,
-      port: row.port ?? null,
-      username: row.username ?? '',
-      password: row.password ?? '',
-      sshKeyPath: row.sshKeyPath ?? '',
-      sshKeyContent: row.sshKeyContent ?? '',
-      webUrl: row.webUrl ?? '',
-      resolution: row.resolution ?? null,
-    } as DeviceInfo,
-  }
+    ...device,
+    connectionType: row.channel,
+    port: row.port ?? null,
+    username: row.username ?? '',
+    password: row.password ?? '',
+    sshKeyPath: row.sshKeyPath ?? '',
+    sshKeyContent: row.sshKeyContent ?? '',
+    webUrl: row.webUrl ?? '',
+    resolution: row.resolution ?? null,
+  } as DeviceInfo
 }
 
 export function openTerminal(deviceId: string, channel?: string): { sessionId: string } {
@@ -267,25 +270,65 @@ export function disconnectSession(sessionId: string) {
   sessions.delete(sessionId)
 }
 
-export function testDeviceConnection(deviceId: string): Promise<{ success: boolean; message: string }> {
-  // Phase 36（36-03，Q1 裁决）：测默认通道——解析同 openTerminal 缺省逻辑；零通道/行不存在 →
-  // 失败文案（UI-SPEC §九），不 throw。
-  const r = resolveChannelView(deviceId)
-  if ('error' in r) {
-    if (r.error === 'no-device') return Promise.resolve({ success: false, message: '设备不存在' })
-    return Promise.resolve({ success: false, message: '该设备未配置登录通道' })
-  }
-  const device = r.view
+/** Phase 36（36-05 checkpoint 用户裁决，Q1 变更）：测试连接单通道探活结果——channel ∈ CHANNELS 四枚举 */
+export interface ChannelTestResult {
+  channel: (typeof CHANNELS)[number]
+  success: boolean
+  message: string
+}
 
-  if (device.connectionType === 'web') {
-    return testWebConnection(device.webUrl)
-  } else if (device.connectionType === 'telnet') {
-    return testTelnetConnection(device.ipAddress, device.port || 23)
-  } else if (device.connectionType === 'rdp') {
-    return testRDPConnection(device.ipAddress, device.port || 3389)
-  } else {
-    return testSSHConnection(device)
+/** testDeviceConnection 聚合返回形态（channels 固定序 + 聚合 success + 兼容旧形态的 message） */
+export interface DeviceConnectionTestResult {
+  success: boolean
+  message: string
+  channels: ChannelTestResult[]
+}
+
+/**
+ * Phase 36（36-05 checkpoint 用户裁决，Q1 变更）：测试连接改为**全通道并行探测**。
+ * 原行为（36-03 Q1 裁决）仅测默认通道；用户拍板改为设备已配通道全测、逐通道报告：
+ * - 通道序固定 CHANNELS（ssh/telnet/web/rdp，UI 一屏呈现稳定序；枚举外行防御跳过——
+ *   DB CHECK 外值本不可能存在，老 else-SSH 兜底随之消亡）
+ * - 并行 Promise.all（独立探活无共享资源）；各探活函数与超时零改动（SSH 8s 快测，P10 禁抹平）
+ * - 单通道 probe 异常隔离（如 sshKeyPath 文件缺失 buildSSHConnectConfig fs throw）——
+ *   该通道记失败不拖垮其他通道（旧形态整单 reject，多通道下会吞掉其余通道结果）
+ * - 聚合 success = 全通道通过；message 单通道 = 该通道文案（UX 等价旧版），
+ *   多通道 = `${pass}/${total} 通道连接成功`（细目见 channels）
+ * - 零通道（含枚举外行全滤）→ 保持「该设备未配置登录通道」单一失败契约（UI-SPEC §九）
+ */
+export async function testDeviceConnection(deviceId: string): Promise<DeviceConnectionTestResult> {
+  const device = getDeviceById(deviceId) as any
+  if (!device) return { success: false, message: '设备不存在', channels: [] }
+  const channels: any[] = Array.isArray(device.channels) ? device.channels : []
+  // 固定序映射 + 枚举外值滤除（UNIQUE(device_id, channel) 保证同通道无重复行）
+  const rows = CHANNELS.map((ch) => ({ ch, row: channels.find((c) => c.channel === ch) }))
+    .filter((x): x is { ch: (typeof CHANNELS)[number]; row: any } => !!x.row)
+  if (rows.length === 0) return { success: false, message: '该设备未配置登录通道', channels: [] }
+  const outcomes = await Promise.all(rows.map(({ ch, row }) => probeChannel(device, ch, row)))
+  const passCount = outcomes.filter((o) => o.success).length
+  return {
+    success: passCount === outcomes.length,
+    message: outcomes.length === 1 ? outcomes[0].message : `${passCount}/${outcomes.length} 通道连接成功`,
+    channels: outcomes,
   }
+}
+
+/** 单通道探活：平铺视图 → 按通道类型分流既有探活函数；异常隔离为该通道失败（见 testDeviceConnection 注释） */
+function probeChannel(
+  device: any,
+  ch: (typeof CHANNELS)[number],
+  row: any
+): Promise<ChannelTestResult> {
+  const view = buildChannelView(device, row)
+  const probe: Promise<{ success: boolean; message: string }> =
+    ch === 'web' ? testWebConnection(view.webUrl)
+      : ch === 'telnet' ? testTelnetConnection(view.ipAddress, view.port || 23)
+        : ch === 'rdp' ? testRDPConnection(view.ipAddress, view.port || 3389)
+          : testSSHConnection(view)
+  return probe.then(
+    (r) => ({ channel: ch, ...r }),
+    (e: unknown) => ({ channel: ch, success: false, message: `探测失败: ${e instanceof Error ? e.message : String(e)}` })
+  )
 }
 
 function testSSHConnection(device: DeviceInfo): Promise<{ success: boolean; message: string }> {

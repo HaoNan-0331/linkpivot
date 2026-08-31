@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import type { CSSProperties } from 'react'
-import { Table, Button, Space, Popconfirm, message, Typography, Alert, Tooltip } from 'antd'
+import { Table, Button, Space, Popconfirm, message, notification, Typography, Alert, Tooltip } from 'antd'
 import { PlusOutlined, EditOutlined, DeleteOutlined, ApiOutlined, CopyOutlined } from '@ant-design/icons'
 import DeviceForm from '../DeviceForm'
 import DuplicateNamesModal from '../DuplicateNamesModal'
@@ -14,6 +14,12 @@ const PLUS_SUFFIX_STYLE: CSSProperties = {
   fontSize: 'var(--nt-font-xxs-12-font-size)',
   lineHeight: 'var(--nt-font-xxs-12-line-height)',
   color: 'var(--nt-alias-label-caption)',
+}
+
+/** Phase 36（36-05 checkpoint 用户裁决，Q1 变更）：多通道测试结果行——xxs-12 行（audit ③④ token 化） */
+const CHANNEL_RESULT_LINE_STYLE: CSSProperties = {
+  fontSize: 'var(--nt-font-xxs-12-font-size)',
+  lineHeight: 'var(--nt-font-xxs-12-line-height)',
 }
 
 const deviceTypeLabels: Record<string, string> = {
@@ -84,10 +90,41 @@ export default function DevicesPage() {
     setTestingId(device.id)
     try {
       const result = await window.api.connection.test(device.id)
-      if (result.success) {
-        message.success(`${device.name}: ${result.message}`)
+      // Phase 36（36-05 checkpoint 用户裁决，Q1 变更）：全通道并行探测——0/1 通道保持原
+      // message 形态（单通道 UX 等价旧版；零通道 = 「该设备未配置登录通道」）；
+      // ≥2 通道 notification 逐通道 ✓/✗ 一屏全览（部分失败 warning / 全败 error / 全过 success）
+      if (result.channels.length <= 1) {
+        const only = result.channels[0]
+        const text = `${device.name}: ${only ? only.message : result.message}`
+        if (only && only.success) message.success(text)
+        else message.error(text)
       } else {
-        message.error(`${device.name}: ${result.message}`)
+        const passCount = result.channels.filter((c) => c.success).length
+        notification.open({
+          type: result.success ? 'success' : passCount === 0 ? 'error' : 'warning',
+          message: `${device.name} 连接测试：${result.message}`,
+          description: (
+            <div>
+              {result.channels.map((c) => (
+                <div key={c.channel} style={CHANNEL_RESULT_LINE_STYLE}>
+                  <span
+                    style={{
+                      color: c.success
+                        ? 'var(--nt-alias-state-success-primary)'
+                        : 'var(--nt-alias-state-error-primary)',
+                      marginRight: 8,
+                    }}
+                  >
+                    {c.success ? '✓' : '✗'}
+                  </span>
+                  <span style={{ marginRight: 8 }}>{CHANNEL_LABELS[c.channel]}</span>
+                  <span>{c.message}</span>
+                </div>
+              ))}
+            </div>
+          ),
+          duration: 8,
+        })
       }
     } catch (e: unknown) {
       message.error(`${device.name}: 测试失败 - ${e instanceof Error ? e.message : String(e)}`)

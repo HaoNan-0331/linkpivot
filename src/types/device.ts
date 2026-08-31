@@ -46,6 +46,29 @@ export interface DeviceChannelDTO {
   resolution?: string
 }
 
+/**
+ * Phase 36（36-05 checkpoint 用户裁决，Q1 变更）：测试连接单通道探活结果——
+ * message 复用各探活函数既有文案契约（SSH 连接成功 / Telnet 连接成功 / Web 端口可达 /
+ * RDP 端口可达 / errno 中文映射 / 探测失败: ...）。
+ */
+export interface ChannelTestResult {
+  channel: ConnectionType
+  success: boolean
+  message: string
+}
+
+/**
+ * Phase 36（36-05 checkpoint 用户裁决，Q1 变更）：测试连接全通道并行探测聚合——
+ * channels 按固定序 ssh/telnet/web/rdp；success = 全通道通过；message 单通道 = 该通道
+ * 文案（UX 等价旧版），多通道 = `${pass}/${total} 通道连接成功`；零通道保持
+ * 「该设备未配置登录通道」单一失败契约（channels: []）。
+ */
+export interface ConnectionTestResult {
+  success: boolean
+  message: string
+  channels: ChannelTestResult[]
+}
+
 export interface Device {
   id: string
   topologyId: string | null

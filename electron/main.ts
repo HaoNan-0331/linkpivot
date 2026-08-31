@@ -406,6 +406,8 @@ app.whenReady().then(async () => {
   ipcMain.handle('connection:openWeb', secure((_e, url) => openWebSafe(url)))
   ipcMain.handle('connection:disconnect', secure((_e, sessionId) => disconnectSession(sessionId)))
   ipcMain.handle('connection:write', secure((_e, sessionId, data) => writeToSession(sessionId, data)))
+  // Phase 36（36-05 checkpoint 用户裁决，Q1 变更）：connection:test 返回全通道并行探测聚合
+  //（channels 固定序逐通道结果 + 聚合 success；零通道保持「该设备未配置登录通道」契约）
   ipcMain.handle('connection:test', secure((_e, deviceId) => testDeviceConnection(deviceId)))
 
   // Terminal window IPC：writeByWebContentsId 经 windowSessionMap 查 sessionId，

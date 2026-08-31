@@ -1,5 +1,5 @@
 import type { PaginatedResult } from './pagination'
-import type { Device, CreateDeviceDTO, UpdateDeviceDTO } from './device'
+import type { Device, CreateDeviceDTO, UpdateDeviceDTO, ConnectionTestResult } from './device'
 import type { Topology, TopologySummary } from './topology'
 import type { NetworkSegment, IPUsage, IPDetail, CreateNetworkInput, UpdateNetworkInput } from './network'
 import type { ARPEntry, ARPCollectionResult, ARPScanProgress } from './arp'
@@ -113,7 +113,10 @@ export interface ElectronAPI {
     disconnect: (sessionId: string) => Promise<void>
     onData: (sid: string, cb: (data: string) => void) => void
     write: (sid: string, data: string) => Promise<void>
-    test: (deviceId: string) => Promise<{ success: boolean; message: string }>
+    /** Phase 36（36-05 checkpoint 用户裁决，Q1 变更）：全通道并行探测——channels 固定序
+     *  ssh/telnet/web/rdp 逐通道 {success,message} + 聚合 success（单通道 message=通道文案
+     *  等价旧版）；零通道 →「该设备未配置登录通道」+ channels: []（契约见 ./device.ts） */
+    test: (deviceId: string) => Promise<ConnectionTestResult>
   }
   ai: {
     chat: (messages: Array<{ role: 'user' | 'assistant'; content: string }>, deviceIds?: string[], sessionId?: string) => Promise<string>

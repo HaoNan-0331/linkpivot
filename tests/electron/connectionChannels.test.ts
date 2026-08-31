@@ -14,7 +14,9 @@ import Database from 'better-sqlite3'
  *   T-36-03-06 注入面封堵）；空值/格式不符零行为变化
  * - getDeviceByIdInternal D-10 平铺投影：web 默认 + ssh 已配 → connectionType 'ssh' +
  *   ssh 行凭证 + capabilities.hasSSH true；仅 web → 保持 'web' + 空凭证 + 全 false
- * - testDeviceConnection 零通道 → { success: false, message: '该设备未配置登录通道' }
+ * - testDeviceConnection 零通道 → { success: false, message: '该设备未配置登录通道', channels: [] }
+ *   （36-05 checkpoint Q1 变更：testDeviceConnection 改全通道并行探测，返回增 channels 数组；
+ *   多通道聚合行为由 electron/services/connection.test.ts 多通道 describe 块锁定）
  *
  * Mock 策略：进程边界（electron BrowserWindow——RUN_AS_NODE 下不可用）与协议连接终点
  * （ssh2 Client.connect / net.createConnection / child_process.execFile / openExternalSafe）
@@ -305,13 +307,13 @@ describe('openTerminal 通道分流（LOGIN-02）', () => {
     expect(() => openTerminal(dev.id, 'web')).toThrow('该设备未配置 Web 地址')
   })
 
-  it('testDeviceConnection 零通道设备 → { success: false, message: "该设备未配置登录通道" }（UI-SPEC §九）', async () => {
+  it('testDeviceConnection 零通道设备 → { success: false, message: "该设备未配置登录通道", channels: [] }（UI-SPEC §九；36-05 Q1 变更全通道契约）', async () => {
     const dev: any = createDevice({
       name: 'Zero-Ch', ipAddress: '10.0.0.8', connectionType: 'ssh',
       channels: [{ channel: 'ssh', enabled: false }],
     })
     const r = await testDeviceConnection(dev.id)
-    expect(r).toEqual({ success: false, message: '该设备未配置登录通道' })
+    expect(r).toEqual({ success: false, message: '该设备未配置登录通道', channels: [] })
   })
 })
 
