@@ -442,8 +442,11 @@ export default function TopologyPage() {
       const connType: ConnectionType = data.connectionType || 'ssh'
       if (connType === 'web') {
         const device = await window.api.device.getById(data.deviceId)
-        if (device?.webUrl) {
-          await window.api.connection.openWeb(device.webUrl)
+        // Phase 36（36-04）：Device 顶层平铺凭证字段已移除——webUrl 改读 channels 投影
+        //（web 通道行；36-05 双击三分支切统一 connection.open 入口时本分支整体重构）
+        const webUrl = device?.channels.find((c) => c.channel === 'web')?.webUrl
+        if (webUrl) {
+          await window.api.connection.openWeb(webUrl)
         } else {
           message.warning('该设备未配置 Web 地址')
         }

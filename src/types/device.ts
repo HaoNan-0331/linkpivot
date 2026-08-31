@@ -2,6 +2,17 @@ export type ConnectionType = 'ssh' | 'telnet' | 'web' | 'rdp'
 export type DeviceType = 'router' | 'switch' | 'firewall' | 'server' | 'generic'
 
 /**
+ * Phase 36（36-04，UI-SPEC §九）：通道 label 全局唯一表——DeviceForm tab、通道选择框行、
+ * DevicesPage Tooltip 全清单共用（单一来源防三处漂移）；错误前缀/卡后缀用的短标另行内联。
+ */
+export const CHANNEL_LABELS: Record<ConnectionType, string> = {
+  ssh: 'SSH',
+  telnet: 'Telnet',
+  web: 'Web 界面',
+  rdp: 'RDP 远程桌面',
+}
+
+/**
  * Phase 36（36-02，LOGIN-01）：设备通道凭证投影元素——device_credentials 子表行的 main 进程
  * 内明文形态，随 device:list / device:getById 的 channels 数组下发。
  * password/sshKeyContent 经 IPC 出口时已被 maskDeviceSecrets 递归脱敏为 ****尾4（H-1 红线，
@@ -21,7 +32,7 @@ export interface DeviceChannel {
 /**
  * Phase 36（36-02）：设备保存通道节入参——enabled=true 时 UPSERT（凭证字段 !== undefined 才写，
  * 「留空=不修改」按通道按字段生效，H-1）；enabled=false 删该通道行（清空即禁用）。
- * resolution 仅 RDP 节携带值（明文列直写）；createDevice/updateDevice 与本 plan 服务层写语义对齐。
+ * resolution 仅 RDP 节携带值（明文列直写）；createDevice/updateDevice 与服务层写语义对齐。
  */
 export interface DeviceChannelDTO {
   channel: ConnectionType
@@ -45,16 +56,8 @@ export interface Device {
   ipAddress: string
   deviceType: DeviceType
   connectionType: ConnectionType
-  // Phase 36（36-02）过渡期字段——main 投影已停发顶层平铺凭证（D-08 不留双源，凭证唯一真源
-  // 为 channels），类型暂留可选保未改造 DeviceForm/DevicesPage 编译；36-04 随表单重构移除。
-  port?: number | null
-  username?: string
-  password?: string
-  sshKeyPath?: string
-  sshKeyContent?: string
-  webUrl?: string
-  // Phase 36（36-02，LOGIN-01）：多通道凭证投影（main 进程内明文；IPC 出口 password/
-  // sshKeyContent 经 maskDeviceSecrets 递归脱敏为 ****尾4）。channel 存在 = 通道已配置。
+  // Phase 36（36-04，LOGIN-01）：顶层六凭证平铺字段移除（36-02 过渡可选形态收口）——凭证唯一
+  // 真源为 channels 投影（device_credentials 子表），服务层过渡 shim 已随本 plan 移除。
   channels: DeviceChannel[]
   status: 'online' | 'offline' | 'unknown'
   lastChecked: string | null
@@ -70,6 +73,11 @@ export interface Device {
   }
 }
 
+/**
+ * Phase 36（36-04，LOGIN-01）：凭证按通道节提交，服务层过渡 shim 已移除——
+ * connectionType 为「默认通道」（可选，缺省/悬空由服务层 D-09 滑落收敛到首条已配通道）；
+ * channels 为通道配置唯一写入口（enabled 节内未携带的凭证字段 = 留空不修改）。
+ */
 export interface CreateDeviceDTO {
   name: string
   vendor?: string
@@ -77,14 +85,7 @@ export interface CreateDeviceDTO {
   version?: string
   ipAddress: string
   deviceType?: DeviceType
-  connectionType: ConnectionType
-  port?: number
-  username?: string
-  password?: string
-  sshKeyPath?: string
-  sshKeyContent?: string
-  webUrl?: string
-  /** Phase 36（36-02）：多通道凭证节（四通道固定序规范化）；缺场走旧平铺入参过渡 shim（36-04 表单切换） */
+  connectionType?: ConnectionType
   channels?: DeviceChannelDTO[]
 }
 
