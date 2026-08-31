@@ -1,5 +1,6 @@
 import { Input, Button, Badge } from 'antd'
 import { SendOutlined, ThunderboltOutlined } from '@ant-design/icons'
+import RetrievalControlButton from './RetrievalControlButton'
 
 const { TextArea } = Input
 
@@ -41,6 +42,12 @@ export default function ChatInput({ value, loading, onChange, onSend, summarizin
       )}
       {/* Phase 34（34-01，SC1）：输入行卡层——.nt-chat-card 同宽居中（与审批面板互斥渲染位同层） */}
       <div className="nt-chat-card" style={{ display: 'flex', gap: 8, alignItems: 'flex-end', width: '100%' }}>
+        {/* Phase 37（37-03，D-09）：检索设置入口——行首小图标，面板全在 Popover 浮层
+            （自治组件零 props 不挤宽度契约）；行 alignItems flex-end 下面板图标 alignSelf
+            center 保持与单行 TextArea 视觉居中对齐 */}
+        <div style={{ alignSelf: 'center' }}>
+          <RetrievalControlButton />
+        </div>
         <TextArea
           value={value}
           onChange={(e) => onChange(e.target.value)}
