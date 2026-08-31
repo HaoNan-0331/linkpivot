@@ -237,11 +237,15 @@ app.whenReady().then(async () => {
   }
   // Phase 36（36-01，LOGIN-03/D-08）：post-MK 设备凭证子表回填 + 行内六列物理清理。
   // v32 迁移只建表；加密回填必须在 MK 注入后（25-05 教训）。幂等（password_enc 根守卫 +
-  // INSERT OR IGNORE），坏密文行跳过不清列（保数据，下次启动重试），失败仅 warn 不阻塞启动。
+  // INSERT OR IGNORE），坏密文/跨通道残留行跳过不清列（保数据，坏密文待重试/残留待人工
+  // 处置——CR-01 残留不猜通道语义跨迁），失败仅 warn 不阻塞启动。
   try {
     const r = DeviceCredentialMigration.backfillDeviceCredentials()
     if (r.backfilled > 0) console.log('[startup] backfill device credentials:', r.backfilled)
-    if (r.skipped > 0) console.warn('[startup] device credentials 回填跳过（空/坏密文，保留旧列待重试）:', r.skipped)
+    if (r.skipped > 0) console.warn('[startup] device credentials 回填跳过（坏密文/不可映射/跨通道残留，保留旧列）:', r.skipped)
+    if (r.residueSkipped > 0) {
+      console.warn('[startup] 检出跨通道残留历史凭证', r.residueSkipped, '行（曾切换连接方式的旧通道密文）——devices 行内凭证列保留不清理（D-08 门控关闭，数据零丢失优先），请人工确认处置后下次启动收敛')
+    }
     if (r.droppedColumns) console.log('[startup] devices 行内凭证六列已物理清理（D-08）')
   } catch (e) {
     console.warn('[startup] backfillDeviceCredentials failed (non-blocking):', (e as Error).message)

@@ -10,13 +10,17 @@ import Database from 'better-sqlite3'
  * 骨架自带测试口）。测试自建 schema：旧形态 devices 表（含六个行内凭证列）+ v32 建表
  * device_credentials 子表。
  *
- * 用例（plan 验收 a-e）：
+ * 用例（plan 验收 a-e + CR-01 补 g/h）：
  *   a) ssh/telnet/web/rdp 四通道各一设备回填：子表行落在正确 (device_id, channel)，
  *      列映射符合 36-CONTEXT 回填映射表，resolution 恒 NULL，devices 原行身份不动
  *   b) 凭证全空设备（六列全 NULL）不产生子表行（零通道设备，D-02 兜底前提）
  *   c) 坏密文行 skipped=1 不插行、六列仍在、droppedColumns=false（保数据待重试）
  *   d) 全部迁完 → 六列被 DROP、droppedColumns=true；再次调用根守卫 no-op 全零（幂等）
  *   e) MK 未注入（空串）→ 直接返回全零不碰库
+ *   g) CR-01 场景一：曾配 SSH 后切 web——web 照常迁移，SSH 残留计入 skipped
+ *      （residueSkipped）→ 门控关闭六列保留不 DROP，重跑幂等持续保列
+ *   h) CR-01 场景二：混合库（干净设备 + rdp 仅密码残留）→ 干净行迁移、残留行关门；
+ *      人工清残留后二轮重跑 → pending=0 且 skipped=0 收敛 DROP
  *
  * 安全域：内存库（`:memory:`）无落盘；只跑回填钩子本体不碰 runMigrations/system log。
  */
@@ -218,14 +222,14 @@ describe('DeviceCredentialMigration.backfillDeviceCredentials（LOGIN-03/D-08）
     DeviceCredentialMigration._setDbGetter(() => db)
     const r1 = DeviceCredentialMigration.backfillDeviceCredentials()
 
-    expect(r1).toEqual({ backfilled: 1, skipped: 0, droppedColumns: true })
+    expect(r1).toEqual({ backfilled: 1, skipped: 0, residueSkipped: 0, droppedColumns: true })
     for (const col of LEGACY_COLS) expect(hasColumn(db, 'devices', col)).toBe(false) // D-08 物理清理
     // 子表行保活（清列不丢数据）
     expect(getChildRows(db)).toHaveLength(1)
 
     // 再次调用：根守卫（password_enc 不存在）整体 no-op 返回全零
     const r2 = DeviceCredentialMigration.backfillDeviceCredentials()
-    expect(r2).toEqual({ backfilled: 0, skipped: 0, droppedColumns: false })
+    expect(r2).toEqual({ backfilled: 0, skipped: 0, residueSkipped: 0, droppedColumns: false })
     expect(getChildRows(db)).toHaveLength(1) // 零动作不重插
     db.close()
   })
@@ -239,7 +243,7 @@ describe('DeviceCredentialMigration.backfillDeviceCredentials（LOGIN-03/D-08）
     DeviceCredentialMigration._setDbGetter(() => db)
     const r = DeviceCredentialMigration.backfillDeviceCredentials()
 
-    expect(r).toEqual({ backfilled: 0, skipped: 0, droppedColumns: false })
+    expect(r).toEqual({ backfilled: 0, skipped: 0, residueSkipped: 0, droppedColumns: false })
     expect(getChildRows(db)).toHaveLength(0) // 不插行
     for (const col of LEGACY_COLS) expect(hasColumn(db, 'devices', col)).toBe(true) // 不清列
     db.close()
@@ -254,15 +258,77 @@ describe('DeviceCredentialMigration.backfillDeviceCredentials（LOGIN-03/D-08）
     DeviceCredentialMigration.setDeviceCredentialMasterKey(TEST_MK)
     DeviceCredentialMigration._setDbGetter(() => db)
     const r1 = DeviceCredentialMigration.backfillDeviceCredentials()
-    expect(r1).toEqual({ backfilled: 1, skipped: 1, droppedColumns: false })
+    expect(r1).toEqual({ backfilled: 1, skipped: 1, residueSkipped: 0, droppedColumns: false })
 
     // 修好坏密文后重跑：好行零重插（OR IGNORE）、坏行补迁、清列收敛
     db.prepare('UPDATE devices SET password_enc = ? WHERE id = ?').run(encField('fixed-pw', TEST_MK), 'dev-bad')
     const r2 = DeviceCredentialMigration.backfillDeviceCredentials()
-    expect(r2).toEqual({ backfilled: 1, skipped: 0, droppedColumns: true })
+    expect(r2).toEqual({ backfilled: 1, skipped: 0, residueSkipped: 0, droppedColumns: true })
     const rows = getChildRows(db)
     expect(rows).toHaveLength(2) // 恰两行（dev-ssh 未重插）
     expect(rows.filter((x) => x.device_id === 'dev-ssh')).toHaveLength(1)
+    db.close()
+  })
+
+  it('g) CR-01 跨通道残留：曾配 SSH 后切 web——web 照常迁移，残留计 skipped 保列不 DROP，重跑幂等', () => {
+    const db = new Database(':memory:')
+    createLegacySchema(db)
+    // 旧 UI 行为考古形态：先配 SSH（port/username/password 落库）后切 web 只提交
+    // web_url——旧 updateDevice 保留未提交字段 → 非映射列残留 SSH 密文
+    seedDevice(db, {
+      id: 'dev-cross', connectionType: 'web', webUrl: 'https://mgmt.local',
+      port: '22', username: 'admin', password: 'ssh-secret',
+    })
+
+    DeviceCredentialMigration.setDeviceCredentialMasterKey(TEST_MK)
+    DeviceCredentialMigration._setDbGetter(() => db)
+    const r1 = DeviceCredentialMigration.backfillDeviceCredentials()
+
+    // web 通道映射列照常迁移（残留≠坏密文，不阻塞本通道回填）；残留行计入 skipped
+    expect(r1).toEqual({ backfilled: 1, skipped: 1, residueSkipped: 1, droppedColumns: false })
+    const rows = getChildRows(db)
+    expect(rows).toHaveLength(1)
+    expect(decryptChild(rows[0])).toMatchObject({ device_id: 'dev-cross', channel: 'web', webUrl: 'https://mgmt.local' })
+    // CR-01 核心：六列保留（不 DROP），残留 SSH 密文原样保活可恢复
+    for (const col of LEGACY_COLS) expect(hasColumn(db, 'devices', col)).toBe(true)
+    const cross = db.prepare('SELECT port_enc, username_enc, password_enc FROM devices WHERE id = ?')
+      .get('dev-cross') as any
+    expect(decField(cross.username_enc, TEST_MK)).toBe('admin')
+    expect(decField(cross.password_enc, TEST_MK)).toBe('ssh-secret')
+
+    // 重跑幂等：web 零重插（OR IGNORE）、残留持续计 skipped、门控持续关闭保列
+    const r2 = DeviceCredentialMigration.backfillDeviceCredentials()
+    expect(r2).toEqual({ backfilled: 0, skipped: 1, residueSkipped: 1, droppedColumns: false })
+    expect(getChildRows(db)).toHaveLength(1)
+    for (const col of LEGACY_COLS) expect(hasColumn(db, 'devices', col)).toBe(true)
+    db.close()
+  })
+
+  it('h) CR-01 混合场景：干净设备迁移 + rdp 仅密码残留关门；人工清残留后二轮收敛 DROP', () => {
+    const db = new Database(':memory:')
+    createLegacySchema(db)
+    seedDevice(db, { id: 'dev-ssh', connectionType: 'ssh', port: '22', username: 'admin', password: 'pw' })
+    seedDevice(db, { id: 'dev-web', connectionType: 'web', webUrl: 'https://a.local' }) // 干净 web：非映射列全 NULL 不误报
+    // 旧 UI rdp 分支只渲染密码框 → 映射列（port/username）全空、仅 password_enc 残留
+    seedDevice(db, { id: 'dev-rdp', connectionType: 'rdp', password: 'rdp-secret' })
+
+    DeviceCredentialMigration.setDeviceCredentialMasterKey(TEST_MK)
+    DeviceCredentialMigration._setDbGetter(() => db)
+    const r1 = DeviceCredentialMigration.backfillDeviceCredentials()
+
+    // 干净行正常迁（ssh + web），残留行不插行不猜通道跨迁、只计 skipped 关门
+    expect(r1).toEqual({ backfilled: 2, skipped: 1, residueSkipped: 1, droppedColumns: false })
+    for (const col of LEGACY_COLS) expect(hasColumn(db, 'devices', col)).toBe(true)
+    const rows = getChildRows(db)
+    expect(rows.map((x) => x.device_id).sort()).toEqual(['dev-ssh', 'dev-web'])
+    expect(rows.findIndex((x) => x.device_id === 'dev-rdp')).toBe(-1) // 不自动造 rdp 子表行
+
+    // 人工确认处置残留（置 NULL）后重跑：pending=0 且 skipped=0 → D-08 收敛清列
+    db.prepare('UPDATE devices SET password_enc = NULL WHERE id = ?').run('dev-rdp')
+    const r2 = DeviceCredentialMigration.backfillDeviceCredentials()
+    expect(r2).toEqual({ backfilled: 0, skipped: 0, residueSkipped: 0, droppedColumns: true })
+    for (const col of LEGACY_COLS) expect(hasColumn(db, 'devices', col)).toBe(false)
+    expect(getChildRows(db)).toHaveLength(2) // 已迁行保活，零重插
     db.close()
   })
 })

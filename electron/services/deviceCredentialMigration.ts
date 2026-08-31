@@ -19,6 +19,10 @@
  * decField 降级（非 NULL 密文解出 '' ⟺ 坏密文，encField('') === null——非空 _enc
  * 不可能来自合法空明文）→ 整行 skipped++ 不插不造假数据（Pitfall 2）；skipped>0
  * 不清列保数据（SC3 数据零丢失优先），下次启动重试。
+ * CR-01（36 review BLOCKER）：跨通道残留行同计入 skipped——旧 UI 允许切换
+ * connectionType 且旧 updateDevice 保留未提交字段，「曾配 SSH 后切 web」等形态在
+ * 非映射列留有历史通道密文，既不在回填映射表也不进 pending SQL；不计数则 D-08
+ * DROP COLUMN 会不可逆物理删除。只保列不猜通道语义跨迁（保数据待人工处置）。
  * 回填 INSERT 用 OR IGNORE（(device_id, channel) 不存在才插——Pitfall 1 回填-约束
  * 死锁防护，重试/中断续跑幂等）；多写包 db.transaction（原子性红线）；
  * prepared statement 循环外复用（DB 性能红线）。
@@ -32,8 +36,10 @@ import { encField, decField } from '../utils/crypto'
 
 export interface DeviceCredentialBackfillResult {
   backfilled: number
-  /** 坏密文/通道不可映射跳过的行数（保留旧列，下次启动重试） */
+  /** 坏密文/通道不可映射/跨通道残留跳过的行数（保留旧列，待重试或人工处置） */
   skipped: number
+  /** 其中跨通道残留行数（CR-01：非映射列历史凭证——保列不 DROP，人工处置后才收敛） */
+  residueSkipped: number
   /** 六个行内凭证列是否已物理清理（D-08） */
   droppedColumns: boolean
 }
@@ -90,12 +96,14 @@ export class DeviceCredentialMigration {
    */
   static backfillDeviceCredentials(): DeviceCredentialBackfillResult {
     // T-29-02-04：MK 未注入（空串）直接返回，避免用空 key 造假密文
-    if (!DeviceCredentialMigration.MK) return { backfilled: 0, skipped: 0, droppedColumns: false }
+    if (!DeviceCredentialMigration.MK) {
+      return { backfilled: 0, skipped: 0, residueSkipped: 0, droppedColumns: false }
+    }
 
     const db = DeviceCredentialMigration.dbGetter()
     // 幂等根守卫（D-08）：password_enc 已清理（清列完成）的库整体 no-op——重复升级零动作
     if (!hasColumn(db, 'devices', 'password_enc')) {
-      return { backfilled: 0, skipped: 0, droppedColumns: false }
+      return { backfilled: 0, skipped: 0, residueSkipped: 0, droppedColumns: false }
     }
 
     const rows = db.prepare(`
@@ -114,6 +122,7 @@ export class DeviceCredentialMigration {
 
     let backfilled = 0
     let skipped = 0
+    let residueSkipped = 0
     const tx = db.transaction(() => {
       for (const row of rows) {
         const cols = row.connection_type ? CHANNEL_MIGRATION_COLUMNS[row.connection_type] : undefined
@@ -123,8 +132,21 @@ export class DeviceCredentialMigration {
           if (LEGACY_DEVICE_ENC_COLUMNS.some((c) => row[c] !== null)) skipped++
           continue
         }
+        // CR-01：跨通道残留检查——非当前通道映射列存在非 NULL 历史凭证（旧 UI 切换
+        // connectionType 后旧 updateDevice 保留未提交字段所致）。残留不在映射表、
+        // 不进 pending SQL → 不计数则 D-08 DROP COLUMN 不可逆物理删除。计入 skipped
+        // 关闭清列门控（保列恒可恢复，删列永不恢复——数据零丢失绝对优先）；
+        // 只保列不猜通道语义跨迁（不自动造子表行，人工处置后才收敛）。
+        // 检查先于「空设备 continue」：rdp 仅 password_enc 等形态映射列全空但残留存在。
+        const mapped = new Set<string>(cols)
+        const hasResidue = LEGACY_DEVICE_ENC_COLUMNS.some((c) => !mapped.has(c) && row[c] !== null)
+        if (hasResidue) {
+          skipped++
+          residueSkipped++
+        }
         // 插行判据：该通道映射列中至少一列原值非 NULL 才插行
-        // （凭证全空设备不插 → 零通道设备，D-02 引导兜底前提）
+        // （凭证全空设备不插 → 零通道设备，D-02 引导兜底前提）。
+        // 残留行当前通道映射列照常迁移（残留≠坏密文，不阻塞本通道回填）。
         if (!cols.some((c) => row[c] !== null)) continue
 
         const plain: Record<string, string | null> = {}
@@ -140,7 +162,9 @@ export class DeviceCredentialMigration {
           plain[c] = raw === null ? null : dec
         }
         if (badCipher) {
-          skipped++ // 不插行；skipped>0 不清列，下次启动重试（SC3 数据零丢失优先）
+          // 不插行；skipped>0 不清列，下次启动重试（SC3 数据零丢失优先）。
+          // 残留已计则不重复计（每行至多贡献一次 skipped）。
+          if (!hasResidue) skipped++
           continue
         }
         const res = insert.run(
@@ -182,6 +206,7 @@ export class DeviceCredentialMigration {
     const pending = pendingRow.c
 
     let droppedColumns = false
+    // skipped === 0 含 CR-01 跨通道残留（residueSkipped 并入 skipped）——有残留即关门保列
     if (pending === 0 && skipped === 0) {
       // 六条 DROP 包单事务（多写原子红线）：部分失败整体回滚，下次启动整段重试
       const dropTx = db.transaction(() => {
@@ -192,6 +217,6 @@ export class DeviceCredentialMigration {
       dropTx()
       droppedColumns = true
     }
-    return { backfilled, skipped, droppedColumns }
+    return { backfilled, skipped, residueSkipped, droppedColumns }
   }
 }
