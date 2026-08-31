@@ -586,7 +586,9 @@ export async function chat(
     // troubleshoot 档无视开关自动取 force guide）。可编辑 registry 条目（ruling 6：行为引导
     // 措辞属可编辑面，标记清洗在代码层 PROTOCOL_MARKERS 不依赖 AI 服从）。
     '\n\n' +
-    (PromptService.getPrompt(resolveBackfillMode(tier) === 'force' ? 'ai.chat.backfillForceGuide' : 'ai.chat.backfillSmartGuide') || '') +
+    (resolveBackfillMode(tier) === 'force'
+      ? PromptService.getPrompt('ai.chat.backfillForceGuide') || ''
+      : PromptService.getPrompt('ai.chat.backfillSmartGuide') || '') +
     mcpInjection
 
   const fullMessages: Array<{ role: string; content: string }> = [
