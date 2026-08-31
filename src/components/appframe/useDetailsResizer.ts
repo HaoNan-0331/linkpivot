@@ -11,6 +11,9 @@ import { clampDetailsWidth } from '@/utils/appFrame'
  *
  * 实现要点（35-RESEARCH Pattern 2 + Pitfall 2/3/5）：
  * - setPointerCapture：指针出条/出窗仍持续收事件（A4）；
+ * - up/cancel 身份校验（35-REVIEW CR-01）：pointerdown 记录发起 pointerId，
+ *   up 额外校验主键——右键/中键释放、外部手势终点落在把手上、拖拽中第二键
+ *   释放一律忽略，不误触发 toggle/commit；
  * - rAF 合帧（Pitfall 3）：pointermove 只写 pendingWidthRef，requestAnimationFrame
  *   单飞提交 setDragWidth——1000Hz 鼠标下避免每秒千次 store 写；
  * - 拖拽激活时 document.body.style.userSelect = 'none' 防蓝选（Pitfall 5），
@@ -29,6 +32,8 @@ const DRAG_THRESHOLD = 4
 interface GestureState {
   dragging: boolean
   startX: number
+  /** 发起手势的 pointerId（null = 无活跃手势）——up/cancel 身份校验用（35-REVIEW CR-01） */
+  pointerId: number | null
 }
 
 export interface UseDetailsResizerReturn {
@@ -44,7 +49,7 @@ export function useDetailsResizer(): UseDetailsResizerReturn {
   // 渲染态：仅 dragging 经 store 订阅（单字段 selector，Pattern 3）
   const dragging = useAppFrameStore((s) => s.dragging)
 
-  const gestureRef = useRef<GestureState>({ dragging: false, startX: 0 })
+  const gestureRef = useRef<GestureState>({ dragging: false, startX: 0, pointerId: null })
   // rAF 合帧件（Pitfall 3）：pending 宽度 + 在飞帧 id
   const pendingWidthRef = useRef<number | null>(null)
   const rafIdRef = useRef<number | null>(null)
@@ -76,7 +81,8 @@ export function useDetailsResizer(): UseDetailsResizerReturn {
     if (e.button !== 0) return // 仅主键
     // 指针出条/出窗仍收事件（A4）
     e.currentTarget.setPointerCapture(e.pointerId)
-    gestureRef.current = { dragging: false, startX: e.clientX }
+    // 记录发起指针：up/cancel 身份校验依据（CR-01）
+    gestureRef.current = { dragging: false, startX: e.clientX, pointerId: e.pointerId }
   }, [])
 
   const onPointerMove = useCallback((e: PointerEvent<HTMLDivElement>): void => {
@@ -106,11 +112,16 @@ export function useDetailsResizer(): UseDetailsResizerReturn {
   }, [scheduleFrame])
 
   const onPointerUp = useCallback((e: PointerEvent<HTMLDivElement>): void => {
+    // CR-01 身份校验：仅本手势的主键释放可结帐——右键/中键单击把手（onPointerDown 早退
+    // 但其 pointerup 仍会送达）、外部起始终点落在把手上的手势（无对应 pointerdown）、
+    // 拖拽途中第二键释放，一律直接忽略，不 toggle / 不 commit / 不重置
+    const g = gestureRef.current
+    if (g.pointerId !== e.pointerId || e.button !== 0) return
     if (e.currentTarget.hasPointerCapture(e.pointerId)) {
       e.currentTarget.releasePointerCapture(e.pointerId)
     }
     flushFrame()
-    if (!gestureRef.current.dragging) {
+    if (!g.dragging) {
       // 单击 = 展开/收起一次到位（D-03）
       useAppFrameStore.getState().toggle()
     } else {
@@ -119,18 +130,20 @@ export function useDetailsResizer(): UseDetailsResizerReturn {
     }
     document.body.style.userSelect = ''
     useAppFrameStore.getState().setDragging(false)
-    gestureRef.current = { dragging: false, startX: 0 }
+    gestureRef.current = { dragging: false, startX: 0, pointerId: null }
   }, [flushFrame])
 
   const onPointerCancel = useCallback((e: PointerEvent<HTMLDivElement>): void => {
-    // 手势被系统打断：释放/冲刷/恢复/重置同 pointerup，但不 toggle 不 commit
+    // 手势被系统打断：释放/冲刷/恢复/重置同 pointerup，但不 toggle 不 commit。
+    // CR-01：cancel 无 button 语义，仅校验 pointerId（外部指针误触发的 cancel 不重置本手势）
+    if (gestureRef.current.pointerId !== e.pointerId) return
     if (e.currentTarget.hasPointerCapture(e.pointerId)) {
       e.currentTarget.releasePointerCapture(e.pointerId)
     }
     flushFrame()
     document.body.style.userSelect = ''
     useAppFrameStore.getState().setDragging(false)
-    gestureRef.current = { dragging: false, startX: 0 }
+    gestureRef.current = { dragging: false, startX: 0, pointerId: null }
   }, [flushFrame])
 
   // 窗口 resize 重 clamp（Pitfall 4 瞬态：40% 上限随窗口变化；reclamp 不写盘）。
