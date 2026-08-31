@@ -19,6 +19,8 @@ if (!(window as any).api) {
   let aiConfig = load<any>('aiConfig', null)
   let execMode = load<string>('execMode', 'confirm')
   let adminInitialized = load<boolean>('adminInit', false)
+  // Phase 37（37-01，RETRIEVE-CTRL-01）：检索两开关模块态（mock 可切换，支撑 37-03 UI dev 路径）
+  let retrievalPrefs = { prefetchEnabled: false, backfillMode: 'smart' as 'force' | 'smart' }
 
   let currentUser: any = null
   void currentUser
@@ -138,6 +140,9 @@ if (!(window as any).api) {
       saveCommandWhitelist: async (list: string[]) => { commandWhitelist = [...list]; save('whitelist', commandWhitelist); return { success: true } },
       getExecMode: async () => execMode,
       setExecMode: async (mode: string, _password: string) => { execMode = mode; save('execMode', execMode); return { success: true } },
+      // Phase 37（37-01，RETRIEVE-CTRL-01）：检索两开关 mock（getExecMode 同形）
+      getRetrievalPrefs: async () => retrievalPrefs,
+      setRetrievalPrefs: async (prefs: { prefetchEnabled: boolean; backfillMode: 'force' | 'smart' }) => { retrievalPrefs = prefs; return { success: true } },
       confirmCommand: async (_execId: string, _approved: boolean) => '命令已执行（模拟）',
       getLogs: async (_limit?: number) => [...execLogs],
       getChatHistory: async () => [...chatHistory],

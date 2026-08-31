@@ -70,6 +70,9 @@ const api = {
     setAgentBurnoutCount: (count: number) => ipcRenderer.invoke('ai:setAgentBurnoutCount', count),
     getAgentCooldownSecs: () => ipcRenderer.invoke('ai:getAgentCooldownSecs'),
     setAgentCooldownSecs: (secs: number) => ipcRenderer.invoke('ai:setAgentCooldownSecs', secs),
+    // Phase 37（37-01，RETRIEVE-CTRL-01）：检索两开关读写（预取开关二值 + 补查模式 force/smart）
+    getRetrievalPrefs: () => ipcRenderer.invoke('ai:getRetrievalPrefs'),
+    setRetrievalPrefs: (prefs: { prefetchEnabled: boolean; backfillMode: 'force' | 'smart' }) => ipcRenderer.invoke('ai:setRetrievalPrefs', prefs),
     confirmCommand: (execId: string, approved: boolean) => ipcRenderer.invoke('ai:confirmCommand', execId, approved),
     getLogs: (limit?: number) => ipcRenderer.invoke('ai:getLogs', limit),
     getChatHistory: () => ipcRenderer.invoke('ai:getChatHistory'),

@@ -12,6 +12,7 @@ import { setDeviceMasterKey, listDevices, createDevice, updateDevice, deleteDevi
 import { setTopologyMasterKey, listTopologies, getTopologyById, createTopology, updateTopology, deleteTopology, exportTopology, importTopology } from './services/topology'
 import { setConnectionMasterKey, openTerminal, openWebSafe, writeToSession, writeByWebContentsId, disconnectSession, testDeviceConnection } from './services/connection'
 import { setAiMasterKey, chat, getAiConfigMasked, saveAiConfig, getCommandWhitelist, saveCommandWhitelist, getExecMode, setExecMode, confirmCommand, getAgentMaxRounds, setAgentMaxRounds, getAgentBurnoutCount, setAgentBurnoutCount, getAgentCooldownSecs, setAgentCooldownSecs, getAiLogs, getChatHistory, saveChatMessage as aiSaveChatMessage, createSession, listSessions, getSessionMessages, deleteSession, updateSessionTitle, reconcileGuardLogs, ChatInterruptedError, registerChatCancel, finishChatCancel, cancelChatForWebContents } from './services/ai'
+import { getRetrievalPrefs, setRetrievalPrefs } from './services/aiAgentState'
 import { discoverTopology } from './services/discovery'
 import { getSystemLogs, createSystemLog, setSystemLogMasterKey, backfillSystemLogEnc } from './services/systemLog'
 import { backfillAiExecLogEnc } from './services/aiExecLogger'
@@ -465,6 +466,10 @@ app.whenReady().then(async () => {
   ipcMain.handle('ai:setAgentBurnoutCount', secure((_e, count) => setAgentBurnoutCount(count)))
   ipcMain.handle('ai:getAgentCooldownSecs', secure(() => getAgentCooldownSecs()))
   ipcMain.handle('ai:setAgentCooldownSecs', secure((_e, secs) => setAgentCooldownSecs(secs)))
+  // Phase 37（37-01，RETRIEVE-CTRL-01）：检索行为两开关读写（D-01/D-03 预取开关 + 补查模式）。
+  // 读 fail-safe 回退默认；入参校验由 service 层 setRetrievalPrefs 承担（T-37-01），handler 不重复校验。
+  ipcMain.handle('ai:getRetrievalPrefs', secure(() => getRetrievalPrefs()))
+  ipcMain.handle('ai:setRetrievalPrefs', secure((_e, prefs) => setRetrievalPrefs(prefs)))
   // 28-06 R2 缺陷③：confirm 续跑阶段注册 AbortController（与 ai:chat 同构）——chat 弹
   // 确认框返回时原控制器已 finally 注销，本 handler 续跑期间不注册则 ai:cancelChat 查
   // 注册表为空报「当前窗口没有进行中的 AI 对话」，用户无法停止确认后的续跑。

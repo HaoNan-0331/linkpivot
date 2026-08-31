@@ -139,6 +139,10 @@ export interface ElectronAPI {
     setAgentBurnoutCount: (count: number) => Promise<{ success: boolean; error?: string }>
     getAgentCooldownSecs: () => Promise<number>
     setAgentCooldownSecs: (secs: number) => Promise<{ success: boolean; error?: string }>
+    /** Phase 37（37-01，RETRIEVE-CTRL-01）：检索两开关（预取开关二值 + 补查模式 force 强制/smart 智能，D-01/D-03；
+     * 结构字面量重复声明，不 import electron 侧类型——renderer 边界惯例） */
+    getRetrievalPrefs: () => Promise<{ prefetchEnabled: boolean; backfillMode: 'force' | 'smart' }>
+    setRetrievalPrefs: (prefs: { prefetchEnabled: boolean; backfillMode: 'force' | 'smart' }) => Promise<{ success: boolean; error?: string }>
     confirmCommand: (execId: string, approved: boolean) => Promise<string>
     getLogs: (limit?: number) => Promise<AIExecLog[]>
     getChatHistory: () => Promise<ChatMessage[]>
