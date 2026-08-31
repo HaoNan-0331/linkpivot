@@ -13,7 +13,7 @@ import { createSystemLog } from '../services/systemLog'
  *      在 createTables() 建好基线表之后、premigration 备份之后执行（D-06）。
  *      init.ts 不直接调用 runMigrations（单一调用点原则）。
  */
-export const MIGRATION_HEAD = 32
+export const MIGRATION_HEAD = 33
 
 interface MigrationStep {
   version: number
@@ -1167,6 +1167,36 @@ export const v32 = (db: Database.Database): void => {
   step()
 }
 
+/**
+ * v33：Phase 37（37-01，RETRIEVE-CTRL-01）—— ai_config 检索行为两开关列。
+ *
+ * - retrieval_prefetch_enabled INTEGER NOT NULL DEFAULT 0：预取开关（D-03 默认关——
+ *   循环前不注入分档预取检索，37-02 消费）。
+ * - retrieval_backfill_mode TEXT NOT NULL DEFAULT 'smart'：补查模式开关（模式切换非功能有无，
+ *   D-01/D-03 默认 'smart' 智能补查——AI 决策；'force' = 系统强制补查）。TEXT+CHECK 沿
+ *   v18 exec_mode 模式切换列先例（migrations.ts v18），CHECK 在库级拦截非法枚举值
+ *   （T-37-02 accept 的 DB 级防线）。
+ * - 布尔/枚举非敏感明文，不入 _enc（H 红线仅约束凭证类敏感列；ai_config 已承载 exec_mode
+ *   同「模式切换」语义的明文设置先例，planner_rulings 裁决 1）。
+ *
+ * 幂等守卫：hasColumn（与 v1/v2/v20/v21/v22/v25/v26/v30 同构，纯 ALTER ADD COLUMN，
+ * 不靠 user_version 判定）；guard 命中也推进 user_version（v31 模式，Pitfall 7）。
+ * init.ts fresh-install DDL 已同步含两列（双路径一致红线）。
+ */
+export const v33 = (db: Database.Database): void => {
+  // 与 v1-v32 一致，步骤执行体包 db.transaction（throw 即 ROLLBACK，原子迁移红线）
+  const step = db.transaction(() => {
+    if (!hasColumn(db, 'ai_config', 'retrieval_prefetch_enabled')) {
+      db.exec('ALTER TABLE ai_config ADD COLUMN retrieval_prefetch_enabled INTEGER NOT NULL DEFAULT 0')
+    }
+    if (!hasColumn(db, 'ai_config', 'retrieval_backfill_mode')) {
+      db.exec("ALTER TABLE ai_config ADD COLUMN retrieval_backfill_mode TEXT NOT NULL DEFAULT 'smart' CHECK(retrieval_backfill_mode IN ('force','smart'))")
+    }
+    db.pragma('user_version = 33')
+  })
+  step()
+}
+
 export const MIGRATIONS: MigrationStep[] = [
   { version: 1, name: 'chat_history.session_id', run: v1 },
   { version: 2, name: 'ai_exec_logs.prompt_text+ai_response', run: v2 },
@@ -1200,6 +1230,7 @@ export const MIGRATIONS: MigrationStep[] = [
   { version: 30, name: 'ai_config.update_skip_version+update_snooze_until（UPD-03/04 升级压制档位）', run: v30 },
   { version: 31, name: 'ai_system_logs CHECK widen update（30-05 真机实证 update 域审计链路修复）', run: v31 },
   { version: 32, name: 'device_credentials 凭证子表（LOGIN-01/03）', run: v32 },
+  { version: 33, name: 'ai_config 检索开关两列（RETRIEVE-CTRL-01 预取/补查开关持久化）', run: v33 },
 ]
 
 /**

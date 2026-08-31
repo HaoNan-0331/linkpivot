@@ -57,6 +57,9 @@ export function createTables() {
       -- 升级压制状态两列（Phase 30 UPD-03/04）：NULL=无压制，明文版本号/ISO 时间戳/'forever' 哨兵；列定义与 migrations.ts v30 ALTER 逐字一致（双路径一致红线）
       update_skip_version TEXT,
       update_snooze_until TEXT,
+      -- 检索行为两开关（Phase 37 RETRIEVE-CTRL-01，D-03）：预取默认关 + 补查默认智能；列定义与 migrations.ts v33 ALTER 逐字一致（双路径一致红线）
+      retrieval_prefetch_enabled INTEGER NOT NULL DEFAULT 0,
+      retrieval_backfill_mode TEXT NOT NULL DEFAULT 'smart' CHECK(retrieval_backfill_mode IN ('force','smart')),
       created_at TEXT DEFAULT (datetime('now','localtime'))
     );
 

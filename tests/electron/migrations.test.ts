@@ -551,7 +551,7 @@ describe('v22/v23/v24 devices.name_hash 三段式', () => {
   })
 
   it('d) MIGRATION_HEAD=24、注册表含 v22/v23/v24、init.ts fresh DDL 含 name_hash', () => {
-    expect(MIGRATION_HEAD).toBe(32) // 36-01 v32（device_credentials 凭证子表）推进
+    expect(MIGRATION_HEAD).toBe(33) // 37-01 v33 推进
     const versions = MIGRATIONS.map((m) => m.version)
     expect(versions).toContain(22)
     expect(versions).toContain(23)
@@ -690,7 +690,7 @@ describe('v27 mcp_packages + 设备级 env 列', () => {
   })
 
   it('d) MIGRATION_HEAD=28、注册表含 v27、init.ts fresh DDL 含三处结构', () => {
-    expect(MIGRATION_HEAD).toBe(32) // 36-01 v32 推进
+    expect(MIGRATION_HEAD).toBe(33) // 37-01 v33 推进
     expect(MIGRATIONS.map((m) => m.version)).toContain(27)
 
     const root = path.resolve(__dirname, '../..')
@@ -862,7 +862,7 @@ describe('v29 mcp_packages.env_meta + mcp_tools.package_id 借存迁移', () => 
   })
 
   it('d) MIGRATION_HEAD=29、注册表含 v29、init.ts fresh DDL 双列并存', () => {
-    expect(MIGRATION_HEAD).toBe(32) // 36-01 v32 推进
+    expect(MIGRATION_HEAD).toBe(33) // 37-01 v33 推进
     expect(MIGRATIONS.map((m) => m.version)).toContain(29)
 
     const root = path.resolve(__dirname, '../..')
@@ -1012,7 +1012,7 @@ describe('v28 mcp_configs.type CHECK widen package', () => {
     const initSrc = fs.readFileSync(path.join(root, 'electron/database/init.ts'), 'utf-8')
     const ddl = initSrc.match(/CREATE TABLE IF NOT EXISTS mcp_configs \(([\s\S]*?)\);/)!
     expect(ddl[1]).toContain("CHECK(type IN ('stdio','http','package'))")
-    expect(MIGRATION_HEAD).toBe(32) // 36-01 v32 推进
+    expect(MIGRATION_HEAD).toBe(33) // 37-01 v33 推进
     expect(MIGRATIONS.map((m) => m.version)).toContain(28)
   })
 })
@@ -1106,7 +1106,7 @@ describe('v31 ai_system_logs CHECK widen update（30-05 真机审计链路修复
   })
 
   it('d) MIGRATION_HEAD=31 且注册表含 v31', () => {
-    expect(MIGRATION_HEAD).toBe(32) // 36-01 v32（device_credentials 凭证子表）推进
+    expect(MIGRATION_HEAD).toBe(33) // 37-01 v33 推进
     expect(MIGRATIONS.map((m) => m.version)).toContain(31)
   })
 })
@@ -1201,7 +1201,7 @@ describe('v32 device_credentials 凭证子表（LOGIN-01/03）', () => {
   })
 
   it('d) MIGRATION_HEAD=32 且注册表含 v32', () => {
-    expect(MIGRATION_HEAD).toBe(32)
+    expect(MIGRATION_HEAD).toBe(33) // 37-01 v33 推进
     expect(MIGRATIONS.map((m) => m.version)).toContain(32)
   })
 })
@@ -1370,8 +1370,8 @@ describe('v11 ai_system_logs CHECK widen security 迁移', () => {
   it('4. MIGRATION_HEAD=32（注册完整性静态守卫，防 bump 漏改）', () => {
     // Phase 18 18-02：v14；Phase 20 20-01：v15；Phase 21 21-01：v16；Phase 22/23 v17~v21；
     // Phase 25 v22~v24；Phase 29 29-02 v27 / 29-09 v28；29.1 v29~v30；Phase 30 30-05：v31；
-    // Phase 36 36-01：v32（device_credentials 凭证子表，当前 HEAD）
-    expect(MIGRATION_HEAD).toBe(32)
+    // Phase 36 36-01：v32（device_credentials 凭证子表）；Phase 37 37-01：v33（ai_config 检索开关两列，当前 HEAD）
+    expect(MIGRATION_HEAD).toBe(33)
   })
 
   it('5. v13 双路径 DDL 一致：v13 ALTER 列定义串与 init.ts 三处 fresh-install DDL 特征串逐字一致', () => {

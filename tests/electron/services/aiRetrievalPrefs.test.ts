@@ -144,7 +144,7 @@ describe('v33 迁移 + 双路径一致（RETRIEVE-CTRL-01）', () => {
     const v33Src = migrationsSrc.slice(v33Idx, migrationsSrc.indexOf('export const MIGRATIONS'))
 
     const migPrefetch = /ALTER TABLE ai_config ADD COLUMN (retrieval_prefetch_enabled [^']+)/.exec(v33Src)?.[1]
-    const migMode = /ALTER TABLE ai_config ADD COLUMN (retrieval_backfill_mode [^"]+)\)/.exec(v33Src)?.[1]
+    const migMode = /ALTER TABLE ai_config ADD COLUMN (retrieval_backfill_mode [^"]+)/.exec(v33Src)?.[1]
     const initPrefetch = /^\s*(retrieval_prefetch_enabled [^,\n]+),$/m.exec(initSrc)?.[1]
     const initMode = /^\s*(retrieval_backfill_mode .+),$/m.exec(initSrc)?.[1]
 

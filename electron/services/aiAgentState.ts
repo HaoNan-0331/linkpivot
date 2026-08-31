@@ -123,6 +123,70 @@ export function setAgentCooldownSecs(secs: number): { success: boolean; error?: 
   return { success: true }
 }
 
+// ---------- Phase 37（37-01，RETRIEVE-CTRL-01）：检索行为两开关（D-01/D-03） ----------
+
+/** 检索开关形状：prefetchEnabled 预取开关（普通二值）；backfillMode 补查模式（force 强制/smart 智能） */
+export interface RetrievalPrefs {
+  prefetchEnabled: boolean
+  backfillMode: 'force' | 'smart'
+}
+
+/** D-03 默认：两开关默认关（预取不注入 + 补查 AI 决策智能模式） */
+export const DEFAULT_RETRIEVAL_PREFS: RetrievalPrefs = { prefetchEnabled: false, backfillMode: 'smart' }
+
+/**
+ * 读 ai_config 检索两开关（v33 两列）；缺行/NULL/畸形值（含列缺失异常）逐项回退
+ * DEFAULT_RETRIEVAL_PREFS（getAgentMaxRounds 读 fail-safe 同构——chat 流程永不因
+ * 开关读取中断，T-37-03）。prefetch 仅 1/0 字面量放行，backfillMode 仅 force/smart 放行。
+ */
+export function getRetrievalPrefs(): RetrievalPrefs {
+  try {
+    const row = agentDbGetter()
+      .prepare('SELECT retrieval_prefetch_enabled, retrieval_backfill_mode FROM ai_config LIMIT 1')
+      .get() as { retrieval_prefetch_enabled?: number | null; retrieval_backfill_mode?: string | null } | undefined
+    const prefetchEnabled =
+      row?.retrieval_prefetch_enabled === 1
+        ? true
+        : row?.retrieval_prefetch_enabled === 0
+          ? false
+          : DEFAULT_RETRIEVAL_PREFS.prefetchEnabled
+    const backfillMode =
+      row?.retrieval_backfill_mode === 'force' || row?.retrieval_backfill_mode === 'smart'
+        ? row.retrieval_backfill_mode
+        : DEFAULT_RETRIEVAL_PREFS.backfillMode
+    return { prefetchEnabled, backfillMode }
+  } catch {
+    return { ...DEFAULT_RETRIEVAL_PREFS }
+  }
+}
+
+/**
+ * 写入口（37-03 设置 UI 消费）：前置校验拒绝（非法值显式回错不静默钳制，setAgentMaxRounds
+ * 同构——T-37-01 防线，非法入参不触 DB）。合法后单 prepared 无 WHERE 更新（单行表 agent 列先例）。
+ */
+export function setRetrievalPrefs(prefs: RetrievalPrefs): { success: boolean; error?: string } {
+  if (typeof prefs?.prefetchEnabled !== 'boolean') {
+    return { success: false, error: '预取开关必须为布尔值' }
+  }
+  if (prefs?.backfillMode !== 'force' && prefs?.backfillMode !== 'smart') {
+    return { success: false, error: '补查模式必须为 force（强制补查）或 smart（智能补查）' }
+  }
+  agentDbGetter()
+    .prepare('UPDATE ai_config SET retrieval_prefetch_enabled = ?, retrieval_backfill_mode = ?')
+    .run(prefs.prefetchEnabled ? 1 : 0, prefs.backfillMode)
+  return { success: true }
+}
+
+/**
+ * D-02 troubleshoot 故障排查档系统强制兜底不可关——补查模式裁决唯一权威点（37-02 的
+ * runEvidenceBackfill 分流与提示词选择必须调本函数，禁止各自内联判断）。
+ * troubleshoot 恒返回 'force' 无视开关当前值；其余档透传开关值。
+ */
+export function resolveBackfillMode(tier: AgentTier): 'force' | 'smart' {
+  if (tier === 'troubleshoot') return 'force'
+  return getRetrievalPrefs().backfillMode
+}
+
 // ---------- Phase 28（AGENT-04/06，28-03）：AgentLoopState 循环状态对象 ----------
 
 /** agent 循环内部 token 预算硬顶（估算口径，不暴露设置页——D-04 裁决） */
