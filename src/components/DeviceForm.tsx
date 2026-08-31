@@ -203,14 +203,24 @@ export default function DeviceForm({ open, device, copySource, existingDevices, 
     }
   }
 
-  // D-06 统一保存：Modal「确 定」一次提交全量四节 channels——enabled 节内空凭证字段剔除
-  //（= 留空不修改，H-1）；off 节发 enabled:false 整节提交（服务层 DELETE）；不再发送任何
-  // 平铺凭证字段（36-04 终态，通道配置唯一入口 = channels 节）。
+  // D-06 统一保存：Modal「确 定」一次提交 channels 节——enabled 节内空凭证字段剔除
+  //（= 留空不修改，H-1）；显式 off 节发 enabled:false 整节提交（服务层 DELETE）；不再发送
+  // 任何平铺凭证字段（36-04 终态，通道配置唯一入口 = channels 节）。
+  // 防线（36-05 真机 UAT 数据丢失缺陷）：节缺场/未注册（enabled 非 boolean——Tabs 懒渲染
+  // 下未点开 tab 的字段不入 form store）绝不可编码为 enabled:false——服务层 DELETE 语义
+  // 会静默清掉已存凭证。缺场节整节剔除：服务层对不在场节点零触碰（resolveChannelNodes
+  // 只规范化在场节，缺场不清既有子表行），D-09 滑落写后 SQL 重查 DB 集合不受缺场影响。
+  // forceRender 已根治懒渲染缺场，此处为回归防线（缺场仅显式 true/false 均非时触发）。
   const handleFinish = async (values: DeviceFormValues) => {
     const hasText = (v: unknown): v is string => typeof v === 'string' && v !== ''
-    const nodes: DeviceChannelDTO[] = CHANNEL_KEYS.map((ch) => {
-      const sec = values.channels?.[ch] ?? {}
-      if (sec.enabled !== true) return { channel: ch, enabled: false }
+    const nodes: DeviceChannelDTO[] = []
+    for (const ch of CHANNEL_KEYS) {
+      const sec = values.channels?.[ch]
+      if (typeof sec?.enabled !== 'boolean') continue
+      if (!sec.enabled) {
+        nodes.push({ channel: ch, enabled: false })
+        continue
+      }
       const node: DeviceChannelDTO = { channel: ch, enabled: true }
       if (sec.port !== undefined && sec.port !== null) node.port = sec.port
       if (hasText(sec.username)) node.username = sec.username
@@ -221,8 +231,8 @@ export default function DeviceForm({ open, device, copySource, existingDevices, 
       // 分辨率非脱敏明文字段（编辑态已回填当前值）：enabled 节随表单现值提交——清空即不指定
       //（空串按字段级 !== undefined 语义直写，openRDP 端格式不符自然忽略）
       if (typeof sec.resolution === 'string') node.resolution = sec.resolution
-      return node
-    })
+      nodes.push(node)
+    }
     const payload: CreateDeviceDTO = {
       name: values.name, vendor: values.vendor, model: values.model, version: values.version,
       ipAddress: values.ipAddress, deviceType: values.deviceType,
@@ -372,12 +382,16 @@ export default function DeviceForm({ open, device, copySource, existingDevices, 
         <Form.Item name="connectionType" label="默认通道" extra="双击直连与 AI 执行命令优先使用默认通道">
           <Select placeholder="未配置" options={onKeys.map((ch) => ({ value: ch, label: CHANNEL_LABELS[ch] }))} />
         </Form.Item>
-        {/* D-04 四 tab 常驻不可增删：填了即启用（auto-on）、拨 off 置灰可反悔、已配 dot 标注 */}
+        {/* D-04 四 tab 常驻不可增删：填了即启用（auto-on）、拨 off 置灰可反悔、已配 dot 标注。
+            forceRender：四 pane 首挂即渲染注册全部通道 Form.Item——AntD Tabs 默认懒渲染下
+            未点开的 tab 字段不入 form store，useWatch 缺场致已配 dot 不亮/默认通道缺选项/
+            onFinish 缺节被编码 enabled:false 静默删已存凭证（36-05 UAT 数据丢失缺陷根因） */}
         <Tabs
           activeKey={activeKey}
           onChange={(k) => setActiveKey(resolveInitialChannel(k as ConnectionType))}
           items={CHANNEL_KEYS.map((ch) => ({
             key: ch,
+            forceRender: true,
             label: (
               <span>
                 {CHANNEL_LABELS[ch]}
