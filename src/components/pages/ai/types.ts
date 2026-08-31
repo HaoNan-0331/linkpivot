@@ -1,5 +1,6 @@
 import type { ChatSession } from '@/types/ai'
 import type { ConfirmDraftsResult } from '@/types/experience'
+import type { ConnectionType } from '@/types/device'
 
 /**
  * AI 子树本地类型（FE-01 / D-5-1）。
@@ -12,7 +13,8 @@ export interface DeviceOption {
   id: string
   name: string
   ipAddress: string
-  connectionType: string
+  // WR-01（36 review）：对齐 Device.connectionType 可空形态（D-09 全 off → NULL）
+  connectionType: ConnectionType | null
   // Phase 23（DSL-03/D-02）：能力三布尔，main 经 device:list 投影下发，
   // renderer 只消费不推导（零本地推导契约，UI 消费在 23-04）。
   capabilities: {

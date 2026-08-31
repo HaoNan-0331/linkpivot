@@ -12,12 +12,14 @@ import {
 } from 'antd'
 import { SearchOutlined } from '@ant-design/icons'
 import type { TopologyNode, TopologyEdge } from '@/types/topology'
+import type { ConnectionType } from '@/types/device'
 
+// WR-01（36 review）：对齐 Device.connectionType 可空形态（D-09 全 off → NULL）
 interface DeviceOption {
   id: string
   name: string
   ipAddress: string
-  connectionType: string
+  connectionType: ConnectionType | null
   vendor: string
 }
 

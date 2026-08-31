@@ -78,7 +78,10 @@ export interface Device {
   version: string
   ipAddress: string
   deviceType: DeviceType
-  connectionType: ConnectionType
+  // WR-01（36 review）：D-09 滑落可写 NULL（全通道 off → 默认通道置空，enforceDefaultChannel）
+  // ——投影类型与运行时契约对齐，后续消费点由 tsc 强制显式处理 null（既有消费点均已 null 安全：
+  // ChannelPickerModal != null 校验 / DevicesPage some() 回退 / TopologyPage || 'ssh'）。
+  connectionType: ConnectionType | null
   // Phase 36（36-04，LOGIN-01）：顶层六凭证平铺字段移除（36-02 过渡可选形态收口）——凭证唯一
   // 真源为 channels 投影（device_credentials 子表），服务层过渡 shim 已随本 plan 移除。
   channels: DeviceChannel[]

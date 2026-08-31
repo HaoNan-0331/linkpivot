@@ -162,7 +162,9 @@ export default function DevicesPage() {
           render: (_: unknown, r: Device) => {
             const channels = r.channels ?? []
             if (channels.length === 0) return '—'
-            const def = channels.some((c) => c.channel === r.connectionType)
+            // WR-01（36 review）：connectionType 可空（D-09 全 off → NULL）——!= null 显式收窄
+            //（TS 无法经 some() 回调推导；null 时比较恒 false，本就走 channels[0] 回退，行为零变）
+            const def = r.connectionType != null && channels.some((c) => c.channel === r.connectionType)
               ? r.connectionType
               : channels[0].channel
             const content = (

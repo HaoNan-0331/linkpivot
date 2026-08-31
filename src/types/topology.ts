@@ -5,7 +5,10 @@ export interface TopologyNodeData {
   deviceId: string
   deviceName: string
   deviceType: DeviceType
-  connectionType: ConnectionType
+  // WR-01（36 review）：节点快照对齐 Device.connectionType 可空——服务层 topoFields 级联以
+  // D-09 滑落终值刷新（全 off → NULL），快照运行时本可持有 null；消费点（TopologyPage 零通道
+  // 引导 data.connectionType || 'ssh'）已 null 安全。
+  connectionType: ConnectionType | null
   ipAddress: string
   vendor?: string
   model?: string
