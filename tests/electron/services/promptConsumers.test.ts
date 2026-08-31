@@ -163,11 +163,12 @@ describe('7 处 prompt 调用点收敛到 PromptService.getPrompt（PMT-01）', 
     expect(system).toBe(getRegistryEntry('rerank.experience')!.content)
   })
 
-  it('registry 恰好 15 条（口径锁死：真实 LLM prompt 调用点 + 资源地图/cmdStyle/禁止令静态条目 + Phase 28 agent 循环五条目）', () => {
+  it('registry 恰好 17 条（口径锁死：真实 LLM prompt 调用点 + 资源地图/cmdStyle/禁止令静态条目 + Phase 28 agent 循环五条目 + Phase 37 补查模式两引导条目）', () => {
     // 原 10 条口径：7 处 LLM 调用点 + ai.chat.resourceMap（23-02 D-07）+ ai.chat.cmdStyle（23-03）+ kb.pick
     // Phase 28 新增 5 条：agentHonestWrapup / agentRetryHint / agentBurnoutNote（28-01 硬顶诚实收尾、
     // 重试提示、熔断说明）+ agentConflictGuide（28-04 D-10 三源冲突标注）+ sourceAttribution（28-06 R6 来源归因）
-    expect(PROMPT_REGISTRY).toHaveLength(15)
+    // Phase 37 新增 2 条（37-02 Task 3，Rule 3 随条目数更新）：backfillSmartGuide / backfillForceGuide
+    expect(PROMPT_REGISTRY).toHaveLength(17)
   })
 
   // 重依赖模块（ai / discovery / kb）源码级收敛断言：内联 prompt 已删、getPrompt(id) 接入

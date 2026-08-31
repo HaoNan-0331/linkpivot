@@ -28,7 +28,7 @@ import { PromptService } from './promptService'
 import { MCP_INJECTION_GUARD, MCP_DISABLED_TOOLS_BAN_HEAD, MCP_DISABLED_TOOLS_BAN_BODY } from './promptRegistry'
 import { sanitizeUntrusted } from './untrustedText'
 import { classifyTier } from './agentRouter'
-import { retrieveForTier, type InjectedSource } from './agentRetrieval'
+import { retrieveForTier, TIER_RETRIEVAL_PLAN, type InjectedSource } from './agentRetrieval'
 import { getAiConfig, getExecMode, getCommandWhitelist, type ExecMode } from './aiConfig'
 import { saveChatMessage } from './aiSession'
 import { callAI, ChatInterruptedError } from './aiClient'
@@ -46,9 +46,10 @@ import {
 } from './aiPayload'
 import {
   createAgentLoopState, pushDeviceSource, resolveStepExecChannel,
+  getRetrievalPrefs, resolveBackfillMode,
   type AgentLoopState, type McpLoopCtx, type McpLoopResult,
 } from './aiAgentState'
-import { stripMcpMarkers, stripExpKbSearchMarkers, stripCmdMarkersWithNotice } from './aiAgentParse'
+import { stripMcpMarkers, stripExpKbSearchMarkers, stripCmdMarkersWithNotice, stripBackfillMarkers } from './aiAgentParse'
 import {
   runAgentLoop, agentInterruptedFinal, agentAppendRoundAndCall, mcpAppendRoundAndCall,
   cmdResultsUserMessage, pushAgentStep, settleAgentStep, agentStepToToolResultPayload,
@@ -371,9 +372,13 @@ export async function confirmCommand(
       return res.payload
     }
     // Bug B 同源出口兜底：追评回复 fail-safe 剥离 MCP/exp/kb 残留标记
+    // Phase 37（37-02，<critical_asymmetry>）：本行不追加 stripBackfillMarkers——BACKFILL
+    // 标记须存活进下一行补查消费（智能模式标记载体）
     finalReply = stripMcpMarkers(stripExpKbSearchMarkers(res.reply))
     // 28-04（AGENT-03/05）：确认续跑收尾证据补查 + 统一 payload/meta 持久化
     finalReply = await runEvidenceBackfill(loopCtx, agentState, loopCtx.tier ?? 'knowledge', finalReply)
+    // Phase 37（37-02，T-37-07）：backfill 返回值内部已 strip，此处幂等兜底（终态出口不漏标记）
+    finalReply = stripBackfillMarkers(finalReply)
     auditMessages = [...loopCtx.fullMessages, ...agentState.extra]
   } else {
     const followUpMessages: Array<{ role: string; content: string }> = [
@@ -382,7 +387,9 @@ export async function confirmCommand(
       { role: 'user', content: cmdResultsUserMessage(deviceNamesStr, resultsText) },
     ]
     // Bug B 同源出口兜底：确认后追评回复 fail-safe 剥离 MCP/exp/kb 残留标记
-    finalReply = stripMcpMarkers(stripExpKbSearchMarkers(await callAI(batch.config, followUpMessages)))
+    // Phase 37（37-02，T-37-07）：legacy 批次（无 agentLoop）不走补查——无 BACKFILL 标记
+    // 下游消费方，此处直接 strip（终态出口不漏标记原文）
+    finalReply = stripMcpMarkers(stripExpKbSearchMarkers(stripBackfillMarkers(await callAI(batch.config, followUpMessages))))
     auditMessages = followUpMessages
   }
 
@@ -447,6 +454,9 @@ export async function chat(
 
   const whitelist = getCommandWhitelist()
   const execMode = getExecMode()
+  // Phase 37（37-02，D-01）：检索行为开关读取——main 侧自查 DB（37-PATTERNS 接线要点：
+  // 不随 IPC 消息传参，chat 流程内每次自取最新值）；读 fail-safe 永不中断 chat（T-37-03）
+  const retrievalPrefs = getRetrievalPrefs()
 
   // Load target devices（动态注入段先行构造，值与拼接顺序与收敛前完全一致——PMT-01 零回归）
   // 前导 \n\n 由变量值带入（registry 占位符契约，见 promptRegistry.ts ai.chat.systemPrompt 注释）
@@ -487,7 +497,15 @@ export async function chat(
   // 命中内容注入 prompt 前经 sanitizeUntrusted（T-28-04-03）；引用去重合并（D-09 溯源）。
   const userMessage = messages[messages.length - 1]?.content ?? ''
   const tier = classifyTier(userMessage)
-  const tierRetrieval = await retrieveForTier({ tier, userMessage, deviceIds })
+  // Phase 37（37-02，D-01）：预取开关短路——开关关（D-03 默认）时不发起分档预取。
+  // demoMode:true 空结果**仅作零注入零卡的下游门控载体**（下方审计循环 / tierInjected /
+  // 注入门控 / 预取卡段全自然跳过，agentRetrieval :144 empty 先例同形态）；开关判定变量
+  // prefetchEnabled 是独立语义——verifySourcesEvidence 与补查路径（runEvidenceBackfill）
+  // 不读 demoMode，补查行为不受预取开关影响（禁止在下游改条件式）。
+  // tier 分类（上一行）与 meta.tier 不受开关影响（分档标签照常）。
+  const tierRetrieval = retrievalPrefs.prefetchEnabled
+    ? await retrieveForTier({ tier, userMessage, deviceIds })
+    : { demoMode: true, plan: TIER_RETRIEVAL_PLAN[tier], injected: [], promptSection: '' }
   // 28-06 R4：目录意图清单注入入审计（command 列 exp:list/kb:list，与 kb:query/exp:query
   // 只读先例同构——只读列表无确认门；清单在 injected 即代表发生了真实列表查询）。
   if (!tierRetrieval.demoMode) {
@@ -563,6 +581,12 @@ export async function chat(
     // 只读命令、网络设备→show/display）。可编辑 registry 条目，仅选中设备时注入
     //（无目标设备时指引无意义，提示词保持干净）。
     (targetDevices.length > 0 ? '\n\n' + PromptService.getPrompt('ai.chat.cmdStyle') : '') +
+    // Phase 37（37-02，D-02/D-04 引导）：补查模式行为引导——恒注入（沿 resourceMap「AI 不知
+    // 用法就不会打标」先例，不依赖设备绑定）；条目选择经 resolveBackfillMode（D-02 唯一裁决点，
+    // troubleshoot 档无视开关自动取 force guide）。可编辑 registry 条目（ruling 6：行为引导
+    // 措辞属可编辑面，标记清洗在代码层 PROTOCOL_MARKERS 不依赖 AI 服从）。
+    '\n\n' +
+    (PromptService.getPrompt(resolveBackfillMode(tier) === 'force' ? 'ai.chat.backfillForceGuide' : 'ai.chat.backfillSmartGuide') || '') +
     mcpInjection
 
   const fullMessages: Array<{ role: string; content: string }> = [
@@ -809,6 +833,9 @@ export async function chat(
   // 上方 MCP 分支整体跳过——历史会话中的标记样例可能诱导模型输出畸形
   // [MCP_TOOL_CALL] 自然语言载荷标记，此前无任何出口 strip，标记原文直接漏进气泡。
   // 此处无条件 fail-safe 剥离（上下文非空时 loop 收尾回复已不含标记，此为幂等兜底）。
+  // Phase 37（37-02，<critical_asymmetry> 锚定）：本行**刻意不追加** stripBackfillMarkers——
+  // 其后 :928/:1002 两处收尾补查（runEvidenceBackfill）要消费 BACKFILL 标记（智能模式
+  // AI 决策补查的标记载体），此处剥离即标记死在补查前；终态出口链已统一 strip。
   finalAiReply = stripMcpMarkers(finalAiReply)
 
   // Extract [CMD:device]...[/CMD] or [CMD]...[/CMD] blocks
@@ -847,7 +874,10 @@ export async function chat(
       rejectedCommands: [
         { command: '（回复命令结构解析失败）', reason: 'AI 回复命令标记解析失败（fail-closed），未提取到可执行命令；请检查提示词配置后重试' },
       ],
-      aiExplanation: finalAiReply,
+      // Phase 37（37-02，T-37-07 出口审计补）：本批次为终态（空命令批次确认/拒绝均不跑
+      // 补查），显示面无下游消费——BACKFILL 标记在此 strip（批次 aiReply 保原文，
+      // 空命令批次永不 surface）
+      aiExplanation: stripBackfillMarkers(finalAiReply),
     })
     saveChatMessage('assistant', '回复命令结构解析失败（fail-closed），等待人工确认...', null, sessionId)
     return failClosedResponse
@@ -1147,7 +1177,9 @@ export async function chat(
     evidenceBackfilled = true
     agentRes = { ...agentRes, reply: await runEvidenceBackfill(agentLoopCtx, agentState, tier, agentRes.reply) }
   }
-  const finalReply = stripMcpMarkers(stripExpKbSearchMarkers(agentRes.reply))
+  // Phase 37（37-02，T-37-07）：BACKFILL 标记终态 strip——backfill 返回值内部已 strip，
+  // 此处幂等兜底 evidenceBackfilled 已置真的历史跳过态，最终回复任何出口不漏标记原文
+  const finalReply = stripMcpMarkers(stripExpKbSearchMarkers(stripBackfillMarkers(agentRes.reply)))
 
   saveChatMessage('assistant', finalReply, null, sessionId, buildAgentMeta(agentState, tier))
 

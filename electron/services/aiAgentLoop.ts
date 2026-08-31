@@ -667,6 +667,11 @@ async function runAgentLoopInner(
     const kbQueries = parseKbQueries(reply)
     const expQueries = parseExpQueries(reply)
     const cmdBlocks = parseCmdBlocks(reply)
+    // Phase 37（37-02，<critical_asymmetry> 锚定）：下方续跑探测正则**刻意不含** BACKFILL
+    // 补查标记（[EXP_BACKFILL]/[KB_BACKFILL]）——该标记设计上必须穿过循环收尾存活，由
+    // chat()/confirmCommand 收尾的 runEvidenceBackfill 消费（智能模式 AI 决策补查的标记
+    // 载体）；若含之循环会续轮消费掉标记载体。零改动是正确态而非遗漏（上方
+    // stripAllAgentMarkers :89-96 同理不含 BACKFILL，双零改动红线）。
     const hasOpenMarker = /\[MCP_TOOL_CALL\]|\[(?:KB|EXP)_SEARCH\]|\[CMD(?::[^\]]*)?\]/.test(reply)
     if (mcpCalls.length === 0 && kbQueries.length === 0 && expQueries.length === 0 && cmdBlocks.length === 0) {
       if (!hasOpenMarker) return { kind: 'final', reply: stripAllAgentMarkers(reply) }

@@ -89,6 +89,12 @@ function makeDb(): Database.Database {
       id TEXT PRIMARY KEY, provider_enc TEXT, api_key_enc TEXT, base_url_enc TEXT, model_name_enc TEXT,
       vision_base_url_enc TEXT, vision_api_key_enc TEXT, vision_model_enc TEXT,
       exec_mode TEXT DEFAULT 'confirm', mcp_max_rounds INTEGER DEFAULT 5,
+      -- Phase 37（37-02 Task 3，Rule 3 同型）：v33 两列补列——本文件「无标记→分档强制预取」等
+      -- 用例断言预取注入行为，置 legacy 预取开（D-03 默认关会短路预取使断言红）；
+      -- backfill_mode 对齐真实 v33 默认 smart（本文件无强制补查行为断言，37-02 双模式矩阵
+      -- 在 aiRetrievalBackfill.test.ts 独立覆盖）
+      retrieval_prefetch_enabled INTEGER NOT NULL DEFAULT 1,
+      retrieval_backfill_mode TEXT NOT NULL DEFAULT 'smart' CHECK(retrieval_backfill_mode IN ('force','smart')),
       created_at TEXT DEFAULT (datetime('now','localtime'))
     );
     CREATE TABLE command_whitelist (id TEXT PRIMARY KEY, pattern TEXT NOT NULL UNIQUE);
