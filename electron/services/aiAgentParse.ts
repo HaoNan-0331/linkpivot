@@ -8,6 +8,8 @@
  * 熔断/重试 key 归一（normalizeAgentKey）、MCP/EXP/KB/CMD 协议标记剥离与回注提示
  * 常量。零依赖（无 MK、不读 DB、不 import 任何 ai 域模块），被 aiAgentLoop（值）
  * 与 ai.ts chat 段 / barrel re-export 单向引用。
+ * Phase 37（37-02，D-04）：收尾补查标记 [EXP_BACKFILL]/[KB_BACKFILL] 解析与 strip
+ * 落本域（消费方 aiPayload 收尾路径，纯函数域免循环依赖，planner_rulings 2）。
  */
 
 /**
@@ -77,6 +79,54 @@ export function stripExpKbSearchMarkers(reply: string): string {
     .replace(/\[KB_SEARCH\][\s\S]*?\[\/KB_SEARCH\]/g, '')
     .replace(/\[(?:EXP|KB)_SEARCH\][^\n]*\n?/g, '')
     .replace(/\[\/(?:EXP|KB)_SEARCH\]/g, '')
+    .trim()
+}
+
+/**
+ * Phase 37（37-02，D-04）：解析收尾补查标记——AI 在回答末尾输出的
+ * `[EXP_BACKFILL]检索词[/EXP_BACKFILL]` / `[KB_BACKFILL]检索词[/KB_BACKFILL]`
+ * （沿 [EXP_SEARCH]/[KB_SEARCH] 成对英文大写先例，planner_rulings 1；按源成对
+ * 使 AI 可只标补 EXP 不补 KB）。每 kind 只取首个非空标记（提示词「每类最多一次」
+ * + 解析层首匹配双保险——补查追加轮有界，T-37-06）；纯解析不做 sanitize
+ * （清洗职责在消费方 aiPayload.runEvidenceBackfill，标记体检索词与用户原话同通道）。
+ */
+export function parseBackfillQueries(reply: string): Array<{ kind: 'exp' | 'kb'; query: string }> {
+  const picks: Array<{ kind: 'exp' | 'kb'; query: string; at: number }> = []
+  const regexByKind: Array<['exp' | 'kb', RegExp]> = [
+    ['exp', /\[EXP_BACKFILL\]([\s\S]*?)\[\/EXP_BACKFILL\]/g],
+    ['kb', /\[KB_BACKFILL\]([\s\S]*?)\[\/KB_BACKFILL\]/g],
+  ]
+  for (const [kind, re] of regexByKind) {
+    for (const m of reply.matchAll(re)) {
+      const query = m[1].trim()
+      if (query) {
+        picks.push({ kind, query, at: m.index ?? 0 })
+        break
+      }
+    }
+  }
+  // 按标记在回复中的出现序返回（多 kind 同现时消费方按序处理）
+  return picks.sort((a, b) => a.at - b.at).map(({ kind, query }) => ({ kind, query }))
+}
+
+/**
+ * Phase 37（37-02，D-04）：剥离 [EXP_BACKFILL]/[KB_BACKFILL] 补查标记——逐字对齐
+ * stripExpKbSearchMarkers 三层兜底（完整段含闭合 DOTALL 非贪婪 / 未闭合开标签沿
+ * 标签到行尾 / 孤立闭合标签），最终回答绝不漏标记原文进气泡（T-37-07）。
+ *
+ * ⚠ 生命周期红线（<critical_asymmetry>，与 KB/EXP_SEARCH 相反）：本函数**禁止**加入
+ * stripAllAgentMarkers 组合——BACKFILL 标记设计上必须穿过循环收尾存活，由收尾后的
+ * runEvidenceBackfill 消费（智能模式 AI 决策补查的标记载体）；若在循环出口剥离，
+ * 智能模式标记即死。出口仅限：runEvidenceBackfill 内部全部返回值 + backfill 之后的
+ * 终态出口（aiChat 收尾链）。同样禁止在 :374/:812 等 backfill 待消费点前追加。
+ */
+export function stripBackfillMarkers(reply: string): string {
+  if (!/\[(?:EXP|KB)_BACKFILL\]/.test(reply) && !/\[\/(?:EXP|KB)_BACKFILL\]/.test(reply)) return reply
+  return reply
+    .replace(/\[EXP_BACKFILL\][\s\S]*?\[\/EXP_BACKFILL\]/g, '')
+    .replace(/\[KB_BACKFILL\][\s\S]*?\[\/KB_BACKFILL\]/g, '')
+    .replace(/\[(?:EXP|KB)_BACKFILL\][^\n]*\n?/g, '')
+    .replace(/\[\/(?:EXP|KB)_BACKFILL\]/g, '')
     .trim()
 }
 

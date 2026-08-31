@@ -20,6 +20,12 @@ const PROTOCOL_MARKERS = [
   '[KB_SEARCH]',
   '[/KB_SEARCH]',
   '[SYSTEM]',
+  // Phase 37（37-02，T-37-05）：收尾补查标记——不可信文本（KB/EXP 内容、MCP 结果）
+  // 伪造 BACKFILL 标记会驱动收尾补查检索（DoS/注入面），与既有七项同通道中和。
+  '[EXP_BACKFILL]',
+  '[/EXP_BACKFILL]',
+  '[KB_BACKFILL]',
+  '[/KB_BACKFILL]',
 ]
 
 /** 中和协议标记：半角括号 → 全角（grep 断言保留字样不再以半角形式出现） */
