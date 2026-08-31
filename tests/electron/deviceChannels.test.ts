@@ -329,4 +329,29 @@ describe('device 通道写路径 + 投影红线（36-02）', () => {
     expect(decField(credRow(dev.id, 'ssh').username_enc, TEST_MK)).toBe('u2')
     expect(credRow(dev.id, 'ssh').port_enc).toBeNull() // 未动字段不被波及
   })
+
+  it('g) WR-04 port 写入面校验拒绝非整数/越界值整体回滚；读侧 NaN/越界密文按 null 呈现', () => {
+    const dev: any = createDevice({
+      name: 'Port-FW', ipAddress: '10.0.0.7', connectionType: 'ssh',
+      channels: [{ channel: 'ssh', enabled: true, port: 22, username: 'u' }],
+    })
+    // 写入面：非整数（IPC 绕过 InputNumber 约束）/ 越界 / 0 → throw + 事务整体回滚（不半写）
+    expect(() => updateDevice(dev.id, { channels: [{ channel: 'ssh', enabled: true, port: 'abc' }] })).toThrow()
+    expect(() => updateDevice(dev.id, { channels: [{ channel: 'ssh', enabled: true, port: 70000 }] })).toThrow()
+    expect(() => updateDevice(dev.id, { channels: [{ channel: 'ssh', enabled: true, port: 0 }] })).toThrow()
+    expect(decField(credRow(dev.id, 'ssh').port_enc, TEST_MK)).toBe('22')
+
+    // 读侧兜底：绕过写入面直改密文为非数字形态 → 投影按 null 呈现，NaN 不下传连接层
+    const db = H.delegate as Database.Database
+    db.prepare("UPDATE device_credentials SET port_enc = ? WHERE device_id = ? AND channel = 'ssh'")
+      .run(encField('abc', TEST_MK), dev.id)
+    const bad: any = listDevices().find((x: any) => x.id === dev.id)
+    expect(bad.channels[0].port).toBeNull()
+
+    // 越界数字形态（'99999'）同样按 null 呈现
+    db.prepare("UPDATE device_credentials SET port_enc = ? WHERE device_id = ? AND channel = 'ssh'")
+      .run(encField('99999', TEST_MK), dev.id)
+    const bad2: any = listDevices().find((x: any) => x.id === dev.id)
+    expect(bad2.channels[0].port).toBeNull()
+  })
 })

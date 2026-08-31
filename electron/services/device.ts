@@ -103,9 +103,12 @@ export function deriveCapabilities(row: {
  */
 function credRowToChannel(c: any) {
   const portStr = dec(c.port_enc)
+  // WR-04（36 review）：port 解析 NaN/越界防护——非数字/越界密文按 null 呈现（连接层
+  // port||22/23/3389 默认回退），NaN 不下传 buildSSHConnectConfig/net.createConnection/openRDP
+  const n = portStr ? parseInt(portStr, 10) : NaN
   return {
     channel: c.channel,
-    port: portStr ? parseInt(portStr) : null,
+    port: Number.isInteger(n) && n >= 1 && n <= 65535 ? n : null,
     username: dec(c.username_enc),
     password: dec(c.password_enc),
     sshKeyPath: dec(c.ssh_key_path_enc),
@@ -258,6 +261,15 @@ function applyChannelNodes(db: ReturnType<typeof getDatabase>, deviceId: string,
     if (node?.enabled === false) {
       del.run(deviceId, node.channel)
       continue
+    }
+    // WR-04（36 review）：port 写入面校验——InputNumber 的 min/max 只是 renderer UI 约束，
+    // IPC 载荷可绕过；非 1-65535 整数 fail-fast throw（secure 包装脱敏回传 renderer，事务
+    // 整体回滚不落库）。null（显式清空，WR-03）/ undefined（不修改）不在校验域。
+    if (
+      node.port !== undefined && node.port !== null &&
+      (!Number.isInteger(node.port) || node.port < 1 || node.port > 65535)
+    ) {
+      throw new Error(`${node.channel} 通道端口无效：需 1-65535 整数`)
     }
     upsert.run(
       uuidv4(), deviceId, node.channel,
