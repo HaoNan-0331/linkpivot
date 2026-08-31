@@ -27,6 +27,9 @@ const api = {
     importJson: (data: string) => ipcRenderer.invoke('topology:importJson', data),
   },
   connection: {
+    // Phase 36（36-03，LOGIN-02）：统一通道入口（web/rdp 也走 main，Q3 裁决）；
+    // channel 缺省 = devices.connection_type 默认通道（D-07），服务层枚举校验。
+    open: (deviceId: string, channel?: string) => ipcRenderer.invoke('connection:open', deviceId, channel),
     sshConnect: (deviceId: string) => ipcRenderer.invoke('connection:ssh', deviceId),
     telnetConnect: (deviceId: string) => ipcRenderer.invoke('connection:telnet', deviceId),
     rdpConnect: (deviceId: string) => ipcRenderer.invoke('connection:rdp', deviceId),

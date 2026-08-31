@@ -5,7 +5,7 @@ import fs from 'fs'
 import net from 'net'
 import iconv from 'iconv-lite'
 import { Client, type ClientChannel } from 'ssh2'
-import { getDeviceById, setDeviceMasterKey } from './device'
+import { getDeviceById, setDeviceMasterKey, resolveExecChannel } from './device'
 import { hardenWindow, openExternalSafe } from '../utils/webSecurity'
 import { buildSSHConnectConfig, mapSshProbeError } from '../utils/sshConfig'
 import { decodeDeviceBuffer } from '../utils/textDecode'
@@ -42,37 +42,63 @@ export function setConnectionMasterKey(key: string) {
 }
 
 /**
- * Phase 36（36-02）过渡桥：device.ts rowToDevice 已停发顶层平铺凭证（D-08 不留双源），凭证
- * 唯一真源为 device_credentials 子表投影 device.channels。此处按默认通道（connectionType，
- * 悬空/不在通道集合时取首条已配通道）把通道行凭证平铺回 DeviceInfo 既有形状，保持
- * connectSSH / connectTelnet / openRDP / testDeviceConnection 消费链零改动；顶层字段在场时
- * 优先保留（兼容既有 flat 形态数据源/测试桩）。36-03 以 openTerminal(deviceId, channel?)
- * 通道分流取代本桥。
+ * Phase 36（36-03，LOGIN-02）：通道解析 + 平铺视图——取代 36-02 loadDeviceInfo 过渡桥。
+ * 指定通道：先枚举校验（'ssh'|'telnet'|'web'|'rdp' 之外 throw，V5/T-36-03-02 服务层与
+ * DB CHECK 双层），再 (device_id, channel) UNIQUE 行级定位（选 A 取 A 行凭证，T-36-03-03），
+ * 行不存在 throw。缺省：devices.connection_type 默认通道（D-07 DB 单一真源）优先；为空/悬空
+ * （不在通道集合）时按 resolveExecChannel 回退（兜底老库悬空默认，T-36-03-04）；无可用通道
+ * → error: 'no-channel'（openTerminal throw / testDeviceConnection 失败文案，由调用方定形）。
+ * 平铺视图：凭证与 resolution 取自目标通道行，connectSSH / connectTelnet / openRDP 消费链零改动。
  */
-function loadDeviceInfo(deviceId: string): DeviceInfo | null {
+const CHANNELS = ['ssh', 'telnet', 'web', 'rdp'] as const
+
+type ChannelViewResult = { view: DeviceInfo } | { error: 'no-device' } | { error: 'no-channel' }
+
+function resolveChannelView(deviceId: string, channel?: string): ChannelViewResult {
+  if (channel !== undefined && !(CHANNELS as readonly string[]).includes(channel)) {
+    throw new Error('无效通道')
+  }
   const device = getDeviceById(deviceId) as any
-  if (!device) return null
+  if (!device) return { error: 'no-device' }
   const channels: any[] = Array.isArray(device.channels) ? device.channels : []
-  const ch = channels.find((c) => c.channel === device.connectionType) ?? channels[0] ?? null
+  const channelNames = channels.map((c) => c.channel as string)
+  let resolved: string | null
+  if (channel !== undefined) {
+    resolved = channel
+  } else if (device.connectionType && channelNames.includes(device.connectionType)) {
+    resolved = device.connectionType
+  } else {
+    resolved = resolveExecChannel(device.connectionType ?? null, channelNames)
+  }
+  if (!resolved) return { error: 'no-channel' }
+  const row = channels.find((c) => c.channel === resolved)
+  if (!row) throw new Error(`该设备未配置${resolved}通道`)
   return {
-    ...device,
-    connectionType: ch ? ch.channel : device.connectionType,
-    port: device.port ?? ch?.port ?? null,
-    username: device.username ?? ch?.username ?? '',
-    password: device.password ?? ch?.password ?? '',
-    sshKeyPath: device.sshKeyPath ?? ch?.sshKeyPath ?? '',
-    sshKeyContent: device.sshKeyContent ?? ch?.sshKeyContent ?? '',
-    webUrl: device.webUrl ?? ch?.webUrl ?? '',
-    resolution: device.resolution ?? ch?.resolution ?? null,
-  } as DeviceInfo
+    view: {
+      ...device,
+      connectionType: resolved,
+      port: row.port ?? null,
+      username: row.username ?? '',
+      password: row.password ?? '',
+      sshKeyPath: row.sshKeyPath ?? '',
+      sshKeyContent: row.sshKeyContent ?? '',
+      webUrl: row.webUrl ?? '',
+      resolution: row.resolution ?? null,
+    } as DeviceInfo,
+  }
 }
 
-export function openTerminal(deviceId: string): { sessionId: string } {
-  const device = loadDeviceInfo(deviceId)
-  if (!device) throw new Error('设备不存在')
+export function openTerminal(deviceId: string, channel?: string): { sessionId: string } {
+  const r = resolveChannelView(deviceId, channel)
+  if ('error' in r) {
+    if (r.error === 'no-device') throw new Error('设备不存在')
+    throw new Error('该设备未配置登录通道')
+  }
+  const device = r.view
 
   if (device.connectionType === 'web') {
-    if (device.webUrl) openWebSafe(device.webUrl)
+    if (!device.webUrl) throw new Error('该设备未配置 Web 地址')
+    openWebSafe(device.webUrl)
     return { sessionId: '' }
   }
 
@@ -241,8 +267,14 @@ export function disconnectSession(sessionId: string) {
 }
 
 export function testDeviceConnection(deviceId: string): Promise<{ success: boolean; message: string }> {
-  const device = loadDeviceInfo(deviceId)
-  if (!device) return Promise.resolve({ success: false, message: '设备不存在' })
+  // Phase 36（36-03，Q1 裁决）：测默认通道——解析同 openTerminal 缺省逻辑；零通道/行不存在 →
+  // 失败文案（UI-SPEC §九），不 throw。
+  const r = resolveChannelView(deviceId)
+  if ('error' in r) {
+    if (r.error === 'no-device') return Promise.resolve({ success: false, message: '设备不存在' })
+    return Promise.resolve({ success: false, message: '该设备未配置登录通道' })
+  }
+  const device = r.view
 
   if (device.connectionType === 'web') {
     return testWebConnection(device.webUrl)
@@ -303,6 +335,14 @@ export function openRDP(device: DeviceInfo) {
   let rdpFile = `full address:s:${host}:${port}\n`
   if (device.username) {
     rdpFile += `username:s:${device.username}\n`
+  }
+  // Phase 36（36-03，D-04 裁决补记 2026-08-31）：RDP 分辨率经通道行 resolution 下发——
+  // 「整数x整数」形态（如 1920x1080）严格匹配才在 username 行之后追加 desktopwidth/
+  // desktopheight 两行（T-36-03-06：\d+ 捕获纯数字，无换行/键值注入面）；空值/格式不符
+  // 零行为变化（不写分辨率行，mstsc 用默认）。username/password 消费关系不变（A4）。
+  const resMatch = typeof device.resolution === 'string' ? /^(\d+)x(\d+)$/.exec(device.resolution.trim()) : null
+  if (resMatch) {
+    rdpFile += `desktopwidth:i:${resMatch[1]}\ndesktopheight:i:${resMatch[2]}\n`
   }
   // mstsc on Windows accepts an .rdp file path as argument
   const tmpPath = path.join(require('os').tmpdir(), `rdp_${device.id || Date.now()}.rdp`)

@@ -18,6 +18,29 @@ function isKnownChannel(ch: unknown): ch is string {
   return typeof ch === 'string' && (CHANNEL_ORDER as readonly string[]).includes(ch)
 }
 
+/** Phase 36（36-03，D-10）：命令行通道固定回退序——SSH > Telnet（连接悬空回退 / AI 执行 / ARP 采集三链共用）。 */
+const CMD_ORDER = ['ssh', 'telnet'] as const
+
+/**
+ * Phase 36（36-03，D-10）：有效命令通道解析（纯函数）。
+ * 默认通道（connection_type）是 ssh/telnet 且在已配通道集合内 → 用之；否则按 CMD_ORDER
+ * 固定序回退到首条已配命令行通道（默认 web/rdp 或悬空时的兜底）；无命令行通道 → null
+ * （消费方 capabilities 派生 false，isDeviceExecutable fail-closed 既有行为，Pitfall 5）。
+ */
+export function resolveExecChannel(defaultChannel: string | null, channels: string[]): 'ssh' | 'telnet' | null {
+  if (
+    defaultChannel !== null &&
+    (CMD_ORDER as readonly string[]).includes(defaultChannel) &&
+    channels.includes(defaultChannel)
+  ) {
+    return defaultChannel as 'ssh' | 'telnet'
+  }
+  for (const ch of CMD_ORDER) {
+    if (channels.includes(ch)) return ch
+  }
+  return null
+}
+
 /** H-1 脱敏字段清单（顶层与 channels 元素同名递归共用）。resolution 非敏感不在清单（D-04）。 */
 const SECRET_KEYS = ['password', 'sshKeyContent'] as const
 
@@ -92,17 +115,45 @@ function credRowToChannel(c: any) {
   }
 }
 
-function rowToDevice(row: any, credRows: any[] = []): any {
-  // Phase 36（36-02，D-08）：顶层六凭证字段平铺解密移除（不留双源）——凭证唯一真源为
-  // device_credentials 子表，经 channels 投影按固定序组装下发。capabilities 改子表派生。
+/** Phase 36（36-03，LOGIN-02）：channels 明文行形态（main 进程内消费；IPC 出口经 maskDeviceSecrets 递归脱敏）。 */
+export interface DeviceChannelRow {
+  channel: string
+  port: number | null
+  username: string
+  password: string
+  sshKeyPath: string
+  sshKeyContent: string
+  webUrl: string
+  resolution: string | null
+}
+
+/** device_credentials 行集合 → 固定序 channels 投影（rowToDevice 与 getDeviceChannels 共用）。 */
+function assembleChannels(credRows: any[]): DeviceChannelRow[] {
   const byChannel = new Map<string, any>()
   for (const c of credRows) {
     if (isKnownChannel(c?.channel)) byChannel.set(c.channel, c)
   }
-  const channels = (CHANNEL_ORDER as readonly string[])
+  return (CHANNEL_ORDER as readonly string[])
     .map((ch) => byChannel.get(ch))
     .filter((c) => c !== undefined)
     .map(credRowToChannel)
+}
+
+/**
+ * Phase 36（36-03）：单设备已配通道明文行（CHANNEL_ORDER 固定序，与投影 channels 同构）。
+ * 连接（openTerminal 通道分流）/AI 执行（getDeviceByIdInternal D-10 投影）/ARP 采集三链
+ * 按 (device_id, channel) 行级定位凭证用。
+ */
+export function getDeviceChannels(deviceId: string): DeviceChannelRow[] {
+  const db = getDatabase()
+  const credRows = db.prepare('SELECT * FROM device_credentials WHERE device_id = ?').all(deviceId) as any[]
+  return assembleChannels(credRows)
+}
+
+function rowToDevice(row: any, credRows: any[] = []): any {
+  // Phase 36（36-02，D-08）：顶层六凭证字段平铺解密移除（不留双源）——凭证唯一真源为
+  // device_credentials 子表，经 channels 投影按固定序组装下发。capabilities 改子表派生。
+  const channels = assembleChannels(credRows)
   return {
     id: row.id,
     topologyId: row.topology_id,
