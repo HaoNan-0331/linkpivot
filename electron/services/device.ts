@@ -231,6 +231,10 @@ function resolveChannelNodes(data: any): any[] {
  * 内实现字段级条件更新（UPSERT/DELETE 两条 prepare 循环外常驻，DB 性能红线）。
  * resolution 为明文列直写（!== undefined 才写、不进 encField——D-04 裁决补记；
  * 值仅 RDP 行有语义，服务层不做通道限定）。port 转 string 后 encField（v13 起字符串列）。
+ * WR-02（36 review，RESEARCH A4「保字段不动行为」）：rdp 节 password 为预留无消费方字段——
+ * openRDP 仅消费 username/resolution 写 .rdp（mstsc 不支持明文密码行），本列只存不连；
+ * CR-01 修复后迁移对 rdp 残留 password_enc 不迁不删（保列待人工处置）；password_enc 为
+ * 四通道共享列，rdp 语义预留不构成删列理由。
  */
 function applyChannelNodes(db: ReturnType<typeof getDatabase>, deviceId: string, nodes: any[], now: string): void {
   const upsert = db.prepare(`

@@ -316,6 +316,10 @@ export default function DeviceForm({ open, device, copySource, existingDevices, 
           <Form.Item name={['channels', 'rdp', 'username']} label="账号" style={{ flex: 1 }}>
             <Input disabled={!rdpOn} onChange={(e) => onChannelFieldChange('rdp', e.target.value)} />
           </Form.Item>
+          {/* WR-02（36 review，RESEARCH A4 裁决「保字段不动行为」）：RDP 密码为预留字段——
+              openRDP 仅消费 username/resolution 写 .rdp（mstsc 不支持 .rdp 明文密码行，
+              password 51:b 需 DPAPI 密文由 mstsc 自生成），本值加密落库后无连接消费方；
+              连接时 mstsc 自行提示输入密码。device_credentials.password_enc 为四通道共享列。 */}
           <Form.Item name={['channels', 'rdp', 'password']} label="密码" style={{ flex: 1 }}>
             <Input.Password placeholder={passwordPlaceholder('rdp')} disabled={!rdpOn} onChange={(e) => onChannelFieldChange('rdp', e.target.value)} />
           </Form.Item>
