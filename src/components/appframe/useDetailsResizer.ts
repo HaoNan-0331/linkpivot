@@ -146,6 +146,18 @@ export function useDetailsResizer(): UseDetailsResizerReturn {
     gestureRef.current = { dragging: false, startX: 0, pointerId: null }
   }, [flushFrame])
 
+  // 卸载兜底（35-REVIEW WR-01）：拖拽中 MainLayout 被卸载（登出门控切换 Login 等）时
+  // pointerup 不再送达已卸载元素——冲刷在飞帧 + 恢复全局选择样式 + 复位拖拽标记，
+  // 防 body.userSelect='none' 残留到登录页（文本不可选）。各操作幂等，
+  // cleanup 后可重跑，StrictMode effect 双跑安全（Pitfall 9 同理）
+  useEffect(() => {
+    return () => {
+      flushFrame()
+      document.body.style.userSelect = ''
+      useAppFrameStore.getState().setDragging(false)
+    }
+  }, [flushFrame])
+
   // 窗口 resize 重 clamp（Pitfall 4 瞬态：40% 上限随窗口变化；reclamp 不写盘）。
   // cleanup 免疫 StrictMode effect 双跑（Pitfall 9）
   useEffect(() => {
