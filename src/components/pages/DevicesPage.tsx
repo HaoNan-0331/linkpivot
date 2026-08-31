@@ -102,6 +102,8 @@ export default function DevicesPage() {
         const passCount = result.channels.filter((c) => c.success).length
         notification.open({
           type: result.success ? 'success' : passCount === 0 ? 'error' : 'warning',
+          // 顶部居中：默认右上角会遮挡页面标题区的「添加设备」按钮
+          placement: 'top',
           message: `${device.name} 连接测试：${result.message}`,
           description: (
             <div>
