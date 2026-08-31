@@ -34,6 +34,7 @@ import { registerExperienceIpc } from './ipc/experienceIpc'
 import { registerExperienceDraftingIpc } from './ipc/experienceDraftingIpc'
 import { McpService } from './services/mcpService'
 import { McpDeviceEnvMigration } from './services/mcpDeviceEnvMigration'
+import { DeviceCredentialMigration } from './services/deviceCredentialMigration'
 import { setIntegrityHandler } from './services/mcpClient'
 import { McpPackageService } from './services/mcpPackageService'
 import { McpProcessRegistry } from './services/mcpProcessRegistry'
@@ -150,6 +151,9 @@ app.whenReady().then(async () => {
   // 第 11 直接注入器（Phase 29）：包生命周期 service 持 private static MK
   // （confirmOverwrite 的 rel 行 env_json_enc 键剔除，29-03）。
   McpPackageService.setMcpPackageMasterKey(masterKey)
+  // 第 12 直接注入器（Phase 36）：多通道凭证回填 service 持 private static MK
+  // （36-01，LOGIN-03——devices 行内凭证迁 device_credentials 子表，回填须 post-MK）。
+  DeviceCredentialMigration.setDeviceCredentialMasterKey(masterKey)
   // R2: decField 解密失败可观测——masterKey 不匹配 / safeStorage 翻转时写 system_log 告警，避免无声数据丢失。
   // handler 在此注入（解耦：crypto.ts 不依赖 services/DB，保持纯函数可单测）。
   setDecryptFailureHandler(() => {
@@ -230,6 +234,17 @@ app.whenReady().then(async () => {
     if (r.skipped > 0) console.warn('[startup] mcp device env 回填跳过（空/坏密文）:', r.skipped)
   } catch (e) {
     console.warn('[startup] backfillDeviceEnv failed (non-blocking):', (e as Error).message)
+  }
+  // Phase 36（36-01，LOGIN-03/D-08）：post-MK 设备凭证子表回填 + 行内六列物理清理。
+  // v32 迁移只建表；加密回填必须在 MK 注入后（25-05 教训）。幂等（password_enc 根守卫 +
+  // INSERT OR IGNORE），坏密文行跳过不清列（保数据，下次启动重试），失败仅 warn 不阻塞启动。
+  try {
+    const r = DeviceCredentialMigration.backfillDeviceCredentials()
+    if (r.backfilled > 0) console.log('[startup] backfill device credentials:', r.backfilled)
+    if (r.skipped > 0) console.warn('[startup] device credentials 回填跳过（空/坏密文，保留旧列待重试）:', r.skipped)
+    if (r.droppedColumns) console.log('[startup] devices 行内凭证六列已物理清理（D-08）')
+  } catch (e) {
+    console.warn('[startup] backfillDeviceCredentials failed (non-blocking):', (e as Error).message)
   }
   // Phase 17 SEC-06（D-01）：日志加密列启动即同步回填——明文存量行加密落 _enc + 旧列置 NULL（净化备份）。
   // 双钩子独立 try/catch 隔离故障（一个失败不挡另一个）；幂等可重试（中断后下次启动续跑），失败仅 warn 不阻塞启动。
