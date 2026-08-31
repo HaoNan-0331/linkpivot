@@ -12,10 +12,11 @@ const { Text, Paragraph } = Typography
 let gatePassedInSession = false
 
 // UI-SPEC Diff 配色（Word 修订模式风格，行内连续）——Phase 33 D-05：色值迁 --nt-* token
-const DIFF_REMOVE_BG = 'var(--nt-static-red-50)'
-const DIFF_REMOVE_FG = 'var(--nt-static-red-900)'
-const DIFF_ADD_BG = 'var(--nt-alias-state-success-tertiary)'
-const DIFF_ADD_FG = 'var(--nt-alias-state-success-primary)'
+// 33 目检项 6 用户终裁组合：删除 B42318/FEF3F2、新增 067647/ECFDF3（error/success 700-50 档，5.4~6.0:1，值定义于 tokens.css static 层）
+const DIFF_REMOVE_BG = 'var(--nt-specific-diff-remove-bg)'
+const DIFF_REMOVE_FG = 'var(--nt-specific-diff-remove-fg)'
+const DIFF_ADD_BG = 'var(--nt-specific-diff-add-bg)'
+const DIFF_ADD_FG = 'var(--nt-specific-diff-add-fg)'
 
 const ipcErrMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 

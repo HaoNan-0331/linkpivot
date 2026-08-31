@@ -89,6 +89,11 @@ body {
   --nt-static-red-500: rgb(239, 68, 68);
   --nt-static-red-600: rgb(236, 19, 19);
   --nt-static-red-900: rgb(87, 12, 12);
+  /* ---- diff 修订对比 4 项（33 目检项 6 用户终裁组合：B42318/FEF3F2 + 067647/ECFDF3，5.4~6.0:1） ---- */
+  --nt-static-diff-remove-fg: rgb(180, 35, 24);
+  --nt-static-diff-remove-bg: rgb(254, 243, 242);
+  --nt-static-diff-add-fg: rgb(6, 118, 71);
+  --nt-static-diff-add-bg: rgb(236, 253, 243);
   --nt-static-amber-100: rgb(254, 245, 231);
   --nt-static-amber-400: rgb(247, 173, 49);
   --nt-static-amber-500: rgb(245, 158, 11);
@@ -210,6 +215,11 @@ body {
   --nt-alias-tooltip-bg: var(--nt-static-neutral-bluish-850);
 
   /* ---- specific 场景层 12 项 = dsh 照搬 11 + 灵枢新增终端底色 1 ---- */
+  /* diff 修订对比 4 项（33 目检项 6 用户终裁组合 B42318/FEF3F2 + 067647/ECFDF3） */
+  --nt-specific-diff-add-bg: var(--nt-static-diff-add-bg);
+  --nt-specific-diff-add-fg: var(--nt-static-diff-add-fg);
+  --nt-specific-diff-remove-bg: var(--nt-static-diff-remove-bg);
+  --nt-specific-diff-remove-fg: var(--nt-static-diff-remove-fg);
   --nt-specific-bubble-highlight: var(--nt-static-deepseek-200);
   --nt-specific-bubble: var(--nt-static-deepseek-50);
   --nt-specific-input-major: var(--nt-static-neutral-bluish-00);
@@ -296,6 +306,11 @@ body[data-nt-theme] {
   --nt-static-red-500: rgb(239, 68, 68);
   --nt-static-red-600: rgb(236, 19, 19);
   --nt-static-red-900: rgb(87, 12, 12);
+  /* ---- diff 修订对比 4 项（33 目检项 6 用户终裁组合：B42318/FEF3F2 + 067647/ECFDF3，5.4~6.0:1） ---- */
+  --nt-static-diff-remove-fg: rgb(180, 35, 24);
+  --nt-static-diff-remove-bg: rgb(254, 243, 242);
+  --nt-static-diff-add-fg: rgb(6, 118, 71);
+  --nt-static-diff-add-bg: rgb(236, 253, 243);
   --nt-static-amber-100: rgb(254, 245, 231);
   --nt-static-amber-400: rgb(247, 173, 49);
   --nt-static-amber-500: rgb(245, 158, 11);
