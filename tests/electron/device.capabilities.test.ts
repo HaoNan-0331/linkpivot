@@ -130,11 +130,14 @@ describe('channels 聚合投影（36-02，D-08/D-04）', () => {
     expect(d.channels[0].port).toBeNull()
   })
 
-  it('deriveCapabilities 第二签名按通道集合派生（ssh+telnet 同真）；缺场走 connection_type 旧派生（过渡）', () => {
+  it('deriveCapabilities 按通道集合派生（ssh+telnet 同真）；第二参数必传（36-03 收口，空集合全 false）', () => {
     expect(deriveCapabilities({ connection_type: 'web', has_mcp: 0 }, ['ssh', 'telnet']))
       .toEqual({ hasSSH: true, hasTelnet: true, hasMcp: false })
-    expect(deriveCapabilities({ connection_type: 'ssh', has_mcp: 1 }))
+    expect(deriveCapabilities({ connection_type: 'ssh', has_mcp: 1 }, ['ssh']))
       .toEqual({ hasSSH: true, hasTelnet: false, hasMcp: true })
+    // 36-03 收口：可选过渡签名移除——通道集合为空时全 false（connection_type 不再参与派生）
+    expect(deriveCapabilities({ connection_type: 'ssh', has_mcp: 0 }, []))
+      .toEqual({ hasSSH: false, hasTelnet: false, hasMcp: false })
   })
 })
 

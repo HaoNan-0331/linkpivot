@@ -41,10 +41,15 @@ vi.mock('ssh2', () => {
 })
 
 // ---- Mock：./device（getDeviceById 可控设备源 + setDeviceMasterKey 桩） ----
+// Phase 36（36-03）：connection.ts 增导入 resolveExecChannel——npm test 轨无法 importActual
+// （better-sqlite3 ABI 连锁），本文件 mock 设备恒带与 connectionType 同名通道行（缺省解析
+// 走「默认通道在集合内」分支，resolveExecChannel 零调用），stub 仅为满足导入绑定；
+// 真源 D-10 行为由 tests/electron/connectionChannels.test.ts 纯函数组锁死。
 const getDeviceByIdMock = vi.fn()
 vi.mock('./device', () => ({
   getDeviceById: (...args: unknown[]) => getDeviceByIdMock(...args),
   setDeviceMasterKey: vi.fn(),
+  resolveExecChannel: vi.fn(() => null),
 }))
 
 import { testDeviceConnection } from './connection'
@@ -84,7 +89,7 @@ async function reserveFreePort(): Promise<number> {
 
 // ---- 通用 ----
 function makeDevice(over: Record<string, unknown> = {}) {
-  return {
+  const base = {
     id: 'dev-1',
     name: 'mock-device',
     ipAddress: '127.0.0.1',
@@ -96,6 +101,21 @@ function makeDevice(over: Record<string, unknown> = {}) {
     sshKeyContent: '',
     webUrl: '',
     ...over,
+  }
+  // Phase 36（36-03）：getDeviceById 现形态为 channels 子表投影——resolveChannelView 从
+  // 目标通道行取凭证/resolution，mock 设备同步携带同名通道行（凭证与顶层字段同值）。
+  return {
+    ...base,
+    channels: [{
+      channel: base.connectionType,
+      port: base.port,
+      username: base.username,
+      password: base.password,
+      sshKeyPath: base.sshKeyPath,
+      sshKeyContent: base.sshKeyContent,
+      webUrl: base.webUrl,
+      resolution: null,
+    }],
   }
 }
 

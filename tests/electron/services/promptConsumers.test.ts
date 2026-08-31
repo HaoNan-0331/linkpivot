@@ -42,6 +42,11 @@ const prepareFn = vi.fn((sql: string) => {
   if (sql.includes('SELECT pattern FROM command_whitelist')) {
     return { all: () => [{ pattern: 'display' }], run: prepareRun, get: prepareGet }
   }
+  // Phase 36（36-03）：getDeviceByIdInternal 凭证/能力派生改读子表（D-08/D-10）——
+  // 返回 ssh 通道行（等价复刻旧 connection_type='ssh' 派生语义）
+  if (sql.includes('FROM device_credentials')) {
+    return { all: () => dbRows.deviceCreds ?? [], run: prepareRun, get: prepareGet }
+  }
   return { get: prepareGet, all: () => [], run: prepareRun }
 })
 
@@ -132,6 +137,12 @@ beforeEach(() => {
   dbRows.execMode = 'confirm'
   dbRows.aiConfig = makeConfigRow()
   dbRows.device = makeDeviceRow()
+  // Phase 36（36-03）：devices 行对应 ssh 子表行（通道行存在性派生 hasSSH，D-05）
+  dbRows.deviceCreds = [{
+    device_id: 'dev-1', channel: 'ssh',
+    port_enc: encField('22', MK), username_enc: encField('admin', MK),
+    password_enc: null, ssh_key_path_enc: null, ssh_key_content_enc: null, web_url_enc: null, resolution: null,
+  }]
 })
 
 // ---------- 1. 收敛断言（PMT-01：7 调用点统一 getPrompt） ----------

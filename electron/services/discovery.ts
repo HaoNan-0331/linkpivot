@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getAiConfig, callAI, getDeviceByIdInternal, executeCommandsOnDevice } from './ai'
 import { getCommandWhitelist } from './ai'
+import { isDeviceExecutable } from './aiExec'
 import { isCommandAllowed } from './commandSafety'
 import { createSystemLog } from './systemLog'
 import { PromptService } from './promptService'
@@ -77,8 +78,11 @@ async function discoverTopologyInner(deviceIds: string[]): Promise<DiscoveryResu
       failedDevices.push({ deviceId, deviceName: '未知', error: '设备不存在' })
       continue
     }
-    if (device.connectionType === 'web') {
-      failedDevices.push({ deviceId, deviceName: device.name, error: 'Web设备不支持SSH采集' })
+    // Phase 36（36-03，D-10 适配）：排除判定 connectionType === 'web' → isDeviceExecutable
+    // capabilities 判定——多通道下 web/rdp 默认但配了 ssh/telnet 的设备可采集（经
+    // getDeviceByIdInternal D-10 投影自动带有效命令通道）；零命令行通道设备 fail-closed 跳过。
+    if (!isDeviceExecutable(device)) {
+      failedDevices.push({ deviceId, deviceName: device.name, error: '无 SSH/Telnet 命令通道，不支持采集' })
       continue
     }
     deviceInfos.push({

@@ -2,6 +2,7 @@ import { BrowserWindow } from 'electron'
 import { execFile } from 'child_process'
 import path from 'path'
 import fs from 'fs'
+import os from 'os'
 import net from 'net'
 import iconv from 'iconv-lite'
 import { Client, type ClientChannel } from 'ssh2'
@@ -345,7 +346,9 @@ export function openRDP(device: DeviceInfo) {
     rdpFile += `desktopwidth:i:${resMatch[1]}\ndesktopheight:i:${resMatch[2]}\n`
   }
   // mstsc on Windows accepts an .rdp file path as argument
-  const tmpPath = path.join(require('os').tmpdir(), `rdp_${device.id || Date.now()}.rdp`)
+  // Phase 36（36-03，Rule 3）：require('os') → 顶部 import os（零行为变化；vitest ESM 环境下
+  // 裸 require 不可用，openRDP 分辨率用例需要真实走临时文件写入路径）
+  const tmpPath = path.join(os.tmpdir(), `rdp_${device.id || Date.now()}.rdp`)
   try {
     fs.writeFileSync(tmpPath, rdpFile, 'utf-8')
   } catch (e) {

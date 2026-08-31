@@ -18,6 +18,11 @@ class MemDb {
     if (/^SELECT d\.\*, \(r\.device_id IS NOT NULL\) AS has_mcp FROM devices d LEFT JOIN mcp_device_rel r ON r\.device_id = d\.id WHERE d\.id = \?$/.test(norm)) {
       return { get: () => (this.deviceRow ? { ...this.deviceRow, has_mcp: 0 } : null) }
     }
+    // Phase 36（36-03）：getDeviceByIdInternal 经 getDeviceChannels 读子表——空行集
+    //（deviceType 投影断言与凭证无关）
+    if (/^SELECT \* FROM device_credentials WHERE device_id = \?$/.test(norm)) {
+      return { all: () => [] }
+    }
     throw new Error('mock DB 未实现的语句: ' + sql)
   }
 }

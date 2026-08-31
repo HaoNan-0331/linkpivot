@@ -2,7 +2,7 @@ import { Client } from 'ssh2'
 import { getDatabase } from '../database/connection'
 import { ARPParser } from './arpParser'
 import { encField, decField } from '../utils/crypto'
-import { listDevices } from './device'
+import { listDevices, resolveExecChannel } from './device'
 import { SSH_READY_TIMEOUT_MS, SSH_ALGORITHMS } from '../utils/sshConfig'
 import { executeTelnetCommand, pickDisablePaginationCmd, pickShellPrompt } from '../utils/telnetExec'
 
@@ -77,6 +77,28 @@ async function executeSSH(host: string, port: number, username: string, password
 // executeTelnet 已抽取为共用 util（electron/utils/telnetExec.ts），见 executeTelnetCommand。
 // arpCollector 走原始输出（不做 gbk/ANSI 处理），由 ARPParser 自行解析。
 
+/**
+ * Phase 36（36-03，D-10）：channels 投影 → 命令行通道平铺视图（arpIpc 单设备路径与
+ * collectFromAll list 路径共用）。resolveExecChannel 解析有效命令通道（默认 web/rdp 回退
+ * 已配 SSH > Telnet——多通道 web 默认设备若配了 telnet 应能采集）后平铺该通道凭证到
+ * DeviceInfo 既有形状；无命令行通道 → 凭证空值 + connectionType 原样（采集连接自然失败，
+ * error 计入结果不崩溃）。旧 flat 形态入参（无 channels）原样透传（兼容既有测试桩）。
+ */
+export function toCmdChannelView(device: any): any {
+  const channels: any[] = Array.isArray(device?.channels) ? device.channels : []
+  if (channels.length === 0) return device
+  const names = channels.map((c) => c.channel as string)
+  const exec = resolveExecChannel(device?.connectionType ?? null, names)
+  const ch = exec !== null ? channels.find((c) => c.channel === exec) : undefined
+  return {
+    ...device,
+    connectionType: exec ?? device?.connectionType,
+    port: ch?.port ?? null,
+    username: ch?.username ?? '',
+    password: ch?.password ?? '',
+  }
+}
+
 export class ARPCollector {
   private concurrency: number
   private timeout: number
@@ -92,24 +114,27 @@ export class ARPCollector {
       vendor: device.vendor, entries: [], collectedAt: new Date().toISOString(),
     }
     try {
-      const command = getARPCommand(device.vendor)
+      // Phase 36（36-03）：channels 投影设备（getDeviceById/listDevices 现形态）经 D-10
+      // 解析平铺后采集；flat 形态入参原样透传。签名不变（36-03 plan 契约）。
+      const dev = toCmdChannelView(device)
+      const command = getARPCommand(dev.vendor)
       let output: string
-      if (device.connectionType === 'ssh') {
-        output = await executeSSH(device.ipAddress, device.port || 22, device.username, device.password, command, this.timeout)
+      if (dev.connectionType === 'ssh') {
+        output = await executeSSH(dev.ipAddress, dev.port || 22, dev.username, dev.password, command, this.timeout)
       } else {
         // WR-03：telnet 路径同 ai.ts 分流——按 vendor 关分页 + 精确 shellPrompt。
         // 默认 /[>#]/ 在 ARP 输出含裸 #（接口名/注释）时提前 resolve 截断；长 ARP 表部分设备 ---- More ----
         // 分页 telnet-client exec 不自动翻页会截断第一屏。复用 telnetExec.ts 抽出的 vendor picker。
         output = await executeTelnetCommand(
-          device.ipAddress, device.port || 23, device.username, device.password, command,
+          dev.ipAddress, dev.port || 23, dev.username, dev.password, command,
           {
             timeout: this.timeout,
-            disablePaginationCmd: pickDisablePaginationCmd(device.vendor),
-            shellPrompt: pickShellPrompt(device.vendor),
+            disablePaginationCmd: pickDisablePaginationCmd(dev.vendor),
+            shellPrompt: pickShellPrompt(dev.vendor),
           }
         )
       }
-      result.entries = ARPParser.parse(output, device.vendor)
+      result.entries = ARPParser.parse(output, dev.vendor)
     } catch (error) {
       result.error = error instanceof Error ? error.message : String(error)
     }

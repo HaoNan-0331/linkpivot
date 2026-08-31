@@ -79,18 +79,18 @@ export function maskDeviceSecrets<T>(device: T): T {
  * ai.ts getDeviceByIdInternal 共用（消除两处派生漂移）。hasMcp 由调用方 SQL LEFT JOIN
  * 带出的 has_mcp 派生。
  *
- * Phase 36（36-02，D-05）：channels 在场按子表行存在性派生 hasSSH/hasTelnet（可同真）；
- * 缺场按 connection_type 旧严格派生——过渡签名保 aiExec.ts 既有调用方编译绿
- * （36-03 切换后改必传）。三布尔恒 boolean 不出 undefined（Pitfall 5：
- * isDeviceExecutable fail-closed 对 capabilities 缺失敏感，禁 undefined）。
+ * Phase 36（36-02，D-05 → 36-03 收口）：channels 按子表行存在性派生 hasSSH/hasTelnet
+ * （可同真）；第二参数必传（36-03 起 aiExec 投影调用方已全部切换，过渡可选签名收口——
+ * 缺参即 tsc 报错，杜绝静默回落 connection_type 旧派生）。三布尔恒 boolean 不出 undefined
+ * （Pitfall 5：isDeviceExecutable fail-closed 对 capabilities 缺失敏感，禁 undefined）。
  */
 export function deriveCapabilities(row: {
   connection_type?: string | null
   has_mcp?: number | boolean | null
-}, channels?: string[]): { hasSSH: boolean; hasTelnet: boolean; hasMcp: boolean } {
+}, channels: string[]): { hasSSH: boolean; hasTelnet: boolean; hasMcp: boolean } {
   return {
-    hasSSH: channels ? channels.includes('ssh') : row.connection_type === 'ssh',
-    hasTelnet: channels ? channels.includes('telnet') : row.connection_type === 'telnet',
+    hasSSH: channels.includes('ssh'),
+    hasTelnet: channels.includes('telnet'),
     hasMcp: Boolean(row.has_mcp),
   }
 }

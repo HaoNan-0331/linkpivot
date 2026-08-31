@@ -22,7 +22,7 @@ import { isCommandAllowed, tokenizeCommand } from './commandSafety'
 import { checkCommand, type GuardHit, type GuardDeviceRef } from './privilegeGuard'
 import { getCommandWhitelist } from './aiConfig'
 import { AI_QONLY_EXEC_BAN } from './promptRegistry'
-import { deriveCapabilities } from './device'
+import { deriveCapabilities, getDeviceChannels, resolveExecChannel } from './device'
 
 let MK = ''
 export function setAiExecMasterKey(key: string) {
@@ -395,6 +395,15 @@ export function getDeviceByIdInternal(id: string): any {
     )
     .get(id) as any
   if (!row) return null
+  // Phase 36（36-03，D-10）：凭证六列读取删除（D-08 已清列）——经 device.ts 子表投影解析
+  // 有效命令通道（默认 ssh/telnet 用之；web/rdp 默认回退已配 SSH > Telnet）后平铺该通道
+  // 凭证到既有字段名（Pattern 1 平铺投影，executeCommandsOnDevice / buildSSHConnectConfig /
+  // executeTelnetCommand 消费链零改动）；无命令行通道 → 凭证空值 + connectionType 保持
+  // 原 connection_type（capabilities 全 false，isDeviceExecutable fail-closed 既有行为）。
+  const channels = getDeviceChannels(id)
+  const channelNames = channels.map((c) => c.channel)
+  const execChannel = resolveExecChannel(row.connection_type ?? null, channelNames)
+  const ch = execChannel !== null ? channels.find((c) => c.channel === execChannel) : undefined
   return {
     id: row.id,
     name: decField(row.name_enc, MK),
@@ -405,15 +414,16 @@ export function getDeviceByIdInternal(id: string): any {
     // H-4：补 deviceType 投影（与 device.ts rowToDevice 同语义兜底）——修复 discovery.ts
     // `dev?.deviceType` 恒 undefined 导致节点图标/EditNodeModal 预填/nodes JSON 落库错型。
     deviceType: row.device_type || 'generic',
-    connectionType: row.connection_type,
-    port: decField(row.port_enc, MK) ? parseInt(decField(row.port_enc, MK)) : null,
-    username: decField(row.username_enc, MK),
-    password: decField(row.password_enc, MK),
-    sshKeyPath: decField(row.ssh_key_path_enc, MK),
-    sshKeyContent: decField(row.ssh_key_content_enc, MK),
-    // Phase 23（23-03）：能力三布尔随投影下发（device.ts deriveCapabilities 单源派生，
-    // D-04 白名单判定依赖；缺失按不可执行 fail-closed）
-    capabilities: deriveCapabilities(row),
+    connectionType: execChannel ?? row.connection_type,
+    port: ch?.port ?? null,
+    username: ch?.username ?? '',
+    password: ch?.password ?? '',
+    sshKeyPath: ch?.sshKeyPath ?? '',
+    sshKeyContent: ch?.sshKeyContent ?? '',
+    webUrl: ch?.webUrl ?? '',
+    // Phase 23（23-03）→ Phase 36（36-03 收口）：能力三布尔按子表通道集合派生（D-05，
+    // 第二参数必传——device.ts deriveCapabilities 单源派生；缺失按不可执行 fail-closed）
+    capabilities: deriveCapabilities(row, channelNames),
   }
 }
 

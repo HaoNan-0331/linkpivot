@@ -48,6 +48,9 @@ const makeDevice = (over: Record<string, unknown> = {}) => ({
   ipAddress: '10.0.0.1',
   connectionType: 'ssh',
   deviceType: 'switch',
+  // Phase 36（36-03）：discovery 排除判定改 isDeviceExecutable（capabilities 判定）——
+  // mock 投影对齐 getDeviceByIdInternal 真实形态（capabilities 恒在场）
+  capabilities: { hasSSH: true, hasTelnet: false, hasMcp: false },
   ...over,
 })
 
@@ -187,11 +190,22 @@ describe('旁路行为（D-12）', () => {
     expect(callAIMock).not.toHaveBeenCalled()
   })
 
-  it('8. connectionType=web → failedDevices 含 {error:"Web设备不支持SSH采集"}（discovery.ts:79-81）', async () => {
-    getDeviceByIdInternalMock.mockReturnValue(makeDevice({ connectionType: 'web' }))
+  it('8. capabilities 全 false（web 默认且无命令行通道，36-03 isDeviceExecutable 判定）→ failedDevices 含「无 SSH/Telnet 命令通道，不支持采集」（discovery.ts 阶段1 排除）', async () => {
+    getDeviceByIdInternalMock.mockReturnValue(makeDevice({
+      connectionType: 'web',
+      capabilities: { hasSSH: false, hasTelnet: false, hasMcp: false },
+    }))
     const result = await discoverTopology(['dev-1'])
-    expect(result.failedDevices).toEqual([{ deviceId: 'dev-1', deviceName: 'SW-Core', error: 'Web设备不支持SSH采集' }])
+    expect(result.failedDevices).toEqual([{ deviceId: 'dev-1', deviceName: 'SW-Core', error: '无 SSH/Telnet 命令通道，不支持采集' }])
     expect(callAIMock).not.toHaveBeenCalled()
+  })
+
+  it('8b. 【36-03 多通道】web 默认但 capabilities.hasSSH=true（D-10 投影带有效命令通道）→ 不被排除，正常进采集', async () => {
+    getDeviceByIdInternalMock.mockImplementation((id: string) =>
+      id === 'dev-1' ? makeDevice({ connectionType: 'ssh', capabilities: { hasSSH: true, hasTelnet: false, hasMcp: false } }) : null)
+    const result = await discoverTopology(['dev-1'])
+    expect(result.failedDevices).toEqual([])
+    expect(result.nodes).toHaveLength(2)
   })
 
   it('9. 阶段3 deviceCommands 引用不存在的设备 → failedDevices 含 设备不存在 且不中断其余设备采集（discovery.ts:184-187）', async () => {

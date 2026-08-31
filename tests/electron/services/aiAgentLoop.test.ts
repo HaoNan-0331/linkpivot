@@ -146,6 +146,15 @@ function makeDb(execMode: string): Database.Database {
     CREATE TABLE devices (id TEXT PRIMARY KEY, name_enc TEXT, ip_enc TEXT, vendor_enc TEXT, model_enc TEXT,
       version_enc TEXT, device_type TEXT, connection_type TEXT, port_enc TEXT, username_enc TEXT,
       password_enc TEXT, ssh_key_path_enc TEXT, ssh_key_content_enc TEXT, status TEXT, last_checked TEXT);
+    -- Phase 36（36-03）：getDeviceByIdInternal 凭证/能力派生改读子表（D-08/D-10）
+    CREATE TABLE device_credentials (
+      id TEXT PRIMARY KEY, device_id TEXT NOT NULL,
+      channel TEXT NOT NULL CHECK(channel IN ('ssh','telnet','web','rdp')),
+      port_enc TEXT, username_enc TEXT, password_enc TEXT,
+      ssh_key_path_enc TEXT, ssh_key_content_enc TEXT, web_url_enc TEXT, resolution TEXT,
+      created_at TEXT, updated_at TEXT,
+      UNIQUE(device_id, channel)
+    );
     CREATE TABLE mcp_device_rel (id TEXT PRIMARY KEY, mcp_config_id INTEGER NOT NULL, device_id TEXT NOT NULL UNIQUE, created_at TEXT DEFAULT (datetime('now','localtime')));
   `)
   d.prepare('INSERT INTO ai_config (id, api_key_enc, exec_mode) VALUES (?, ?, ?)').run(
@@ -231,6 +240,10 @@ function insertDevice(id: string, name: string) {
   db.prepare(
     'INSERT INTO devices (id, name_enc, ip_enc, connection_type) VALUES (?, ?, ?, ?)'
   ).run(id, encField(name, MK), encField('10.0.0.1', MK), 'ssh')
+  // Phase 36（36-03）：ssh 子表行（capabilities/有效命令通道按行存在性派生，D-05/D-10）
+  db.prepare('INSERT INTO device_credentials (id, device_id, channel) VALUES (?, ?, ?)').run(
+    `${id}-cred`, id, 'ssh'
+  )
 }
 
 /** fetch 队列 mock：callAI 逐次消费 replies */

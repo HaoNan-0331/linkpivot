@@ -107,6 +107,16 @@ function makeDb(): Database.Database {
     CREATE TABLE devices (id TEXT PRIMARY KEY, name_enc TEXT, ip_enc TEXT, vendor_enc TEXT, model_enc TEXT,
       version_enc TEXT, device_type TEXT, connection_type TEXT, port_enc TEXT, username_enc TEXT,
       password_enc TEXT, ssh_key_path_enc TEXT, ssh_key_content_enc TEXT, status TEXT, last_checked TEXT);
+    -- Phase 36（36-03）：getDeviceByIdInternal 凭证/能力派生改读子表（D-08/D-10）——
+    -- 内存库需带 device_credentials（列集照抄 init.ts 最小集）
+    CREATE TABLE device_credentials (
+      id TEXT PRIMARY KEY, device_id TEXT NOT NULL,
+      channel TEXT NOT NULL CHECK(channel IN ('ssh','telnet','web','rdp')),
+      port_enc TEXT, username_enc TEXT, password_enc TEXT,
+      ssh_key_path_enc TEXT, ssh_key_content_enc TEXT, web_url_enc TEXT, resolution TEXT,
+      created_at TEXT, updated_at TEXT,
+      UNIQUE(device_id, channel)
+    );
     CREATE TABLE mcp_configs (
       id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, type TEXT NOT NULL,
       command_or_url TEXT NOT NULL, args_json TEXT, env_json_enc TEXT, credential_enc TEXT,
@@ -245,11 +255,19 @@ describe('EXP_SEARCH 标记协议（Phase 23 23-02）', () => {
 
 // ---------- Phase 23 Plan 23-03 —— CMD 白名单防御 + 能力声明注入（D-03/D-04/D-05） ----------
 
+/** Phase 36（36-03）：按 connectionType 插子表凭证行（credentials 空行——capabilities/
+ *  有效通道派生按行存在性，D-05/D-10；等价复刻旧 connection_type 派生语义） */
+function insertCred(deviceId: string, channel: string) {
+  db.prepare('INSERT INTO device_credentials (id, device_id, channel) VALUES (?, ?, ?)')
+    .run(`${deviceId}-cred`, deviceId, channel)
+}
+
 /** 插入设备（connectionType=null → capabilities 三布尔全 false → 仅问答） */
 function insertDevice(id: string, name: string, connectionType: string | null) {
   db.prepare(
     'INSERT INTO devices (id, name_enc, ip_enc, connection_type) VALUES (?, ?, ?, ?)'
   ).run(id, encField(name, MK), encField('10.0.0.1', MK), connectionType)
+  if (connectionType) insertCred(id, connectionType)
 }
 
 describe('CMD 白名单防御 + 能力声明注入（Phase 23 23-03）', () => {
@@ -366,6 +384,7 @@ function insertTypedDevice(id: string, name: string, deviceType: string, connect
   db.prepare(
     'INSERT INTO devices (id, name_enc, ip_enc, device_type, connection_type) VALUES (?, ?, ?, ?, ?)'
   ).run(id, encField(name, MK), encField('10.0.0.1', MK), deviceType, connectionType)
+  if (connectionType) insertCred(id, connectionType)
 }
 
 describe('设备类型注入 + 命令风格指引（Phase 23 23-03 复验反馈）', () => {
@@ -393,6 +412,7 @@ describe('设备类型注入 + 命令风格指引（Phase 23 23-03 复验反馈�
     db.prepare(
       'INSERT INTO devices (id, name_enc, ip_enc, connection_type) VALUES (?, ?, ?, ?)'
     ).run('g1', encField('裸机', MK), encField('10.0.0.9', MK), 'ssh')
+    insertCred('g1', 'ssh')
     const fetchMock = queueReplies('好的')
     await chat([{ role: 'user', content: '查版本' }], ['g1'], null)
     const sys = JSON.parse((fetchMock.mock.calls[0][1] as any).body).messages[0].content
@@ -509,6 +529,7 @@ function insertGuardDevice(id: string, name: string, ip: string, connectionType:
   db.prepare(
     'INSERT INTO devices (id, name_enc, ip_enc, connection_type) VALUES (?, ?, ?, ?)'
   ).run(id, encField(name, MK), encField(ip, MK), connectionType)
+  insertCred(id, connectionType)
 }
 
 describe('privilegeGuard 接入（Phase 27 27-03）', () => {
