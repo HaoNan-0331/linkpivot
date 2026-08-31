@@ -5,12 +5,25 @@ import { PlusOutlined, SearchOutlined } from '@ant-design/icons'
 import TopologyCanvas from '@/components/topology/TopologyCanvas'
 import AddDeviceModal from '@/components/topology/AddDeviceModal'
 import LayoutPreviewBanner from '@/components/topology/LayoutPreviewBanner'
+import ChannelPickerModal from '@/components/topology/ChannelPickerModal'
+import DeviceForm from '@/components/DeviceForm'
 import { spreadLayout, alignNodes, NODE_WIDTH, NODE_HEIGHT, type AlignMode, type Point } from '@/utils/topologyLayout'
 import DiscoveryPanel from '@/components/topology/DiscoveryPanel'
 import EditNodeModal from '@/components/topology/EditNodeModal'
 import { useTopologyToolbarStore } from '@/stores/topologyToolbarStore'
 import type { TopologyNode, TopologyNodeData, TopologyEdgeData, TopologyEdge, TopologySummary } from '@/types/topology'
-import type { ConnectionType } from '@/types/device'
+import type { ConnectionType, CreateDeviceDTO, Device } from '@/types/device'
+
+/**
+ * Phase 36（36-05，UI-SPEC §6.4/§九）：通道短标——连接失败文案归因前缀用（与表单 tab /
+ * 选择框行的 CHANNEL_LABELS 全称 label 分离，两套清单均为 §九 契约）。
+ */
+const CHANNEL_SHORT_LABELS: Record<ConnectionType, string> = {
+  ssh: 'SSH',
+  telnet: 'Telnet',
+  web: 'Web',
+  rdp: 'RDP',
+}
 
 // D-08（Phase 19 / REN-02）：topology 记录已知字段覆盖集（Topology 类型字段），供未识别字段 warn 判定
 const KNOWN_TOPOLOGY_KEYS = new Set(['id', 'name', 'nodes', 'edges', 'status', 'createdAt', 'updatedAt'])
@@ -38,6 +51,11 @@ export default function TopologyPage() {
   const [discoveryOpen, setDiscoveryOpen] = useState(false)
   const [editModalOpen, setEditModalOpen] = useState(false)
   const [editingNodeData, setEditingNodeData] = useState<TopologyNodeData | null>(null)
+  // Phase 36（36-05，LOGIN-02）：双击三分支态——≥2 通道选择框设备；0 通道引导表单设备与
+  // Tabs 定位初值（快照 connectionType，Pitfall 9 允许的唯一快照消费位）
+  const [pickerDevice, setPickerDevice] = useState<Device | null>(null)
+  const [credentialDevice, setCredentialDevice] = useState<Device | null>(null)
+  const [credentialInitialChannel, setCredentialInitialChannel] = useState<ConnectionType>('ssh')
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set())
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<Set<string>>(new Set())
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -437,30 +455,72 @@ export default function TopologyPage() {
     [setNodes, setEdges]
   )
 
-  const handleNodeDoubleClick = useCallback(async (_nodeId: string, data: TopologyNodeData) => {
+  // §6.4 连接失败文案：带通道短标归因（SSH/Telnet/Web/RDP）；统一入口失败在此统一呈现
+  const openChannel = useCallback(async (deviceId: string, channel: ConnectionType) => {
     try {
-      const connType: ConnectionType = data.connectionType || 'ssh'
-      if (connType === 'web') {
-        const device = await window.api.device.getById(data.deviceId)
-        // Phase 36（36-04）：Device 顶层平铺凭证字段已移除——webUrl 改读 channels 投影
-        //（web 通道行；36-05 双击三分支切统一 connection.open 入口时本分支整体重构）
-        const webUrl = device?.channels.find((c) => c.channel === 'web')?.webUrl
-        if (webUrl) {
-          await window.api.connection.openWeb(webUrl)
-        } else {
-          message.warning('该设备未配置 Web 地址')
-        }
-      } else if (connType === 'telnet') {
-        await window.api.connection.telnetConnect(data.deviceId)
-      } else if (connType === 'rdp') {
-        await window.api.connection.rdpConnect(data.deviceId)
-      } else {
-        await window.api.connection.sshConnect(data.deviceId)
-      }
+      await window.api.connection.open(deviceId, channel)
     } catch {
-      message.error('连接失败')
+      message.error(`${CHANNEL_SHORT_LABELS[channel]} 连接失败`)
     }
   }, [])
+
+  // Phase 36（36-05，LOGIN-02 · D-01/D-02/D-03）：双击三分支——判定唯一源 = device.getById
+  // 的 channels 投影（Pitfall 9 禁读节点 JSON 快照；快照 connectionType 仅作零通道引导的
+  // Tabs 定位初值）。0 通道弹编辑态 DeviceForm 引导补配；1 通道免弹直连；≥2 通道弹
+  // ChannelPickerModal。连接统一单入口 connection.open(deviceId, channel)（36-03 落地，
+  // web 也走 main——旧 renderer 直取 webUrl 分支删除）。
+  const handleNodeDoubleClick = useCallback(async (_nodeId: string, data: TopologyNodeData) => {
+    try {
+      const device = await window.api.device.getById(data.deviceId)
+      if (!device) {
+        message.error('设备不存在')
+        return
+      }
+      const channels = device.channels ?? []
+      if (channels.length === 0) {
+        // D-02 零通道引导：编辑态表单 + credentialHint Alert + Tabs 定位（非法/空值回落 'ssh'）
+        setCredentialInitialChannel(data.connectionType || 'ssh')
+        setCredentialDevice(device)
+        return
+      }
+      if (channels.length === 1) {
+        // D-01 单通道免弹直连（现状手感）
+        await openChannel(device.id, channels[0].channel)
+        return
+      }
+      // D-03 ≥2 通道选择框（预选 = 记忆 > 默认通道 > 固定序首行，组件内解析）
+      setPickerDevice(device)
+    } catch {
+      // §6.4：无法归因通道（getById 失败等）回落既有文案
+      message.error('连接失败')
+    }
+  }, [openChannel])
+
+  // D-03 确认回调——记忆写入已在 ChannelPickerModal 确认时刻完成（记「上次所选」非
+  // 「上次成功」）；此处关框 + 统一入口连接（不设 loading 键，§6.2）
+  const handlePickerConnect = useCallback((channel: ConnectionType) => {
+    if (!pickerDevice) return
+    const deviceId = pickerDevice.id
+    setPickerDevice(null)
+    openChannel(deviceId, channel)
+  }, [pickerDevice, openChannel])
+
+  // D-02 零通道引导表单保存——device:update 单一写路径（DevicesPage handleUpdate 同型；
+  // 凭证变更不影响节点 data，拓扑画布零刷新）
+  const handleCredentialFormOk = useCallback(async (values: CreateDeviceDTO) => {
+    if (!credentialDevice) return
+    try {
+      await window.api.device.update(credentialDevice.id, values)
+      message.success('设备更新成功')
+      setCredentialDevice(null)
+    } catch (e: unknown) {
+      // D-09：updateDevice 事务化，失败即整体回滚（本地不落脏值）
+      message.error('操作失败，数据已回滚无变化：' + (e instanceof Error ? e.message : String(e)))
+    }
+  }, [credentialDevice])
+
+  const handleCredentialFormCancel = useCallback(() => setCredentialDevice(null), [])
+  const handlePickerCancel = useCallback(() => setPickerDevice(null), [])
 
   const handleDeleteSelected = useCallback(() => {
     setNodes((nds) => nds.filter((n) => !selectedNodeIds.has(n.id)))
@@ -578,6 +638,24 @@ export default function TopologyPage() {
         data={editingNodeData}
         onConfirm={handleEditConfirm}
         onCancel={handleEditCancel}
+      />
+      {/* Phase 36（36-05，D-03）：双击 ≥2 通道选择框（记忆预选 + 确认时刻写 lastChannelByDevice） */}
+      <ChannelPickerModal
+        open={pickerDevice !== null}
+        device={pickerDevice}
+        onConnect={handlePickerConnect}
+        onCancel={handlePickerCancel}
+      />
+      {/* Phase 36（36-05，D-02）：双击 0 通道引导——编辑态 DeviceForm（与 DevicesPage 共用
+          组件不同实例）；credentialHint 引导 Alert + initialChannel Tabs 定位（36-04 落库休眠
+          的引导 props 在此点亮） */}
+      <DeviceForm
+        open={credentialDevice !== null}
+        device={credentialDevice}
+        credentialHint
+        initialChannel={credentialInitialChannel}
+        onOk={handleCredentialFormOk}
+        onCancel={handleCredentialFormCancel}
       />
     </div>
   )
