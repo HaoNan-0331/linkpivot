@@ -151,6 +151,26 @@ export interface AgentStep {
    * 补查缺席源（真实检索），同样不占步数硬顶；renderer 据此加「[补查]」前缀。
    */
   backfilled?: boolean
+  /**
+   * Phase 36（36-05，D-11）：cmd 步骤的执行通道标注（renderer ToolResultCard 标题后缀
+   * 「 · SSH/TELNET」消费，用户可核实命令走哪条通道）；缺场 = legacy 载荷/历史消息
+   * （fail-open 零渲染）。仅 'ssh'|'telnet' 可入（命令行通道两枚举），其他不写字段。
+   */
+  execChannel?: 'ssh' | 'telnet'
+}
+
+/**
+ * Phase 36（36-05，D-11）：cmd 步骤 execChannel 解析——取设备投影的 connectionType
+ * （36-03 后 getDeviceByIdInternal = D-10 有效命令通道平铺投影）；仅 'ssh'|'telnet'
+ * 可入 AgentStep.execChannel，其余值（web/rdp/NULL 等）返回 undefined（不写字段，
+ * renderer 按缺场 fail-open 处理）。aiAgentLoop/aiChat 的 cmd 步骤构造点共用单源。
+ */
+export function resolveStepExecChannel(
+  device: { connectionType?: string } | null | undefined
+): 'ssh' | 'telnet' | undefined {
+  return device?.connectionType === 'ssh' || device?.connectionType === 'telnet'
+    ? device.connectionType
+    : undefined
 }
 
 /** 来源轨迹（D-09：由代码层按执行轨迹生成，prompt 文本不参与来源判定） */

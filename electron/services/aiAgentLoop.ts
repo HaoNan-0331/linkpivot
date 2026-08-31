@@ -43,6 +43,7 @@ import { getCommandWhitelist } from './aiConfig'
 import {
   AGENT_TOKEN_BUDGET, DEFAULT_AGENT_RETRY_BUDGET, pushDeviceSource,
   getAgentMaxRounds, getAgentBurnoutCount, getAgentCooldownSecs,
+  resolveStepExecChannel,
   type AgentStep, type AgentLoopState, type McpLoopCtx, type McpLoopResult,
 } from './aiAgentState'
 import {
@@ -127,7 +128,7 @@ function buildBurnoutNote(count: number, cooldownSecs: number): string {
 export function pushAgentStep(
   state: AgentLoopState,
   actionType: AgentStep['actionType'],
-  opts: { deviceName?: string; command?: string; query?: string; outputSummary?: string }
+  opts: { deviceName?: string; command?: string; query?: string; outputSummary?: string; execChannel?: 'ssh' | 'telnet' }
 ): AgentStep {
   const step: AgentStep = { stepIndex: state.steps.length, actionType, status: 'running', ...opts }
   state.steps.push(step)
@@ -170,6 +171,9 @@ export function agentStepToToolResultPayload(s: AgentStep): ToolResultPayload {
     stepStatus: s.status,
     ...(s.prefetched ? { prefetched: true } : {}),
     ...(s.backfilled ? { backfilled: true } : {}),
+    // Phase 36（36-05，D-11）：cmd 步骤通道标注透传（renderer fail-open 消费，
+    // 与 prefetched/backfilled 同型；缺场不写字段 = legacy 载荷形态）
+    ...(s.execChannel ? { execChannel: s.execChannel } : {}),
   }
 }
 
@@ -471,14 +475,14 @@ async function runAgentCmdRound(
     // 硬区禁止令，不执行（D-13/D-15）。冷却跳过同样计入连续未成功（操作仍未交付）。
     const failCount = state.failureCounts.get(key) ?? 0
     if (failCount >= limits.burnoutCount) {
-      settleAgentStep(pushAgentStep(state, 'cmd', { deviceName: String(targetDevice.name), command: cmd, outputSummary: '连续失败熔断' }), 'burned', state)
+      settleAgentStep(pushAgentStep(state, 'cmd', { deviceName: String(targetDevice.name), command: cmd, outputSummary: '连续失败熔断', execChannel: resolveStepExecChannel(targetDevice) }), 'burned', state)
       results.push(`设备: ${targetDevice.name}\n命令: ${cmd}\n状态: burned\n输出:\n该操作已连续失败 ${failCount} 次被系统熔断，本轮不再执行。\n${buildBurnoutNote(failCount, limits.cooldownSecs)}`)
       continue
     }
     // ③ 冷却硬顶：同 deviceId:command 失败后冷却期内跳过（D-15：仅本 agentState 内生效）
     if ((state.cooldowns.get(key) ?? 0) > Date.now()) {
       state.failureCounts.set(key, failCount + 1)
-      settleAgentStep(pushAgentStep(state, 'cmd', { deviceName: String(targetDevice.name), command: cmd, outputSummary: '冷却中跳过' }), 'cooldown', state)
+      settleAgentStep(pushAgentStep(state, 'cmd', { deviceName: String(targetDevice.name), command: cmd, outputSummary: '冷却中跳过', execChannel: resolveStepExecChannel(targetDevice) }), 'cooldown', state)
       results.push(`设备: ${targetDevice.name}\n命令: ${cmd}\n状态: cooldown\n输出:\n该命令前次失败，冷却中（${limits.cooldownSecs}s 内不重复执行），本轮已跳过。`)
       continue
     }
@@ -557,8 +561,9 @@ async function runAgentCmdRound(
   // auto 直执：D-14 限次静默重试 → 成功清 failureCounts / 失败计连续失败 + 写冷却
   for (const c of allowedCommands) {
     const key = `${c.deviceId}:${c.command}`
-    const step = pushAgentStep(state, 'cmd', { deviceName: c.deviceName, command: c.command })
+    // 36-05 D-11：先取设备投影再建卡——execChannel 取该投影的 connectionType（有效命令通道）
     const device = getDeviceByIdInternal(c.deviceId)
+    const step = pushAgentStep(state, 'cmd', { deviceName: c.deviceName, command: c.command, execChannel: resolveStepExecChannel(device) })
     let success = false
     let output = ''
     if (!device) {

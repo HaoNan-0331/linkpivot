@@ -66,11 +66,22 @@ export function resolveStatusVisual(data: ToolResultMessage): StepStatusVisualMe
 
 // 标题 = 短类目短语 flex:none 不截断（34-UI-SPEC §6.2 拆两层裁决）：
 // [预取]/[补查] 前缀保留（28-06 决策产物）+ 类目；细节归摘要槽。
+// Phase 36（36-05，D-11）：cmd 类标题追加通道后缀「 · {SSH|TELNET}」（36-UI-SPEC §七）——
+// 大写短标并入标题槽文本（同 token 同色 label-secondary，flex:none 不截断，中点两侧
+// 各一空格）；fail-open：execChannel 缺场（legacy 载荷/历史消息）零渲染，在场但非两
+// 枚举值视为缺场（忽略该位，不丢弃卡片）；kb/exp/mcp 不标（与设备通道无关）。
+const EXEC_CHANNEL_LABEL: Partial<Record<'ssh' | 'telnet', string>> = { ssh: 'SSH', telnet: 'TELNET' }
+
+function stepChannelSuffix(data: ToolResultMessage): string {
+  if (data.execChannel !== 'ssh' && data.execChannel !== 'telnet') return ''
+  return ` · ${EXEC_CHANNEL_LABEL[data.execChannel]}`
+}
+
 function stepTitle(data: ToolResultMessage): string {
   const prefix = data.prefetched ? '[预取] ' : data.backfilled ? '[补查] ' : ''
   switch (data.actionType) {
     case 'cmd':
-      return `${prefix}${data.deviceName ? `在 ${data.deviceName} 执行命令` : '执行命令'}`
+      return `${prefix}${data.deviceName ? `在 ${data.deviceName} 执行命令` : '执行命令'}${stepChannelSuffix(data)}`
     case 'kb':
       return `${prefix}检索知识库`
     case 'exp':

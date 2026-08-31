@@ -45,7 +45,7 @@ import {
   mergeExpRefs, mergeKbRefs, wrapAgentFinalPayload, runEvidenceBackfill, deviceTypeLabel,
 } from './aiPayload'
 import {
-  createAgentLoopState, pushDeviceSource,
+  createAgentLoopState, pushDeviceSource, resolveStepExecChannel,
   type AgentLoopState, type McpLoopCtx, type McpLoopResult,
 } from './aiAgentState'
 import { stripMcpMarkers, stripExpKbSearchMarkers, stripCmdMarkersWithNotice } from './aiAgentParse'
@@ -283,7 +283,7 @@ export async function confirmCommand(
     // executeCommandsOnDevice throw 时 catch 内对已建卡补 failed 终态。legacy 无
     // agentLoop 批次 steps=null 零行为变化。steps 声明在 try 外——catch 块要引用。
     const steps = batch.agentLoop
-      ? cmds.map((c) => pushAgentStep(batch.agentLoop!.agentState, 'cmd', { deviceName: c.deviceName, command: c.command }))
+      ? cmds.map((c) => pushAgentStep(batch.agentLoop!.agentState, 'cmd', { deviceName: c.deviceName, command: c.command, execChannel: resolveStepExecChannel(device) }))
       : null
     try {
       const execResults = await executeCommandsOnDevice(device, cmds.map(c => c.command), {
@@ -1077,7 +1077,8 @@ export async function chat(
       for (let i = 0; i < cmds.length; i++) {
         const r = execResults[i]
         // 28-04：直执路径同样入 steps/sources 轨迹（D-09 代码层溯源，meta_enc/agent_answer 消费）
-        const step = pushAgentStep(agentState, 'cmd', { deviceName: cmds[i].deviceName, command: cmds[i].command })
+        // 36-05 D-11：execChannel 取设备投影 connectionType（有效命令通道），供卡后缀标注
+        const step = pushAgentStep(agentState, 'cmd', { deviceName: cmds[i].deviceName, command: cmds[i].command, execChannel: resolveStepExecChannel(device) })
         if (r && r.success) {
           updateLogStatus(cmds[i].logId, 'executed')
           step.outputSummary = sanitizeUntrusted(r.output || '', 200)
@@ -1100,6 +1101,7 @@ export async function chat(
         updateLogStatus(cmd.logId, 'failed')
         settleAgentStep(pushAgentStep(agentState, 'cmd', {
           deviceName: cmd.deviceName, command: cmd.command, outputSummary: sanitizeUntrusted(`执行失败: ${err.message}`, 200),
+          execChannel: resolveStepExecChannel(device),
         }), 'failed', agentState)
         cmdResults.push({ deviceName: cmd.deviceName, cmd: cmd.command, output: `执行失败: ${err.message}`, status: 'failed' })
       }

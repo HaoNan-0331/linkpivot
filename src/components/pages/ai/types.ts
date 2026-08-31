@@ -97,6 +97,12 @@ export interface ToolResultMessage {
   // Phase 31（31-02，FIX-02 D-01）：归属会话标识——与 main 侧 ToolResultPayload 逐字对齐；
   // 旧载荷无字段自然降级（归因回退在途会话，见 parseAiReply.attributeToolResultSession）
   sessionId?: string
+  /**
+   * Phase 36（36-05，D-11）：cmd 步骤执行通道标注——fail-open 契约（区别于 31-02 sessionId
+   * 在场即校验）：缺场放行零渲染（legacy 载荷/历史消息）；在场但非 'ssh'|'telnet' 枚举值
+   * 渲染层按缺场处理（忽略该位，不丢弃整条卡片）。仅展示用途（ToolResultCard 标题后缀）。
+   */
+  execChannel?: 'ssh' | 'telnet'
 }
 
 /**

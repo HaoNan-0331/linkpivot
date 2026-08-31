@@ -282,6 +282,9 @@ function stepToToolResultMessage(s: unknown): ToolResultMessage | undefined {
     stepStatus: stepStatus as AgentStepStatus,
     ...(o.prefetched === true ? { prefetched: true } : {}),
     ...(o.backfilled === true ? { backfilled: true } : {}),
+    // Phase 36（36-05，D-11）：cmd 步骤通道标注随 meta.steps 恢复（28-06 R2 缺陷⑥ 同款
+    // 不变量——切会话再切回卡片字段不丢）；非枚举值透传，渲染层 fail-open 按缺场忽略
+    ...(isStr(o.execChannel) ? { execChannel: o.execChannel as ToolResultMessage['execChannel'] } : {}),
   }
   return isValidToolResultPayload(payload) ? payload : undefined
 }
