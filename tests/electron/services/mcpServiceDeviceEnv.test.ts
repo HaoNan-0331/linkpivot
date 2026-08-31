@@ -89,6 +89,24 @@ function makeDb(): Database.Database {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    -- Phase 36（36-02）：mcpService.rowToView 经 deviceService.getDeviceById 读设备投影，
+    -- 36-02 起投影携带 device_credentials 子表查询——内存库需带该表（DDL 照抄 init.ts）
+    CREATE TABLE device_credentials (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      channel TEXT NOT NULL CHECK(channel IN ('ssh','telnet','web','rdp')),
+      port_enc TEXT,
+      username_enc TEXT,
+      password_enc TEXT,
+      ssh_key_path_enc TEXT,
+      ssh_key_content_enc TEXT,
+      web_url_enc TEXT,
+      resolution TEXT,
+      created_at TEXT DEFAULT (datetime('now','localtime')),
+      updated_at TEXT DEFAULT (datetime('now','localtime')),
+      UNIQUE(device_id, channel),
+      FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
   `)
   return db
 }

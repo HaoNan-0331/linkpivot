@@ -11,6 +11,16 @@ export function setDeviceMasterKey(key: string) { MK = key }
 function enc(val: string | null | undefined): string | null { return encField(val, MK) }
 function dec(val: string | null | undefined): string { return decField(val, MK) }
 
+/** Phase 36（36-02，LOGIN-01）：四通道固定序——channels 投影排序 / 写路径规范化 / D-09 滑落共用。 */
+const CHANNEL_ORDER = ['ssh', 'telnet', 'web', 'rdp'] as const
+
+function isKnownChannel(ch: unknown): ch is string {
+  return typeof ch === 'string' && (CHANNEL_ORDER as readonly string[]).includes(ch)
+}
+
+/** H-1 脱敏字段清单（顶层与 channels 元素同名递归共用）。resolution 非敏感不在清单（D-04）。 */
+const SECRET_KEYS = ['password', 'sshKeyContent'] as const
+
 /**
  * H-1（v0.3.0 audit）：设备凭证 IPC 边界脱敏投影（纯函数）。
  *
@@ -18,33 +28,81 @@ function dec(val: string | null | undefined): string { return decField(val, MK) 
  * 与 ai.ts getAiConfigMasked 同格式）。所有 device IPC 出口（device:list/getById/create/update、
  * experience:listDevices）包裹；service 内部主进程明文消费方（connection.ts 终端连接、arpCollector 采集、
  * experienceService 主进程路径）不受影响。
+ *
+ * Phase 36（36-02，Pitfall 4）：channels 嵌套递归脱敏——子表凭证同红线，漏递归即明文出 main。
+ * main.ts 既有 device IPC 出口 .map(maskDeviceSecrets) 零改动覆盖（递归天然生效）。
  */
 export function maskDeviceSecrets<T>(device: T): T {
   const masked: Record<string, unknown> = { ...(device as Record<string, unknown>) }
-  for (const key of ['password', 'sshKeyContent'] as const) {
+  for (const key of SECRET_KEYS) {
     const v = masked[key]
     if (typeof v === 'string' && v.length > 0) masked[key] = `****${v.slice(-4)}`
+  }
+  if (Array.isArray(masked.channels)) {
+    masked.channels = (masked.channels as Record<string, unknown>[]).map((ch) => {
+      const m = { ...ch }
+      for (const key of SECRET_KEYS) {
+        const v = m[key]
+        if (typeof v === 'string' && v.length > 0) m[key] = `****${v.slice(-4)}`
+      }
+      return m
+    })
   }
   return masked as T
 }
 
 /**
  * Phase 23（23-03，DSL-03/D-04）：能力三布尔单源派生——device.ts rowToDevice 与
- * ai.ts getDeviceByIdInternal 共用（消除两处派生漂移）。hasSSH/hasTelnet 严格按
- * connectionType 派生，hasMcp 由调用方 SQL LEFT JOIN 带出的 has_mcp 派生。
+ * ai.ts getDeviceByIdInternal 共用（消除两处派生漂移）。hasMcp 由调用方 SQL LEFT JOIN
+ * 带出的 has_mcp 派生。
+ *
+ * Phase 36（36-02，D-05）：channels 在场按子表行存在性派生 hasSSH/hasTelnet（可同真）；
+ * 缺场按 connection_type 旧严格派生——过渡签名保 aiExec.ts 既有调用方编译绿
+ * （36-03 切换后改必传）。三布尔恒 boolean 不出 undefined（Pitfall 5：
+ * isDeviceExecutable fail-closed 对 capabilities 缺失敏感，禁 undefined）。
  */
 export function deriveCapabilities(row: {
   connection_type?: string | null
   has_mcp?: number | boolean | null
-}): { hasSSH: boolean; hasTelnet: boolean; hasMcp: boolean } {
+}, channels?: string[]): { hasSSH: boolean; hasTelnet: boolean; hasMcp: boolean } {
   return {
-    hasSSH: row.connection_type === 'ssh',
-    hasTelnet: row.connection_type === 'telnet',
+    hasSSH: channels ? channels.includes('ssh') : row.connection_type === 'ssh',
+    hasTelnet: channels ? channels.includes('telnet') : row.connection_type === 'telnet',
     hasMcp: Boolean(row.has_mcp),
   }
 }
 
-function rowToDevice(row: any): any {
+/**
+ * device_credentials 行 → channels 投影元素（main 进程内明文；IPC 出口经 maskDeviceSecrets
+ * 递归脱敏后才到 renderer）。decField 降级空串按空值呈现，行仍保留（单行坏密文不阻断
+ * 通道存在性表达）。resolution 为明文列直读（D-04 裁决补记 2026-08-31：非敏感不入 _enc，
+ * 不经 decField；仅 RDP 通道行有语义值）。
+ */
+function credRowToChannel(c: any) {
+  const portStr = dec(c.port_enc)
+  return {
+    channel: c.channel,
+    port: portStr ? parseInt(portStr) : null,
+    username: dec(c.username_enc),
+    password: dec(c.password_enc),
+    sshKeyPath: dec(c.ssh_key_path_enc),
+    sshKeyContent: dec(c.ssh_key_content_enc),
+    webUrl: dec(c.web_url_enc),
+    resolution: (c.resolution ?? null) as string | null,
+  }
+}
+
+function rowToDevice(row: any, credRows: any[] = []): any {
+  // Phase 36（36-02，D-08）：顶层六凭证字段平铺解密移除（不留双源）——凭证唯一真源为
+  // device_credentials 子表，经 channels 投影按固定序组装下发。capabilities 改子表派生。
+  const byChannel = new Map<string, any>()
+  for (const c of credRows) {
+    if (isKnownChannel(c?.channel)) byChannel.set(c.channel, c)
+  }
+  const channels = (CHANNEL_ORDER as readonly string[])
+    .map((ch) => byChannel.get(ch))
+    .filter((c) => c !== undefined)
+    .map(credRowToChannel)
   return {
     id: row.id,
     topologyId: row.topology_id,
@@ -55,34 +113,38 @@ function rowToDevice(row: any): any {
     ipAddress: dec(row.ip_enc),
     deviceType: row.device_type || 'generic',
     connectionType: row.connection_type,
-    port: dec(row.port_enc) ? parseInt(dec(row.port_enc)) : null,
-    username: dec(row.username_enc),
-    password: dec(row.password_enc),
-    sshKeyPath: dec(row.ssh_key_path_enc),
-    sshKeyContent: dec(row.ssh_key_content_enc),
-    webUrl: dec(row.web_url_enc),
+    channels,
     status: row.status || 'unknown',
     lastChecked: row.last_checked || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    // Phase 23（DSL-03/D-02）：能力三布尔随投影下发——hasSSH/hasTelnet 严格按 connectionType
-    // 派生（不猜通道），hasMcp 由 mcp_device_rel 关联存在性派生（listDevices LEFT JOIN 带 has_mcp）。
-    // 三布尔独立不做最高档合并；非敏感字段，出口经 maskDeviceSecrets 原样透传。
-    capabilities: deriveCapabilities(row),
+    // Phase 23（DSL-03/D-02）→ Phase 36（D-05）：三布尔随投影下发，hasSSH/hasTelnet 按
+    // channels 集合派生（可同真），hasMcp 由 mcp_device_rel 关联存在性派生（LEFT JOIN 带
+    // has_mcp）；三布尔独立不做最高档合并；非敏感字段，出口经 maskDeviceSecrets 原样透传。
+    capabilities: deriveCapabilities(row, channels.map((c) => c.channel)),
   }
 }
 
 export function listDevices() {
-  // DSL-03：单条 SQL LEFT JOIN 派生 hasMcp（mcp_device_rel.device_id UNIQUE 保证一对一，无重复行）；
-  // prepare 在 .all() 调用处一次构造、map 外复用，无 N+1；无缓存现查（锁定决策）。
-  return (
-    getDatabase().prepare(`
+  // DSL-03：单条 SQL LEFT JOIN 派生 hasMcp（mcp_device_rel.device_id UNIQUE 保证一对一，无重复行）。
+  // Phase 36（36-02，Open Q4 改良裁决）：第二条 prepared 全量查 device_credentials → JS 按
+  // device_id 分组 → rowToDevice 消费——两条 prepare 各一次（迭代外，不随设备数增长，无 N+1），
+  // 规避 GROUP_CONCAT 多列配对脆弱性；无缓存现查（锁定决策）。
+  const db = getDatabase()
+  const rows = db.prepare(`
       SELECT d.*, (r.device_id IS NOT NULL) AS has_mcp
       FROM devices d
       LEFT JOIN mcp_device_rel r ON r.device_id = d.id
       ORDER BY d.created_at DESC
     `).all() as any[]
-  ).map(rowToDevice)
+  const credRows = db.prepare('SELECT * FROM device_credentials').all() as any[]
+  const credsByDevice = new Map<string, any[]>()
+  for (const c of credRows) {
+    const list = credsByDevice.get(c.device_id)
+    if (list) list.push(c)
+    else credsByDevice.set(c.device_id, [c])
+  }
+  return rows.map((row) => rowToDevice(row, credsByDevice.get(row.id) ?? []))
 }
 
 /**
@@ -94,6 +156,112 @@ function deviceNameConflictError(conflictRow: any): Error {
   return new Error(`设备名称已存在：${dec(conflictRow.name_enc)} (${dec(conflictRow.ip_enc)})`)
 }
 
+/**
+ * Phase 36（36-02，LOGIN-01）：通道节来源归一。
+ * data.channels 在场 → 四通道固定序规范化（值域外节静默丢弃——DB CHECK 双层兜底
+ * T-36-02-03；同通道重复节后到为准）。
+ * 缺场 → 过渡 shim（本 plan 引入、36-04 移除）：旧平铺入参（port/username/password/
+ * sshKeyPath/sshKeyContent/webUrl 在场字段）按 data.connectionType（update 缺省时取库内
+ * 现存 connection_type）映射为单通道节走同一 UPSERT 路径，未改造 DeviceForm/DevicesPage
+ * 行为不变（字段级 !== undefined 保留「留空=不修改」，H-1）。create 恒产生默认通道节
+ * （旧形态 connectionType 必填且决定 capabilities 派生，行为保持）；update 仅平铺凭证
+ * 字段在场时产生节点（纯改名等操作零通道写）。
+ */
+function resolveChannelNodes(data: any, currentConnectionType: string | null | undefined, mode: 'create' | 'update'): any[] {
+  if (Array.isArray(data?.channels)) {
+    const byChannel = new Map<string, any>()
+    for (const node of data.channels) {
+      if (!node || !isKnownChannel(node.channel)) continue
+      byChannel.set(node.channel, node)
+    }
+    return (CHANNEL_ORDER as readonly string[]).filter((ch) => byChannel.has(ch)).map((ch) => byChannel.get(ch))
+  }
+  const FLAT_KEYS = ['port', 'username', 'password', 'sshKeyPath', 'sshKeyContent', 'webUrl'] as const
+  const hasFlat = FLAT_KEYS.some((k) => data?.[k] !== undefined)
+  if (mode === 'update' && !hasFlat) return []
+  const channel = data?.connectionType !== undefined ? data.connectionType : (currentConnectionType ?? null)
+  if (!isKnownChannel(channel)) return []
+  return [{
+    channel,
+    enabled: true,
+    port: data?.port,
+    username: data?.username,
+    password: data?.password,
+    sshKeyPath: data?.sshKeyPath,
+    sshKeyContent: data?.sshKeyContent,
+    webUrl: data?.webUrl,
+  }]
+}
+
+/**
+ * Phase 36（36-02，LOGIN-01/Pitfall 8）：通道节写——enabled=true → UPSERT（凭证字段仅
+ * 输入 !== undefined 时更新对应 _enc 列，「留空=不修改」按通道按字段生效，H-1）；
+ * enabled=false → DELETE 该行（清空即禁用）。IIF 在场标志位（0/1）在单条常驻 prepared
+ * 内实现字段级条件更新（UPSERT/DELETE 两条 prepare 循环外常驻，DB 性能红线）。
+ * resolution 为明文列直写（!== undefined 才写、不进 encField——D-04 裁决补记；
+ * 值仅 RDP 行有语义，服务层不做通道限定）。port 转 string 后 encField（v13 起字符串列）。
+ */
+function applyChannelNodes(db: ReturnType<typeof getDatabase>, deviceId: string, nodes: any[], now: string): void {
+  const upsert = db.prepare(`
+    INSERT INTO device_credentials
+      (id, device_id, channel, port_enc, username_enc, password_enc,
+       ssh_key_path_enc, ssh_key_content_enc, web_url_enc, resolution, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(device_id, channel) DO UPDATE SET
+      port_enc = IIF(?, excluded.port_enc, device_credentials.port_enc),
+      username_enc = IIF(?, excluded.username_enc, device_credentials.username_enc),
+      password_enc = IIF(?, excluded.password_enc, device_credentials.password_enc),
+      ssh_key_path_enc = IIF(?, excluded.ssh_key_path_enc, device_credentials.ssh_key_path_enc),
+      ssh_key_content_enc = IIF(?, excluded.ssh_key_content_enc, device_credentials.ssh_key_content_enc),
+      web_url_enc = IIF(?, excluded.web_url_enc, device_credentials.web_url_enc),
+      resolution = IIF(?, excluded.resolution, device_credentials.resolution),
+      updated_at = excluded.updated_at
+  `)
+  const del = db.prepare('DELETE FROM device_credentials WHERE device_id = ? AND channel = ?')
+  const flag = (v: unknown) => (v !== undefined ? 1 : 0)
+  for (const node of nodes) {
+    if (node?.enabled === false) {
+      del.run(deviceId, node.channel)
+      continue
+    }
+    upsert.run(
+      uuidv4(), deviceId, node.channel,
+      node.port !== undefined ? enc(String(node.port)) : null,
+      node.username !== undefined ? enc(node.username) : null,
+      node.password !== undefined ? enc(node.password) : null,
+      node.sshKeyPath !== undefined ? enc(node.sshKeyPath) : null,
+      node.sshKeyContent !== undefined ? enc(node.sshKeyContent) : null,
+      node.webUrl !== undefined ? enc(node.webUrl) : null,
+      node.resolution !== undefined ? node.resolution : null,
+      now, now,
+      flag(node.port), flag(node.username), flag(node.password),
+      flag(node.sshKeyPath), flag(node.sshKeyContent), flag(node.webUrl), flag(node.resolution)
+    )
+  }
+}
+
+/**
+ * D-09 默认通道滑落（DB 权威，RESEARCH Pattern 3）：通道写操作全部执行后（同一设备写事务内，
+ * T-36-02-04 原子）重查通道集合——connection_type 不在集合 → 按固定序 ssh > telnet > web > rdp
+ * 滑到下一条已配通道；集合空 → 置 NULL（零通道，init.ts CHECK 无 NOT NULL 可空已验证）。
+ * 返回是否发生变化及终值（变化时拓扑级联以终值刷新 connectionType，Pitfall 9 快照跟随）。
+ */
+function enforceDefaultChannel(db: ReturnType<typeof getDatabase>, deviceId: string, now: string): { changed: boolean; value: string | null } {
+  const row = db.prepare('SELECT connection_type FROM devices WHERE id = ?').get(deviceId) as any
+  const set = (db.prepare('SELECT channel FROM device_credentials WHERE device_id = ?').all(deviceId) as any[])
+    .map((r) => r.channel as string)
+  const current = (row?.connection_type ?? null) as string | null
+  let final = current
+  if (current === null || !set.includes(current)) {
+    final = (CHANNEL_ORDER as readonly string[]).find((ch) => set.includes(ch)) ?? null
+  }
+  if (final !== current) {
+    db.prepare('UPDATE devices SET connection_type = ?, updated_at = ? WHERE id = ?').run(final, now, deviceId)
+    return { changed: true, value: final }
+  }
+  return { changed: false, value: current }
+}
+
 export function createDevice(data: any) {
   const db = getDatabase()
   const id = uuidv4()
@@ -101,6 +269,8 @@ export function createDevice(data: any) {
   const nameHash = hashDeviceName(String(data.name ?? ''))
 
   // Phase 25（25-02，ASSET-03）：唯一预检 + INSERT 同事务（防 TOCTOU，DB UNIQUE 是第二道兜底）。
+  // Phase 36（36-02，D-08）：主行 INSERT 移除六行内凭证列（fresh-install 不建/遗留库已随 v32
+  // 回填清列）——凭证经通道节 UPSERT/DELETE 落 device_credentials（唯一真源），与主行同一事务。
   const tx = db.transaction(() => {
     const stmtFindByNameHash = db.prepare('SELECT id, name_enc, ip_enc FROM devices WHERE name_hash = ?')
     const conflict = stmtFindByNameHash.get(nameHash) as any
@@ -108,17 +278,19 @@ export function createDevice(data: any) {
 
     db.prepare(`
       INSERT INTO devices (id, name_enc, vendor_enc, model_enc, version_enc, ip_enc,
-        device_type, connection_type, port_enc, username_enc, password_enc,
-        ssh_key_path_enc, ssh_key_content_enc, web_url_enc, created_at, updated_at, name_hash)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        device_type, connection_type, created_at, updated_at, name_hash)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, enc(data.name), enc(data.vendor), enc(data.model), enc(data.version),
-      enc(data.ipAddress), data.deviceType || 'generic', data.connectionType,
-      enc(data.port?.toString()), enc(data.username), enc(data.password),
-      enc(data.sshKeyPath), enc(data.sshKeyContent), enc(data.webUrl), now, now, nameHash)
+      enc(data.ipAddress), data.deviceType || 'generic', data.connectionType ?? null, now, now, nameHash)
+
+    // FK 即时校验：主行先行，通道行随后；D-09 滑落收尾（同一事务原子）
+    const nodes = resolveChannelNodes(data, undefined, 'create')
+    if (nodes.length > 0) applyChannelNodes(db, id, nodes, now)
+    enforceDefaultChannel(db, id, now)
   })
   tx()
 
-  return rowToDevice(db.prepare('SELECT * FROM devices WHERE id = ?').get(id))
+  return getDeviceById(id) as any
 }
 
 export function updateDevice(id: string, data: any) {
@@ -127,10 +299,11 @@ export function updateDevice(id: string, data: any) {
   const sets: string[] = ['updated_at = ?']
   const vals: any[] = [now]
 
+  // Phase 36（36-02，D-08）：六凭证键移出 encMap——主行不再写行内凭证（fresh-install 不建/
+  // 遗留库已清列）；凭证走通道节 UPSERT/DELETE（device_credentials 唯一真源，见事务体）。
   const encMap: Record<string, string> = {
     name: 'name_enc', vendor: 'vendor_enc', model: 'model_enc', version: 'version_enc',
-    ipAddress: 'ip_enc', port: 'port_enc', username: 'username_enc', password: 'password_enc',
-    sshKeyPath: 'ssh_key_path_enc', sshKeyContent: 'ssh_key_content_enc', webUrl: 'web_url_enc',
+    ipAddress: 'ip_enc',
   }
 
   for (const [key, col] of Object.entries(encMap)) {
@@ -155,11 +328,17 @@ export function updateDevice(id: string, data: any) {
     name: 'deviceName', deviceType: 'deviceType', connectionType: 'connectionType',
     ipAddress: 'ipAddress', vendor: 'vendor', model: 'model',
   }
-  const changedFields = Object.keys(topoFields).filter(k => data[k] !== undefined)
+  // 级联取值：显式入参（!== undefined）优先；D-09 滑落终值在事务内覆写 connectionType
+  //（connectionType 在 topoFields 级联集内，Pitfall 9 节点快照跟随默认通道终值刷新）。
+  const cascadeValues: Record<string, unknown> = {}
+  for (const field of Object.keys(topoFields)) {
+    if (data[field] !== undefined) cascadeValues[field] = data[field]
+  }
 
-  // TXN-01（18-02）：devices UPDATE + 拓扑 JSON 级联包同一同步事务，中途失败整体回滚（无半写状态）。
-  // 循环内 JSON.parse catch+continue 行级容错原样保留进事务体（P8 禁顺手删 catch）；
-  // UPDATE topologies 的 prepare 提循环外复用（TXN-02 精神）；encField/decField 加密调用不动。
+  // TXN-01（18-02）：devices UPDATE + 通道节写 + D-09 滑落 + 拓扑 JSON 级联包同一同步事务，
+  // 中途失败整体回滚（无半写状态）。循环内 JSON.parse catch+continue 行级容错原样保留进
+  // 事务体（P8 禁顺手删 catch）；UPDATE topologies 的 prepare 提循环外复用（TXN-02 精神）；
+  // encField/decField 加密调用不动。
   const tx = db.transaction(() => {
     // 唯一预检与 UPDATE 同事务（TOCTOU 防护）；排除自身 id，改回自身原名不误拦（D-11）。
     if (newNameHash !== null) {
@@ -168,7 +347,15 @@ export function updateDevice(id: string, data: any) {
       ).get(newNameHash, id) as any
       if (conflict) throw deviceNameConflictError(conflict)
     }
+    // 过渡 shim 的通道解析锚点：data.connectionType 缺场时按库内现存默认通道映射（主 UPDATE 前）
+    const before = db.prepare('SELECT connection_type FROM devices WHERE id = ?').get(id) as any
     db.prepare(`UPDATE devices SET ${sets.join(', ')} WHERE id = ?`).run(...vals)
+    // Phase 36（36-02）：通道节 UPSERT/DELETE（channels DTO 或平铺 shim）+ D-09 滑落（原子）
+    const nodes = resolveChannelNodes(data, before?.connection_type ?? null, 'update')
+    if (nodes.length > 0) applyChannelNodes(db, id, nodes, now)
+    const fallback = enforceDefaultChannel(db, id, now)
+    if (fallback.changed) cascadeValues.connectionType = fallback.value
+    const changedFields = Object.keys(cascadeValues)
     if (changedFields.length > 0) {
       const topologies = db.prepare('SELECT id, data_enc FROM topologies').all() as any[]
       const stmtUpdateTopo = db.prepare('UPDATE topologies SET data_enc = ?, updated_at = ? WHERE id = ?')
@@ -185,7 +372,7 @@ export function updateDevice(id: string, data: any) {
           for (const node of topoData.nodes) {
             if (node.data?.deviceId === id) {
               for (const field of changedFields) {
-                node.data[topoFields[field]] = data[field]
+                node.data[topoFields[field]] = cascadeValues[field]
               }
               modified = true
             }
@@ -212,7 +399,7 @@ export function updateDevice(id: string, data: any) {
     }
   }
 
-  return rowToDevice(db.prepare('SELECT * FROM devices WHERE id = ?').get(id))
+  return getDeviceById(id) as any
 }
 
 /**
@@ -344,8 +531,13 @@ export function deleteDevice(id: string) {
 }
 
 export function getDeviceById(id: string) {
-  const row = getDatabase().prepare('SELECT * FROM devices WHERE id = ?').get(id) as any
-  return row ? rowToDevice(row) : null
+  // Phase 36（36-02）：凭证唯一真源 device_credentials——第二条 prepared（WHERE device_id）
+  // 与主查各一次（迭代外），rowToDevice 组装 channels 投影（与 listDevices 同构，无 N+1）。
+  const db = getDatabase()
+  const row = db.prepare('SELECT * FROM devices WHERE id = ?').get(id) as any
+  if (!row) return null
+  const credRows = db.prepare('SELECT * FROM device_credentials WHERE device_id = ?').all(id) as any[]
+  return rowToDevice(row, credRows)
 }
 
 /**

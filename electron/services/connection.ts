@@ -22,6 +22,8 @@ interface DeviceInfo {
   sshKeyPath: string
   sshKeyContent: string
   webUrl: string
+  /** Phase 36（D-04 裁决补记）：RDP 分辨率明文字段（'1920x1080' 形态），36-03 openRDP 消费 */
+  resolution?: string | null
 }
 
 interface ActiveSession {
@@ -39,8 +41,34 @@ export function setConnectionMasterKey(key: string) {
   setDeviceMasterKey(key)
 }
 
+/**
+ * Phase 36（36-02）过渡桥：device.ts rowToDevice 已停发顶层平铺凭证（D-08 不留双源），凭证
+ * 唯一真源为 device_credentials 子表投影 device.channels。此处按默认通道（connectionType，
+ * 悬空/不在通道集合时取首条已配通道）把通道行凭证平铺回 DeviceInfo 既有形状，保持
+ * connectSSH / connectTelnet / openRDP / testDeviceConnection 消费链零改动；顶层字段在场时
+ * 优先保留（兼容既有 flat 形态数据源/测试桩）。36-03 以 openTerminal(deviceId, channel?)
+ * 通道分流取代本桥。
+ */
+function loadDeviceInfo(deviceId: string): DeviceInfo | null {
+  const device = getDeviceById(deviceId) as any
+  if (!device) return null
+  const channels: any[] = Array.isArray(device.channels) ? device.channels : []
+  const ch = channels.find((c) => c.channel === device.connectionType) ?? channels[0] ?? null
+  return {
+    ...device,
+    connectionType: ch ? ch.channel : device.connectionType,
+    port: device.port ?? ch?.port ?? null,
+    username: device.username ?? ch?.username ?? '',
+    password: device.password ?? ch?.password ?? '',
+    sshKeyPath: device.sshKeyPath ?? ch?.sshKeyPath ?? '',
+    sshKeyContent: device.sshKeyContent ?? ch?.sshKeyContent ?? '',
+    webUrl: device.webUrl ?? ch?.webUrl ?? '',
+    resolution: device.resolution ?? ch?.resolution ?? null,
+  } as DeviceInfo
+}
+
 export function openTerminal(deviceId: string): { sessionId: string } {
-  const device = getDeviceById(deviceId) as DeviceInfo | null
+  const device = loadDeviceInfo(deviceId)
   if (!device) throw new Error('设备不存在')
 
   if (device.connectionType === 'web') {
@@ -213,7 +241,7 @@ export function disconnectSession(sessionId: string) {
 }
 
 export function testDeviceConnection(deviceId: string): Promise<{ success: boolean; message: string }> {
-  const device = getDeviceById(deviceId) as DeviceInfo | null
+  const device = loadDeviceInfo(deviceId)
   if (!device) return Promise.resolve({ success: false, message: '设备不存在' })
 
   if (device.connectionType === 'web') {

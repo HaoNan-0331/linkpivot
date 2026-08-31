@@ -70,6 +70,25 @@ function makeDb(): Database.Database {
       mcp_config_id TEXT NOT NULL,
       device_id TEXT NOT NULL UNIQUE
     );
+    -- Phase 36（36-02）：service 层读写已切 device_credentials 子表（create/update 通道节
+    -- + getDeviceById 读投影），内存库需带该表（DDL 照抄 init.ts；遗留 devices 六列保留
+    -- 模拟升级库形态，服务代码不再读写）
+    CREATE TABLE device_credentials (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      channel TEXT NOT NULL CHECK(channel IN ('ssh','telnet','web','rdp')),
+      port_enc TEXT,
+      username_enc TEXT,
+      password_enc TEXT,
+      ssh_key_path_enc TEXT,
+      ssh_key_content_enc TEXT,
+      web_url_enc TEXT,
+      resolution TEXT,
+      created_at TEXT DEFAULT (datetime('now','localtime')),
+      updated_at TEXT DEFAULT (datetime('now','localtime')),
+      UNIQUE(device_id, channel),
+      FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
   `)
   return db
 }

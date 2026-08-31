@@ -145,8 +145,9 @@ describe('connection 真路径 — 凭证 + 探活 + D-08 加密底线', () => {
   })
 
   beforeEach(() => {
-    // 每个 it 独立真库（tmpdir 唯一名）+ devices 表 DDL 逐字照抄 init.ts:22-41
-    // （createDevice INSERT 不含 topology_id 列，留 NULL 不触发 FK）
+    // 每个 it 独立真库（tmpdir 唯一名）+ devices/device_credentials DDL 逐字照抄 init.ts
+    // （36-02 后 fresh 形态：devices 无六行内凭证列，凭证唯一真源 device_credentials；
+    // createDevice INSERT 不含 topology_id 列，留 NULL 不触发 FK）
     const handle = makeRealDb()
     holder.handle = handle
     holder.handle.db.exec(`
@@ -169,17 +170,29 @@ describe('connection 真路径 — 凭证 + 探活 + D-08 加密底线', () => {
         ip_enc TEXT,
         device_type TEXT DEFAULT 'generic' CHECK(device_type IN ('router','switch','firewall','server','generic')),
         connection_type TEXT CHECK(connection_type IN ('ssh','telnet','web','rdp')),
+        name_hash TEXT,
+        created_at TEXT DEFAULT (datetime('now','localtime')),
+        updated_at TEXT DEFAULT (datetime('now','localtime')),
+        FOREIGN KEY (topology_id) REFERENCES topologies(id) ON DELETE SET NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS device_credentials (
+        id TEXT PRIMARY KEY,
+        device_id TEXT NOT NULL,
+        channel TEXT NOT NULL CHECK(channel IN ('ssh','telnet','web','rdp')),
         port_enc TEXT,
         username_enc TEXT,
         password_enc TEXT,
         ssh_key_path_enc TEXT,
         ssh_key_content_enc TEXT,
         web_url_enc TEXT,
+        resolution TEXT,
         created_at TEXT DEFAULT (datetime('now','localtime')),
         updated_at TEXT DEFAULT (datetime('now','localtime')),
-        name_hash TEXT,
-        FOREIGN KEY (topology_id) REFERENCES topologies(id) ON DELETE SET NULL
+        UNIQUE(device_id, channel),
+        FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
       );
+      CREATE INDEX IF NOT EXISTS idx_device_credentials_device ON device_credentials(device_id);
     `)
     // MK 注入必须在 createDevice 之前（加密落库依赖模块级 MK）
     setConnectionMasterKey(TEST_MK)
@@ -244,7 +257,7 @@ describe('connection 真路径 — 凭证 + 探活 + D-08 加密底线', () => {
     expect(r).toEqual({ success: false, message: '认证失败(用户名/密码/密钥错误)' })
   })
 
-  it('D-08 凭证加密底线：devices 表凭证列经真实 encField 加密落库（v2: 密文非明文 + 解密回读一致）', () => {
+  it('D-08 凭证加密底线：device_credentials 凭证列经真实 encField 加密落库（v2: 密文非明文 + 解密回读一致）', () => {
     const dev = createDevice({
       name: 'nt-real-enc',
       ipAddress: '127.0.0.1',
@@ -254,9 +267,9 @@ describe('connection 真路径 — 凭证 + 探活 + D-08 加密底线', () => {
       password: 'test-pw-plain',
       sshKeyContent: 'test-key-plain',
     })
-    // 裸 SQL 直读加密列（不经过 service 解密路径）
+    // 裸 SQL 直读加密列（不经过 service 解密路径）——36-02 起凭证落 device_credentials 子表
     const row = holder.handle!.db
-      .prepare('SELECT password_enc, ssh_key_content_enc, username_enc FROM devices WHERE id = ?')
+      .prepare("SELECT password_enc, ssh_key_content_enc, username_enc FROM device_credentials WHERE device_id = ? AND channel = 'ssh'")
       .get(dev.id) as { password_enc: string; ssh_key_content_enc: string; username_enc: string }
     // 密文非空 + 不等于明文（D-08：凭证不以明文落库）+ 'v2:' 前缀（AES-256-GCM v2 格式，crypto.ts）
     expect(row.password_enc).toBeTruthy()
@@ -269,10 +282,12 @@ describe('connection 真路径 — 凭证 + 探活 + D-08 加密底线', () => {
     // decField 回读与传入一致（密文可逆且密钥正确）
     expect(decField(row.password_enc, TEST_MK)).toBe('test-pw-plain')
     expect(decField(row.ssh_key_content_enc, TEST_MK)).toBe('test-key-plain')
-    // 真实 getDeviceById 解密路径一致性（connection.ts 探活消费的就是这条解密链）
-    const got = getDeviceById(dev.id)
-    expect(got?.password).toBe('test-pw-plain')
-    expect(got?.sshKeyContent).toBe('test-key-plain')
+    // 真实 getDeviceById channels 投影解密路径一致性（36-02 起凭证唯一真源为子表；
+    // connection.ts 探活消费的经 loadDeviceInfo 平铺桥取自同一条解密链）
+    const got: any = getDeviceById(dev.id)
+    const sshCh = got?.channels?.find((c: any) => c.channel === 'ssh')
+    expect(sshCh?.password).toBe('test-pw-plain')
+    expect(sshCh?.sshKeyContent).toBe('test-key-plain')
   })
 
   it('telnet 探活真路径：connectionType telnet 设备连 mock 对端 → Telnet 连接成功', async () => {

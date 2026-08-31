@@ -2,19 +2,23 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import Database from 'better-sqlite3'
 
 /**
- * listDevices capabilities 投影测试（Phase 23 / DSL-03 / D-02）+
- * name_hash 唯一拦截/查重测试（Phase 25 / 25-02 / ASSET-03）。
+ * listDevices capabilities 投影测试（Phase 23 / DSL-03 / D-02 → Phase 36 / 36-02 / D-05 改子表派生）+
+ * channels 聚合投影（36-02，LOGIN-01）+ name_hash 唯一拦截/查重测试（Phase 25 / 25-02 / ASSET-03）。
  *
  * 约束：
  * - device:list 每设备下发 capabilities: { hasSSH, hasTelnet, hasMcp } 三独立布尔
- * - hasSSH/hasTelnet 严格按 connectionType 派生；hasMcp 由 mcp_device_rel LEFT JOIN 派生
+ * - Phase 36（D-05）：hasSSH/hasTelnet 按子表行存在性派生（可同真，ssh+telnet 双通道设备）；
+ *   hasMcp 由 mcp_device_rel LEFT JOIN 派生；三布尔恒 boolean 不出 undefined（Pitfall 5）
+ * - Phase 36（36-02）：channels 投影随 list/getById 下发（resolution 明文直读，D-04）；
+ *   顶层不再有平铺凭证字段（D-08）；两条 prepared（主查 + device_credentials 全量查）无 N+1
  * - LEFT JOIN 不产生重复行（mcp_device_rel.device_id UNIQUE，每设备恰好一行）
  * - 同名（含大小写/首尾空格/连字符 Unicode 变体）create/update 被服务层 throw，
  *   message 含冲突设备名称+IP 明文（D-12）；编辑排除自身（D-11）；checkDeviceName
  *   返回冲突 { name, ipAddress } 或 null
  *
  * Mock 策略：getDatabase → 内存 mock（mock 路径按 device.ts 的模块解析写
- * ../../electron/database/connection）。capabilities 组用固定行 prepare；
+ * ../../electron/database/connection）；prepare 按 sql 分支返回设备行集 / 凭证行集
+ * （sql 含 device_credentials → H.credRows，否则 H.rows）。capabilities 组用固定行 prepare；
  * name_hash 组经 H.delegate 注入真 better-sqlite3 内存库（test:electron 走 electron ABI，
  * native binding 可加载，优于 mock SQL 语义）。
  */
@@ -29,6 +33,17 @@ const H = vi.hoisted(() => {
       { id: 'd-ssh-mcp', connection_type: 'ssh', has_mcp: 1 },
       { id: 'd-web-mcp', connection_type: 'web', has_mcp: 1 },
     ] as any[],
+    // device_credentials 行集（36-02）：行存在 = 通道已配置（D-02）；d-rdp 行携带 resolution
+    // 明文值（D-04 裁决补记：非敏感列，直读不经 decField）
+    credRows: [
+      { device_id: 'd-ssh', channel: 'ssh', port_enc: null, username_enc: null, password_enc: null, ssh_key_path_enc: null, ssh_key_content_enc: null, web_url_enc: null, resolution: null },
+      { device_id: 'd-telnet', channel: 'telnet', port_enc: null, username_enc: null, password_enc: null, ssh_key_path_enc: null, ssh_key_content_enc: null, web_url_enc: null, resolution: null },
+      { device_id: 'd-web', channel: 'web', port_enc: null, username_enc: null, password_enc: null, ssh_key_path_enc: null, ssh_key_content_enc: null, web_url_enc: null, resolution: null },
+      { device_id: 'd-rdp', channel: 'rdp', port_enc: null, username_enc: null, password_enc: null, ssh_key_path_enc: null, ssh_key_content_enc: null, web_url_enc: null, resolution: '1280x720' },
+      { device_id: 'd-ssh-mcp', channel: 'ssh', port_enc: null, username_enc: null, password_enc: null, ssh_key_path_enc: null, ssh_key_content_enc: null, web_url_enc: null, resolution: null },
+      { device_id: 'd-ssh-mcp', channel: 'telnet', port_enc: null, username_enc: null, password_enc: null, ssh_key_path_enc: null, ssh_key_content_enc: null, web_url_enc: null, resolution: null },
+      { device_id: 'd-web-mcp', channel: 'web', port_enc: null, username_enc: null, password_enc: null, ssh_key_path_enc: null, ssh_key_content_enc: null, web_url_enc: null, resolution: null },
+    ] as any[],
     delegate: null as Database.Database | null,
     spy: [] as string[],
   }
@@ -39,22 +54,24 @@ vi.mock('../../electron/database/connection', () => ({
     H.delegate ?? {
       prepare: (sql: string) => {
         H.spy.push(sql)
-        return { all: () => H.rows.map((r) => ({ ...r })) }
+        const rows = sql.includes('device_credentials') ? H.credRows : H.rows
+        return { all: () => rows.map((r) => ({ ...r })) }
       },
     },
 }))
 
-import { listDevices, createDevice, updateDevice, checkDeviceName, setDeviceMasterKey, listDuplicateGroups, backfillNameHash, ensureNameUniqueIndex } from '../../electron/services/device'
+import { listDevices, createDevice, updateDevice, checkDeviceName, setDeviceMasterKey, deriveCapabilities, listDuplicateGroups, backfillNameHash, ensureNameUniqueIndex } from '../../electron/services/device'
 import { hashDeviceName } from '../../electron/services/deviceName'
 import { encField } from '../../electron/utils/crypto'
 
-describe('listDevices — capabilities 三布尔投影（D-02）', () => {
-  it('单条 SQL LEFT JOIN mcp_device_rel 派生 has_mcp（无 N+1：prepare 恰好一次）', () => {
+describe('listDevices — capabilities 三布尔投影（D-02/D-05）', () => {
+  it('两条 prepared：主查 LEFT JOIN mcp_device_rel + device_credentials 全量查（无 N+1：prepare 恰好两次）', () => {
     H.spy.length = 0
     const devices = listDevices()
-    expect(H.spy).toHaveLength(1)
+    expect(H.spy).toHaveLength(2)
     expect(H.spy[0]).toContain('mcp_device_rel')
     expect(H.spy[0]).toContain('LEFT JOIN')
+    expect(H.spy[1]).toContain('device_credentials')
     expect(devices).toHaveLength(H.rows.length) // 无重复行
   })
 
@@ -75,9 +92,9 @@ describe('listDevices — capabilities 三布尔投影（D-02）', () => {
     }
   })
 
-  it('mcp_device_rel 有关联行 → hasMcp true（可与 hasSSH 并存，三布尔独立）', () => {
-    const sshMcp = listDevices().find((x: any) => x.id === 'd-ssh-mcp')!
-    expect(sshMcp.capabilities).toEqual({ hasSSH: true, hasTelnet: false, hasMcp: true })
+  it('ssh+telnet 双通道设备（hasMcp 并存）→ hasSSH/hasTelnet 同真（D-05 子表派生核心用例）', () => {
+    const dual = listDevices().find((x: any) => x.id === 'd-ssh-mcp')!
+    expect(dual.capabilities).toEqual({ hasSSH: true, hasTelnet: true, hasMcp: true })
     const webMcp = listDevices().find((x: any) => x.id === 'd-web-mcp')!
     expect(webMcp.capabilities).toEqual({ hasSSH: false, hasTelnet: false, hasMcp: true })
   })
@@ -88,6 +105,36 @@ describe('listDevices — capabilities 三布尔投影（D-02）', () => {
       expect(typeof d.capabilities.hasTelnet).toBe('boolean')
       expect(typeof d.capabilities.hasMcp).toBe('boolean')
     }
+  })
+})
+
+/** Phase 36（36-02，LOGIN-01）：channels 聚合投影 + deriveCapabilities 派生签名。 */
+describe('channels 聚合投影（36-02，D-08/D-04）', () => {
+  it('channels 随投影下发按固定序组装；顶层不再有平铺凭证字段（D-08 不留双源）', () => {
+    const dual = listDevices().find((x: any) => x.id === 'd-ssh-mcp')!
+    expect(dual.channels.map((c: any) => c.channel)).toEqual(['ssh', 'telnet'])
+    for (const key of ['port', 'username', 'password', 'sshKeyPath', 'sshKeyContent', 'webUrl']) {
+      expect(dual[key]).toBeUndefined()
+    }
+    const rdp = listDevices().find((x: any) => x.id === 'd-rdp')!
+    expect(rdp.channels).toHaveLength(1)
+  })
+
+  it('channels 元素形态：channel/port/username/password/sshKeyPath/sshKeyContent/webUrl/resolution', () => {
+    const d = listDevices().find((x: any) => x.id === 'd-rdp')!
+    expect(Object.keys(d.channels[0]).sort()).toEqual(
+      ['channel', 'password', 'port', 'resolution', 'sshKeyContent', 'sshKeyPath', 'username', 'webUrl'].sort()
+    )
+    // D-04 裁决补记：resolution 为明文列直读（不经 decField），rdp 行保留原值
+    expect(d.channels[0].resolution).toBe('1280x720')
+    expect(d.channels[0].port).toBeNull()
+  })
+
+  it('deriveCapabilities 第二签名按通道集合派生（ssh+telnet 同真）；缺场走 connection_type 旧派生（过渡）', () => {
+    expect(deriveCapabilities({ connection_type: 'web', has_mcp: 0 }, ['ssh', 'telnet']))
+      .toEqual({ hasSSH: true, hasTelnet: true, hasMcp: false })
+    expect(deriveCapabilities({ connection_type: 'ssh', has_mcp: 1 }))
+      .toEqual({ hasSSH: true, hasTelnet: false, hasMcp: true })
   })
 })
 
@@ -131,6 +178,25 @@ function makeDb(withIndex = true): Database.Database {
       CREATE TABLE mcp_device_rel (
         mcp_config_id TEXT NOT NULL,
         device_id TEXT NOT NULL UNIQUE
+      );
+      -- Phase 36（36-02）：service 层读写已切子表（create/update 通道节 + 读投影），
+      -- 内存库需带 device_credentials（DDL 照抄 init.ts：遗留形态 devices 六列保留供
+      -- insertRawDevice 直插模拟存量行，服务代码不再读写）
+      CREATE TABLE device_credentials (
+        id TEXT PRIMARY KEY,
+        device_id TEXT NOT NULL,
+        channel TEXT NOT NULL CHECK(channel IN ('ssh','telnet','web','rdp')),
+        port_enc TEXT,
+        username_enc TEXT,
+        password_enc TEXT,
+        ssh_key_path_enc TEXT,
+        ssh_key_content_enc TEXT,
+        web_url_enc TEXT,
+        resolution TEXT,
+        created_at TEXT DEFAULT (datetime('now','localtime')),
+        updated_at TEXT DEFAULT (datetime('now','localtime')),
+        UNIQUE(device_id, channel),
+        FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
       );
     `)
     return db

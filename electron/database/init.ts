@@ -29,12 +29,6 @@ export function createTables() {
       ip_enc TEXT,
       device_type TEXT DEFAULT 'generic' CHECK(device_type IN ('router','switch','firewall','server','generic')),
       connection_type TEXT CHECK(connection_type IN ('ssh','telnet','web','rdp')),
-      port_enc TEXT,
-      username_enc TEXT,
-      password_enc TEXT,
-      ssh_key_path_enc TEXT,
-      ssh_key_content_enc TEXT,
-      web_url_enc TEXT,
       name_hash TEXT,
       created_at TEXT DEFAULT (datetime('now','localtime')),
       updated_at TEXT DEFAULT (datetime('now','localtime')),
@@ -42,6 +36,11 @@ export function createTables() {
     );
     -- name_hash：ASSET-03（Phase 25）。列定义与 migrations.ts v22 ALTER 逐字一致（双路径一致红线）。
     -- fresh-install 不建 idx_devices_name_hash（v24 清零门控统一负责，避免 fresh/migrate 两路径索引时序漂移）。
+    -- Phase 36（36-02，LOGIN-01/03）：行内凭证列（port_enc/username_enc/password_enc/
+    -- ssh_key_path_enc/ssh_key_content_enc/web_url_enc 六列）收敛 device_credentials 子表——
+    -- 双路径一致（遗留库经 v32 后 post-MK 回填 ALTER DROP COLUMN 清列收敛同形，D-08 不留双源）；
+    -- migrations.ts 历史 v5 rebuild 步骤守卫 includes("'rdp'") 恒命中 no-op，不会重建六列。
+    -- connection_type CHECK 行不动：D-07 语义升级为默认通道（可空，D-09 全删通道滑落置 NULL）。
 
     CREATE TABLE IF NOT EXISTS ai_config (
       id TEXT PRIMARY KEY,
