@@ -151,6 +151,15 @@ export default function ChatMessageList({ messages, loading, agentRunning, onSto
         ))}
         {/* D-11 无源声明：零检索零执行固定灰 Tag——只由 payload 布尔驱动，正文字符串不可触发 */}
         {meta.noRealtimeData === true && <Tag style={{ fontSize: 'var(--nt-font-xxs-12-font-size)' }}>未查询实时数据</Tag>}
+        {/* Phase 37（37-03，D-05/D-06）：智能模式未查源灰 Tag 逐源一个——只认
+            meta.unqueriedSources 结构化字段（37-02 档位矩阵产出），AI 正文 content 字符串
+            无触发路径（域红线 T-37-09）；缺场/空数组不渲染（legacy 消息零影响）；
+            源中文名复用 SOURCE_KIND_NAMES（现场纯中文名映射），未知 kind 以原文兜底防白屏 */}
+        {meta.unqueriedSources?.map((k) => (
+          <Tag key={k} style={{ fontSize: 'var(--nt-font-xxs-12-font-size)' }}>
+            未查询：{(SOURCE_KIND_NAMES as Record<string, string>)[k] ?? k}
+          </Tag>
+        ))}
         {expanded && (
           <div style={{ marginTop: 4 }}>
             {badgeKinds.flatMap((g) =>

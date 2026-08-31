@@ -84,6 +84,12 @@ function parseAgentMeta(p: Record<string, unknown>): AgentMeta | undefined {
   if (Array.isArray(p.backfillNotes) && p.backfillNotes.every(isStr) && p.backfillNotes.length > 0) {
     meta = { sources: [], ...(meta ?? {}), backfillNotes: p.backfillNotes as string[] }
   }
+  // Phase 37（37-03，D-05/D-06）：智能模式未查源清单——fail-closed 校验（照 backfillNotes 分支
+  // 模板）：空数组不写键（零未查 = 不渲染，37-02 产出端「非空才写」同语义）；混入非字符串
+  // 整组拒绝不部分采纳（T-37-09——未查询标签只能来自 payload 结构化字段）
+  if (Array.isArray(p.unqueriedSources) && p.unqueriedSources.every(isStr) && p.unqueriedSources.length > 0) {
+    meta = { sources: [], ...(meta ?? {}), unqueriedSources: p.unqueriedSources as string[] }
+  }
   return meta
 }
 

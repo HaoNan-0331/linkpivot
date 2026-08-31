@@ -68,6 +68,9 @@ export interface AgentMeta {
   noRealtimeData?: boolean
   hardStop?: 'user_cancel'
   backfillNotes?: string[]
+  // Phase 37（37-03，D-05/D-06）：智能模式未查源清单（main 侧 computeUnqueriedSources 按
+  // TIER_RETRIEVAL_PLAN 档位矩阵产出，值域 exp/kb/device）——缺场 = 零未查或 legacy 消息，不渲染
+  unqueriedSources?: string[]
 }
 
 /** Phase 28（28-05）：分档四值（main 侧 agentRouter.AgentTier 契约对齐） */
