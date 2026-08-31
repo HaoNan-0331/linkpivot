@@ -31,13 +31,15 @@ export interface DeviceChannel {
 
 /**
  * Phase 36（36-02）：设备保存通道节入参——enabled=true 时 UPSERT（凭证字段 !== undefined 才写，
- * 「留空=不修改」按通道按字段生效，H-1）；enabled=false 删该通道行（清空即禁用）。
+ * 「留空=不修改」按通道按字段生效，H-1；WR-03 例外：明文回填字段提交空串/port null = 显式
+ * 清除已存值）；enabled=false 删该通道行（清空即禁用）。
  * resolution 仅 RDP 节携带值（明文列直写）；createDevice/updateDevice 与服务层写语义对齐。
  */
 export interface DeviceChannelDTO {
   channel: ConnectionType
   enabled: boolean
-  port?: number
+  /** WR-03（36 review）：null = 编辑态显式清空（服务层写 NULL 列）；undefined = 不修改 */
+  port?: number | null
   username?: string
   password?: string
   sshKeyPath?: string

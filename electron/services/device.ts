@@ -261,7 +261,9 @@ function applyChannelNodes(db: ReturnType<typeof getDatabase>, deviceId: string,
     }
     upsert.run(
       uuidv4(), deviceId, node.channel,
-      node.port !== undefined ? enc(String(node.port)) : null,
+      // WR-03（36 review）：undefined = 不修改（flag 0）；null = 编辑态显式清空（flag 1 写
+      // NULL 列——顺带消除 String(null)='null' 字面串落库形态）；数字 = enc(String(port))
+      node.port === undefined ? null : node.port === null ? null : enc(String(node.port)),
       node.username !== undefined ? enc(node.username) : null,
       node.password !== undefined ? enc(node.password) : null,
       node.sshKeyPath !== undefined ? enc(node.sshKeyPath) : null,

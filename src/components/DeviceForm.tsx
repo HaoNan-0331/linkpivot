@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { Form, Input, Select, InputNumber, Modal, Alert, Tabs, Switch } from 'antd'
 import type { Device, CreateDeviceDTO, DeviceChannelDTO, ConnectionType } from '../types/device'
@@ -56,6 +56,18 @@ type DeviceFormValues = Omit<CreateDeviceDTO, 'channels'> & {
   channels?: Partial<Record<ConnectionType, ChannelSectionValues>>
 }
 
+/**
+ * WR-03（36 review）：编辑态明文回填快照——「原本已存值」的判定源。仅覆盖非脱敏回填字段
+ *（password/sshKeyContent 永不回填，无清空语义，留空恒为不修改，H-1）。快照非空 + 表单现值
+ * 为空 = 用户显式清空已存值 → 提交空串 / port null 哨兵（服务层字段级写 NULL 列）。
+ */
+interface RefillSnapshot {
+  port?: number
+  username?: string
+  sshKeyPath?: string
+  webUrl?: string
+}
+
 function resolveInitialChannel(ch?: ConnectionType): ConnectionType {
   return ch && (CHANNEL_KEYS as string[]).includes(ch) ? ch : 'ssh'
 }
@@ -68,6 +80,8 @@ export default function DeviceForm({ open, device, copySource, existingDevices, 
   const fillSource = device ?? copySource
   // §6.3 Tabs 初始定位（36-05 消费）：每次打开按 initialChannel 重置，缺省/非法回落 'ssh'
   const [activeKey, setActiveKey] = useState<ConnectionType>(() => resolveInitialChannel(initialChannel))
+  // WR-03（36 review）：编辑态明文回填快照（语义见 RefillSnapshot 注释，随打开重置）
+  const refillSnapshotRef = useRef<Partial<Record<ConnectionType, RefillSnapshot>>>({})
 
   // §5.2 通道启用态（Switch 权威）——字段 disabled / tab dot / 默认通道 options / 警示可见性共用
   const sshOn = Form.useWatch(['channels', 'ssh', 'enabled'], form) === true
@@ -95,6 +109,24 @@ export default function DeviceForm({ open, device, copySource, existingDevices, 
       // 四节全 off + 零回填——源凭证永远不出 main 进程，启用即等于新配。
       const chRow = (ch: ConnectionType) =>
         (!isCopy ? (fillSource.channels ?? []).find((c) => c.channel === ch) : undefined)
+      // WR-03（36 review）：快照 = 回填初值 = 库中已存明文（非脱敏字段投影即库值）。编辑态用户
+      // 把非空初值清空 = 显式清除（提交空串/port null 哨兵）；复制/新建零快照永不触发清除。
+      refillSnapshotRef.current = !isCopy && device ? {
+        ssh: {
+          port: chRow('ssh')?.port ?? undefined,
+          username: chRow('ssh')?.username ?? undefined,
+          sshKeyPath: chRow('ssh')?.sshKeyPath ?? undefined,
+        },
+        telnet: {
+          port: chRow('telnet')?.port ?? undefined,
+          username: chRow('telnet')?.username ?? undefined,
+        },
+        web: { webUrl: chRow('web')?.webUrl ?? undefined },
+        rdp: {
+          port: chRow('rdp')?.port ?? undefined,
+          username: chRow('rdp')?.username ?? undefined,
+        },
+      } : {}
       form.resetFields()
       form.setFieldsValue({
         name: fillSource.name, vendor: fillSource.vendor, model: fillSource.model, version: fillSource.version,
@@ -131,6 +163,7 @@ export default function DeviceForm({ open, device, copySource, existingDevices, 
             : undefined,
       })
     } else {
+      refillSnapshotRef.current = {}
       form.resetFields()
     }
   }, [fillSource, form, open, isCopy])
@@ -204,8 +237,9 @@ export default function DeviceForm({ open, device, copySource, existingDevices, 
   }
 
   // D-06 统一保存：Modal「确 定」一次提交 channels 节——enabled 节内空凭证字段剔除
-  //（= 留空不修改，H-1）；显式 off 节发 enabled:false 整节提交（服务层 DELETE）；不再发送
-  // 任何平铺凭证字段（36-04 终态，通道配置唯一入口 = channels 节）。
+  //（= 留空不修改，H-1；WR-03 例外：明文回填字段被用户显式清空时提交空值清除）；显式 off
+  // 节发 enabled:false 整节提交（服务层 DELETE）；不再发送任何平铺凭证字段
+  //（36-04 终态，通道配置唯一入口 = channels 节）。
   // 防线（36-05 真机 UAT 数据丢失缺陷）：节缺场/未注册（enabled 非 boolean——Tabs 懒渲染
   // 下未点开 tab 的字段不入 form store）绝不可编码为 enabled:false——服务层 DELETE 语义
   // 会静默清掉已存凭证。缺场节整节剔除：服务层对不在场节点零触碰（resolveChannelNodes
@@ -222,12 +256,21 @@ export default function DeviceForm({ open, device, copySource, existingDevices, 
         continue
       }
       const node: DeviceChannelDTO = { channel: ch, enabled: true }
+      // WR-03（36 review）：明文回填字段支持编辑态显式清空——现值非空照常提交；现值为空但
+      // 回填快照非空（用户删掉了原本已存的值）→ 提交空串（服务层 encField('')=null 清列）/
+      // port null 哨兵（服务层写 NULL 列）。password/sshKeyContent 无快照（永不回填），
+      // 留空恒为不修改（H-1）；复制/新建无快照，空值照旧剔除。
+      const refill = refillSnapshotRef.current[ch]
       if (sec.port !== undefined && sec.port !== null) node.port = sec.port
+      else if (refill?.port !== undefined) node.port = null
       if (hasText(sec.username)) node.username = sec.username
+      else if (hasText(refill?.username)) node.username = ''
       if (hasText(sec.password)) node.password = sec.password
       if (hasText(sec.sshKeyPath)) node.sshKeyPath = sec.sshKeyPath
+      else if (hasText(refill?.sshKeyPath)) node.sshKeyPath = ''
       if (hasText(sec.sshKeyContent)) node.sshKeyContent = sec.sshKeyContent
       if (hasText(sec.webUrl)) node.webUrl = sec.webUrl
+      else if (hasText(refill?.webUrl)) node.webUrl = ''
       // 分辨率非脱敏明文字段（编辑态已回填当前值）：enabled 节随表单现值提交——清空即不指定
       //（空串按字段级 !== undefined 语义直写，openRDP 端格式不符自然忽略）
       if (typeof sec.resolution === 'string') node.resolution = sec.resolution

@@ -301,4 +301,32 @@ describe('device 通道写路径 + 投影红线（36-02）', () => {
     // 非脱敏字段原样透传（username 不在 SECRET_KEYS）
     expect(sshCh.username).toBe('ops')
   })
+
+  it('f) WR-03 编辑态显式清空：明文字段空串清列 + port null 哨兵清列，未动字段保留', () => {
+    const dev: any = createDevice({
+      name: 'Clear-SW', ipAddress: '10.0.0.6', connectionType: 'ssh',
+      channels: [{ channel: 'ssh', enabled: true, port: 2222, username: 'u1', sshKeyPath: 'C:/keys/id', password: 'p1' }],
+    })
+    // 编辑态清空 username/sshKeyPath（提交空串）+ port（null 哨兵）→ 三列置 NULL，password 不动
+    updateDevice(dev.id, {
+      channels: [{ channel: 'ssh', enabled: true, port: null, username: '', sshKeyPath: '' }],
+    })
+    const ssh = credRow(dev.id, 'ssh')
+    expect(ssh.port_enc).toBeNull()
+    expect(ssh.username_enc).toBeNull()
+    expect(ssh.ssh_key_path_enc).toBeNull()
+    expect(decField(ssh.password_enc, TEST_MK)).toBe('p1')
+
+    // 投影回读：清空后 port 呈现 null（decField(NULL)='' → falsy → null）、明文字段空串
+    const after: any = listDevices().find((x: any) => x.id === dev.id)
+    expect(after.channels[0].port).toBeNull()
+    expect(after.channels[0].username).toBe('')
+    expect(after.channels[0].sshKeyPath).toBe('')
+    expect(after.channels[0].password).toBe('p1')
+
+    // 空串清空后再单字段重填（清空 ≠ 禁用，行保留可继续 UPSERT）
+    updateDevice(dev.id, { channels: [{ channel: 'ssh', enabled: true, username: 'u2' }] })
+    expect(decField(credRow(dev.id, 'ssh').username_enc, TEST_MK)).toBe('u2')
+    expect(credRow(dev.id, 'ssh').port_enc).toBeNull() // 未动字段不被波及
+  })
 })
