@@ -214,10 +214,8 @@ describe('connection 真路径 — 凭证 + 探活 + D-08 加密底线', () => {
     const dev = createDevice({
       name: 'nt-real-ssh-pw',
       ipAddress: '127.0.0.1',
-      port: ssh.port,
-      connectionType: 'ssh',
-      username: expectedUser,
-      password: expectedPassword,
+      // 36-04：凭证按通道节提交（shim 已移除），默认通道经 D-09 滑落收敛为 ssh
+      channels: [{ channel: 'ssh', enabled: true, port: ssh.port, username: expectedUser, password: expectedPassword }],
     })
     const r = await testDeviceConnection(dev.id)
     expect(r).toEqual({ success: true, message: `SSH 连接成功 (127.0.0.1:${ssh.port})` })
@@ -231,10 +229,7 @@ describe('connection 真路径 — 凭证 + 探活 + D-08 加密底线', () => {
     const dev = createDevice({
       name: 'nt-real-ssh-key',
       ipAddress: '127.0.0.1',
-      port: ssh.port,
-      connectionType: 'ssh',
-      username: expectedUser,
-      sshKeyContent: privateKeyPem,
+      channels: [{ channel: 'ssh', enabled: true, port: ssh.port, username: expectedUser, sshKeyContent: privateKeyPem }],
     })
     const r = await testDeviceConnection(dev.id)
     expect(r.success).toBe(true)
@@ -246,10 +241,7 @@ describe('connection 真路径 — 凭证 + 探活 + D-08 加密底线', () => {
     const dev = createDevice({
       name: 'nt-real-ssh-badpw',
       ipAddress: '127.0.0.1',
-      port: ssh.port,
-      connectionType: 'ssh',
-      username: expectedUser,
-      password: 'test-pw-WRONG', // 设备存的是错误密码
+      channels: [{ channel: 'ssh', enabled: true, port: ssh.port, username: expectedUser, password: 'test-pw-WRONG' }], // 设备存的是错误密码
     })
     const r = await testDeviceConnection(dev.id)
     // D-10 核心断言：用户看到的报错提示正确（ssh2 'All configured authentication methods failed'
@@ -261,11 +253,7 @@ describe('connection 真路径 — 凭证 + 探活 + D-08 加密底线', () => {
     const dev = createDevice({
       name: 'nt-real-enc',
       ipAddress: '127.0.0.1',
-      port: ssh.port,
-      connectionType: 'ssh',
-      username: 'nt-enc-user',
-      password: 'test-pw-plain',
-      sshKeyContent: 'test-key-plain',
+      channels: [{ channel: 'ssh', enabled: true, port: ssh.port, username: 'nt-enc-user', password: 'test-pw-plain', sshKeyContent: 'test-key-plain' }],
     })
     // 裸 SQL 直读加密列（不经过 service 解密路径）——36-02 起凭证落 device_credentials 子表
     const row = holder.handle!.db
@@ -312,10 +300,7 @@ describe('connection 真路径 — 凭证 + 探活 + D-08 加密底线', () => {
       const dev = createDevice({
         name: 'nt-real-telnet',
         ipAddress: '127.0.0.1',
-        port: tel.port,
-        connectionType: 'telnet',
-        username: 'a',
-        password: 'test-telnet-pw',
+        channels: [{ channel: 'telnet', enabled: true, port: tel.port, username: 'a', password: 'test-telnet-pw' }],
       })
       const r = await testDeviceConnection(dev.id)
       expect(r).toEqual({ success: true, message: `Telnet 连接成功 (127.0.0.1:${tel.port})` })
@@ -349,10 +334,7 @@ describe('connection 真路径 — 凭证 + 探活 + D-08 加密底线', () => {
       const dev = createDevice({
         name: 'nt-real-hang',
         ipAddress: '127.0.0.1',
-        port: hanging.port,
-        connectionType: 'ssh',
-        username: 'nt-hang-user',
-        password: 'test-pw-hang',
+        channels: [{ channel: 'ssh', enabled: true, port: hanging.port, username: 'nt-hang-user', password: 'test-pw-hang' }],
       })
       // settled+timer 竞速（connectSSH.algorithms.real.test.ts:90-128 范式）：外层 13s 兜底，
       // SSH 探活自身 8s readyTimeout + 10s timer 会在兜底前 resolve false（vitest testTimeout 15s 外层再兜一层）

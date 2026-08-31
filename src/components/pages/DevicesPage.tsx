@@ -1,11 +1,20 @@
 import { useState, useEffect } from 'react'
-import { Table, Button, Space, Popconfirm, message, Typography, Alert } from 'antd'
+import type { CSSProperties } from 'react'
+import { Table, Button, Space, Popconfirm, message, Typography, Alert, Tooltip } from 'antd'
 import { PlusOutlined, EditOutlined, DeleteOutlined, ApiOutlined, CopyOutlined } from '@ant-design/icons'
 import DeviceForm from '../DeviceForm'
 import DuplicateNamesModal from '../DuplicateNamesModal'
 import type { Device, CreateDeviceDTO } from '../../types/device'
+import { CHANNEL_LABELS } from '../../types/device'
 
 const { Title } = Typography
+
+/** Phase 36（36-04，UI-SPEC §三/§八）：+N 多通道后缀——自研内联文本微结构（12/18 label-caption） */
+const PLUS_SUFFIX_STYLE: CSSProperties = {
+  fontSize: 'var(--nt-font-xxs-12-font-size)',
+  lineHeight: 'var(--nt-font-xxs-12-line-height)',
+  color: 'var(--nt-alias-label-caption)',
+}
 
 const deviceTypeLabels: Record<string, string> = {
   router: '路由器', switch: '交换机', firewall: '防火墙', server: '服务器', generic: '通用',
@@ -48,13 +57,10 @@ export default function DevicesPage() {
 
   const handleUpdate = async (values: CreateDeviceDTO) => {
     if (!editing) return
-    // H-1：编辑时密码/Key 留空（''/undefined）= 不修改——从 payload 剔除，
-    // updateDevice 的 `!== undefined` 字段级跳过语义生效，不误清空已有凭证。
-    const payload: Record<string, unknown> = { ...values }
-    if (!payload.password) delete payload.password
-    if (!payload.sshKeyContent) delete payload.sshKeyContent
+    // H-1（36-04 按通道节形态）：「留空=不修改」剔除已在 DeviceForm handleFinish 内完成
+    //（on 节空凭证字段剔除；off 节 enabled:false 交服务层 DELETE）——本处纯透传，勿双重剔除。
     try {
-      await window.api.device.update(editing.id, payload as unknown as CreateDeviceDTO)
+      await window.api.device.update(editing.id, values)
       message.success('设备更新成功')
       setEditing(null); setFormOpen(false); load(); loadDupGroups()
     } catch (e: unknown) {
@@ -111,7 +117,30 @@ export default function DevicesPage() {
         { title: '厂商', dataIndex: 'vendor', key: 'vendor' },
         { title: '型号', dataIndex: 'model', key: 'model' },
         { title: 'IP', dataIndex: 'ipAddress', key: 'ipAddress' },
-        { title: '连接方式', dataIndex: 'connectionType', key: 'connectionType', render: (v: string) => v?.toUpperCase() },
+        {
+          title: '连接方式', dataIndex: 'connectionType', key: 'connectionType',
+          // Phase 36（36-04，§八）：默认通道 toUpperCase + 多通道 +N 后缀 + 全通道 Tooltip；零通道「—」
+          render: (_: unknown, r: Device) => {
+            const channels = r.channels ?? []
+            if (channels.length === 0) return '—'
+            const def = channels.some((c) => c.channel === r.connectionType)
+              ? r.connectionType
+              : channels[0].channel
+            const content = (
+              <span>
+                {def.toUpperCase()}
+                {channels.length > 1 && (
+                  <span style={PLUS_SUFFIX_STYLE}>{`+${channels.length - 1}`}</span>
+                )}
+              </span>
+            )
+            return (
+              <Tooltip title={`已配通道：${channels.map((c) => CHANNEL_LABELS[c.channel]).join('、')}`}>
+                {content}
+              </Tooltip>
+            )
+          },
+        },
         { title: '操作', key: 'action', render: (_: unknown, r: Device) => (
           <Space>
             <Button icon={<ApiOutlined />} type="text" loading={testingId === r.id} onClick={() => handleTest(r)} title="测试连接" />

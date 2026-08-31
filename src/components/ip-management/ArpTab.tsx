@@ -22,7 +22,7 @@ export default function ArpTab({ api }: ArpTabProps) {
 
   useEffect(() => {
     api.device.list().then((list) => {
-      setDevices(list.filter((d) => d.connectionType === 'ssh' || d.connectionType === 'telnet'))
+      setDevices(list.filter((d) => d.capabilities.hasSSH || d.capabilities.hasTelnet))
     })
   }, [])
 

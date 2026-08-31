@@ -55,7 +55,7 @@ function DiscoveryPanel({
       // Only show CLI devices (ssh/telnet)
       // Phase 19 / REN-02：(d: any)×2 → Device 强类型（device.list() 已返 Promise<Device[]>，照抄 useAIChat 收窄版写法）
       const cliDevices = list.filter(
-        (d) => d.connectionType === 'ssh' || d.connectionType === 'telnet'
+        (d) => d.capabilities.hasSSH || d.capabilities.hasTelnet
       )
       setDevices(
         cliDevices.map((d) => ({

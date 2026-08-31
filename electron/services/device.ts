@@ -208,40 +208,20 @@ function deviceNameConflictError(conflictRow: any): Error {
 }
 
 /**
- * Phase 36（36-02，LOGIN-01）：通道节来源归一。
+ * Phase 36（36-04，LOGIN-01 终态）：通道节来源归一。
  * data.channels 在场 → 四通道固定序规范化（值域外节静默丢弃——DB CHECK 双层兜底
  * T-36-02-03；同通道重复节后到为准）。
- * 缺场 → 过渡 shim（本 plan 引入、36-04 移除）：旧平铺入参（port/username/password/
- * sshKeyPath/sshKeyContent/webUrl 在场字段）按 data.connectionType（update 缺省时取库内
- * 现存 connection_type）映射为单通道节走同一 UPSERT 路径，未改造 DeviceForm/DevicesPage
- * 行为不变（字段级 !== undefined 保留「留空=不修改」，H-1）。create 恒产生默认通道节
- * （旧形态 connectionType 必填且决定 capabilities 派生，行为保持）；update 仅平铺凭证
- * 字段在场时产生节点（纯改名等操作零通道写）。
+ * 缺场 → 空数组零通道写（通道配置唯一入口 = channels 节；36-02 的旧平铺入参兼容分支已随
+ * 36-04 DeviceForm 切换删除——纯改名/拓扑属性编辑等操作不产生通道写，也不清既有子表行）。
  */
-function resolveChannelNodes(data: any, currentConnectionType: string | null | undefined, mode: 'create' | 'update'): any[] {
-  if (Array.isArray(data?.channels)) {
-    const byChannel = new Map<string, any>()
-    for (const node of data.channels) {
-      if (!node || !isKnownChannel(node.channel)) continue
-      byChannel.set(node.channel, node)
-    }
-    return (CHANNEL_ORDER as readonly string[]).filter((ch) => byChannel.has(ch)).map((ch) => byChannel.get(ch))
+function resolveChannelNodes(data: any): any[] {
+  if (!Array.isArray(data?.channels)) return []
+  const byChannel = new Map<string, any>()
+  for (const node of data.channels) {
+    if (!node || !isKnownChannel(node.channel)) continue
+    byChannel.set(node.channel, node)
   }
-  const FLAT_KEYS = ['port', 'username', 'password', 'sshKeyPath', 'sshKeyContent', 'webUrl'] as const
-  const hasFlat = FLAT_KEYS.some((k) => data?.[k] !== undefined)
-  if (mode === 'update' && !hasFlat) return []
-  const channel = data?.connectionType !== undefined ? data.connectionType : (currentConnectionType ?? null)
-  if (!isKnownChannel(channel)) return []
-  return [{
-    channel,
-    enabled: true,
-    port: data?.port,
-    username: data?.username,
-    password: data?.password,
-    sshKeyPath: data?.sshKeyPath,
-    sshKeyContent: data?.sshKeyContent,
-    webUrl: data?.webUrl,
-  }]
+  return (CHANNEL_ORDER as readonly string[]).filter((ch) => byChannel.has(ch)).map((ch) => byChannel.get(ch))
 }
 
 /**
@@ -335,7 +315,7 @@ export function createDevice(data: any) {
       enc(data.ipAddress), data.deviceType || 'generic', data.connectionType ?? null, now, now, nameHash)
 
     // FK 即时校验：主行先行，通道行随后；D-09 滑落收尾（同一事务原子）
-    const nodes = resolveChannelNodes(data, undefined, 'create')
+    const nodes = resolveChannelNodes(data)
     if (nodes.length > 0) applyChannelNodes(db, id, nodes, now)
     enforceDefaultChannel(db, id, now)
   })
@@ -398,11 +378,9 @@ export function updateDevice(id: string, data: any) {
       ).get(newNameHash, id) as any
       if (conflict) throw deviceNameConflictError(conflict)
     }
-    // 过渡 shim 的通道解析锚点：data.connectionType 缺场时按库内现存默认通道映射（主 UPDATE 前）
-    const before = db.prepare('SELECT connection_type FROM devices WHERE id = ?').get(id) as any
     db.prepare(`UPDATE devices SET ${sets.join(', ')} WHERE id = ?`).run(...vals)
-    // Phase 36（36-02）：通道节 UPSERT/DELETE（channels DTO 或平铺 shim）+ D-09 滑落（原子）
-    const nodes = resolveChannelNodes(data, before?.connection_type ?? null, 'update')
+    // Phase 36（36-04）：通道节 UPSERT/DELETE（channels 节唯一入口，缺场零通道写）+ D-09 滑落（原子）
+    const nodes = resolveChannelNodes(data)
     if (nodes.length > 0) applyChannelNodes(db, id, nodes, now)
     const fallback = enforceDefaultChannel(db, id, now)
     if (fallback.changed) cascadeValues.connectionType = fallback.value

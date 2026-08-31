@@ -9,8 +9,8 @@ import Database from 'better-sqlite3'
  * - b) D-09 滑落：删默认通道按固定序滑到下一条已配 / 全删置 NULL；D-07 默认通道必为已配
  *      （显式指向未配置通道被滑回）；拓扑级联以滑落终值刷新（Pitfall 9 快照跟随）
  * - c) 字段级「留空=不修改」（H-1）：凭证字段 !== undefined 才写，单字段更新其余保留
- * - d) 过渡 shim：旧平铺入参按 connectionType 映射单通道节走同一 UPSERT（36-04 移除）；
- *      纯改名等操作零通道写
+ * - d) shim 移除（36-04）：缺场 channels 零通道写——create 零行零默认 / 纯改名不清行 /
+ *      旧平铺凭证入参被忽略
  * - e) H-1 递归脱敏红线：maskDeviceSecrets 后投影 JSON 无明文凭证，
  *      channels[*].password / sshKeyContent 匹配 ****尾4，resolution 明文保留（非脱敏清单）
  *
@@ -245,24 +245,31 @@ describe('device 通道写路径 + 投影红线（36-02）', () => {
     expect(decField(ssh.port_enc, TEST_MK)).toBe('2222')
   })
 
-  it('d) 过渡 shim：平铺入参按 connectionType 映射单通道节走同一 UPSERT；纯改名零通道写', () => {
-    // create shim：默认通道 ssh 行落库（凭证空——旧行为 connectionType 决定通道存在性）
-    const dev: any = createDevice({ name: 'Shim-R', ipAddress: '10.0.0.4', connectionType: 'ssh' })
-    expect(rowChannels(dev.id)).toEqual(['ssh'])
+  it('d) shim 移除后（36-04）：缺场 channels 零通道写——create 零行零默认，纯改名不清行，旧平铺凭证入参被忽略', () => {
+    // create 无 channels → 子表零行 + connection_type NULL（零通道设备合法，D-02 兜底）
+    const dev: any = createDevice({ name: 'Shim-R', ipAddress: '10.0.0.4' })
+    expect(rowChannels(dev.id)).toEqual([])
+    expect(connType(dev.id)).toBeNull()
+    expect(dev.channels).toHaveLength(0)
 
-    // update shim：connectionType + 在场平铺凭证字段 → telnet 行 UPSERT 落库
-    updateDevice(dev.id, { connectionType: 'telnet', username: 'u', password: 'p' })
-    expect(rowChannels(dev.id)).toEqual(['ssh', 'telnet'])
-    const telnet = credRow(dev.id, 'telnet')
-    expect(decField(telnet.username_enc, TEST_MK)).toBe('u')
-    expect(decField(telnet.password_enc, TEST_MK)).toBe('p')
+    // channels 节正常入口 → telnet 行落库 + D-09 滑落补默认
+    updateDevice(dev.id, { channels: [{ channel: 'telnet', enabled: true, username: 'u', password: 'p' }] })
+    expect(rowChannels(dev.id)).toEqual(['telnet'])
     expect(connType(dev.id)).toBe('telnet')
 
-    // 纯改名（无平铺凭证字段）→ 不产生通道写、不清既有行、凭证不变
+    // 纯改名（无 channels）→ 不产生通道写、不清既有行、凭证不变
     updateDevice(dev.id, { name: 'Shim-R2' })
-    expect(rowChannels(dev.id)).toEqual(['ssh', 'telnet'])
+    expect(rowChannels(dev.id)).toEqual(['telnet'])
     expect(decField(credRow(dev.id, 'telnet').username_enc, TEST_MK)).toBe('u')
     expect(decField(credRow(dev.id, 'telnet').password_enc, TEST_MK)).toBe('p')
+
+    // 旧平铺凭证入参（无 channels）不再被消费——凭证字段被忽略零通道写；
+    // connectionType 仍写（非凭证字段）但 D-07 滑落收回集合内
+    updateDevice(dev.id, { connectionType: 'ssh', port: 22, username: 'legacy', password: 'legacy' })
+    expect(rowChannels(dev.id)).toEqual(['telnet'])
+    expect(decField(credRow(dev.id, 'telnet').username_enc, TEST_MK)).toBe('u')
+    expect(decField(credRow(dev.id, 'telnet').password_enc, TEST_MK)).toBe('p')
+    expect(connType(dev.id)).toBe('telnet')
   })
 
   it('e) H-1 递归脱敏红线：投影 JSON 无明文凭证，channels[*] ****尾4，resolution 明文保留', () => {
