@@ -661,3 +661,51 @@ describe('34 review CR-02：tool_result 扩展字段逐字段校验 + resolveSta
     expect(legacy.dotState).toBe('failed')
   })
 })
+
+// ---------- Phase 37（37-03，D-05/D-06）：unqueriedSources meta 校验 ----------
+// 智能补查模式下 main 侧 computeUnqueriedSources（37-02，TIER_RETRIEVAL_PLAN 档位矩阵口径：
+// 该档必查 − 实际查过）产出 meta.unqueriedSources → renderer 灰「未查询：源」小标签数据源。
+// 此处锁死 parseAgentMeta 校验契约（照 backfillNotes 分支模板，T-37-09）：
+// - 合法（非空全字符串数组）→ 进 meta（逐源渲染数据源）
+// - 空数组 → 不进 meta（零未查源不渲染契约，37-02 产出端「非空才写」同语义）
+// - 混入非字符串 → 整字段丢弃（fail-closed 整组拒绝，不部分采纳）
+// - 缺场（legacy 消息）→ meta 无该键，其余字段解析不受影响
+describe('37-03 D-05/D-06：unqueriedSources fail-closed 校验', () => {
+  it('Test 1: 合法数组（各元素字符串）——meta.unqueriedSources 深等于该数组', () => {
+    const r = parseAiReply(JSON.stringify({
+      type: 'agent_answer', content: 'c', sources: [], unqueriedSources: ['kb', 'device'],
+    }))
+    expect(r.kind).toBe('answer')
+    if (r.kind !== 'answer') return
+    expect(r.agentMeta).toEqual({ sources: [], unqueriedSources: ['kb', 'device'] })
+  })
+
+  it('Test 2: 空数组——meta 无 unqueriedSources 键（零未查源不渲染契约，37-02 产出端同语义）', () => {
+    const r = parseAiReply(JSON.stringify({
+      type: 'agent_answer', content: 'c', sources: [], tier: 'knowledge', unqueriedSources: [],
+    }))
+    expect(r.kind).toBe('answer')
+    if (r.kind !== 'answer') return
+    expect(r.agentMeta).toEqual({ sources: [], tier: 'knowledge' })
+    expect(r.agentMeta).not.toHaveProperty('unqueriedSources')
+  })
+
+  it('Test 3: 混入非字符串（[\'kb\', 123]）——整字段丢弃不部分采纳（fail-closed 整组拒绝）', () => {
+    const r = parseAiReply(JSON.stringify({
+      type: 'agent_answer', content: 'c', sources: [], tier: 'configQuery', unqueriedSources: ['kb', 123],
+    }))
+    expect(r.kind).toBe('answer')
+    if (r.kind !== 'answer') return
+    expect(r.agentMeta).toEqual({ sources: [], tier: 'configQuery' })
+    expect(r.agentMeta).not.toHaveProperty('unqueriedSources')
+  })
+
+  it('Test 4: 缺场（legacy 消息）——meta 无该键，其余字段解析不受影响', () => {
+    const r = parseAiReply(JSON.stringify({
+      type: 'agent_answer', content: 'c', sources: [], tier: 'troubleshoot', noRealtimeData: true,
+    }))
+    expect(r.kind).toBe('answer')
+    if (r.kind !== 'answer') return
+    expect(r.agentMeta).toEqual({ sources: [], tier: 'troubleshoot', noRealtimeData: true })
+  })
+})
