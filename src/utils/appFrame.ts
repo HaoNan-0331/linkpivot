@@ -23,12 +23,15 @@ export interface PersistedFrame {
  * 宽度边界钳制（D-06 画布优先边界）：
  * - 上限 = max(240, floor(frameWidth × 0.4))——窗口 < 600px 时 40% < min，min 胜
  *   （保证展开永远有意义，边界冲突在纯函数内消化）；
- * - 输入非有限值（NaN/Infinity，localStorage 载荷被篡改场景）回默认宽 320；
+ * - 任一输入非有限值（NaN/Infinity：width 见 localStorage 载荷被篡改场景；
+ *   frameWidth 见未来外部调用方注入（D-08 预留接口）不可控）一律回默认宽 320——
+ *   否则 NaN 经 Math.min 透传会一路写进 store、inline style 与持久化载荷
+ *   （"width":null，35-REVIEW WR-02）；
  * - 小数宽度四舍五入取整（拖拽像素语义）。
  */
 export function clampDetailsWidth(width: number, frameWidth: number): number {
+  if (!Number.isFinite(width) || !Number.isFinite(frameWidth)) return DETAILS_DEFAULT_WIDTH
   const max = Math.max(DETAILS_MIN_WIDTH, Math.floor(frameWidth * DETAILS_MAX_RATIO))
-  if (!Number.isFinite(width)) return DETAILS_DEFAULT_WIDTH
   return Math.min(max, Math.max(DETAILS_MIN_WIDTH, Math.round(width)))
 }
 

@@ -27,6 +27,14 @@ describe('Phase 35 / UI-07 appFrame 纯函数', () => {
       expect(clampDetailsWidth(NaN, 1920)).toBe(320)
     })
 
+    it('frameWidth 非有限值（NaN/Infinity）同样回退 320——上限计算不产生 NaN 透传（WR-02）', () => {
+      // 修前 NaN 上限经 Math.max/Math.min 透传：clampDetailsWidth(400, NaN) 返回 NaN
+      // → store/inline style width:NaNpx 塌宽 + persist 序列化 "width":null
+      expect(clampDetailsWidth(400, NaN)).toBe(320)
+      expect(clampDetailsWidth(400, Number.POSITIVE_INFINITY)).toBe(320)
+      expect(clampDetailsWidth(NaN, NaN)).toBe(320)
+    })
+
     it('窗口 500 时 40%=200 < min 240，min 胜（展开永远有意义）', () => {
       expect(clampDetailsWidth(500, 500)).toBe(240)
     })
