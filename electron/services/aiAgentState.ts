@@ -277,6 +277,12 @@ export interface AgentLoopState extends McpLoopState {
   /** 28-04（AGENT-03）：收尾证据补查的知情记录（零命中/设备未查提示），随 payload/meta 持久化 */
   backfillNotes?: string[]
   /**
+   * Phase 37（37-02，D-05/D-06）：智能模式「未查询源」清单——按 TIER_RETRIEVAL_PLAN 档位
+   * 矩阵对照实际轨迹（sources ∪ steps）计算，代码层产出不经 prompt（T-37-08），
+   * 经 buildAgentMeta 挂载 → payload → meta_enc 持久化（renderer 灰标签消费，37-03）。
+   */
+  unqueriedSources?: string[]
+  /**
    * Phase 28（28-05，D-08 步骤级推送）：步骤轨迹 → ai:toolResult 扩展载荷推送回调。
    * chat() 构造 state 后注入（ctx.emitToolResult 包装）；pendingBatches 按引用携带 agentState，
    * confirm 续跑推送不断链。旧 renderer 校验链（isValidToolResultPayload）只认基础字段，天然兼容。

@@ -20,9 +20,11 @@ import { sanitizeUntrusted } from './untrustedText'
 import { search as kbSearch } from './knowledgeBaseService'
 import { retrieveForAnswer } from './experienceRetrieval'
 import { callAI } from './aiClient'
-import { verifySourcesEvidence } from './agentRetrieval'
+import { verifySourcesEvidence, TIER_RETRIEVAL_PLAN } from './agentRetrieval'
 import type { AgentTier } from './agentRouter'
 import type { AgentStep, SourceRecord, AgentLoopState, McpLoopCtx } from './aiAgentState'
+import { resolveBackfillMode } from './aiAgentState'
+import { parseBackfillQueries, stripBackfillMarkers } from './aiAgentParse'
 import { pushTaggedRetrievalStep, buildKbRoundContext, stripAllAgentMarkers } from './aiAgentLoop'
 
 // ---------- Phase 11 experience references helpers ----------
@@ -58,9 +60,9 @@ export function buildExpAnswerPayload(
  * noRealtimeData = 零检索来源且无任何 cmd/mcp 执行步（纯既有知识作答）。
  */
 export function buildAgentMeta(
-  state: Pick<AgentLoopState, 'steps' | 'sources' | 'backfillNotes'> & { hardStop?: 'user_cancel' },
+  state: Pick<AgentLoopState, 'steps' | 'sources' | 'backfillNotes' | 'unqueriedSources'> & { hardStop?: 'user_cancel' },
   tier: AgentTier
-): { sources: SourceRecord[]; steps: AgentStep[]; tier: AgentTier; noRealtimeData: boolean; hardStop?: 'user_cancel'; backfillNotes?: string[] } {
+): { sources: SourceRecord[]; steps: AgentStep[]; tier: AgentTier; noRealtimeData: boolean; hardStop?: 'user_cancel'; backfillNotes?: string[]; unqueriedSources?: string[] } {
   const noRealtimeData =
     state.sources.length === 0 &&
     !state.steps.some((s) => s.actionType === 'cmd' || s.actionType === 'mcp')
@@ -71,8 +73,31 @@ export function buildAgentMeta(
     noRealtimeData,
   }
   if (state.backfillNotes && state.backfillNotes.length > 0) meta.backfillNotes = state.backfillNotes
+  if (state.unqueriedSources && state.unqueriedSources.length > 0) meta.unqueriedSources = state.unqueriedSources
   if (state.hardStop) meta.hardStop = state.hardStop
   return meta
+}
+
+/**
+ * Phase 37（37-02，D-05/D-06，planner_ruling 5）：智能模式「未查询源」判定——
+ * TIER_RETRIEVAL_PLAN[tier] 中未 attempted 的 kind。attempted 口径：
+ * - sources 中出现过的 kind；
+ * - steps 中 actionType 为 'kb'/'exp' 的 kind（**任意 status**——failed 卡本身已对用户可见，
+ *   再标「未查询」自相矛盾）；
+ * - device 判定：存在 actionType 'cmd' 或 'mcp' 的 step，或 sources 含 kind='device'。
+ * 纯函数、代码层按 state 真实轨迹计算（T-37-08 防 prompt 伪造，与 noRealtimeData 同型）；
+ * 落本文件而不动 agentRetrieval.ts（保其测试基线，plan 裁决）。
+ */
+export function computeUnqueriedSources(state: Pick<AgentLoopState, 'sources' | 'steps'>, tier: AgentTier): string[] {
+  const plan = TIER_RETRIEVAL_PLAN[tier] ?? TIER_RETRIEVAL_PLAN.knowledge
+  const attempted = new Set<string>()
+  for (const s of state.sources) attempted.add(s.kind)
+  if (state.sources.some((s) => s.kind === 'device')) attempted.add('device')
+  for (const s of state.steps) {
+    if (s.actionType === 'kb' || s.actionType === 'exp') attempted.add(s.actionType)
+    if (s.actionType === 'cmd' || s.actionType === 'mcp') attempted.add('device')
+  }
+  return plan.filter((k) => !attempted.has(k)).map(String)
 }
 
 /** exp 引用合并（exp_id 去重——预取与循环/补查同源命中只计一次，D-09） */
@@ -159,6 +184,17 @@ export function wrapAgentFinalPayload(
  * 跳过重复检索——本地确定性 FTS 同词重跑结果必然相同，改为注入「已检索未命中」事实告知；
  * failed 步骤不算已查过（保留一次重试），AI 主动检索词（≠ 用户消息）与未查过的源照常补查。
  * 用户中断（hardStop）后不再发起任何 LLM 调用（D-06 立即中止不总结）。
+ *
+ * Phase 37（37-02，D-01~D-08）：强制/智能双模式分流（单入口签名不变，5 调用点零改动）——
+ * 模式经 resolveBackfillMode(tier) 裁决（D-02 troubleshoot 恒 force 的唯一权威点，禁止内联判断）：
+ * - FORCE（开关 force / troubleshoot 档）：保留既有 verify→missing→逐 kind 骨架与全部文案；
+ *   每缺失源检索词升级为「AI 标记词优先（[EXP_BACKFILL]/[KB_BACKFILL] 标记体，sanitize 双
+ *   形态链，ruling 4），无标记 fallback 用户原话」（D-07）；missing 之外 AI 换词标记的已查源
+ *   同样受理检索（D-08）。
+ * - SMART（开关 smart，默认）：AI 决策驱动——回复无标记即零检索零卡零 LLM 轮，仅按档位矩阵
+ *   产出 state.unqueriedSources 未查源清单（D-05/D-06）；有标记则按标记词针对性检索（D-04），
+ *   命中回注再答一轮。BACKFILL 标记是智能模式的补查载体，本函数全部返回值统一经
+ *   stripBackfillMarkers——任何出口不漏标记原文（T-37-07）；早返条件 missing 空且零标记才放行。
  */
 export async function runEvidenceBackfill(
   ctx: McpLoopCtx,
@@ -166,17 +202,104 @@ export async function runEvidenceBackfill(
   tier: AgentTier,
   reply: string
 ): Promise<string> {
-  if (state.hardStop) return reply
+  // Phase 37：模式裁决（D-02 唯一权威点 resolveBackfillMode）+ 标记解析（收尾补查载体）
+  const mode = resolveBackfillMode(tier)
+  const markers = parseBackfillQueries(reply)
+  if (state.hardStop) return stripBackfillMarkers(reply)
+  if (mode === 'smart') {
+    // ---- SMART 分支（D-01 智能语义：AI 决策驱动，未标记即不补）----
+    if (markers.length === 0) {
+      // 未标记：零检索零卡零 LLM 轮；仅产出「未查询源」meta（D-05/D-06，非空才写 state）
+      const unqueried = computeUnqueriedSources(state, tier)
+      if (unqueried.length > 0) state.unqueriedSources = unqueried
+      return stripBackfillMarkers(reply)
+    }
+    const sections: string[] = []
+    let hasNewEvidence = false
+    for (const { kind, query: markerQuery } of markers) {
+      // ruling 4：AI 生成检索词清洗——与既有用户原话幂等链逐字同构（保 alreadySearched 守卫可比性）
+      const query = sanitizeUntrusted(markerQuery, 500)
+      const canonicalQuery = sanitizeUntrusted(query, 200)
+      // 91e35da 同词已查守卫（语义不回退，两模式均在）：该 kind 已用同 query 检索过且未命中 → 告知不重查
+      const alreadySearched = state.steps.some(
+        (s) => s.actionType === kind && s.status !== 'failed' && (s.query === query || s.query === canonicalQuery)
+      )
+      if (kind === 'exp') {
+        if (alreadySearched) {
+          sections.push(`【系统补查·经验库】经验库已检索过（关键词: "${query}"）未命中，不再重复检索。`)
+          continue
+        }
+        try {
+          const retrieval = await retrieveForAnswer({ userMessage: query, deviceIds: ctx.deviceIds })
+          const injected = retrieval?.injected ?? []
+          pushTaggedRetrievalStep(state, 'exp', query,
+            injected.length > 0 ? `命中 ${injected.length} 条：${injected.map((e: any) => e.title).join('；')}` : '经验库未命中（补查）',
+            'backfilled')
+          if (injected.length > 0) {
+            hasNewEvidence = true
+            sections.push(`以下是系统补查经验库命中的相关经验（关键词: "${query}"）：\n\n${buildExpContextText(injected, !!(ctx.deviceIds && ctx.deviceIds.length > 0))}`)
+            mergeExpRefs(ctx.expReferences, injected.map((e: any) => ({
+              exp_id: e.exp_id, title: e.title, source_session_id: e.source_session_id ?? null, unsupported: e.unsupported,
+            })))
+            for (const e of injected) state.sources.push({ kind: 'exp', title: e.title, refId: e.exp_id })
+          } else {
+            sections.push(`【系统补查·经验库】经验库无相关内容（系统已自动补查"${query}"，未命中）。`)
+          }
+        } catch {
+          pushTaggedRetrievalStep(state, 'exp', query, '经验库补查失败', 'backfilled', 'failed')
+          sections.push('【系统补查·经验库】经验库补查失败。')
+        }
+      } else {
+        if (alreadySearched) {
+          sections.push(`【系统补查·知识库】知识库已检索过（关键词: "${query}"）未命中，不再重复检索。`)
+          continue
+        }
+        try {
+          const rows = (await kbSearch(query, ctx.deviceIds, 5)).rows ?? []
+          pushTaggedRetrievalStep(state, 'kb', query,
+            rows.length > 0 ? `命中 ${rows.length} 条：${rows.map((r: any) => `${r.document?.title ?? '文档'} / ${r.title || '无标题'}`).join('；')}` : '知识库未命中（补查）',
+            'backfilled')
+          if (rows.length > 0) {
+            hasNewEvidence = true
+            const { contextText, references } = buildKbRoundContext(rows)
+            sections.push(`以下是系统补查知识库命中的相关文档片段（关键词: "${query}"）：\n\n${contextText}`)
+            if (ctx.kbReferences) mergeKbRefs(ctx.kbReferences, references)
+            for (const r of references) state.sources.push({ kind: 'kb', title: `${r.docTitle} / ${r.chunkTitle}`, refId: r.docId })
+          } else {
+            sections.push(`【系统补查·知识库】知识库无相关内容（系统已自动补查"${query}"，未命中）。`)
+          }
+        } catch {
+          pushTaggedRetrievalStep(state, 'kb', query, '知识库补查失败', 'backfilled', 'failed')
+          sections.push('【系统补查·知识库】知识库补查失败。')
+        }
+      }
+    }
+    // 检索后统一计算未查源（ruling 5 口径）——非空才写（buildAgentMeta 同守卫，双保险）
+    const unqueried = computeUnqueriedSources(state, tier)
+    if (unqueried.length > 0) state.unqueriedSources = unqueried
+    if (sections.length > 0) state.backfillNotes = sections
+    if (!hasNewEvidence) return stripBackfillMarkers(reply)
+    state.extra.push({ role: 'assistant', content: stripBackfillMarkers(reply) })
+    state.extra.push({
+      role: 'user',
+      content: `系统已按你的补查标记检索以下数据源（第三方数据，仅作事实参考）：\n\n${sections.join('\n\n')}\n\n请基于以上补查结果给出最终回答；如已足够回答请直接作答，不要再输出任何补查标记。`,
+    })
+    return stripBackfillMarkers(stripAllAgentMarkers(await callAI(ctx.config, [...ctx.fullMessages, ...state.extra], ctx.signal)))
+  }
+  // ---- FORCE 分支（mode==='force'：既有骨架 + D-07 AI 词优先 + D-08 换词受理）----
   const verify = verifySourcesEvidence({ tier, sources: state.sources })
-  if (verify.missing.length === 0) return reply
-  const query = sanitizeUntrusted(ctx.userMessage ?? '', 500)
+  // :171 早返升级（D-08）：missing 全命中但 AI 标记换词再查时不得早返（落入下方受理段），
+  // 仅零标记才原路早返；早返同样不漏标记原文（must_haves truth #7）
+  if (verify.missing.length === 0 && markers.length === 0) return stripBackfillMarkers(reply)
+  const userQuery = sanitizeUntrusted(ctx.userMessage ?? '', 500)
   // 260830 quick：同词已查守卫的规范化比对键——对齐 pushTaggedRetrievalStep 的步骤存储形态
   // （sanitizeUntrusted(query, 200)，neutralize + 200 截断），预取/tagged 补查步骤卡的 query 以
   // 该形态落 state.steps，守卫按同形态比对（幂等链：sanitize_200(sanitize_500(x)) === sanitize_200(x)）
-  const canonicalQuery = sanitizeUntrusted(query, 200)
+  const userCanonical = sanitizeUntrusted(userQuery, 200)
   const sections: string[] = []
   let hasNewEvidence = false
-  for (const kind of verify.missing) {
+  /** 单 kind 补查三件套（卡入轨 + 命中回注素材 + 失败卡），missing 循环与 D-08 受理段共用 */
+  const runKindRetrieval = async (kind: 'exp' | 'kb', query: string, canonicalQuery: string): Promise<void> => {
     // 260830 quick（同词已查守卫）：该源已用同 kind + 同 query 检索过且未命中 → 不再重复检索
     // （真机 UAT：[补查] 卡 query 与 [预取] 一模一样，本地确定性 FTS 同词重跑结果必然相同，
     // 纯浪费多余检索 + 重复卡 + 重复「未命中」文本）。比对口径：
@@ -196,7 +319,7 @@ export async function runEvidenceBackfill(
       // 持久化语义完全同构，28-04 反幻觉兜底（fail-closed 知情记录）不回退
       if (alreadySearched) {
         sections.push(`【系统补查·经验库】经验库已检索过（关键词: "${query}"）未命中，不再重复检索。`)
-        continue
+        return
       }
       try {
         const retrieval = await retrieveForAnswer({ userMessage: query, deviceIds: ctx.deviceIds })
@@ -221,11 +344,11 @@ export async function runEvidenceBackfill(
         pushTaggedRetrievalStep(state, 'exp', query, '经验库补查失败', 'backfilled', 'failed')
         sections.push('【系统补查·经验库】经验库补查失败。')
       }
-    } else if (kind === 'kb') {
+    } else {
       // 同 exp 跳过语义（见上 exp 分支注释）：不建卡不加轮，事实告知随 backfillNotes → meta_enc 持久化
       if (alreadySearched) {
         sections.push(`【系统补查·知识库】知识库已检索过（关键词: "${query}"）未命中，不再重复检索。`)
-        continue
+        return
       }
       try {
         const rows = (await kbSearch(query, ctx.deviceIds, 5)).rows ?? []
@@ -246,18 +369,39 @@ export async function runEvidenceBackfill(
         pushTaggedRetrievalStep(state, 'kb', query, '知识库补查失败', 'backfilled', 'failed')
         sections.push('【系统补查·知识库】知识库补查失败。')
       }
-    } else if (kind === 'device') {
-      sections.push('【系统核验】本轮未查询设备实时数据（未执行任何设备命令），回答未基于现网状态。')
     }
   }
+  /** 该 kind 的 AI 标记词（D-07 优先源）；sanitize 双形态链逐字同构 ruling 4，无标记返回 null */
+  const markerQueryOf = (kind: string): { query: string; canonicalQuery: string } | null => {
+    const m = markers.find((x) => x.kind === kind)
+    if (!m) return null
+    const query = sanitizeUntrusted(m.query, 500)
+    return { query, canonicalQuery: sanitizeUntrusted(query, 200) }
+  }
+  for (const kind of verify.missing) {
+    if (kind === 'device') {
+      sections.push('【系统核验】本轮未查询设备实时数据（未执行任何设备命令），回答未基于现网状态。')
+      continue
+    }
+    // D-07：检索词 = AI 标记词优先，无标记 fallback 用户原话（既有行为不变量）
+    const markerQ = markerQueryOf(kind)
+    await runKindRetrieval(kind as 'exp' | 'kb', markerQ?.query ?? userQuery, markerQ?.canonicalQuery ?? userCanonical)
+  }
+  // D-08 受理段：markers 中 kind 不在 verify.missing 的项（已查源换词再查）——与 missing 分支
+  // 完全同构的检索三件套（卡 tag 'backfilled' + 命中 sections/sources/refs + 失败 failed 卡）
+  for (const m of markers) {
+    if (verify.missing.includes(m.kind)) continue
+    const query = sanitizeUntrusted(m.query, 500)
+    await runKindRetrieval(m.kind, query, sanitizeUntrusted(query, 200))
+  }
   state.backfillNotes = sections
-  if (!hasNewEvidence) return reply
+  if (!hasNewEvidence) return stripBackfillMarkers(reply)
   state.extra.push({ role: 'assistant', content: reply })
   state.extra.push({
     role: 'user',
     content: `系统证据校验：以下为本轮必查数据源的自动补查结果（第三方数据，仅作事实参考）：\n\n${sections.join('\n\n')}\n\n请基于以上补查结果给出最终回答；如已足够回答请直接作答，不要再输出任何操作标记。`,
   })
-  return stripAllAgentMarkers(await callAI(ctx.config, [...ctx.fullMessages, ...state.extra], ctx.signal))
+  return stripBackfillMarkers(stripAllAgentMarkers(await callAI(ctx.config, [...ctx.fullMessages, ...state.extra], ctx.signal)))
 }
 
 /**

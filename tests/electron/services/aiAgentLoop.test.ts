@@ -127,6 +127,12 @@ function makeDb(execMode: string): Database.Database {
       vision_base_url_enc TEXT, vision_api_key_enc TEXT, vision_model_enc TEXT,
       exec_mode TEXT DEFAULT 'confirm', mcp_max_rounds INTEGER DEFAULT 5,
       agent_max_rounds INTEGER, agent_burnout_count INTEGER, agent_cooldown_secs INTEGER,
+      -- Phase 37（37-02 Task 2g，Rule 3 同型）：v33 两列补列并置 **legacy 值**（force + 预取开）——
+      -- 本文件全部用例写于 37-02 双模式/预取开关落地前（无条件强制补查 + 无条件预取），
+      -- 默认 smart/关会使补查与预取断言红；置 legacy 保既有行为断言零改（新双模式矩阵在
+      -- aiRetrievalBackfill.test.ts 独立覆盖）
+      retrieval_prefetch_enabled INTEGER NOT NULL DEFAULT 1,
+      retrieval_backfill_mode TEXT NOT NULL DEFAULT 'force' CHECK(retrieval_backfill_mode IN ('force','smart')),
       created_at TEXT DEFAULT (datetime('now','localtime'))
     );
     CREATE TABLE command_whitelist (id TEXT PRIMARY KEY, pattern TEXT NOT NULL UNIQUE);
