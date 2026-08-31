@@ -75,7 +75,7 @@ describe('v30 迁移幂等（T-30-02）', () => {
     const db = makeDb()
     expect(() => v30(db)).not.toThrow() // 第二次重复执行
     expect(db.pragma('user_version', { simple: true })).toBe(30)
-    expect(MIGRATION_HEAD).toBe(31) // 30-05 v31 推进
+    expect(MIGRATION_HEAD).toBe(32) // 36-01 v32 推进
     db.close()
   })
 })

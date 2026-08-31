@@ -130,7 +130,7 @@ describe('aiExecLogger guard 审计列（27-02）', () => {
     const cols = (db.prepare('PRAGMA table_info(ai_exec_logs)').all() as Array<{ name: string }>).map((r) => r.name)
     expect(cols).toContain('guard_hits')
     expect(cols).toContain('guard_outcome')
-    expect(MIGRATION_HEAD).toBe(31) // 30-05 v31 推进（v25 自身 user_version 断言不变）
+    expect(MIGRATION_HEAD).toBe(32) // 36-01 v32 推进（v25 自身 user_version 断言不变）
     db.close()
   })
 

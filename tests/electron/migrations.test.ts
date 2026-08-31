@@ -20,7 +20,7 @@ import Database from 'better-sqlite3'
  * 安全域：内存库（`:memory:`）无落盘；只跑 v16 本体不碰 runMigrations/system log。
  */
 
-import { v11, v15, v16, v17, v19, v20, v21, v22, v23, v24, v26, v27, v28, v31, MIGRATION_HEAD, MIGRATIONS } from '../../electron/database/migrations'
+import { v11, v15, v16, v17, v19, v20, v21, v22, v23, v24, v26, v27, v28, v31, v32, MIGRATION_HEAD, MIGRATIONS } from '../../electron/database/migrations'
 import { encField } from '../../electron/utils/crypto'
 import {
   appendLogAiResponse,
@@ -551,7 +551,7 @@ describe('v22/v23/v24 devices.name_hash 三段式', () => {
   })
 
   it('d) MIGRATION_HEAD=24、注册表含 v22/v23/v24、init.ts fresh DDL 含 name_hash', () => {
-    expect(MIGRATION_HEAD).toBe(31) // 30-05 v31（ai_config 升级压制两列）推进
+    expect(MIGRATION_HEAD).toBe(32) // 36-01 v32（device_credentials 凭证子表）推进
     const versions = MIGRATIONS.map((m) => m.version)
     expect(versions).toContain(22)
     expect(versions).toContain(23)
@@ -690,7 +690,7 @@ describe('v27 mcp_packages + 设备级 env 列', () => {
   })
 
   it('d) MIGRATION_HEAD=28、注册表含 v27、init.ts fresh DDL 含三处结构', () => {
-    expect(MIGRATION_HEAD).toBe(31) // 30-05 v31 推进
+    expect(MIGRATION_HEAD).toBe(32) // 36-01 v32 推进
     expect(MIGRATIONS.map((m) => m.version)).toContain(27)
 
     const root = path.resolve(__dirname, '../..')
@@ -862,7 +862,7 @@ describe('v29 mcp_packages.env_meta + mcp_tools.package_id 借存迁移', () => 
   })
 
   it('d) MIGRATION_HEAD=29、注册表含 v29、init.ts fresh DDL 双列并存', () => {
-    expect(MIGRATION_HEAD).toBe(31) // 30-05 v31 推进
+    expect(MIGRATION_HEAD).toBe(32) // 36-01 v32 推进
     expect(MIGRATIONS.map((m) => m.version)).toContain(29)
 
     const root = path.resolve(__dirname, '../..')
@@ -1012,7 +1012,7 @@ describe('v28 mcp_configs.type CHECK widen package', () => {
     const initSrc = fs.readFileSync(path.join(root, 'electron/database/init.ts'), 'utf-8')
     const ddl = initSrc.match(/CREATE TABLE IF NOT EXISTS mcp_configs \(([\s\S]*?)\);/)!
     expect(ddl[1]).toContain("CHECK(type IN ('stdio','http','package'))")
-    expect(MIGRATION_HEAD).toBe(31) // 30-05 v31 推进
+    expect(MIGRATION_HEAD).toBe(32) // 36-01 v32 推进
     expect(MIGRATIONS.map((m) => m.version)).toContain(28)
   })
 })
@@ -1106,8 +1106,103 @@ describe('v31 ai_system_logs CHECK widen update（30-05 真机审计链路修复
   })
 
   it('d) MIGRATION_HEAD=31 且注册表含 v31', () => {
-    expect(MIGRATION_HEAD).toBe(31) // 30-05 v31（ai_system_logs CHECK widen update）推进
+    expect(MIGRATION_HEAD).toBe(32) // 36-01 v32（device_credentials 凭证子表）推进
     expect(MIGRATIONS.map((m) => m.version)).toContain(31)
+  })
+})
+
+/**
+ * Phase 36 Plan 36-01 Task 1 —— v32 迁移（device_credentials 凭证子表建表）真路径验证。
+ *
+ * 用例（plan 验收 a-c）：
+ *   a) 空库跑 v32 → sqlite_master 存在 device_credentials 且含 UNIQUE(device_id, channel) /
+ *      CHECK(channel IN (...)) / resolution TEXT 明文列，user_version=32
+ *   b) 幂等：重复跑 v32 第二次 no-op（不 throw），既有行保活，user_version 仍达 32
+ *   c) DDL 逐字比对：init.ts 与 migrations.ts v32 的 CREATE TABLE device_credentials
+ *      归一化（\s+→单空格）后相等（双路径一致红线，Pitfall 6）
+ */
+describe('v32 device_credentials 凭证子表（LOGIN-01/03）', () => {
+  function columnsOf(db: Database.Database, table: string): string[] {
+    return (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((r) => r.name)
+  }
+
+  it('a) 空库跑 v32 → 建表含 UNIQUE/CHECK/resolution 明文列 + 索引，user_version=32', () => {
+    const db = new Database(':memory:')
+    v32(db)
+
+    const sql = getTableSql(db, 'device_credentials')
+    expect(sql).toContain('UNIQUE(device_id, channel)')
+    expect(sql).toContain("CHECK(channel IN ('ssh','telnet','web','rdp'))")
+    // D-04 裁决补记：resolution 为明文列（无 _enc 后缀），置于 web_url_enc 之后
+    expect(sql).toContain('resolution TEXT')
+    expect(sql).not.toContain('resolution_enc')
+    expect(sql).toContain('FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE')
+
+    const cols = columnsOf(db, 'device_credentials')
+    expect(cols).toContain('port_enc')
+    expect(cols).toContain('username_enc')
+    expect(cols).toContain('password_enc')
+    expect(cols).toContain('ssh_key_path_enc')
+    expect(cols).toContain('ssh_key_content_enc')
+    expect(cols).toContain('web_url_enc')
+    expect(cols).toContain('resolution')
+
+    const idx = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_device_credentials_device'")
+      .get() as { name: string } | undefined
+    expect(idx?.name).toBe('idx_device_credentials_device')
+
+    expect(db.pragma('user_version', { simple: true })).toBe(32)
+    db.close()
+  })
+
+  it('b) 幂等：guard 命中第二次跑 v32 no-op（不 throw、行保活），user_version 仍达 32', () => {
+    const db = new Database(':memory:')
+    v32(db)
+    // 建最小 devices 表 + 父行满足 FK 目标（better-sqlite3 默认 foreign_keys=ON，DML 即校验）
+    db.exec(`
+      CREATE TABLE devices (id TEXT PRIMARY KEY, name TEXT);
+    `)
+    db.prepare("INSERT INTO devices (id, name) VALUES ('d1', 'dev-1')").run()
+    db.prepare(
+      "INSERT INTO device_credentials (id, device_id, channel, username_enc) VALUES ('c1', 'd1', 'ssh', 'enc-甲')"
+    ).run()
+
+    expect(() => v32(db)).not.toThrow() // guard 命中（表已存在）→ 建表段跳过
+
+    const row = db.prepare("SELECT username_enc FROM device_credentials WHERE id = 'c1'").get() as any
+    expect(row.username_enc).toBe('enc-甲') // 行保活（未重建表）
+    expect(db.prepare('SELECT COUNT(*) AS c FROM device_credentials').get()).toEqual({ c: 1 })
+    expect(db.pragma('user_version', { simple: true })).toBe(32) // Pitfall 7：guard 命中也推进
+    db.close()
+  })
+
+  it('c) DDL 逐字比对：init.ts 与 migrations.ts 的 device_credentials DDL 归一化后相等', () => {
+    const root = path.resolve(__dirname, '../..')
+    const migrationsSrc = fs.readFileSync(
+      path.join(root, 'electron/database/migrations.ts'),
+      'utf-8'
+    )
+    const initSrc = fs.readFileSync(path.join(root, 'electron/database/init.ts'), 'utf-8')
+
+    // 截取 v32 函数体再抽取，防误命中文件内其它 DDL
+    const v32Idx = migrationsSrc.indexOf('export const v32')
+    expect(v32Idx).toBeGreaterThanOrEqual(0)
+    const v32Src = migrationsSrc.slice(v32Idx, migrationsSrc.indexOf('export const MIGRATIONS'))
+
+    const extract = (src: string, table: string): string => {
+      const re = new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\(([\\s\\S]*?)\\);`)
+      const m = src.match(re)
+      expect(m, `${table} DDL 未在源文件命中`).toBeTruthy()
+      return m![1].replace(/\s+/g, ' ').trim()
+    }
+
+    expect(extract(v32Src, 'device_credentials')).toBe(extract(initSrc, 'device_credentials'))
+  })
+
+  it('d) MIGRATION_HEAD=32 且注册表含 v32', () => {
+    expect(MIGRATION_HEAD).toBe(32)
+    expect(MIGRATIONS.map((m) => m.version)).toContain(32)
   })
 })
 
@@ -1272,10 +1367,11 @@ describe('v11 ai_system_logs CHECK widen security 迁移', () => {
     expect(initDdl).toContain(expectedStatusCheck)
   })
 
-  it('4. MIGRATION_HEAD=31（注册完整性静态守卫，防 bump 漏改）', () => {
+  it('4. MIGRATION_HEAD=32（注册完整性静态守卫，防 bump 漏改）', () => {
     // Phase 18 18-02：v14；Phase 20 20-01：v15；Phase 21 21-01：v16；Phase 22/23 v17~v21；
-    // Phase 25 v22~v24；Phase 29 29-02 v27 / 29-09 v28；29.1 v29~v30；Phase 30 30-05：v31（当前 HEAD）
-    expect(MIGRATION_HEAD).toBe(31)
+    // Phase 25 v22~v24；Phase 29 29-02 v27 / 29-09 v28；29.1 v29~v30；Phase 30 30-05：v31；
+    // Phase 36 36-01：v32（device_credentials 凭证子表，当前 HEAD）
+    expect(MIGRATION_HEAD).toBe(32)
   })
 
   it('5. v13 双路径 DDL 一致：v13 ALTER 列定义串与 init.ts 三处 fresh-install DDL 特征串逐字一致', () => {

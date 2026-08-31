@@ -13,7 +13,7 @@ import { createSystemLog } from '../services/systemLog'
  *      在 createTables() 建好基线表之后、premigration 备份之后执行（D-06）。
  *      init.ts 不直接调用 runMigrations（单一调用点原则）。
  */
-export const MIGRATION_HEAD = 31
+export const MIGRATION_HEAD = 32
 
 interface MigrationStep {
   version: number
@@ -1116,6 +1116,57 @@ export const v31 = (db: Database.Database): void => {
   step()
 }
 
+/**
+ * v32：Phase 36（36-01，LOGIN-01/LOGIN-03）—— device_credentials 凭证子表建表。
+ *
+ * 单设备多协议通道凭证模型（一资产跨协议多通道登录）：每 (device_id, channel) 至多一套
+ * 凭证（UNIQUE 兜底），行存在 = 通道启用（D-04「填了即启用、清空即禁用」的落库语义）。
+ * 凭证列全 nullable（禁 NOT NULL、禁空串默认）——NULL（未配置）双态语义是读侧
+ * 「列存在性判据、禁试解密」的根基（v13:369-370 同款）。
+ * resolution 为 RDP 分辨率明文列（D-04 裁决补记 2026-08-31：非敏感不入 _enc、可空、
+ * 仅 RDP 通道语义有效，置于 web_url_enc 之后、created_at 之前）——无历史来源，回填不涉及。
+ *
+ * 历史行内凭证迁移不在此步：加密回填须在 MK 注入后执行（v10/v13/v23 caveat 铁律——
+ * 迁移失败中止启动 / 回填失败可重试不阻塞启动，职责分离），归
+ * deviceCredentialMigration.backfillDeviceCredentials post-MK 钩子（回填 + 六列
+ * ALTER DROP COLUMN 物理清理 D-08，36-01 Task 2）。
+ *
+ * 幂等守卫 D-14 第二形式：sqlite_master 查 device_credentials 表存在性（v8 查
+ * 'attrs_enc' 同构），不靠 user_version 判定（文件头红线）；guard 命中也推进
+ * user_version（v31 模式，Pitfall 7）。执行体包 db.transaction（throw 即 ROLLBACK）。
+ * DDL 与 init.ts fresh-install 块逐字一致（双路径一致红线，v7/v8/v13-v17 注释同款要求）。
+ */
+export const v32 = (db: Database.Database): void => {
+  const existing = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='device_credentials'")
+    .get() as { sql?: string } | undefined
+  const step = db.transaction(() => {
+    if (!existing) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS device_credentials (
+          id TEXT PRIMARY KEY,
+          device_id TEXT NOT NULL,
+          channel TEXT NOT NULL CHECK(channel IN ('ssh','telnet','web','rdp')),
+          port_enc TEXT,
+          username_enc TEXT,
+          password_enc TEXT,
+          ssh_key_path_enc TEXT,
+          ssh_key_content_enc TEXT,
+          web_url_enc TEXT,
+          resolution TEXT,
+          created_at TEXT DEFAULT (datetime('now','localtime')),
+          updated_at TEXT DEFAULT (datetime('now','localtime')),
+          UNIQUE(device_id, channel),
+          FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_device_credentials_device ON device_credentials(device_id);
+      `)
+    }
+    db.pragma('user_version = 32')
+  })
+  step()
+}
+
 export const MIGRATIONS: MigrationStep[] = [
   { version: 1, name: 'chat_history.session_id', run: v1 },
   { version: 2, name: 'ai_exec_logs.prompt_text+ai_response', run: v2 },
@@ -1148,6 +1199,7 @@ export const MIGRATIONS: MigrationStep[] = [
   { version: 29, name: 'mcp_packages.env_meta + mcp_tools.package_id 借存迁移（PKG-29.1-D04/D-05）', run: v29 },
   { version: 30, name: 'ai_config.update_skip_version+update_snooze_until（UPD-03/04 升级压制档位）', run: v30 },
   { version: 31, name: 'ai_system_logs CHECK widen update（30-05 真机实证 update 域审计链路修复）', run: v31 },
+  { version: 32, name: 'device_credentials 凭证子表（LOGIN-01/03）', run: v32 },
 ]
 
 /**

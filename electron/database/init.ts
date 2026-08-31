@@ -419,6 +419,32 @@ export function createTables() {
     CREATE INDEX IF NOT EXISTS idx_mcp_device_rel_mcp ON mcp_device_rel(mcp_config_id);
     CREATE INDEX IF NOT EXISTS idx_mcp_device_rel_device ON mcp_device_rel(device_id);
 
+    -- Phase 36（36-01 v32，LOGIN-01/03）：设备凭证子表（一资产跨协议多通道登录）。
+    -- 列定义与 migrations.ts v32 逐字一致（双路径一致红线，v7/v8/v13-v17 注释同款要求）。
+    -- 行存在 = 通道启用（每 (device_id, channel) 至多一套，UNIQUE 兜底）；凭证列全
+    -- nullable（NULL=未配置，v13 双态语义）；resolution 为 RDP 分辨率明文列
+    -- （D-04 裁决补记 2026-08-31：非敏感不入 _enc、可空、仅 RDP 通道语义有效）。
+    -- 历史行内凭证回填与 devices 六列物理清理（D-08）归 post-MK 钩子
+    -- （deviceCredentialMigration.backfillDeviceCredentials），不进本 DDL。
+
+    CREATE TABLE IF NOT EXISTS device_credentials (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      channel TEXT NOT NULL CHECK(channel IN ('ssh','telnet','web','rdp')),
+      port_enc TEXT,
+      username_enc TEXT,
+      password_enc TEXT,
+      ssh_key_path_enc TEXT,
+      ssh_key_content_enc TEXT,
+      web_url_enc TEXT,
+      resolution TEXT,
+      created_at TEXT DEFAULT (datetime('now','localtime')),
+      updated_at TEXT DEFAULT (datetime('now','localtime')),
+      UNIQUE(device_id, channel),
+      FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_device_credentials_device ON device_credentials(device_id);
+
     -- Phase 29（29-02 v27 / 29.1-01 v29）：MCP 包导入登记表。DDL 必须与 migrations.ts
     -- v27/v29 迁移后 DDL 逐字一致（双路径一致红线，v7/v8/v13-v17 注释同款要求）。
     -- manifest_json/fingerprint/fingerprint_json 存明文元数据（红线裁决：DB 只存明文
