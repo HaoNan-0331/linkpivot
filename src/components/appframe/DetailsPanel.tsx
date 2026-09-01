@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useAppFrameStore } from '@/stores/appFrameStore'
 import { useDeviceDetailStore } from '@/stores/deviceDetailStore'
-import DetailsPlaceholder from './DetailsPlaceholder'
+import DeviceDetailPanel from './DeviceDetailPanel'
 
 /**
  * DetailsPanel —— AppFrame details 栏容器（Phase 35 / UI-07，D-01 预留骨架）。
@@ -52,7 +52,10 @@ export default function DetailsPanel() {
       data-dragging={dragging}
       style={{ width: effectiveCollapsed ? 0 : width }}
     >
-      <DetailsPlaceholder />
+      {/* Phase 38（38-02）：35 期预留占位替换为 DeviceDetailPanel 详情内容——
+          无条件挂载（SC2 红线延续，无任何 {visible && ...} 短路）；折叠保挂载的活性证明
+          职责由面板内状态（逐通道测试结果）在目检中承接 */}
+      <DeviceDetailPanel />
     </aside>
   )
 }
