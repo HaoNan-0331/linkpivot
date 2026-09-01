@@ -482,21 +482,17 @@ export default function TopologyPage() {
     try {
       resetPreviewState()
       const topo = await window.api.topology.importJson(jsonStr)
-      // WR-07：同 handleNew，经 selectId 单一选中路径防双重加载
+      // WR-07 + WR-04（39 review）：经 fetchTopologies(topo.id) 单一选中/加载路径——
+      // loadTopology 内已完成 device.list 未纳管标志比对 + setNodes/setEdges（39-03 收敛），
+      // 不再二次拉取覆写（旧独立 setNodes 为收敛前遗留：多一轮 device:list IPC、多一次
+      // 全量节点替换渲染与一个 isLoadingRef guard 周期）
       await fetchTopologies(topo.id)
       setCurrentTopologyId(topo.id)
-      // 39-03：导入路径独立 setNodes 覆写（图数据进入 setNodes 的第二入口）——补同款
-      // 未纳管比对，否则导入后标志缺失至下次载图
-      const devices = await window.api.device.list().catch(() => [] as Device[])
-      if (topo.nodes) {
-        setNodes(markUnmanagedFlags(normalizeNodeSizes(topo.nodes), new Set(devices.map((d) => d.id))))
-      }
-      if (topo.edges) setEdges(topo.edges)
       message.success('导入成功')
     } catch {
       message.error('导入失败')
     }
-  }, [resetPreviewState, fetchTopologies, setNodes, setEdges])
+  }, [resetPreviewState, fetchTopologies])
 
   const handleExport = useCallback(async () => {
     if (!currentTopologyId) return
