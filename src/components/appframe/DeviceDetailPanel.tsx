@@ -29,11 +29,16 @@ import {
 /** D-07 四通道固定序（channels 投影本身已固定序，渲染遍历以全集四行为准——未配行显性呈现） */
 const ALL_CHANNELS: ConnectionType[] = ['ssh', 'telnet', 'web', 'rdp']
 
-/** D-07 端口补全表：descriptor 在 port 缺省（null）时按通道默认端口呈现 */
-const DEFAULT_PORTS: Record<ConnectionType, number> = {
+/**
+ * D-07 端口补全表：descriptor 在 port 缺省（null）时按通道默认端口呈现。
+ * WR-04（38 review）：web 不在此列——实际连接端口由 main 侧按 Web 站点协议判定
+ * （https→443 / http→80），而 SC3 脱敏边界下本组件不可知协议，臆测展示 443 与实际
+ * 连接行为不符（http 形态误示）；故 web 行 port null 时不补默认端口，descriptor 仅
+ * 显示 username。已配真实端口的行不受影响（直显配置值）。
+ */
+const DEFAULT_PORTS: Record<Exclude<ConnectionType, 'web'>, number> = {
   ssh: 22,
   telnet: 23,
-  web: 443,
   rdp: 3389,
 }
 
@@ -454,10 +459,15 @@ export default function DeviceDetailPanel() {
               </div>
             )
           }
-          // D-07 descriptor：username:port（port 缺省按 DEFAULT_PORTS 补全；
-          // username 空串仅 port——telnet 无认证设备形态）
-          const port = ch.port ?? DEFAULT_PORTS[k]
-          const descriptor = ch.username ? `${ch.username}:${port}` : `${port}`
+          // D-07 descriptor：username:port（port 缺省按 DEFAULT_PORTS 补全；username 空串
+          // 仅 port——telnet 无认证设备形态）。WR-04：web 通道不查补全表（协议不可知，
+          // 见 DEFAULT_PORTS 注释）——port null 时仅显示 username（无 username 显 '—'）
+          const port = k === 'web' ? ch.port : ch.port ?? DEFAULT_PORTS[k]
+          const descriptor = port != null
+            ? ch.username
+              ? `${ch.username}:${port}`
+              : `${port}`
+            : ch.username || '—'
           const result = testResults?.[k]
           return (
             <div key={k} style={CHANNEL_ROW_STYLE}>
