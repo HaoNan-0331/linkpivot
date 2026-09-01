@@ -55,14 +55,14 @@ describe('TIER_RETRIEVAL_PLAN 四档矩阵', () => {
   it('troubleshoot = exp + kb + device', () => {
     expect(TIER_RETRIEVAL_PLAN.troubleshoot).toEqual(['exp', 'kb', 'device'])
   })
-  it('configQuery = kb + device', () => {
-    expect(TIER_RETRIEVAL_PLAN.configQuery).toEqual(['kb', 'device'])
+  it('configQuery = kb + exp + device（37-04 GAP-3/4 检索源不分档，device 提示按档保留）', () => {
+    expect(TIER_RETRIEVAL_PLAN.configQuery).toEqual(['kb', 'exp', 'device'])
   })
   it('knowledge = kb + exp（不含 device）', () => {
     expect(TIER_RETRIEVAL_PLAN.knowledge).toEqual(['kb', 'exp'])
   })
-  it('inspection = exp + device', () => {
-    expect(TIER_RETRIEVAL_PLAN.inspection).toEqual(['exp', 'device'])
+  it('inspection = exp + kb + device（37-04 GAP-3/4 检索源不分档，device 提示按档保留）', () => {
+    expect(TIER_RETRIEVAL_PLAN.inspection).toEqual(['exp', 'kb', 'device'])
   })
 })
 
@@ -218,7 +218,7 @@ describe('verifySourcesEvidence（后置证据校验 fail-closed）', () => {
 
   it('缺席即列（partial sources）', () => {
     const r = verifySourcesEvidence({ tier: 'configQuery', sources: [{ kind: 'kb' }] })
-    expect(r.missing).toEqual(['device'])
+    expect(r.missing).toEqual(['exp', 'device'])
   })
 })
 
