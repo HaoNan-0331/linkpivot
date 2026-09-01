@@ -13,6 +13,17 @@ export const CHANNEL_LABELS: Record<ConnectionType, string> = {
 }
 
 /**
+ * Phase 38（38-01）：短标表自 TopologyPage 内联迁入——第三消费方 appframe/DeviceDetailPanel
+ * （38-02）连接失败文案归因；与 CHANNEL_LABELS 全称表仍为两套清单（36 §九契约），仅共址不合并。
+ */
+export const CHANNEL_SHORT_LABELS: Record<ConnectionType, string> = {
+  ssh: 'SSH',
+  telnet: 'Telnet',
+  web: 'Web',
+  rdp: 'RDP',
+}
+
+/**
  * Phase 36（36-02，LOGIN-01）：设备通道凭证投影元素——device_credentials 子表行的 main 进程
  * 内明文形态，随 device:list / device:getById 的 channels 数组下发。
  * password/sshKeyContent 经 IPC 出口时已被 maskDeviceSecrets 递归脱敏为 ****尾4（H-1 红线，

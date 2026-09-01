@@ -11,19 +11,11 @@ import { spreadLayout, alignNodes, NODE_WIDTH, NODE_HEIGHT, type AlignMode, type
 import DiscoveryPanel from '@/components/topology/DiscoveryPanel'
 import EditNodeModal from '@/components/topology/EditNodeModal'
 import { useTopologyToolbarStore } from '@/stores/topologyToolbarStore'
+import { useDeviceDetailStore } from '@/stores/deviceDetailStore'
 import type { TopologyNode, TopologyNodeData, TopologyEdgeData, TopologyEdge, TopologySummary } from '@/types/topology'
+// Phase 38（38-01）：CHANNEL_SHORT_LABELS 短标表迁 types/device.ts 全局唯一化（38-02 右栏第三消费方）
+import { CHANNEL_SHORT_LABELS } from '@/types/device'
 import type { ConnectionType, CreateDeviceDTO, Device } from '@/types/device'
-
-/**
- * Phase 36（36-05，UI-SPEC §6.4/§九）：通道短标——连接失败文案归因前缀用（与表单 tab /
- * 选择框行的 CHANNEL_LABELS 全称 label 分离，两套清单均为 §九 契约）。
- */
-const CHANNEL_SHORT_LABELS: Record<ConnectionType, string> = {
-  ssh: 'SSH',
-  telnet: 'Telnet',
-  web: 'Web',
-  rdp: 'RDP',
-}
 
 // D-08（Phase 19 / REN-02）：topology 记录已知字段覆盖集（Topology 类型字段），供未识别字段 warn 判定
 const KNOWN_TOPOLOGY_KEYS = new Set(['id', 'name', 'nodes', 'edges', 'status', 'createdAt', 'updatedAt'])
@@ -73,6 +65,9 @@ export default function TopologyPage() {
   const nodesRef = useRef<TopologyNode[]>([])
   const edgesRef = useRef<TopologyEdge[]>([])
   const setToolbarState = useTopologyToolbarStore((s) => s.setToolbar)
+  // Phase 38（38-01，DETAIL-01）：跨层选中态写侧——只取 action 引用（写完即走，store 变化零重渲染）
+  const setSelectedDeviceId = useDeviceDetailStore((s) => s.setSelectedDeviceId)
+  const refreshDeviceDetail = useDeviceDetailStore((s) => s.refresh)
 
   // FE-03: ref 同步 effect（O(1) 赋值，与既有 isLoadingRef/saveTimerRef 同模式，无性能影响）
   useEffect(() => {
@@ -81,6 +76,27 @@ export default function TopologyPage() {
   useEffect(() => {
     edgesRef.current = edges
   }, [edges])
+
+  // Phase 38（38-01，D-01/D-03 收敛点）：选中同步 effect——拓扑选中态上行 deviceDetailStore。
+  // 仅「恰好单选一台设备节点」时上抛该节点 data.deviceId（React Flow node.id ≠ deviceId，
+  // 必须经 nodesRef 换算）；无选中/框选 ≥2/单选连线一律 null（edgeIds 不参与，连线选中自然
+  // 落 null 分支）；节点不存在（loadTopology 换图后 stale id）上抛 null。
+  // 选 effect 而非在 handleCanvasSelectionChange 回调内写：覆盖非回调选中变化路径——
+  // handleDeleteSelected 本地清选中、loadTopology 换图节点替换；nodes 拖拽每帧换引用的
+  // 代价仅为一次数组 find + zustand 同值 set（订阅方 Object.is 判等零重渲染）。
+  // 声明位置必须在 nodesRef 同步 effect 之后：同 commit 内先刷新镜像再读。
+  useEffect(() => {
+    if (selectedNodeIds.size !== 1) {
+      setSelectedDeviceId(null)
+      return
+    }
+    const nodeId = [...selectedNodeIds][0]
+    const node = nodesRef.current.find((n) => n.id === nodeId)
+    setSelectedDeviceId(node ? node.data.deviceId : null)
+  }, [selectedNodeIds, nodes, setSelectedDeviceId])
+
+  // Phase 38（38-01，D-02 双保险）：切页卸载即清空跨层选中（照 :403 toolbar cleanup 先例）
+  useEffect(() => () => setSelectedDeviceId(null), [setSelectedDeviceId])
 
   // Phase 26 / D-04 + D-05：位置映射应用——仅对 moves 涉及节点换引用（保持 26-01 细粒度修复，
   // 不 map 全量 {...n}），未涉及节点原引用透传（memo comparator 直接命中，无重渲染）
@@ -512,12 +528,14 @@ export default function TopologyPage() {
     try {
       await window.api.device.update(credentialDevice.id, values)
       message.success('设备更新成功')
+      // Phase 38（38-01）：双写路径 refresh bump——38-02 右栏面板重拉 getById 的信号线
+      refreshDeviceDetail()
       setCredentialDevice(null)
     } catch (e: unknown) {
       // D-09：updateDevice 事务化，失败即整体回滚（本地不落脏值）
       message.error('操作失败，数据已回滚无变化：' + (e instanceof Error ? e.message : String(e)))
     }
-  }, [credentialDevice])
+  }, [credentialDevice, refreshDeviceDetail])
 
   const handleCredentialFormCancel = useCallback(() => setCredentialDevice(null), [])
   const handlePickerCancel = useCallback(() => setPickerDevice(null), [])
@@ -571,11 +589,13 @@ export default function TopologyPage() {
         )
         setEditModalOpen(false)
         setEditingNodeData(null)
+        // Phase 38（38-01）：双写路径 refresh bump——38-02 右栏面板重拉 getById 的信号线
+        refreshDeviceDetail()
       } catch (e: unknown) {
         message.error('保存失败：' + (e instanceof Error ? e.message : String(e)))
       }
     },
-    [setNodes]
+    [setNodes, refreshDeviceDetail]
   )
 
   return (
