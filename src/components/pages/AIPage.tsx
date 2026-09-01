@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Spin, Typography } from 'antd'
 import { ExclamationCircleOutlined } from '@ant-design/icons'
 import { useAIChat } from './ai/useAIChat'
+import { useDeviceDetailStore } from '@/stores/deviceDetailStore'
 import DeviceSelector from './ai/DeviceSelector'
 import ChatSessionList from './ai/ChatSessionList'
 import ChatMessageList from './ai/ChatMessageList'
@@ -35,6 +36,19 @@ export default function AIPage() {
         if (cancelled) return
         setHasConfig(ok)
         await chat.loadData(ok)
+        // Phase 38（38-02，D-05）：右栏 [AI 对话] 跳转消费——DeviceDetailPanel 先写
+        // pendingAiDeviceId 再 navigate('/ai')，在此一次性读清（getState 快照，不订阅
+        // ——Pattern 3 订阅范围不扩散到 AIPage 渲染路径；cancelled 守卫内先判再消费，
+        // StrictMode 首挂已取消不抢走真挂的中转值）。!ok（AI 未配置）时消费即弃：跳转
+        // 意图失效不悬挂，不会在下次进 /ai 时误触发。顺序：handleNewSession 仅建会话/
+        // 清消息/清 pendingConfirm，不触碰 selectedDevices——设备注入随后不被覆盖。
+        if (!cancelled) {
+          const pendingId = useDeviceDetailStore.getState().consumePendingAiDevice()
+          if (ok && pendingId) {
+            await chat.handleNewSession()
+            chat.setSelectedDevices([pendingId])
+          }
+        }
       } catch (e: unknown) {
         console.error('[ai] loadConfig 失败:', e instanceof Error ? e.message : String(e))
       } finally {

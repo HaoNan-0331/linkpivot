@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState, type CSSProperties } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Button, Spin, message } from 'antd'
 import { useDeviceDetailStore } from '@/stores/deviceDetailStore'
+import EditNodeModal from '@/components/topology/EditNodeModal'
+import type { TopologyNodeData } from '@/types/topology'
 import {
   CHANNEL_LABELS,
   CHANNEL_SHORT_LABELS,
@@ -214,10 +217,27 @@ const CONNECT_BUTTON_STYLE: CSSProperties = {
   flex: 'none',
 }
 
+/** 区标题（登录通道/快捷操作）：xs-13-strong label-secondary */
+const SECTION_TITLE_STYLE: CSSProperties = {
+  font: 'var(--nt-font-xs-13-strong)',
+  color: 'var(--nt-alias-label-secondary)',
+}
+
+/** 操作区按钮行：横向 8 间隔可换行（窄栏三按钮不溢出） */
+const ACTION_ROW_STYLE: CSSProperties = {
+  display: 'flex',
+  gap: 8,
+  flexWrap: 'wrap',
+}
+
 export default function DeviceDetailPanel() {
   // Pattern 3（单字段 selector）：跨层选中态与刷新信号（38-01 落库契约）
   const selectedDeviceId = useDeviceDetailStore((s) => s.selectedDeviceId)
   const refreshCounter = useDeviceDetailStore((s) => s.refreshCounter)
+  // Pattern 3（action 引用，TopologyPage 写侧同款）：编辑保存刷新信号 + AI 跳转中转写入
+  const refresh = useDeviceDetailStore((s) => s.refresh)
+  const setPendingAiDevice = useDeviceDetailStore((s) => s.setPendingAiDevice)
+  const navigate = useNavigate()
 
   // getById 三态：loading（拉取中）/ ready（渲染三区）/ missing（设备已删或查询异常）
   const [detailState, setDetailState] = useState<'loading' | 'ready' | 'missing'>('missing')
@@ -225,6 +245,10 @@ export default function DeviceDetailPanel() {
   // 测试连接逐通道结果（D-05，38-02 Task 2 实装触发路径）：仅含已配通道键；
   // 切设备/编辑刷新时清除（本 effect 首行），防上一台结果错位到新选中设备行
   const [testResults, setTestResults] = useState<Partial<Record<ConnectionType, ChannelTestResult>> | null>(null)
+  // D-05 测试连接在途标志（按钮 loading 防重复触发，T-38-07 单用户桌面场景无放大面）
+  const [testing, setTesting] = useState(false)
+  // D-05 编辑弹窗自有实例：当前 Device 投影构造的 TopologyNodeData（非 null 即开弹窗）
+  const [editData, setEditData] = useState<TopologyNodeData | null>(null)
 
   useEffect(() => {
     // 切设备/编辑刷新（refreshCounter bump）：清除上一台的逐通道测试结果
@@ -264,6 +288,76 @@ export default function DeviceDetailPanel() {
       message.error(`${CHANNEL_SHORT_LABELS[channel]} 连接失败`)
     }
   }, [])
+
+  // D-05 编辑入口（右栏自有 EditNodeModal 实例，与画布侧独立）：由当前 Device 投影构造
+  // TopologyNodeData（六七字段对位，node.id ≠ deviceId——此处直接持 deviceId）开弹窗
+  const handleEdit = useCallback(() => {
+    if (!device) return
+    setEditData({
+      deviceId: device.id,
+      deviceName: device.name,
+      deviceType: device.deviceType,
+      connectionType: device.connectionType,
+      ipAddress: device.ipAddress,
+      vendor: device.vendor,
+      model: device.model,
+    })
+  }, [device])
+
+  // 确认保存照 TopologyPage handleEditConfirm 同款：update 载荷恰五字段（WR-01——与
+  // updateDevice topoFields 级联集对齐，凭证不可经此路径写）。拓扑画布节点镜像不在此刷新：
+  // updateDevice main 侧已级联 topologies.data_enc，画布内存态沿既有设备管理页编辑同款
+  // 行为，下次载图自正确。
+  const handleEditConfirm = useCallback(
+    async (updated: TopologyNodeData) => {
+      try {
+        await window.api.device.update(updated.deviceId, {
+          name: updated.deviceName,
+          ipAddress: updated.ipAddress,
+          deviceType: updated.deviceType,
+          vendor: updated.vendor,
+          model: updated.model,
+        })
+        message.success('保存成功')
+        setEditData(null)
+        // 三写路径第三条（本入口）：refreshCounter bump → getById effect 重拉，右栏即时
+        // 反映新值（画布侧 EditNodeModal / 零通道引导 DeviceForm 两入口 38-01 已接线）
+        refresh()
+      } catch (e: unknown) {
+        // 失败不关弹窗、本地不落脏值（device 不动，重拉仍以库内为准）
+        message.error('保存失败：' + (e instanceof Error ? e.message : String(e)))
+      }
+    },
+    [refresh]
+  )
+
+  const handleEditCancel = useCallback(() => setEditData(null), [])
+
+  // D-05 测试连接（36-05 connection.test 全通道并行探测复用）：逐通道结果按 channel 键
+  // 归并写入 testResults（仅含已配通道键，行内展示位在通道区已配行）；零通道设备无通道
+  // 可测（按钮 disabled）。finally 释放在途标志（按钮 loading 防重复触发）
+  const handleTest = useCallback(async () => {
+    if (!device) return
+    setTesting(true)
+    try {
+      const result = await window.api.connection.test(device.id)
+      const map: Partial<Record<ConnectionType, ChannelTestResult>> = {}
+      for (const c of result.channels) map[c.channel] = c
+      setTestResults(map)
+    } catch (e: unknown) {
+      message.error('测试失败：' + (e instanceof Error ? e.message : String(e)))
+    } finally {
+      setTesting(false)
+    }
+  }, [device])
+
+  // D-05 AI 对话跳转（store 中转方案，PATTERNS §5 推荐②——比 router state 少一条隐式
+  // 契约）：先写中转字段再 navigate，AIPage mount effect 一次性读清（原子消费防重放）
+  const handleAiChat = useCallback(() => {
+    if (!device) return
+    setPendingAiDevice(device.id)
+    navigate('/ai')
+  }, [device, setPendingAiDevice, navigate])
 
   // 无选中空态引导（SC2 内容切换分支之一——组件本体仍无条件挂载）
   if (selectedDeviceId === null) {
@@ -335,7 +429,7 @@ export default function DeviceDetailPanel() {
 
       {/* 登录通道区（D-07，含行内连接 D-04） */}
       <div style={SECTION_STYLE}>
-        <div style={{ font: 'var(--nt-font-xs-13-strong)', color: 'var(--nt-alias-label-secondary)' }}>登录通道</div>
+        <div style={SECTION_TITLE_STYLE}>登录通道</div>
         {ALL_CHANNELS.map((k) => {
           const ch = channels.find((c) => c.channel === k)
           if (!ch) {
@@ -378,6 +472,30 @@ export default function DeviceDetailPanel() {
           )
         })}
       </div>
+
+      {/* 快捷操作区（D-05）：编辑 / 测试连接 / AI 对话——无删除按钮（D-06，删除属设备管理页职责） */}
+      <div style={SECTION_STYLE}>
+        <div style={SECTION_TITLE_STYLE}>快捷操作</div>
+        <div style={ACTION_ROW_STYLE}>
+          <Button size="small" onClick={handleEdit}>
+            编辑
+          </Button>
+          <Button size="small" loading={testing} disabled={channels.length === 0} onClick={handleTest}>
+            测试连接
+          </Button>
+          <Button size="small" onClick={handleAiChat}>
+            AI 对话
+          </Button>
+        </div>
+      </div>
+
+      {/* D-05 编辑弹窗（右栏自有实例）：confirm 走 device.update + refresh()，见 handleEditConfirm */}
+      <EditNodeModal
+        open={editData !== null}
+        data={editData}
+        onConfirm={handleEditConfirm}
+        onCancel={handleEditCancel}
+      />
     </div>
   )
 }
