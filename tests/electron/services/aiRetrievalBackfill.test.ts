@@ -260,11 +260,15 @@ describe('37-02 Task 2: runEvidenceBackfill 强制/智能双模式分流', () =>
     queueReplies('未期轮')
     await runEvidenceBackfill(makeCtx('用户原话问题'), s1, 'configQuery', '回答')
     expect(kbSearchMock).toHaveBeenCalledWith('用户原话问题', undefined, 5)
+    // 37-04 GAP-4：configQuery missing 现含 exp → exp 同样以用户原话补查（两库都补）
+    expect(retrieveForAnswerMock).toHaveBeenCalledWith({ userMessage: '用户原话问题', deviceIds: undefined })
     // 8b 标记词优先于用户原话
     const s2 = createAgentLoopState()
     queueReplies('未期轮')
     await runEvidenceBackfill(makeCtx('用户原话问题'), s2, 'configQuery', '回答\n[KB_BACKFILL]精准词B[/KB_BACKFILL]')
     expect(kbSearchMock).toHaveBeenLastCalledWith('精准词B', undefined, 5)
+    // 37-04 GAP-4：exp 无标记仍 fallback 用户原话（kb 标记词只影响 kb 检索词）
+    expect(retrieveForAnswerMock).toHaveBeenCalledWith({ userMessage: '用户原话问题', deviceIds: undefined })
     // 8c 泄漏断言：verify.missing 为空 + 合法标记在场 → 返回值不含任一标记原文（D-08 受理不漏）
     const s3 = createAgentLoopState()
     s3.sources.push({ kind: 'kb', title: '手册' }, { kind: 'exp', title: '经验' }) // knowledge plan 全命中
@@ -281,10 +285,12 @@ describe('37-02 Task 2: runEvidenceBackfill 强制/智能双模式分流', () =>
   it('Test 9 强制·换词再查（D-08）：已查源（非 missing）+ 换词标记 → 额外受理检索', async () => {
     setBackfillMode('force')
     const state = createAgentLoopState()
-    state.sources.push({ kind: 'kb', title: '已有 kb 命中' }) // configQuery missing 退化为 [device]
+    state.sources.push({ kind: 'kb', title: '已有 kb 命中' }) // configQuery missing = [exp, device]（37-04 GAP-4：kb 在场、exp 缺席）
     queueReplies('未期轮')
     const out = await runEvidenceBackfill(makeCtx('原话'), state, 'configQuery', '回答\n[KB_BACKFILL]新词C[/KB_BACKFILL]')
     expect(kbSearchMock).toHaveBeenCalledWith('新词C', undefined, 5)
+    // 37-04 GAP-4：exp 缺席走 missing 补查（无标记 fallback 用户原话），kb 经 D-08 受理段换词检索——两源并存
+    expect(retrieveForAnswerMock).toHaveBeenCalledWith({ userMessage: '原话', deviceIds: undefined })
     expect(out).toBe('回答') // 零命中无新证据 → strip 返回
   })
 
@@ -339,9 +345,9 @@ describe('37-02 Task 2: runEvidenceBackfill 强制/智能双模式分流', () =>
     // mcp 步同计 device；sources kind='device' 同计
     const s3 = createAgentLoopState()
     s3.steps.push({ stepIndex: 0, actionType: 'mcp', status: 'done' } as any)
-    expect(computeUnqueriedSources(s3, 'inspection')).toEqual(['exp']) // inspection plan exp+device
+    expect(computeUnqueriedSources(s3, 'inspection')).toEqual(['exp', 'kb']) // inspection plan exp+kb+device（37-04 GAP-3/4 去档位化）
     const s4 = createAgentLoopState()
     s4.sources.push({ kind: 'device', title: 'd' })
-    expect(computeUnqueriedSources(s4, 'inspection')).toEqual(['exp'])
+    expect(computeUnqueriedSources(s4, 'inspection')).toEqual(['exp', 'kb'])
   })
 })

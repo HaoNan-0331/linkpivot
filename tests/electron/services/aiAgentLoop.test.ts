@@ -1372,15 +1372,16 @@ describe('28-06 R8：后置证据补查生成步骤卡（真实检索过程可�
     expect(vi.mocked(kbSearch)).toHaveBeenCalledTimes(1)
   })
 
-  it('inspection 档补查源与分档一致：plan 不含 kb → kbSearch 零调用、零 kb 卡（补查只按 TIER_RETRIEVAL_PLAN）', async () => {
+  it('inspection 档检索源不分档：kb 预取照常发起（37-04 GAP-3/4）', async () => {
     retrieveForAnswerMock.mockResolvedValue({ injected: [] })
     const payloads: any[] = []
     queueReplies('巡检总结')
     await chat([{ role: 'user', content: '帮我巡检一遍网络情况' }], undefined, null, (p) => payloads.push(p))
-    // inspection plan = [exp, device]：exp 预取 1 次（同 query 已查过 → 补查跳过），kb 全链路零检索
+    // inspection plan = [exp, kb, device]（37-04 矩阵去档位化）：exp/kb 各预取 1 次（本文件
+    // fixture 为 force+预取开；补查因同 query 已查守卫仍跳过——守卫改换词属 37-05，届时再升级本用例）
     expect(retrieveForAnswerMock).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(kbSearch)).not.toHaveBeenCalled()
-    expect(payloads.some((p) => p.actionType === 'kb')).toBe(false)
+    expect(vi.mocked(kbSearch)).toHaveBeenCalledTimes(1)
+    expect(payloads.some((p) => p.actionType === 'kb' && p.prefetched === true)).toBe(true)
     expect(payloads.some((p) => p.backfilled === true && p.actionType === 'exp')).toBe(false)
     expect(payloads.some((p) => p.backfilled === true)).toBe(false)
   })
@@ -1605,12 +1606,13 @@ describe('260830 quick：补查同词已查守卫（runEvidenceBackfill 直连�
     expect(out).toBe('补查后总结')
     expect(retrieveForAnswerMock).toHaveBeenCalledTimes(1)
     expect(retrieveForAnswerMock).toHaveBeenCalledWith({ userMessage: '网络故障排查', deviceIds: undefined })
-    // 补查卡：steps 末位 backfilled exp done（命中概要如实）
-    const last = state.steps[state.steps.length - 1]
-    expect(last.actionType).toBe('exp')
-    expect(last.status).toBe('done')
-    expect(last.backfilled).toBe(true)
-    expect(String(last.outputSummary)).toContain('命中 1 条')
+    // 37-04 GAP-4：inspection missing 现含 kb（query 不同于已查步 → 守卫不遮）→ kb 同样以原话补查
+    expect(vi.mocked(kbSearch)).toHaveBeenCalledWith('网络故障排查', undefined, 5)
+    // 补查卡：exp backfilled done（命中概要如实；kb 补查卡后入栈，末位不再是 exp）
+    const expCard = state.steps.filter((s) => s.backfilled === true && s.actionType === 'exp').pop() as any
+    expect(expCard.status).toBe('done')
+    expect(String(expCard.outputSummary)).toContain('命中 1 条')
+    expect(state.steps.filter((s) => s.backfilled === true && s.actionType === 'kb')).toHaveLength(1)
     // 命中注入：expReferences 合并 + 二次 callAI 回注 user 消息含补查命中文本
     expect(ctx.expReferences).toHaveLength(1)
     const userMsg = reqMsgs(fetchMock, 0).filter((m: any) => m.role === 'user').pop()
