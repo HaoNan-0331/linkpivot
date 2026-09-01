@@ -219,6 +219,8 @@ export function buildRewordRequest(pending: Array<{ kind: 'exp' | 'kb'; triedQue
  *   stripBackfillMarkers——任何出口不漏标记原文（T-37-07）；早返条件 missing 空且零标记才放行。
  * Phase 37 GAP-2（37-05）：同词已查不再是跳过理由而是换词理由（2026-09-01 用户真机裁决）；
  * 守卫命中 → 换词轮（单次有界）→ 新词检索三件套，智能 + 强制两模式统一。
+ * 换词轮标记形态区分出口基准（2026-09-01 UAT 修复）：换词轮有标记（过渡语形态）且新词
+ * 检索未命中 → 返回原始 reply；零标记（作答形态）→ 返回 rewordReply。
  */
 export async function runEvidenceBackfill(
   ctx: McpLoopCtx,
@@ -306,13 +308,17 @@ export async function runEvidenceBackfill(
     // 换词轮（GAP-2，37-05）：单次有界——结构性单个 if 块无循环回跳，换词后仍同词仅落事实文案，
     // 绝无第二次换词（T-37G5-03 DoS 轮次放大防护）
     let finalBasis = reply
+    // UAT 修复（2026-09-01 真机实证）：换词轮是否产出标记决定未命中出口的返回基准（见下方出口注释）
+    let rewordProducedMarkers = false
     if (rewordPending.length > 0) {
       if (state.hardStop) return stripBackfillMarkers(reply)
       state.extra.push({ role: 'assistant', content: stripBackfillMarkers(reply) })
       state.extra.push({ role: 'user', content: buildRewordRequest(rewordPending) })
       const rewordReply = await callAI(ctx.config, [...ctx.fullMessages, ...state.extra], ctx.signal)
       finalBasis = rewordReply
-      for (const { kind, query: markerQuery } of parseBackfillQueries(rewordReply)) {
+      const rewordMarkers = parseBackfillQueries(rewordReply)
+      rewordProducedMarkers = rewordMarkers.length > 0
+      for (const { kind, query: markerQuery } of rewordMarkers) {
         const query = sanitizeUntrusted(markerQuery, 500)
         const canonicalQuery = sanitizeUntrusted(query, 200)
         // 守卫复检（换词有界）：换词后仍与已查词相同 → 事实告知收尾，不再检索
@@ -331,7 +337,12 @@ export async function runEvidenceBackfill(
     const unqueried = computeUnqueriedSources(state, tier)
     if (unqueried.length > 0) state.unqueriedSources = unqueried
     if (sections.length > 0) state.backfillNotes = sections
-    if (!hasNewEvidence) return stripBackfillMarkers(finalBasis)
+    // UAT 修复（2026-09-01 真机实证）：换词轮有标记 = 过渡语形态（请求重查的中间话术）非答案，
+    // 出口返回原始 reply（含路由表分析）；换词轮零标记 = 作答形态（AI 声明无需再查直接作答）
+    // 是完整答案，返回 rewordReply。37-02 出口语义「返回当前文本基准」在 37-05 基准切至
+    // rewordReply 后未跟随，此处收口；换词与未命中事实由 backfillNotes（meta_enc → UI 系统
+    // 提示区）承载不丢。
+    if (!hasNewEvidence) return stripBackfillMarkers(rewordProducedMarkers ? reply : finalBasis)
     state.extra.push({ role: 'assistant', content: stripBackfillMarkers(finalBasis) })
     state.extra.push({
       role: 'user',
@@ -457,13 +468,17 @@ export async function runEvidenceBackfill(
   // 换词轮（GAP-2，37-05）：与 SMART 分支同构——单次有界（结构性单个 if 块无循环回跳，
   // 换词后仍同词仅落事实文案，绝无第二次换词，T-37G5-03）；换词轮前 hardStop 复检
   let finalBasis = reply
+  // UAT 修复（2026-09-01 真机实证）：换词轮是否产出标记决定未命中出口的返回基准（见下方出口注释）
+  let rewordProducedMarkers = false
   if (rewordPending.length > 0) {
     if (state.hardStop) return stripBackfillMarkers(reply)
     state.extra.push({ role: 'assistant', content: stripBackfillMarkers(reply) })
     state.extra.push({ role: 'user', content: buildRewordRequest(rewordPending) })
     const rewordReply = await callAI(ctx.config, [...ctx.fullMessages, ...state.extra], ctx.signal)
     finalBasis = rewordReply
-    for (const { kind, query: markerQuery } of parseBackfillQueries(rewordReply)) {
+    const rewordMarkers = parseBackfillQueries(rewordReply)
+    rewordProducedMarkers = rewordMarkers.length > 0
+    for (const { kind, query: markerQuery } of rewordMarkers) {
       const query = sanitizeUntrusted(markerQuery, 500)
       const canonicalQuery = sanitizeUntrusted(query, 200)
       // 守卫复检（换词有界）：换词后仍与已查词相同 → 事实告知收尾，不再检索
@@ -479,7 +494,12 @@ export async function runEvidenceBackfill(
     }
   }
   state.backfillNotes = sections
-  if (!hasNewEvidence) return stripBackfillMarkers(finalBasis)
+  // UAT 修复（2026-09-01 真机实证）：换词轮有标记 = 过渡语形态（请求重查的中间话术）非答案，
+  // 出口返回原始 reply（含路由表分析）；换词轮零标记 = 作答形态（AI 声明无需再查直接作答）
+  // 是完整答案，返回 rewordReply。37-02 出口语义「返回当前文本基准」在 37-05 基准切至
+  // rewordReply 后未跟随，此处收口（与 SMART 出口对称）；换词与未命中事实由 backfillNotes
+  // （meta_enc → UI 系统提示区）承载不丢。
+  if (!hasNewEvidence) return stripBackfillMarkers(rewordProducedMarkers ? reply : finalBasis)
   state.extra.push({ role: 'assistant', content: finalBasis })
   state.extra.push({
     role: 'user',
