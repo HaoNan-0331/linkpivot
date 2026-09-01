@@ -32,6 +32,19 @@ function normalizeNodeSizes(nodes: TopologyNode[]): TopologyNode[] {
   )
 }
 
+// Phase 39（39-03，ADOPT-01/D-08）：未纳管标志载图比对——权威判定 = 载图时 device.list
+// 快照与节点 deviceId 集合比对（discovery 快照 ipAddress 空串可被后续编辑破坏，不可作
+// 判定源，PATTERNS §9 裁决）。资产表内（已纳管）显式置 undefined——JSON.stringify 丢键
+// 即历史持久化形态（types/topology P14 契约），同时洗掉历史 JSON 可能残留的 stale true。
+// stale 窗口（T-39-11 accept）：设备管理页删设备/发现导入新节点后未换图期间标志滞后——
+// 右栏 getById null 落 missing 态兜底显示（文案+纳管/删除入口仍正确），下次载图修正。
+function markUnmanagedFlags(nodes: TopologyNode[], assetDeviceIds: Set<string>): TopologyNode[] {
+  return nodes.map((n) => ({
+    ...n,
+    data: { ...n.data, unmanaged: assetDeviceIds.has(n.data.deviceId) ? undefined : true },
+  }))
+}
+
 export default function TopologyPage() {
   // Phase 19 / REN-02：topologies 强类型 TopologySummary（P14 全字段 optional，兼容持久化历史 JSON）
   const [topologies, setTopologies] = useState<TopologySummary[]>([])
@@ -240,9 +253,16 @@ export default function TopologyPage() {
 
   const loadTopology = useCallback(async (id: string) => {
     isLoadingRef.current = true
-    const topo = await window.api.topology.getById(id)
+    // 39-03（D-08）：未纳管比对源与拓扑数据并行拉取；device.list 失败不阻断载图
+    //（回退空集合 = 全按已纳管渲染，missing 态 getById null 兜底仍在——stale 窗口语义）
+    const [topo, devices] = await Promise.all([
+      window.api.topology.getById(id),
+      window.api.device.list().catch(() => [] as Device[]),
+    ])
     if (topo) {
-      setNodes(normalizeNodeSizes(topo.nodes || []))
+      setNodes(
+        markUnmanagedFlags(normalizeNodeSizes(topo.nodes || []), new Set(devices.map((d) => d.id)))
+      )
       setEdges(topo.edges || [])
     }
     // WR-01（26 review）：React 18 批处理下自动保存 effect 在同步代码结束后才 flush，
@@ -464,7 +484,12 @@ export default function TopologyPage() {
       // WR-07：同 handleNew，经 selectId 单一选中路径防双重加载
       await fetchTopologies(topo.id)
       setCurrentTopologyId(topo.id)
-      if (topo.nodes) setNodes(normalizeNodeSizes(topo.nodes))
+      // 39-03：导入路径独立 setNodes 覆写（图数据进入 setNodes 的第二入口）——补同款
+      // 未纳管比对，否则导入后标志缺失至下次载图
+      const devices = await window.api.device.list().catch(() => [] as Device[])
+      if (topo.nodes) {
+        setNodes(markUnmanagedFlags(normalizeNodeSizes(topo.nodes), new Set(devices.map((d) => d.id))))
+      }
       if (topo.edges) setEdges(topo.edges)
       message.success('导入成功')
     } catch {

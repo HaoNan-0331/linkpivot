@@ -56,11 +56,41 @@ function DeviceNodeInner({ data, selected, dragging }: NodeProps<TopologyNodeDat
         {data.deviceName}
       </div>
 
+      {/* Phase 39（39-03，D-08）：未纳管角标——名称标签上方居中同族定位（absolute +
+          flex 容器 alignItems center 静态位，与名称标签零重叠），仅 data.unmanaged 为
+          true 时渲染（39-03 载图 device.list 比对写入）；warn 系 token，徽标为 DOM 内联
+          style 位 var() 可用（非 SVG 属性位，MiniMap 陷阱不适用） */}
+      {data.unmanaged && (
+        <div
+          style={{
+            position: 'absolute',
+            top: -36,
+            whiteSpace: 'nowrap',
+            fontSize: 'var(--nt-font-xxxs-11-font-size)',
+            lineHeight: 'var(--nt-font-xxxs-11-line-height)',
+            color: 'var(--nt-alias-state-warn-label)',
+            border: '1px solid var(--nt-alias-state-warn-primary)',
+            borderRadius: 4,
+            background: 'var(--nt-alias-state-warn-tertiary)',
+            padding: '0 4px',
+            userSelect: 'none',
+          }}
+        >
+          未纳管
+        </div>
+      )}
+
       <div
         style={{
           padding: 4,
           borderRadius: 8,
-          border: selected ? '2px solid var(--nt-static-deepseek-500)' : '2px solid transparent',
+          // 39-03（D-08）：未选中且未纳管 → warn 系虚线边框；选中态实线优先覆盖（选中反馈
+          // 优先于纳管状态）；已纳管节点非选中 transparent 零变化
+          border: selected
+            ? '2px solid var(--nt-static-deepseek-500)'
+            : data.unmanaged
+              ? '2px dashed var(--nt-alias-state-warn-primary)'
+              : '2px solid transparent',
           background: selected ? 'var(--nt-static-deepseek-50)' : 'transparent',
         }}
       >
