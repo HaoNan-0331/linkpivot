@@ -239,8 +239,11 @@ export default function DeviceDetailPanel() {
   const setPendingAiDevice = useDeviceDetailStore((s) => s.setPendingAiDevice)
   const navigate = useNavigate()
 
-  // getById 三态：loading（拉取中）/ ready（渲染三区）/ missing（设备已删或查询异常）
-  const [detailState, setDetailState] = useState<'loading' | 'ready' | 'missing'>('missing')
+  // getById 三态：loading（拉取中）/ ready（渲染三区）/ missing（设备已删或查询异常）。
+  // WR-02（38 review）：初始态与空选复位均为 'loading' 而非 'missing'——'missing' 只能由
+  // 「已完成的本 id 拉取」到达，防 null→选中 切换的渲染帧（effect 尚未执行）闪一帧
+  // 「设备不存在或已删除」错误文案（空选由 selectedDeviceId===null 早退分支接管，不误显 Spin）
+  const [detailState, setDetailState] = useState<'loading' | 'ready' | 'missing'>('loading')
   const [device, setDevice] = useState<Device | null>(null)
   // 测试连接逐通道结果（D-05，38-02 Task 2 实装触发路径）：仅含已配通道键；
   // 切设备/编辑刷新时清除（本 effect 首行），防上一台结果错位到新选中设备行
@@ -254,9 +257,10 @@ export default function DeviceDetailPanel() {
     // 切设备/编辑刷新（refreshCounter bump）：清除上一台的逐通道测试结果
     setTestResults(null)
     if (selectedDeviceId === null) {
-      // 无选中（右栏被手动展开等边缘态）：复位不拉取（渲染走空态引导分支）
+      // 无选中（右栏被手动展开等边缘态）：复位不拉取（渲染走空态引导分支）；
+      // 状态复位 'loading' 而非 'missing'（WR-02——见 detailState 声明处注释）
       setDevice(null)
-      setDetailState('missing')
+      setDetailState('loading')
       return
     }
     // T-38-09 竞态守卫（AIPage mount effect 同款）：cleanup 置位后旧响应到达即弃，
@@ -336,11 +340,19 @@ export default function DeviceDetailPanel() {
   // D-05 测试连接（36-05 connection.test 全通道并行探测复用）：逐通道结果按 channel 键
   // 归并写入 testResults（仅含已配通道键，行内展示位在通道区已配行）；零通道设备无通道
   // 可测（按钮 disabled）。finally 释放在途标志（按钮 loading 防重复触发）
+  // WR-01（38 review）在途响应守卫：effect 首行清 testResults 只能清已落结果，挡不住在途
+  // promise——resolve 后校验「选中设备 + refreshCounter 均未变」（与上方 getById effect 的
+  // 清除触发条件对称：切设备/编辑刷新任一发生即弃，防旧设备或编辑前通道集的探测文案
+  // 错位落进当前通道行）
   const handleTest = useCallback(async () => {
     if (!device) return
+    const targetId = device.id
+    const startCounter = useDeviceDetailStore.getState().refreshCounter
     setTesting(true)
     try {
-      const result = await window.api.connection.test(device.id)
+      const result = await window.api.connection.test(targetId)
+      const s = useDeviceDetailStore.getState()
+      if (s.selectedDeviceId !== targetId || s.refreshCounter !== startCounter) return
       const map: Partial<Record<ConnectionType, ChannelTestResult>> = {}
       for (const c of result.channels) map[c.channel] = c
       setTestResults(map)
