@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react'
 import { Popover, Button, Switch, Segmented, message } from 'antd'
-import { SearchOutlined } from '@ant-design/icons'
+import { SettingOutlined } from '@ant-design/icons'
 
 /**
  * RetrievalControlButton —— AI 检索行为设置入口（Phase 37 / 37-03，RETRIEVE-CTRL-01，D-09/D-10）。
  *
- * 输入行行首小图标 + Popover 设置面板（自治组件零 props，ExecModeSwitch :30-70 状态机同构）：
+ * 输入行行首小图标（图标 GAP-1 闭合（2026-09-01 UAT 裁决）：放大镜 → 齿轮（设置语义））
+ * + Popover 设置面板（自治组件零 props，ExecModeSwitch :30-70 状态机同构）：
  * - 「预取注入」Switch（D-01：开 = 档位矩阵预取注入，关 = 循环前零注入零 [预取] 卡）
  * - 「补查模式」Segmented 强制/智能（模式切换而非有无——关 ≠ 不查，是 AI 决策）
  * - 两行小字钉死 D-10 硬约束（智能 AI 决策语义 + troubleshoot 档恒强制例外 D-02）
@@ -88,7 +89,7 @@ export default function RetrievalControlButton() {
 
   return (
     <Popover content={panel} trigger="click" placement="topRight" overlayStyle={{ maxWidth: 320 }}>
-      <Button type="text" size="small" icon={<SearchOutlined />} aria-label="检索设置" disabled={loading} />
+      <Button type="text" size="small" icon={<SettingOutlined />} aria-label="检索设置" disabled={loading} />
     </Popover>
   )
 }
