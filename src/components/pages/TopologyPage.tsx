@@ -101,7 +101,8 @@ export default function TopologyPage() {
   // 分支三（零选/多选）三分支全置 null。设备/连线互斥由 RF 选中天然保证 + 写侧双清。
   // 选 effect 而非在 handleCanvasSelectionChange 回调内写：覆盖非回调选中变化路径——
   // handleDeleteSelected 本地清选中、loadTopology 换图节点替换；nodes 拖拽每帧换引用的
-  // 代价仅为一次数组 find + zustand 同值 set（订阅方 Object.is 判等零重渲染）。
+  // 代价仅为一次数组 find + zustand set——快照对象字面量虽每次新建，store setter 值级
+  // 判等短路（WR-01 39 review）内容未变保留原引用，订阅方 Object.is 判等零重渲染。
   // 声明位置必须在 nodesRef 同步 effect 之后：同 commit 内先刷新镜像再读。
   useEffect(() => {
     if (selectedNodeIds.size === 1) {

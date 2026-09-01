@@ -58,6 +58,30 @@ export interface SelectedNodeMeta {
 }
 
 /**
+ * WR-01（39 review）：快照 setter 值级判等短路——TopologyPage 选中同步 effect 依赖
+ * nodes/edges（拖拽每帧/整理布局/发现导入均换数组引用），每次重跑都构造新快照对象字面量；
+ * 新引用直写 store 会使订阅 selectedEdge 的 DetailsPanel 自动展开 effect 被 churn 重触发
+ * （单选连线且用户手动收起后被强制弹开，破坏「手动收起意图优先」交互契约），订阅
+ * selectedNodeMeta 的 DeviceDetailPanel 拖拽期间逐帧重渲染。内容未变保留原引用，
+ * 订阅方 Object.is 判等命中零重渲染。
+ */
+const sameEdgeSnapshot = (a: EdgeSelectionSnapshot, b: EdgeSelectionSnapshot): boolean =>
+  a.edgeId === b.edgeId &&
+  a.sourceInterface === b.sourceInterface &&
+  a.targetInterface === b.targetInterface &&
+  a.sourceDeviceId === b.sourceDeviceId &&
+  a.sourceDeviceName === b.sourceDeviceName &&
+  a.targetDeviceId === b.targetDeviceId &&
+  a.targetDeviceName === b.targetDeviceName
+
+/** WR-01（39 review）：同 sameEdgeSnapshot——节点元信息四字段值级判等 */
+const sameNodeMeta = (a: SelectedNodeMeta, b: SelectedNodeMeta): boolean =>
+  a.nodeId === b.nodeId &&
+  a.deviceId === b.deviceId &&
+  a.deviceName === b.deviceName &&
+  a.deviceType === b.deviceType
+
+/**
  * Phase 39（39-01，接入点②跨层命令通道）：Routes 外（右栏）→ Routes 内（画布）
  * 的命令契约——TopologyPage mount 注册 useCallback 引用、卸载置 null；右栏消费方
  * 一律 getState().canvasActions 一次性取用调用（不订阅，Pattern 3 读清即走）。
@@ -115,7 +139,18 @@ export const useDeviceDetailStore = create<DeviceDetailStore>((set, get) => ({
     if (pending !== null) set({ pendingAiDeviceId: null })
     return pending
   },
-  setSelectedEdge: (edge) => set({ selectedEdge: edge }),
-  setSelectedNodeMeta: (meta) => set({ selectedNodeMeta: meta }),
+  // WR-01（39 review）：值级判等短路——内容未变保留原引用，订阅方 Object.is 命中零重渲染
+  setSelectedEdge: (edge) =>
+    set((s) => ({
+      selectedEdge:
+        s.selectedEdge && edge && sameEdgeSnapshot(s.selectedEdge, edge) ? s.selectedEdge : edge,
+    })),
+  setSelectedNodeMeta: (meta) =>
+    set((s) => ({
+      selectedNodeMeta:
+        s.selectedNodeMeta && meta && sameNodeMeta(s.selectedNodeMeta, meta)
+          ? s.selectedNodeMeta
+          : meta,
+    })),
   setCanvasActions: (actions) => set({ canvasActions: actions }),
 }))
