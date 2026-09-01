@@ -9,7 +9,6 @@ import ChannelPickerModal from '@/components/topology/ChannelPickerModal'
 import DeviceForm from '@/components/DeviceForm'
 import { spreadLayout, alignNodes, NODE_WIDTH, NODE_HEIGHT, type AlignMode, type Point } from '@/utils/topologyLayout'
 import DiscoveryPanel from '@/components/topology/DiscoveryPanel'
-import EditNodeModal from '@/components/topology/EditNodeModal'
 import { useTopologyToolbarStore } from '@/stores/topologyToolbarStore'
 import { useDeviceDetailStore } from '@/stores/deviceDetailStore'
 import type { TopologyNode, TopologyNodeData, TopologyEdgeData, TopologyEdge, TopologySummary } from '@/types/topology'
@@ -41,8 +40,6 @@ export default function TopologyPage() {
   const [edges, setEdges, onEdgesChange] = useEdgesState<TopologyEdgeData>([])
   const [addDeviceOpen, setAddDeviceOpen] = useState(false)
   const [discoveryOpen, setDiscoveryOpen] = useState(false)
-  const [editModalOpen, setEditModalOpen] = useState(false)
-  const [editingNodeData, setEditingNodeData] = useState<TopologyNodeData | null>(null)
   // Phase 36（36-05，LOGIN-02）：双击三分支态——≥2 通道选择框设备；0 通道引导表单设备与
   // Tabs 定位初值（快照 connectionType，Pitfall 9 允许的唯一快照消费位）
   const [pickerDevice, setPickerDevice] = useState<Device | null>(null)
@@ -153,11 +150,11 @@ export default function TopologyPage() {
 
   // Phase 38（38 review CR-01）：编辑保存后画布节点定向镜像——updateDevice 虽在库内级联刷新
   // topologies.data_enc，但画布内存 nodes 仍持旧字段值；若不镜像，随后任意画布操作触发的
-  // 1s debounce 自动保存将以旧值整图覆写 data_enc（右栏改名被静默回滚）。本页三条编辑写路径
-  // （画布侧 EditNodeModal / 零通道引导 DeviceForm / 38-02 右栏编辑）均 bump refreshCounter，
-  // 后两条此前无镜像；此处按 bump 时刻选中设备重拉 getById，把 topoFields 级联六字段写回对应
-  // 节点。对画布侧自身编辑幂等无害（值与库内一致）；镜像 setNodes 会经自动保存 effect 以
-  // 已修正值再写一次 data_enc，与库内一致无冲突。失败仅 warn（库内已正确，下次载图自收敛）。
+  // 1s debounce 自动保存将以旧值整图覆写 data_enc（右栏改名被静默回滚）。当前两条编辑写路径
+  // （零通道引导 DeviceForm / 39-02 右栏 DeviceForm 编辑——38 期画布侧六字段弹窗已随 39-02
+  // 退役）均 bump refreshCounter 且自身无画布镜像；此处按 bump 时刻选中设备重拉 getById，把
+  // topoFields 级联六字段写回对应节点。镜像 setNodes 会经自动保存 effect 以已修正值再写一次
+  // data_enc，与库内一致无冲突。失败仅 warn（库内已正确，下次载图自收敛）。
   useEffect(() => {
     if (detailRefreshCounter === 0) return
     const devId = useDeviceDetailStore.getState().selectedDeviceId
@@ -529,10 +526,6 @@ export default function TopologyPage() {
   // Phase 26 / 26-04 round 3 P-C：稳定回调/取值器——内联箭头函数每帧新引用会击穿子组件 memo
   const handleAddDeviceCancel = useCallback(() => setAddDeviceOpen(false), [])
   const handleDiscoveryCancel = useCallback(() => setDiscoveryOpen(false), [])
-  const handleEditCancel = useCallback(() => {
-    setEditModalOpen(false)
-    setEditingNodeData(null)
-  }, [])
   const getViewportCenter = useCallback(() => ({ ...viewportCenterRef.current }), [])
   const getExistingNodes = useCallback(() => nodesRef.current, [])
 
@@ -639,16 +632,6 @@ export default function TopologyPage() {
     setSelectedEdgeIds(new Set())
   }, [selectedNodeIds, selectedEdgeIds, setNodes, setEdges])
 
-  const handleEditSelectedNode = useCallback(() => {
-    const nodeId = [...selectedNodeIds][0]
-    if (!nodeId) return
-    // FE-03: 读 ref.current 取最新 nodes（消除 stale closure）
-    const node = nodesRef.current.find((n) => n.id === nodeId)
-    if (!node) return
-    setEditingNodeData(node.data)
-    setEditModalOpen(true)
-  }, [selectedNodeIds])
-
   const handleCanvasSelectionChange = useCallback((nodeIds: string[], edgeIds: string[]) => {
     setSelectedNodeIds(new Set(nodeIds))
     setSelectedEdgeIds(new Set(edgeIds))
@@ -659,7 +642,8 @@ export default function TopologyPage() {
   // getState().canvasActions 一次性取用（Pattern 3 读清即走，不订阅）。
   // 39-02（删除双动作）/39-03（纳管回写）只消费，不再改本命令层。
 
-  // D-02 接口回写：setEdges 定向换 data（handleEditConfirm 镜像 :626-630 节点版形态改边版）。
+  // D-02 接口回写：setEdges 定向换 data（定向换引用镜像形态——38 期画布侧节点编辑保存的
+  // 节点版镜像同款，该路径已随 39-02 右栏 DeviceForm 编辑退役）。
   // 落库链零新增：edges 引用变化自动触发既有自动保存 effect → debouncedSave 1s topology.update。
   const applyEdgeInterfaces = useCallback(
     (edgeId: string, sourceInterface: string, targetInterface: string) => {
@@ -757,41 +741,10 @@ export default function TopologyPage() {
     setCanvasActions,
   ])
 
-  // Phase 25.1（25.1-01）：设备属性编辑收敛 device:update 单一写路径——service 层 updateDevice
-  // 同一事务内同步 devices 表（updated_at/name_hash/重名拦截）并级联刷新所有 topologies.data_enc，
-  // 消除原「只 setNodes + debounce 写 data_enc」的旁路写库（设备管理页不同步根因）。
-  // 失败不 setNodes（本地不落脏值），错误明文透出（重名冲突含冲突设备名+IP，D-12）。
-  // 约束（plan-checker，WR-01 25.1）：EditNodeModal 可编辑字段必须 ⊆ updateDevice topoFields
-  // 级联集（name/deviceType/connectionType/ipAddress/vendor/model，见 device.ts topoFields）。
-  // 新增可编辑字段（如 version/webUrl）须先确认已在级联集内，否则拓扑 JSON 不级联、本地镜像分叉。
-  const handleEditConfirm = useCallback(
-    async (updatedData: TopologyNodeData) => {
-      try {
-        // WR-06（26 review）：UpdateDeviceDTO = Partial<CreateDeviceDTO>，字段全 optional，
-        // 直接构造可赋值对象——删双断言，新增字段缺漏即刻产生编译错误（防 25.1-01 级联集分叉）
-        await window.api.device.update(updatedData.deviceId, {
-          name: updatedData.deviceName,
-          ipAddress: updatedData.ipAddress,
-          deviceType: updatedData.deviceType,
-          vendor: updatedData.vendor,
-          model: updatedData.model,
-        })
-        // 成功后再镜像本地节点（值与 service 落库一致，debounce 回写不产生冲突数据）
-        setNodes((nds) =>
-          nds.map((n) =>
-            n.data.deviceId === updatedData.deviceId ? { ...n, data: updatedData } : n
-          )
-        )
-        setEditModalOpen(false)
-        setEditingNodeData(null)
-        // Phase 38（38-01）：双写路径 refresh bump——38-02 右栏面板重拉 getById 的信号线
-        refreshDeviceDetail()
-      } catch (e: unknown) {
-        message.error('保存失败：' + (e instanceof Error ? e.message : String(e)))
-      }
-    },
-    [setNodes, refreshDeviceDetail]
-  )
+  // Phase 25.1（25.1-01，39-02 退役）：画布侧六字段编辑弹窗整链删除——右栏编辑已换 DeviceForm
+  // 全量载荷路径（deviceDetailPanel handleEditFormOk），五字段 topoFields 载荷形态与画布侧
+  // 编辑回调链（含 TopologyCanvas/SelectionToolbar prop 透传）不再需要；topoFields 级联集
+  // 约束注释已随活文档迁移至保存回调处。
 
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
@@ -803,7 +756,6 @@ export default function TopologyPage() {
         onConnect={handleConnect}
         onNodeDoubleClick={handleNodeDoubleClick}
         onDeleteSelected={handleDeleteSelected}
-        onEditSelectedNode={handleEditSelectedNode}
         onSelectionChange={handleCanvasSelectionChange}
         viewportCenterRef={viewportCenterRef}
         nodesRef={nodesRef}
@@ -847,12 +799,6 @@ export default function TopologyPage() {
         open={discoveryOpen}
         onCancel={handleDiscoveryCancel}
         onConfirm={handleDiscoveryConfirm}
-      />
-      <EditNodeModal
-        open={editModalOpen}
-        data={editingNodeData}
-        onConfirm={handleEditConfirm}
-        onCancel={handleEditCancel}
       />
       {/* Phase 36（36-05，D-03）：双击 ≥2 通道选择框（记忆预选 + 确认时刻写 lastChannelByDevice） */}
       <ChannelPickerModal

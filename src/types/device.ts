@@ -25,7 +25,7 @@ export const CHANNEL_SHORT_LABELS: Record<ConnectionType, string> = {
 
 /**
  * Phase 38（38 review WR-05）：设备类型中文映射全局唯一表——DevicesPage 表格 /
- * AddDeviceModal 表格 / appframe/DeviceDetailPanel 基础区 / DeviceForm 与 EditNodeModal
+ * AddDeviceModal 表格 / appframe/DeviceDetailPanel 基础区 / DeviceForm
  * 类型下拉（经 DEVICE_TYPE_OPTIONS 派生）共用，单一来源防漂移（CHANNEL_LABELS 同款契约；
  * 原五处本地拷贝 generic 值已漂移「通用/通用设备」，裁决统一为「通用」——对齐设备管理页
  * 表格现值，紧凑表列/字段行场景取最短形态）。
@@ -38,7 +38,7 @@ export const DEVICE_TYPE_LABELS: Record<DeviceType, string> = {
   generic: '通用',
 }
 
-/** 设备类型下拉 options 派生（键序即展示序，DeviceForm / EditNodeModal 共用） */
+/** 设备类型下拉 options 派生（键序即展示序，DeviceForm 共用） */
 export const DEVICE_TYPE_OPTIONS: Array<{ value: DeviceType, label: string }> = (
   Object.keys(DEVICE_TYPE_LABELS) as DeviceType[]
 ).map((value) => ({ value, label: DEVICE_TYPE_LABELS[value] }))

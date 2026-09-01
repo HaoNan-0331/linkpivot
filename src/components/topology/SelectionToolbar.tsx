@@ -2,7 +2,6 @@ import { memo, useMemo } from 'react'
 import { Button, Divider, Space, Tooltip } from 'antd'
 import {
   DeleteOutlined,
-  EditOutlined,
   AlignLeftOutlined,
   AlignRightOutlined,
   VerticalAlignTopOutlined,
@@ -18,7 +17,6 @@ interface SelectionToolbarProps {
   selectedNodes: TopologyNode[]
   selectedEdges: TopologyEdge[]
   onDelete: () => void
-  onEdit: () => void
   /** Phase 26 / D-12：对齐回调链（经 props 上抛到 Page，Page 调 alignNodes 后 setNodes） */
   onAlign?: (mode: AlignMode) => void
 }
@@ -32,7 +30,6 @@ function SelectionToolbarBase({
   selectedNodes,
   selectedEdges,
   onDelete,
-  onEdit,
   onAlign,
 }: SelectionToolbarProps) {
   const transform = useStore((s) => s.transform)
@@ -61,7 +58,10 @@ function SelectionToolbarBase({
       a.length === b.length && a.every((p, i) => p.x === b[i].x && p.y === b[i].y)
   )
 
-  const hasSelection = selectedNodes.length > 0 || selectedEdges.length > 0
+  // Phase 39（39-02，D-05 单选退役）：浮动条仅多选态（合计 ≥2，含「1 节点 + 1 边」混合
+  // 选中——38-D03「多选=批量操作」语义，删除按钮对混合选中现状可用）出条；单选节点/单选
+  // 连线不再出条（编辑入右栏 DeviceForm / 删除入右栏双动作）。
+  const hasSelection = selectedNodes.length + selectedEdges.length >= 2
   if (!hasSelection || positions.length === 0) return null
 
   let x = 0
@@ -75,7 +75,6 @@ function SelectionToolbarBase({
   const screenX = avgX * transform[2] + transform[0]
   const screenY = avgY * transform[2] + transform[1]
 
-  const isNodeSelected = selectedNodes.length > 0
   // Phase 26 / D-12（UI-SPEC Interaction 7）：框选 ≥2 节点对齐按钮组可用；均分需 ≥3
   const canAlign = selectedNodes.length >= 2
   const canDistribute = selectedNodes.length >= 3
@@ -94,11 +93,6 @@ function SelectionToolbarBase({
         boxShadow: 'var(--nt-shadow-lv3)',
       }}
     >
-      {isNodeSelected && (
-        <Button size="small" icon={<EditOutlined />} onClick={onEdit}>
-          编辑属性
-        </Button>
-      )}
       {canAlign && (
         <>
           <Tooltip title="左对齐">

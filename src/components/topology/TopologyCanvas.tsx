@@ -60,7 +60,6 @@ interface TopologyCanvasProps {
   onConnect?: (connection: Connection, sourceInterface: string, targetInterface: string) => void
   onNodeDoubleClick?: (nodeId: string, data: TopologyNodeData) => void
   onDeleteSelected?: () => void
-  onEditSelectedNode?: () => void
   onSelectionChange?: (nodeIds: string[], edgeIds: string[]) => void
   // Phase 26 / D-13：视野中心（画布坐标）ref 注出口——供新增设备最近空位落点计算
   viewportCenterRef?: { current: { x: number; y: number } }
@@ -135,7 +134,6 @@ export default function TopologyCanvas({
   onConnect,
   onNodeDoubleClick,
   onDeleteSelected,
-  onEditSelectedNode,
   onSelectionChange,
   viewportCenterRef,
   nodesRef,
@@ -299,7 +297,6 @@ export default function TopologyCanvas({
           selectedNodes={selectedNodes}
           selectedEdges={selectedEdges}
           onDelete={onDeleteSelected ?? noop}
-          onEdit={onEditSelectedNode ?? noop}
           onAlign={onAlignSelected}
         />
       </ReactFlow>
