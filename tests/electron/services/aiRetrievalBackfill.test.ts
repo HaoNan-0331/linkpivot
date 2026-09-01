@@ -302,7 +302,9 @@ describe('37-02 Task 2: runEvidenceBackfill 强制/智能双模式分流', () =>
     } as any)
     const fetchMock = queueReplies('再标同词\n[EXP_BACKFILL]词A[/EXP_BACKFILL]')
     const out = await runEvidenceBackfill(makeCtx('原话'), state, 'inspection', '结论\n[EXP_BACKFILL]词A[/EXP_BACKFILL]')
-    expect(out).toBe('再标同词')
+    // UAT 修复：换词轮有标记（过渡语形态）→ 出口返回原始 reply 而非换词轮文本
+    expect(out).toBe('结论')
+    expect(out).not.toContain('再标同词')
     expect(fetchMock.mock.calls.length).toBe(1) // 仅第一轮换词，无第二轮（结构性单次有界）
     expect(retrieveForAnswerMock).not.toHaveBeenCalled()
     expect(state.backfillNotes?.some((n) => n.includes('换词后关键词仍与已查相同'))).toBe(true)
@@ -334,6 +336,56 @@ describe('37-02 Task 2: runEvidenceBackfill 强制/智能双模式分流', () =>
     const expBackfilled = state.steps.filter((s) => s.actionType === 'exp' && s.backfilled === true)
     expect(expBackfilled).toHaveLength(1)
     expect(expBackfilled[0].query).toBe('新词D')
+  })
+
+  it('Test 7e 智能·换词轮新标记未命中 → 出口返回原始分析回复（UAT 修复 2026-09-01：换词轮过渡语形态非答案）', async () => {
+    // UAT 修复（2026-09-01 真机实证）：换词轮输出新标记 = 过渡语形态（请求重查的中间话术）非答案，
+    // 新词检索未命中时出口不得返回换词过渡语——返回原始 reply（含路由表分析），换词/未命中
+    // 事实由 backfillNotes 承载不丢
+    setBackfillMode('smart')
+    const state = createAgentLoopState()
+    state.steps.push({
+      stepIndex: 0, actionType: 'exp', status: 'done',
+      query: sanitizeUntrusted('词A', 200), outputSummary: '经验库未命中',
+    } as any)
+    const fetchMock = queueReplies('换词过渡语\n[EXP_BACKFILL]更具体的新词[/EXP_BACKFILL]')
+    const out = await runEvidenceBackfill(makeCtx('原话'), state, 'inspection', '路由表分析结论\n[EXP_BACKFILL]词A[/EXP_BACKFILL]')
+    expect(out).toBe('路由表分析结论') // 原始 reply strip 后（bug 行为：返回 '换词过渡语'）
+    expect(out).not.toContain('换词过渡语')
+    // 新词确实检索过恰 1 次（原同词被守卫拦下转 rewordPending，不重复检索）
+    expect(retrieveForAnswerMock).toHaveBeenCalledTimes(1)
+    expect(retrieveForAnswerMock).toHaveBeenCalledWith({ userMessage: '更具体的新词', deviceIds: undefined })
+    // fetch 恰 1 轮：换词轮（新词未命中零新证据，无终答轮）
+    expect(fetchMock.mock.calls.length).toBe(1)
+    // 换词与未命中事实告知不丢（→ backfillNotes → meta_enc → UI 系统提示区）
+    expect(state.backfillNotes?.some((n) => n.includes('已请求换词重查'))).toBe(true)
+    expect(state.backfillNotes?.some((n) => n.includes('未命中'))).toBe(true)
+    // 出口零标记泄漏（T-37G5-04 不回退）
+    expect(out).not.toContain('[EXP_BACKFILL]')
+    expect(out).not.toContain('[/EXP_BACKFILL]')
+  })
+
+  it('Test 7f 强制·换词轮新标记未命中 → 出口返回原始分析回复（与智能分支对称，UAT 修复）', async () => {
+    setBackfillMode('force')
+    const state = createAgentLoopState()
+    state.steps.push({
+      stepIndex: 0, actionType: 'exp', status: 'done',
+      query: sanitizeUntrusted('原话', 200), outputSummary: '经验库未命中',
+    } as any)
+    const fetchMock = queueReplies('换词过渡\n[EXP_BACKFILL]新词D[/EXP_BACKFILL]')
+    const out = await runEvidenceBackfill(makeCtx('原话'), state, 'configQuery', '路由表分析\n[EXP_BACKFILL]原话[/EXP_BACKFILL]')
+    expect(out).toBe('路由表分析') // 原始 reply strip 后（bug 行为：返回 '换词过渡'）
+    expect(out).not.toContain('换词过渡')
+    // exp 同词被守卫拦下（missing 源标记词与已查词相同），仅换词新词检索恰 1 次
+    expect(retrieveForAnswerMock).toHaveBeenCalledTimes(1)
+    expect(retrieveForAnswerMock).toHaveBeenCalledWith({ userMessage: '新词D', deviceIds: undefined })
+    // kb 无标记 fallback 用户原话直查（沿 7d 同型）
+    expect(kbSearchMock).toHaveBeenCalledWith('原话', undefined, 5)
+    // fetch 恰 1 轮：换词轮（新词未命中零新证据，无终答轮）
+    expect(fetchMock.mock.calls.length).toBe(1)
+    // 出口零标记泄漏（T-37G5-04 不回退）
+    expect(out).not.toContain('[EXP_BACKFILL]')
+    expect(out).not.toContain('[/EXP_BACKFILL]')
   })
 
   it('Test 8 强制·AI 词优先（D-07）：无标记 fallback 用户原话；标记词优先；missing 空+标记在场早返不泄漏原文', async () => {

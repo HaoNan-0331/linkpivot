@@ -587,8 +587,9 @@ describe('28-04 Task 1: 分档强制预取 + 后置证据校验 + agent_answer p
     // 检索 = 预取 1 + 换词新词 1（原同词被守卫拦下转 rewordPending，不重复检索）
     expect(retrieveForAnswerMock).toHaveBeenCalledTimes(2)
     expect(retrieveForAnswerMock).toHaveBeenLastCalledWith({ userMessage: '环路定位方法', deviceIds: undefined })
-    // 返回值 = strip 后换词轮回复（零轨迹纯文本契约不变）
-    expect(out).toBe('换词重查')
+    // 返回值：换词轮有标记（过渡语形态非答案）→ 原始分析回复（UAT 2026-09-01 修复；零轨迹纯文本契约不变）
+    expect(out).toBe('初步分析')
+    expect(out).not.toContain('换词重查')
     // exp 预取卡恰 1 张 + 换词新词 [补查] 卡恰 1 张
     expect(payloads.filter((p) => p.actionType === 'exp' && p.prefetched === true)).toHaveLength(1)
     const expBackfilled = payloads.filter((p) => p.backfilled === true && p.actionType === 'exp')
