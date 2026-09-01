@@ -106,9 +106,6 @@ export interface ElectronAPI {
   connection: {
     /** Phase 36（36-03，LOGIN-02）：统一通道入口——channel 缺省走默认通道（D-07），四通道枚举经服务层校验 */
     open: (deviceId: string, channel?: string) => Promise<{ sessionId: string }>
-    sshConnect: (deviceId: string) => Promise<{ sessionId: string }>
-    telnetConnect: (deviceId: string) => Promise<{ sessionId: string }>
-    rdpConnect: (deviceId: string) => Promise<{ sessionId: string }>
     openWeb: (url: string) => Promise<void>
     disconnect: (sessionId: string) => Promise<void>
     onData: (sid: string, cb: (data: string) => void) => void

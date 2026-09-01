@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from 'vitest'
 // H-3（v0.3.0 audit）：ai:saveConfig 掩码守卫回归网。
 //
 // 红线：设置页任意保存不会把 **** 掩码串落库覆盖真实 apiKey/visionApiKey。
-// 主进程侧兜住一切掩码回传（不依赖 renderer 行为）——与 mock-api.ts DEV 守卫语义对齐。
+// 主进程侧兜住一切掩码回传（不依赖 renderer 行为）。
 
 vi.mock('../../electron/database/connection', () => ({
   getDatabase: () => { throw new Error('aiConfigMask 测试不应触达 DB') },

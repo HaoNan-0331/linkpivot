@@ -7,15 +7,6 @@
   </head>
   <body>
     <div id="root"></div>
-    <script>
-      // Inject mock API when not running in Electron
-      if (!window.api) {
-        var s = document.createElement('script');
-        s.src = '/src/mock-api.ts';
-        s.type = 'module';
-        document.head.appendChild(s);
-      }
-    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

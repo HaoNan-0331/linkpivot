@@ -402,12 +402,8 @@ app.whenReady().then(async () => {
 
   // Connection IPC
   // Phase 36（36-03，LOGIN-02）：统一入口 connection:open(deviceId, channel)——web 也走 main
-  //（webUrl 为子表凭证列，凭证不出 main 对称性，Q3 裁决）；三别名透传自身语义通道
-  //（修正原三 handler 全调 openTerminal(deviceId) 忽略通道名的名存实亡，Pitfall 11）。
+  //（webUrl 为子表凭证列，凭证不出 main 对称性，Q3 裁决）。
   ipcMain.handle('connection:open', secure((_e, deviceId: string, channel?: string) => openTerminal(deviceId, channel)))
-  ipcMain.handle('connection:ssh', secure((_e, deviceId) => openTerminal(deviceId, 'ssh')))
-  ipcMain.handle('connection:telnet', secure((_e, deviceId) => openTerminal(deviceId, 'telnet')))
-  ipcMain.handle('connection:rdp', secure((_e, deviceId) => openTerminal(deviceId, 'rdp')))
   ipcMain.handle('connection:openWeb', secure((_e, url) => openWebSafe(url)))
   ipcMain.handle('connection:disconnect', secure((_e, sessionId) => disconnectSession(sessionId)))
   ipcMain.handle('connection:write', secure((_e, sessionId, data) => writeToSession(sessionId, data)))

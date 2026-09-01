@@ -70,7 +70,7 @@ export function getAiConfigMasked(): Record<string, string> | null {
  * H-3（v0.3.0 audit）：saveAiConfig 掩码守卫（纯函数）。
  *
  * 红线：设置页任意保存不会把 **** 掩码串落库覆盖真实 apiKey/visionApiKey。
- * 主进程侧兜住一切掩码回传（不限定键名、不依赖 renderer 行为，与 mock-api.ts DEV 守卫语义对齐）：
+ * 主进程侧兜住一切掩码回传（不限定键名、不依赖 renderer 行为）：
  * 值以 **** 开头的键直接剔除，merge 分支 `config.X ?? current.X` 自动保持现值；
  * INSERT 分支掩码串也不会落库。null/''/undefined 值不剔除（?? 语义交给 merge）。
  */
