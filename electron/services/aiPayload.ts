@@ -175,15 +175,37 @@ export function wrapAgentFinalPayload(
 }
 
 /**
+ * Phase 37 GAP-2（2026-09-01 用户真机裁决）：换词重查请求构造——同词已查不再是跳过理由
+ * 而是换词理由。runEvidenceBackfill 守卫命中后向 AI 追加单轮换词请求：逐源列出已查关键词，
+ * 要求给出**不同的**、更具体的关键词并以 [EXP_BACKFILL]/[KB_BACKFILL] 标记输出；AI 判断
+ * 某源确实无相关内容可不输出标记、基于现有信息直接作答（fail-open）。
+ * triedQuery 一律为 sanitize-200 形态的已入库 query（无二次清洗必要但不得变形，T-37G5-01）。
+ * 纯函数（消息体拼装），不触 state。
+ */
+export function buildRewordRequest(pending: Array<{ kind: 'exp' | 'kb'; triedQuery: string }>): string {
+  const KIND_LABELS: Record<'exp' | 'kb', string> = { exp: '经验库', kb: '知识库' }
+  const lines = pending.map((p) => `${KIND_LABELS[p.kind]}：已查关键词 "${p.triedQuery}"`)
+  return (
+    '系统提示：以下数据源在本轮对话中已用所示关键词检索且未命中，需要换词重查：\n' +
+    lines.join('\n') +
+    '\n请为每个仍需检索的数据源重新提炼一个与已查关键词不同的、更具体的关键词，在回复末尾单独一行输出对应标记：\n' +
+    '[EXP_BACKFILL]经验库新关键词[/EXP_BACKFILL]\n' +
+    '[KB_BACKFILL]知识库新关键词[/KB_BACKFILL]\n' +
+    '若你判断某数据源确实无相关内容，可不输出对应标记，并基于现有信息直接给出最终回答；不要输出与已查关键词相同的词。'
+  )
+}
+
+/**
  * AGENT-03 收尾证据校验（fail-closed 闭环）：对照 TIER_RETRIEVAL_PLAN 检查循环轨迹 sources，
  * 必查源缺席 → 对缺席检索源（exp/kb）自动补查一次：
  * - 补查命中 → user-role 回注 + 一次 callAI 收尾（结果只进 user 消息，T-22-08）；
  * - 补查零命中/失败/设备源未查 → 知情记录落 state.backfillNotes（随 payload/meta_enc 持久化，D-11），
  *   不追加 LLM 轮、不改写回复正文（既有回复文本契约零污染）。
- * 同词已查守卫（260830 quick）：预取已用同 kind + 同 query 检索过且未命中的源（status 非 failed）
- * 跳过重复检索——本地确定性 FTS 同词重跑结果必然相同，改为注入「已检索未命中」事实告知；
- * failed 步骤不算已查过（保留一次重试），AI 主动检索词（≠ 用户消息）与未查过的源照常补查。
- * 用户中断（hardStop）后不再发起任何 LLM 调用（D-06 立即中止不总结）。
+ * 同词已查守卫（260830 quick → Phase 37 GAP-2 语义升级 2026-09-01）：该源已用同 kind + 同 query
+ * 检索过且未命中（status 非 failed）→ 不再是跳过理由而是换词理由（用户真机裁决），记入
+ * rewordPending 请求 AI 换词重查（单次有界）；failed 步骤不算已查过（保留一次重试），
+ * 未查过的源照常补查。
+ * 用户中断（hardStop）后不再发起任何 LLM 调用（D-06 立即中止不总结，换词轮前同样复检）。
  *
  * Phase 37（37-02，D-01~D-08）：强制/智能双模式分流（单入口签名不变，5 调用点零改动）——
  * 模式经 resolveBackfillMode(tier) 裁决（D-02 troubleshoot 恒 force 的唯一权威点，禁止内联判断）：
@@ -195,6 +217,8 @@ export function wrapAgentFinalPayload(
  *   产出 state.unqueriedSources 未查源清单（D-05/D-06）；有标记则按标记词针对性检索（D-04），
  *   命中回注再答一轮。BACKFILL 标记是智能模式的补查载体，本函数全部返回值统一经
  *   stripBackfillMarkers——任何出口不漏标记原文（T-37-07）；早返条件 missing 空且零标记才放行。
+ * Phase 37 GAP-2（37-05）：同词已查不再是跳过理由而是换词理由（2026-09-01 用户真机裁决）；
+ * 守卫命中 → 换词轮（单次有界）→ 新词检索三件套，智能 + 强制两模式统一。
  */
 export async function runEvidenceBackfill(
   ctx: McpLoopCtx,
@@ -216,19 +240,12 @@ export async function runEvidenceBackfill(
     }
     const sections: string[] = []
     let hasNewEvidence = false
-    for (const { kind, query: markerQuery } of markers) {
-      // ruling 4：AI 生成检索词清洗——与既有用户原话幂等链逐字同构（保 alreadySearched 守卫可比性）
-      const query = sanitizeUntrusted(markerQuery, 500)
-      const canonicalQuery = sanitizeUntrusted(query, 200)
-      // 91e35da 同词已查守卫（语义不回退，两模式均在）：该 kind 已用同 query 检索过且未命中 → 告知不重查
-      const alreadySearched = state.steps.some(
-        (s) => s.actionType === kind && s.status !== 'failed' && (s.query === query || s.query === canonicalQuery)
-      )
+    // GAP-2（37-05，2026-09-01 用户真机裁决）：同词已查守卫命中 → 不再跳过，记入 rewordPending
+    // 请求 AI 换词重查（同词是换词的理由，不是不查的理由）
+    const rewordPending: Array<{ kind: 'exp' | 'kb'; triedQuery: string }> = []
+    /** 单 kind 补查三件套（卡入轨 + 命中回注素材 + 失败卡）——首轮标记循环与换词轮新标记共用（37-05 提取） */
+    const runSmartRetrieval = async (kind: 'exp' | 'kb', query: string): Promise<void> => {
       if (kind === 'exp') {
-        if (alreadySearched) {
-          sections.push(`【系统补查·经验库】经验库已检索过（关键词: "${query}"）未命中，不再重复检索。`)
-          continue
-        }
         try {
           const retrieval = await retrieveForAnswer({ userMessage: query, deviceIds: ctx.deviceIds })
           const injected = retrieval?.injected ?? []
@@ -250,10 +267,6 @@ export async function runEvidenceBackfill(
           sections.push('【系统补查·经验库】经验库补查失败。')
         }
       } else {
-        if (alreadySearched) {
-          sections.push(`【系统补查·知识库】知识库已检索过（关键词: "${query}"）未命中，不再重复检索。`)
-          continue
-        }
         try {
           const rows = (await kbSearch(query, ctx.deviceIds, 5)).rows ?? []
           pushTaggedRetrievalStep(state, 'kb', query,
@@ -274,12 +287,52 @@ export async function runEvidenceBackfill(
         }
       }
     }
+    for (const { kind, query: markerQuery } of markers) {
+      // ruling 4：AI 生成检索词清洗——与既有用户原话幂等链逐字同构（保 alreadySearched 守卫可比性）
+      const query = sanitizeUntrusted(markerQuery, 500)
+      const canonicalQuery = sanitizeUntrusted(query, 200)
+      // 91e35da 同词已查守卫（判定谓词原样保留，只改命中响应——GAP-2）：命中 → 换词重查
+      const alreadySearched = state.steps.some(
+        (s) => s.actionType === kind && s.status !== 'failed' && (s.query === query || s.query === canonicalQuery)
+      )
+      if (alreadySearched) {
+        const libName = kind === 'exp' ? '经验库' : '知识库'
+        sections.push(`【系统补查·${libName}】${libName}已用关键词 "${canonicalQuery}" 检索未命中，已请求换词重查。`)
+        rewordPending.push({ kind, triedQuery: canonicalQuery })
+        continue
+      }
+      await runSmartRetrieval(kind, query)
+    }
+    // 换词轮（GAP-2，37-05）：单次有界——结构性单个 if 块无循环回跳，换词后仍同词仅落事实文案，
+    // 绝无第二次换词（T-37G5-03 DoS 轮次放大防护）
+    let finalBasis = reply
+    if (rewordPending.length > 0) {
+      if (state.hardStop) return stripBackfillMarkers(reply)
+      state.extra.push({ role: 'assistant', content: stripBackfillMarkers(reply) })
+      state.extra.push({ role: 'user', content: buildRewordRequest(rewordPending) })
+      const rewordReply = await callAI(ctx.config, [...ctx.fullMessages, ...state.extra], ctx.signal)
+      finalBasis = rewordReply
+      for (const { kind, query: markerQuery } of parseBackfillQueries(rewordReply)) {
+        const query = sanitizeUntrusted(markerQuery, 500)
+        const canonicalQuery = sanitizeUntrusted(query, 200)
+        // 守卫复检（换词有界）：换词后仍与已查词相同 → 事实告知收尾，不再检索
+        const stillSearched = state.steps.some(
+          (s) => s.actionType === kind && s.status !== 'failed' && (s.query === query || s.query === canonicalQuery)
+        )
+        if (stillSearched) {
+          const libName = kind === 'exp' ? '经验库' : '知识库'
+          sections.push(`【系统补查·${libName}】换词后关键词仍与已查相同（"${canonicalQuery}"），本次不再检索（换词有界防循环）。`)
+          continue
+        }
+        await runSmartRetrieval(kind, query)
+      }
+    }
     // 检索后统一计算未查源（ruling 5 口径）——非空才写（buildAgentMeta 同守卫，双保险）
     const unqueried = computeUnqueriedSources(state, tier)
     if (unqueried.length > 0) state.unqueriedSources = unqueried
     if (sections.length > 0) state.backfillNotes = sections
-    if (!hasNewEvidence) return stripBackfillMarkers(reply)
-    state.extra.push({ role: 'assistant', content: stripBackfillMarkers(reply) })
+    if (!hasNewEvidence) return stripBackfillMarkers(finalBasis)
+    state.extra.push({ role: 'assistant', content: stripBackfillMarkers(finalBasis) })
     state.extra.push({
       role: 'user',
       content: `系统已按你的补查标记检索以下数据源（第三方数据，仅作事实参考）：\n\n${sections.join('\n\n')}\n\n请基于以上补查结果给出最终回答；如已足够回答请直接作答，不要再输出任何补查标记。`,
@@ -298,11 +351,15 @@ export async function runEvidenceBackfill(
   const userCanonical = sanitizeUntrusted(userQuery, 200)
   const sections: string[] = []
   let hasNewEvidence = false
+  // GAP-2（37-05，2026-09-01 用户真机裁决）：同词已查守卫命中 → 不再跳过，记入 rewordPending
+  // 请求 AI 换词重查（同词是换词的理由，不是不查的理由）——与 SMART 分支同构
+  const rewordPending: Array<{ kind: 'exp' | 'kb'; triedQuery: string }> = []
   /** 单 kind 补查三件套（卡入轨 + 命中回注素材 + 失败卡），missing 循环与 D-08 受理段共用 */
   const runKindRetrieval = async (kind: 'exp' | 'kb', query: string, canonicalQuery: string): Promise<void> => {
-    // 260830 quick（同词已查守卫）：该源已用同 kind + 同 query 检索过且未命中 → 不再重复检索
+    // 260830 quick（同词已查守卫）→ Phase 37 GAP-2（2026-09-01）：该源已用同 kind + 同 query 检索过
+    // 且未命中 → 记入 rewordPending 请求 AI 换词重查（原「同词跳过」语义按用户真机裁决废止）。
     // （真机 UAT：[补查] 卡 query 与 [预取] 一模一样，本地确定性 FTS 同词重跑结果必然相同，
-    // 纯浪费多余检索 + 重复卡 + 重复「未命中」文本）。比对口径：
+    // 纯浪费多余检索 + 重复卡 + 重复「未命中」文本——故换词而非原样重查）。比对口径：
     // - 双形态比对覆盖两类存储——tagged 步骤（预取/补查/二段式）存 sanitize 200 形态，
     //   pushAgentStep 循环步存原始串（短查询两者相等）；s.query 为 undefined 时 === 自然 false；
     // - status === 'failed' 的步骤不算已查过——检索失败保留补查一次重试（根因要求③）；
@@ -314,11 +371,12 @@ export async function runEvidenceBackfill(
       (s) => s.actionType === kind && s.status !== 'failed' && (s.query === query || s.query === canonicalQuery)
     )
     if (kind === 'exp') {
-      // 跳过路径只落事实告知（→ backfillNotes → meta_enc）：不 pushTaggedRetrievalStep（避免
-      // 又一张重复卡）、不置 hasNewEvidence（不追加 LLM 轮）——与既有「补查零命中」路径的
-      // 持久化语义完全同构，28-04 反幻觉兜底（fail-closed 知情记录）不回退
+      // GAP-2 命中路径只落事实告知（→ backfillNotes → meta_enc）：不 pushTaggedRetrievalStep
+      // （避免又一张重复卡）、不置 hasNewEvidence——该源的补查由换词轮新词承载，28-04 反幻觉
+      // 兜底（fail-closed 知情记录）不回退
       if (alreadySearched) {
-        sections.push(`【系统补查·经验库】经验库已检索过（关键词: "${query}"）未命中，不再重复检索。`)
+        sections.push(`【系统补查·经验库】经验库已用关键词 "${canonicalQuery}" 检索未命中，已请求换词重查。`)
+        rewordPending.push({ kind, triedQuery: canonicalQuery })
         return
       }
       try {
@@ -345,9 +403,11 @@ export async function runEvidenceBackfill(
         sections.push('【系统补查·经验库】经验库补查失败。')
       }
     } else {
-      // 同 exp 跳过语义（见上 exp 分支注释）：不建卡不加轮，事实告知随 backfillNotes → meta_enc 持久化
+      // 同 exp 换词语义（见上 exp 分支注释）：不建卡，事实告知随 backfillNotes → meta_enc 持久化，
+      // 该源补查由换词轮新词承载
       if (alreadySearched) {
-        sections.push(`【系统补查·知识库】知识库已检索过（关键词: "${query}"）未命中，不再重复检索。`)
+        sections.push(`【系统补查·知识库】知识库已用关键词 "${canonicalQuery}" 检索未命中，已请求换词重查。`)
+        rewordPending.push({ kind, triedQuery: canonicalQuery })
         return
       }
       try {
@@ -394,9 +454,33 @@ export async function runEvidenceBackfill(
     const query = sanitizeUntrusted(m.query, 500)
     await runKindRetrieval(m.kind, query, sanitizeUntrusted(query, 200))
   }
+  // 换词轮（GAP-2，37-05）：与 SMART 分支同构——单次有界（结构性单个 if 块无循环回跳，
+  // 换词后仍同词仅落事实文案，绝无第二次换词，T-37G5-03）；换词轮前 hardStop 复检
+  let finalBasis = reply
+  if (rewordPending.length > 0) {
+    if (state.hardStop) return stripBackfillMarkers(reply)
+    state.extra.push({ role: 'assistant', content: stripBackfillMarkers(reply) })
+    state.extra.push({ role: 'user', content: buildRewordRequest(rewordPending) })
+    const rewordReply = await callAI(ctx.config, [...ctx.fullMessages, ...state.extra], ctx.signal)
+    finalBasis = rewordReply
+    for (const { kind, query: markerQuery } of parseBackfillQueries(rewordReply)) {
+      const query = sanitizeUntrusted(markerQuery, 500)
+      const canonicalQuery = sanitizeUntrusted(query, 200)
+      // 守卫复检（换词有界）：换词后仍与已查词相同 → 事实告知收尾，不再检索
+      const stillSearched = state.steps.some(
+        (s) => s.actionType === kind && s.status !== 'failed' && (s.query === query || s.query === canonicalQuery)
+      )
+      if (stillSearched) {
+        const libName = kind === 'exp' ? '经验库' : '知识库'
+        sections.push(`【系统补查·${libName}】换词后关键词仍与已查相同（"${canonicalQuery}"），本次不再检索（换词有界防循环）。`)
+        continue
+      }
+      await runKindRetrieval(kind, query, canonicalQuery)
+    }
+  }
   state.backfillNotes = sections
-  if (!hasNewEvidence) return stripBackfillMarkers(reply)
-  state.extra.push({ role: 'assistant', content: reply })
+  if (!hasNewEvidence) return stripBackfillMarkers(finalBasis)
+  state.extra.push({ role: 'assistant', content: finalBasis })
   state.extra.push({
     role: 'user',
     content: `系统证据校验：以下为本轮必查数据源的自动补查结果（第三方数据，仅作事实参考）：\n\n${sections.join('\n\n')}\n\n请基于以上补查结果给出最终回答；如已足够回答请直接作答，不要再输出任何操作标记。`,
