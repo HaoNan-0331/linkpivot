@@ -309,7 +309,8 @@ describe('Task 2: 四标记统一循环（混合动作 + KB/EXP 循环内直执�
     const fetchMock = queueReplies(
       '[CMD:dev1]display version[/CMD]',
       '[CMD:dev1]display clock[/CMD] 同时查资料 [KB_SEARCH]vlan 原理[/KB_SEARCH]',
-      '混合轮总结'
+      '混合轮总结',
+      '混合轮总结' // GAP-2（37-05）：exp 预取同词未命中 → 换词轮桩（无新标记即收尾）
     )
     const out = await chat([{ role: 'user', content: '查状态和资料' }], ['dev1'], null)
     // 28-04：有执行轨迹的最终回答附带 meta（kb 引用在场保持 kb_answer 契约 + meta 字段）
@@ -336,7 +337,8 @@ describe('Task 2: 四标记统一循环（混合动作 + KB/EXP 循环内直执�
     const fetchMock = queueReplies(
       '[CMD:dev1]display version[/CMD]',
       '再查经验 [EXP_SEARCH]ARP 异常[/EXP_SEARCH]',
-      '经验总结'
+      '经验总结',
+      '经验总结' // GAP-2（37-05）：kb 预取同词未命中 → 换词轮桩
     )
     const out = await chat([{ role: 'user', content: '排查' }], ['dev1'], null)
     expect(retrieveForAnswerMock).toHaveBeenCalledWith({ userMessage: 'ARP 异常', deviceIds: ['dev1'] })
@@ -357,7 +359,8 @@ describe('Task 2: 硬顶①步数 + 硬顶④token 预算 → D-13 诚实收尾'
     const fetchMock = queueReplies(
       '[CMD:dev1]display version[/CMD]',
       '[CMD:dev1]display clock[/CMD]',
-      '【执行进度】收尾报告'
+      '【执行进度】收尾报告',
+      '【执行进度】收尾报告' // GAP-2（37-05）：kb/exp 预取同词未命中 → 换词轮桩
     )
     const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
     expect(JSON.parse(out).content).toBe('【执行进度】收尾报告')
@@ -375,7 +378,8 @@ describe('Task 2: 硬顶①步数 + 硬顶④token 预算 → D-13 诚实收尾'
     const fetchMock = queueReplies(
       '[CMD:dev1]display version[/CMD]',
       'a'.repeat(850000) + '[CMD:dev1]display clock[/CMD]',
-      'token 收尾'
+      'token 收尾',
+      'token 收尾' // GAP-2（37-05）：换词轮桩
     )
     const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
     expect(JSON.parse(out).content).toBe('token 收尾')
@@ -392,7 +396,8 @@ describe('Task 2: 硬顶②熔断 + 硬顶③冷却 + 重试降级（Pitfall 10 
     queueReplies(
       '[CMD:dev1]display version[/CMD]',
       '[CMD:dev1]display version[/CMD]',
-      '重试轮总结'
+      '重试轮总结',
+      '重试轮总结' // GAP-2（37-05）：换词轮桩
     )
     await chat([{ role: 'user', content: '查' }], ['dev1'], null)
     // 28-06 缺陷①：无 MCP 绑定 + 首答含 [CMD] 也进 runAgentLoop——两轮都在循环内：
@@ -407,11 +412,13 @@ describe('Task 2: 硬顶②熔断 + 硬顶③冷却 + 重试降级（Pitfall 10 
     // 循环路径首轮 1+2 重试 = 3 连接（RED=1 / GREEN=3，行为分水岭即循环入口）
     const fetchMock = queueReplies(
       '[CMD:dev1]display version[/CMD]',
-      '收尾'
+      '收尾',
+      '收尾' // GAP-2（37-05）：换词轮桩
     )
     await chat([{ role: 'user', content: '查' }], ['dev1'], null)
     expect(FakeClient.count).toBe(3)
-    expect(fetchMock.mock.calls.length).toBe(2)
+    // 初答 + 收尾 + 换词轮（GAP-2 同词守卫改换词重查）
+    expect(fetchMock.mock.calls.length).toBe(3)
   })
 
   it('熔断：连续第 burnout_count 轮失败后，同命令不再执行并回注 AGENT_BURNOUT_GUARD', async () => {
@@ -423,7 +430,8 @@ describe('Task 2: 硬顶②熔断 + 硬顶③冷却 + 重试降级（Pitfall 10 
       '[CMD:dev1]display version[/CMD]',
       '[CMD:dev1]display version[/CMD]',
       '[CMD:dev1]display version[/CMD]',
-      '熔断收尾'
+      '熔断收尾',
+      '熔断收尾' // GAP-2（37-05）：换词轮桩
     )
     const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
     expect(JSON.parse(out).content).toBe('熔断收尾')
@@ -444,7 +452,8 @@ describe('Task 2: 硬顶②熔断 + 硬顶③冷却 + 重试降级（Pitfall 10 
       '[CMD:dev1]display version[/CMD]',
       '[CMD:dev1]display version[/CMD]',
       '[CMD:dev1]display clock[/CMD]',
-      '冷却收尾'
+      '冷却收尾',
+      '冷却收尾' // GAP-2（37-05）：换词轮桩
     )
     await chat([{ role: 'user', content: '查' }], ['dev1'], null)
     // 28-06 缺陷①后全循环内：r1 3次(重试全失败写冷却) + r2 冷却跳过(fc=2) +
@@ -461,12 +470,13 @@ describe('Task 2: 硬顶②熔断 + 硬顶③冷却 + 重试降级（Pitfall 10 
     queueReplies(
       '[CMD:dev1]display version[/CMD]',
       '[CMD:dev1]display version[/CMD]',
-      '第一轮结束'
+      '第一轮结束',
+      '第一轮结束' // GAP-2（37-05）：换词轮桩
     )
     await chat([{ role: 'user', content: '查' }], ['dev1'], null)
     const countAfterFirst = FakeClient.count
     // 第二次 chat：全新 agentState，同命令再次进入执行（不受旧冷却影响）
-    queueReplies('[CMD:dev1]display version[/CMD]', '第二轮结束')
+    queueReplies('[CMD:dev1]display version[/CMD]', '第二轮结束', '第二轮结束') // 末位 = GAP-2 换词轮桩
     await chat([{ role: 'user', content: '再查' }], ['dev1'], null)
     expect(FakeClient.count).toBeGreaterThan(countAfterFirst)
   })
@@ -479,6 +489,7 @@ describe('Task 2: 硬顶②熔断 + 硬顶③冷却 + 重试降级（Pitfall 10 
       '[CMD:dev1]display version[/CMD]',
       '[CMD:dev1]display version[/CMD]',
       '安全拒绝收尾',
+      '安全拒绝收尾', // GAP-2（37-05）：换词轮桩
     ]
     let callIdx = 0
     const fetchMock = vi.fn(async () => {
@@ -509,7 +520,8 @@ describe('Task 2: CMD confirm 续跑不断头（Pitfall 2 主路径修复）', (
     const fetchMock = queueReplies(
       '[CMD:dev1]display version[/CMD]',
       '命令完成，再查资料 [KB_SEARCH]vlan 原理[/KB_SEARCH]',
-      '续跑收尾'
+      '续跑收尾',
+      '续跑收尾' // GAP-2（37-05）：换词轮桩
     )
     const out1 = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
     expect(JSON.parse(out1).type).toBe('confirm_required')
@@ -518,7 +530,8 @@ describe('Task 2: CMD confirm 续跑不断头（Pitfall 2 主路径修复）', (
     // 确认后命令执行 + KB 检索在续跑循环内发生
     expect(FakeClient.count).toBe(1)
     expect(vi.mocked(kbSearch)).toHaveBeenCalledWith('vlan 原理', ['dev1'], 5)
-    expect(fetchMock.mock.calls.length).toBe(3)
+    // 初答 + 续跑收尾 + 换词轮（GAP-2 同词守卫改换词重查）
+    expect(fetchMock.mock.calls.length).toBe(4)
   })
 
   it('confirm 档：确认后下轮再出 [CMD] → 再次 confirm_required（循环内 CMD 确认门）', async () => {
@@ -527,7 +540,8 @@ describe('Task 2: CMD confirm 续跑不断头（Pitfall 2 主路径修复）', (
     queueReplies(
       '[CMD:dev1]display version[/CMD]',
       '[CMD:dev1]display clock[/CMD]',
-      '二轮确认后收尾'
+      '二轮确认后收尾',
+      '二轮确认后收尾' // GAP-2（37-05）：换词轮桩
     )
     const out1 = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
     const out2 = await confirmCommand(JSON.parse(out1).execId, true)
@@ -561,56 +575,59 @@ describe('28-04 Task 1: 分档强制预取 + 后置证据校验 + agent_answer p
     expect(buildAgentMeta(state, 'troubleshoot').noRealtimeData).toBe(false)
   })
 
-  it('troubleshoot 预取 exp 同词未命中 → 补查跳过重复检索：检索恰 1 次、零补查卡、backfillNotes 载已检索未命中', async () => {
-    // 260830 quick：预取已用同词（用户消息）检索过且未命中 → 收尾补查不再重复检索
-    // （本地确定性 FTS 同词重跑结果必然相同）——零补查卡、零补查回注轮、事实告知落 backfillNotes
+  it('troubleshoot 预取 exp 同词未命中 → 换词重查（GAP-2：同词是换词的理由不是不查的理由）', async () => {
+    // 37-05 GAP-2（2026-09-01 用户真机裁决）：预取已用同词检索未命中 → 守卫命中不再跳过，
+    // 换词轮请求 AI 给出不同的关键词；换词新词照常检索入轨（[补查] 卡 + 事实告知）
     retrieveForAnswerMock.mockResolvedValue({ injected: [] })
     const payloads: any[] = []
-    const fetchMock = queueReplies('初步分析')
+    const fetchMock = queueReplies('初步分析', '换词重查 [EXP_BACKFILL]环路定位方法[/EXP_BACKFILL]')
     const out = await chat([{ role: 'user', content: '网络故障排查' }], undefined, 'sess-u56-skip', (p) => payloads.push(p))
-    // 全程检索恰 1 次（修复前 2：预取 + 补查同词重复）
-    expect(retrieveForAnswerMock).toHaveBeenCalledTimes(1)
-    // 跳过不置 hasNewEvidence → 无补查回注轮
-    expect(fetchMock.mock.calls.length).toBe(1)
-    // 零轨迹纯文本契约不变（不把普通问答变 JSON）
-    expect(out).toBe('初步分析')
-    // exp 预取卡恰 1 张、零补查卡
+    // 初答 + 换词轮 = 2（换词新词零命中不再终答轮）
+    expect(fetchMock.mock.calls.length).toBe(2)
+    // 检索 = 预取 1 + 换词新词 1（原同词被守卫拦下转 rewordPending，不重复检索）
+    expect(retrieveForAnswerMock).toHaveBeenCalledTimes(2)
+    expect(retrieveForAnswerMock).toHaveBeenLastCalledWith({ userMessage: '环路定位方法', deviceIds: undefined })
+    // 返回值 = strip 后换词轮回复（零轨迹纯文本契约不变）
+    expect(out).toBe('换词重查')
+    // exp 预取卡恰 1 张 + 换词新词 [补查] 卡恰 1 张
     expect(payloads.filter((p) => p.actionType === 'exp' && p.prefetched === true)).toHaveLength(1)
-    expect(payloads.filter((p) => p.backfilled === true)).toHaveLength(0)
-    // meta_enc：exp 步骤恰 1 且 prefetched、无 backfilled 步骤、backfillNotes 载「已检索未命中」事实告知
+    const expBackfilled = payloads.filter((p) => p.backfilled === true && p.actionType === 'exp')
+    expect(expBackfilled).toHaveLength(1)
+    expect(expBackfilled[0].argsJson).toBe('环路定位方法')
+    // meta_enc：tier/steps 轨迹 + backfillNotes 载「已请求换词重查」事实告知
     const row = db.prepare(
       "SELECT meta_enc FROM chat_history WHERE role='assistant' AND session_id=? ORDER BY created_at DESC LIMIT 1"
     ).get('sess-u56-skip') as any
     const meta = JSON.parse(decField(row.meta_enc, MK) as string)
     expect(meta.tier).toBe('troubleshoot')
-    expect(meta.steps.filter((s: any) => s.actionType === 'exp')).toHaveLength(1)
-    expect(meta.steps.filter((s: any) => s.actionType === 'exp')[0].prefetched).toBe(true)
-    expect(meta.steps.some((s: any) => s.backfilled === true)).toBe(false)
-    expect(meta.backfillNotes.some((n: string) => n.includes('已检索过'))).toBe(true)
-    expect(meta.backfillNotes.some((n: string) => n.includes('未命中'))).toBe(true)
-    expect(meta.backfillNotes.some((n: string) => n.includes('不再重复检索'))).toBe(true)
+    expect(meta.steps.filter((s: any) => s.actionType === 'exp' && s.prefetched === true)).toHaveLength(1)
+    expect(meta.steps.some((s: any) => s.backfilled === true)).toBe(true)
+    expect(meta.backfillNotes.some((n: string) => n.includes('已请求换词重查'))).toBe(true)
+    expect(meta.backfillNotes.some((n: string) => n.includes('重复检索'))).toBe(false)
   })
 
-  it('补查零命中：不加 LLM 轮，知情落 meta_enc（backfillNotes），零轨迹回复正文不变（纯文本契约）', async () => {
+  it('补查换词后仍零命中：换词轮 +1、事实告知落 meta_enc（backfillNotes），零轨迹回复正文不变（纯文本契约）', async () => {
     retrieveForAnswerMock.mockResolvedValue({ injected: [] })
-    const fetchMock = queueReplies('直接回答')
+    const fetchMock = queueReplies('直接回答', '基于现有信息的最终回答')
     const out = await chat([{ role: 'user', content: '网络故障排查' }], undefined, 'sess-zero')
-    expect(fetchMock.mock.calls.length).toBe(1)
-    // 预取 1 次（同 query 已查过 → 补查跳过）
+    // 初答 + 换词轮 = 2（37-05 GAP-2：「不加 LLM 轮」前提被裁决推翻——同词改换词重查）
+    expect(fetchMock.mock.calls.length).toBe(2)
+    // 预取 1 次 + 换词轮零新标记零检索（AI 拒绝换词直接作答）
     expect(retrieveForAnswerMock).toHaveBeenCalledTimes(1)
     // 零检索零执行 → 纯文本原样返回（不把普通问答变 JSON），无源标签经 meta_enc 持久化
-    expect(out).toBe('直接回答')
+    expect(out).toBe('基于现有信息的最终回答')
     const row = db.prepare(
       "SELECT meta_enc FROM chat_history WHERE role='assistant' AND session_id=? ORDER BY created_at DESC LIMIT 1"
     ).get('sess-zero') as any
     const meta = JSON.parse(decField(row.meta_enc, MK) as string)
     expect(meta.noRealtimeData).toBe(true)
-    // 260830 quick：同词已查 → 补查跳过，事实告知文案为「不再重复检索」
-    expect(meta.backfillNotes.some((n: string) => n.includes('不再重复检索'))).toBe(true)
+    // GAP-2：同词已查 → 换词事实告知（旧跳过文案废止，负锁拆字面）
+    expect(meta.backfillNotes.some((n: string) => n.includes('已请求换词重查'))).toBe(true)
+    expect(meta.backfillNotes.some((n: string) => n.includes('重复检索'))).toBe(false)
   })
 
   it('systemPrompt 追加三源冲突指令（D-10：内联 ⚠ + 末尾冲突清单，禁止静默取舍）', async () => {
-    const fetchMock = queueReplies('好的')
+    const fetchMock = queueReplies('好的', '好的') // 末位 = GAP-2（37-05）换词轮桩
     await chat([{ role: 'user', content: '你好' }], undefined, null)
     const sys = reqMsgs(fetchMock, 0)[0]
     expect(sys.role).toBe('system')
@@ -619,7 +636,7 @@ describe('28-04 Task 1: 分档强制预取 + 后置证据校验 + agent_answer p
 
   it('meta_enc 持久化：最终回答落 chat_history.meta_enc（sources/steps/tier/noRealtimeData）', async () => {
     allowCmd()
-    queueReplies('[CMD:dev1]display version[/CMD]', '执行完成总结')
+    queueReplies('[CMD:dev1]display version[/CMD]', '执行完成总结', '执行完成总结') // 末位 = GAP-2（37-05）换词轮桩
     await chat([{ role: 'user', content: '查状态和资料' }], ['dev1'], 'sess-28-04')
     const row = db.prepare(
       "SELECT meta_enc FROM chat_history WHERE role='assistant' AND session_id=? ORDER BY created_at DESC LIMIT 1"
@@ -771,7 +788,8 @@ describe('28-06 R3：混合标记轮 [CMD] 不蒸发（首答 [KB_SEARCH]+[CMD] 
     vi.mocked(kbSearch).mockResolvedValue(KB_ROWS as any)
     const fetchMock = queueReplies(
       '先查资料 [KB_SEARCH]vlan 原理[/KB_SEARCH] 再查版本 [CMD:dev1]display version[/CMD]',
-      '混合任务总结'
+      '混合任务总结',
+      '混合任务总结' // GAP-2（37-05）：换词轮桩
     )
     const out = await chat([{ role: 'user', content: '先查版本再查资料' }], ['dev1'], null)
     const payload = JSON.parse(out)
@@ -794,7 +812,8 @@ describe('28-06 R3：混合标记轮 [CMD] 不蒸发（首答 [KB_SEARCH]+[CMD] 
     vi.mocked(kbSearch).mockResolvedValue({ rows: [] } as any)
     queueReplies(
       '[KB_SEARCH]vlan[/KB_SEARCH] [CMD]display version[/CMD]',
-      '总结'
+      '总结',
+      '总结' // GAP-2（37-05）：换词轮桩
     )
     const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
     expect(FakeClient.count).toBe(1)
@@ -810,7 +829,8 @@ describe('28-06 R3：混合标记轮 [CMD] 不蒸发（首答 [KB_SEARCH]+[CMD] 
     FakeClient.output = 'VERSION 5.20'
     queueReplies(
       '[CMD:核心交换机]display version[/CMD]',
-      '总结'
+      '总结',
+      '总结' // GAP-2（37-05）：换词轮桩
     )
     const out = await chat([{ role: 'user', content: '查版本' }], ['dev2'], null)
     // 修复前：精确匹配失败 → 旧路径拒绝「未找到指定设备」（0 连接）；修复后模糊命中直接执行
@@ -845,7 +865,8 @@ describe('28-06 R2 缺陷①：步骤卡内容非空（argsJson=resultJson 数�
     queueReplies(
       '[CMD:dev1]display version[/CMD]',
       '命令完成，再查资料 [KB_SEARCH]vlan 原理[/KB_SEARCH]',
-      '混合任务总结'
+      '混合任务总结',
+      '混合任务总结' // GAP-2（37-05）：换词轮桩
     )
     const payloads: any[] = []
     await chat([{ role: 'user', content: '查状态和资料' }], ['dev1'], null, (p) => payloads.push(p))
@@ -872,7 +893,8 @@ describe('28-06 R2 缺陷⑥：历史恢复 meta 通道（getSessionMessages 返
     queueReplies(
       '[CMD:dev1]display version[/CMD]',
       '命令完成，再查资料 [KB_SEARCH]vlan 原理[/KB_SEARCH]',
-      '最终总结'
+      '最终总结',
+      '最终总结' // GAP-2（37-05）：换词轮桩
     )
     await chat([{ role: 'user', content: '查' }], ['dev1'], 'sess-r2-6')
     const msgs = getSessionMessages('sess-r2-6')
@@ -904,7 +926,8 @@ describe('28-06 R2 缺陷②：device 来源按设备判重（同设备多命令
     queueReplies(
       '[CMD:dev1]display version[/CMD] [CMD:dev1]display vlan[/CMD]',
       '再查资料 [KB_SEARCH]vlan 原理[/KB_SEARCH]',
-      '总结'
+      '总结',
+      '总结' // GAP-2（37-05）：换词轮桩
     )
     const out = await chat([{ role: 'user', content: '查' }], ['dev1'], null)
     const payload = JSON.parse(out)
@@ -922,7 +945,8 @@ describe('28-06 R2 缺陷⑤：confirm 续跑结果回注（命令输出必须�
     FakeClient.output = 'Huawei Versatile Routing Platform Software VRP (R) V500R005C10'
     const fetchMock = queueReplies(
       '[CMD:dev1]display version[/CMD]',
-      '已拿到版本信息的最终回答'
+      '已拿到版本信息的最终回答',
+      '已拿到版本信息的最终回答' // GAP-2（37-05）：换词轮桩
     )
     const out1 = await chat([{ role: 'user', content: '查版本' }], ['dev1'], null)
     expect(JSON.parse(out1).type).toBe('confirm_required')
@@ -942,7 +966,8 @@ describe('28-06 R2 缺陷⑤：confirm 续跑结果回注（命令输出必须�
     const fetchMock = queueReplies(
       '[CMD:dev1]display version[/CMD]',
       '第一轮完成，继续 [CMD:dev1]display vlan[/CMD]',
-      '两步都完成的最终回答'
+      '两步都完成的最终回答',
+      '两步都完成的最终回答' // GAP-2（37-05）：换词轮桩
     )
     const out1 = await chat([{ role: 'user', content: '查版本和 vlan' }], ['dev1'], null)
     const out2 = await confirmCommand(JSON.parse(out1).execId, true)
@@ -963,7 +988,8 @@ describe('28-06 R2 缺陷⑤：confirm 续跑结果回注（命令输出必须�
     FakeClient.output = '' // 执行成功但设备零输出（data 无内容）
     const fetchMock = queueReplies(
       '[CMD:dev1]display version[/CMD]',
-      '收到，继续任务'
+      '收到，继续任务',
+      '收到，继续任务' // GAP-2（37-05）：换词轮桩
     )
     const out1 = await chat([{ role: 'user', content: '查版本' }], ['dev1'], null)
     await confirmCommand(JSON.parse(out1).execId, true)
@@ -1108,7 +1134,7 @@ describe('28-06 R6 增强 b：来源归因指令（预取注入 + 循环内回�
   it('预取注入 user 消息头部含归因指令（[系统预取·分档上下文] 段）', async () => {
     withAttributionPrompt()
     retrieveForAnswerMock.mockResolvedValue(EXP_HIT)
-    const fetchMock = queueReplies('回答')
+    const fetchMock = queueReplies('回答', '回答') // 末位 = GAP-2（37-05）换词轮桩
     await chat([{ role: 'user', content: '网络故障排查' }], undefined, null)
     const preMsg = reqMsgs(fetchMock, 0).find((m: any) => m.role === 'user' && m.content.includes('[系统预取·分档上下文]'))
     expect(preMsg).toBeTruthy()
@@ -1123,7 +1149,8 @@ describe('28-06 R6 增强 b：来源归因指令（预取注入 + 循环内回�
     const fetchMock = queueReplies(
       '[CMD:dev1]display version[/CMD]',
       '查资料 [KB_SEARCH]vlan 原理[/KB_SEARCH]',
-      '总结'
+      '总结',
+      '总结' // GAP-2（37-05）：换词轮桩
     )
     await chat([{ role: 'user', content: '查状态和资料' }], ['dev1'], null)
     const userMsg = reqMsgs(fetchMock, 2).filter((m: any) => m.role === 'user').pop()
@@ -1278,7 +1305,8 @@ describe('28-06 R7：预取卡 + 循环内检索卡全序列可见且 stepIndex 
     queueReplies(
       '先查设备状态 [CMD:dev1]display interface[/CMD]',
       '换词检索经验 [EXP_SEARCH]接口错误计数[/EXP_SEARCH]',
-      '总结'
+      '总结',
+      '总结' // GAP-2（37-05）：换词轮桩
     )
     await chat([{ role: 'user', content: '查状态和资料' }], ['dev1'], null, (p) => payloads.push(p))
     const cards = simulateRendererCards(payloads)
@@ -1326,33 +1354,42 @@ describe('28-06 R2 缺陷③：confirm 续跑阶段停止有效（signal 贯穿�
 // ---------- 28-06 R8：后置证据补查步骤卡 + 检索路径卡片覆盖审计 ----------
 
 describe('28-06 R8：后置证据补查生成步骤卡（真实检索过程可见）', () => {
-  it('troubleshoot 预取双零命中 → 补查双源跳过：预取卡 2 张、零补查卡、stepIndex 唯一、backfillNotes 双源告知', async () => {
-    // 260830 quick：exp/kb 预取同词双零命中 → 补查双源均不再重复检索（预取卡即真实检索轨迹）
+  it('troubleshoot 双源同词 → 单轮换词请求覆盖两源（GAP-2：buildRewordRequest 双行清单 + 双源换词检索）', async () => {
+    // 37-05 GAP-2（2026-09-01 用户真机裁决）：exp/kb 预取同词双零命中 → 双源同守卫命中并入同轮
+    // 换词请求（单条 user 消息双行已查清单，不按源各起一轮）；换词新词照常检索入轨
     retrieveForAnswerMock.mockResolvedValue({ injected: [] })
     vi.mocked(kbSearch).mockResolvedValue({ rows: [] } as any)
     const payloads: any[] = []
-    const fetchMock = queueReplies('初步分析')
+    const fetchMock = queueReplies('初步分析', '双源换词 [EXP_BACKFILL]换词E[/EXP_BACKFILL] [KB_BACKFILL]换词K[/KB_BACKFILL]')
     await chat([{ role: 'user', content: '网络故障排查' }], undefined, 'sess-u56-skip2', (p) => payloads.push(p))
-    // 双源跳过 → 不追加 LLM 轮（无补查回注）
-    expect(fetchMock.mock.calls.length).toBe(1)
-    // 预取卡 2 张（exp/kb 未命中）+ 零补查卡
+    // 初答 + 换词轮 = 2（双源同词单轮覆盖；换词新词双零命中不再终答轮）
+    expect(fetchMock.mock.calls.length).toBe(2)
+    // 换词请求单条 user 消息含双行清单（经验库 + 知识库已查关键词）
+    const rewordMsg = reqMsgs(fetchMock, 1).filter((m: any) => m.role === 'user').pop()
+    expect(rewordMsg.content).toContain('经验库：已查关键词')
+    expect(rewordMsg.content).toContain('知识库：已查关键词')
+    expect(rewordMsg.content).toContain('不要输出与已查关键词相同的词')
+    // 双源换词后行为：exp/kb 各 = 预取 1 + 换词新词 1
+    expect(retrieveForAnswerMock).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(kbSearch)).toHaveBeenCalledTimes(2)
+    // 预取卡 2 张 + 双源换词 [补查] 卡 2 张
     expect(payloads.filter((p) => p.prefetched === true)).toHaveLength(2)
-    expect(payloads.filter((p) => p.backfilled === true)).toHaveLength(0)
+    expect(payloads.filter((p) => p.backfilled === true)).toHaveLength(2)
     // stepIndex 全序列唯一（renderer 同构模拟零互覆）
     const cards = simulateRendererCards(payloads)
     const idxes = cards.map((c) => c.stepIndex)
     expect(new Set(idxes).size).toBe(idxes.length)
-    // 补查跳过事实随 meta_enc 持久化：无 backfilled 步骤 + 双源「不再重复检索」告知
+    // 换词事实随 meta_enc 持久化（双源各一条「已请求换词重查」，旧跳过口径废止（负锁拆字面））
     const row = db.prepare(
       "SELECT meta_enc FROM chat_history WHERE role='assistant' AND session_id=? ORDER BY created_at DESC LIMIT 1"
     ).get('sess-u56-skip2') as any
     const meta = JSON.parse(decField(row.meta_enc, MK) as string)
-    expect(meta.steps.some((s: any) => s.backfilled === true)).toBe(false)
-    expect(meta.backfillNotes.some((n: string) => n.includes('经验库已检索过'))).toBe(true)
-    expect(meta.backfillNotes.some((n: string) => n.includes('知识库已检索过'))).toBe(true)
+    expect(meta.steps.filter((s: any) => s.backfilled === true)).toHaveLength(2)
+    expect(meta.backfillNotes.filter((n: string) => n.includes('已请求换词重查'))).toHaveLength(2)
+    expect(meta.backfillNotes.some((n: string) => n.includes('重复检索'))).toBe(false)
   })
 
-  it('补查跳过零补查卡且不占步数硬顶：agent_max_rounds=1 下收尾仍报「第 1 步」', async () => {
+  it('补查换词不占步数硬顶：agent_max_rounds=1 下收尾仍报「第 1 步」（GAP-2 kb 同词换词）', async () => {
     allowCmd()
     db.prepare('UPDATE ai_config SET agent_max_rounds = 1').run()
     retrieveForAnswerMock.mockResolvedValue(EXP_HIT)
@@ -1360,30 +1397,34 @@ describe('28-06 R8：后置证据补查生成步骤卡（真实检索过程可�
     const fetchMock = queueReplies(
       '[CMD:dev1]display version[/CMD]',
       '[CMD:dev1]display clock[/CMD]',
-      '【执行进度】收尾报告'
+      '【执行进度】收尾报告',
+      '换词轮 [KB_BACKFILL]时钟同步排查手册[/KB_BACKFILL]'
     )
     const out = await chat([{ role: 'user', content: '网络故障排查' }], ['dev1'], null)
     const wrapMsg = reqMsgs(fetchMock, 2).filter((m: any) => m.role === 'user').pop()
     expect(wrapMsg.content).toContain('第 1 步')
     const payload = JSON.parse(out)
-    // 260830 quick：kb 预取同词未命中 → 补查跳过（零补查卡），步数硬顶语义不变
-    expect(payload.steps.some((s: any) => s.backfilled === true)).toBe(false)
-    // kb 预取 1 次（同 query 已查过 → 补查跳过）
-    expect(vi.mocked(kbSearch)).toHaveBeenCalledTimes(1)
+    // GAP-2：kb 预取同词未命中 → 换词轮新词补查（1 张 backfilled 卡 + 新 query），不占步数硬顶语义不变
+    const kbBackfilled = payload.steps.filter((s: any) => s.backfilled === true && s.actionType === 'kb')
+    expect(kbBackfilled).toHaveLength(1)
+    expect(kbBackfilled[0].query).toBe('时钟同步排查手册')
+    // kb 预取 1 次 + 换词新词 1 次
+    expect(vi.mocked(kbSearch)).toHaveBeenCalledTimes(2)
   })
 
-  it('inspection 档检索源不分档：kb 预取照常发起（37-04 GAP-3/4）', async () => {
+  it('inspection 档检索源不分档：kb 预取照常发起 + 同词补查走换词（37-04 GAP-3/4 + 37-05 GAP-2）', async () => {
     retrieveForAnswerMock.mockResolvedValue({ injected: [] })
     const payloads: any[] = []
-    queueReplies('巡检总结')
+    const fetchMock = queueReplies('巡检总结', '巡检换词 [EXP_BACKFILL]端口光模块状态[/EXP_BACKFILL]')
     await chat([{ role: 'user', content: '帮我巡检一遍网络情况' }], undefined, null, (p) => payloads.push(p))
-    // inspection plan = [exp, kb, device]（37-04 矩阵去档位化）：exp/kb 各预取 1 次（本文件
-    // fixture 为 force+预取开；补查因同 query 已查守卫仍跳过——守卫改换词属 37-05，届时再升级本用例）
-    expect(retrieveForAnswerMock).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(kbSearch)).toHaveBeenCalledTimes(1)
+    // inspection plan = [exp, kb, device]（37-04 矩阵去档位化）：exp/kb 各预取 1 次（fixture force+预取开）
+    expect(retrieveForAnswerMock).toHaveBeenCalledTimes(2) // 预取 1 + GAP-2 换词新词 1
+    expect(vi.mocked(kbSearch)).toHaveBeenCalledTimes(1) // kb 无换词标记 → 仅预取 1 次
     expect(payloads.some((p) => p.actionType === 'kb' && p.prefetched === true)).toBe(true)
-    expect(payloads.some((p) => p.backfilled === true && p.actionType === 'exp')).toBe(false)
-    expect(payloads.some((p) => p.backfilled === true)).toBe(false)
+    // GAP-2：同词 exp 补查走换词——换词轮 fetch +1、exp 换词新词补查卡 1 张（新词零命中不再终答）
+    expect(fetchMock.mock.calls.length).toBe(2)
+    expect(payloads.filter((p) => p.backfilled === true && p.actionType === 'exp')).toHaveLength(1)
+    expect(payloads.filter((p) => p.backfilled === true)).toHaveLength(1)
   })
 })
 
@@ -1429,7 +1470,7 @@ describe('28-06 R8：循环外二段式 KB/EXP 检索生成步骤卡（真实检
     retrieveForAnswerMock.mockResolvedValue(EXP_HIT)
     vi.mocked(kbSearch).mockRejectedValue(new Error('kb down'))
     const payloads: any[] = []
-    queueReplies('查文档 [KB_SEARCH]vlan[/KB_SEARCH]')
+    queueReplies('查文档 [KB_SEARCH]vlan[/KB_SEARCH]', '总结') // 末位 = GAP-2（37-05）换词轮桩
     await chat([{ role: 'user', content: 'vlan 原理与排查经验' }], undefined, null, (p) => payloads.push(p))
     expect(payloads.some((p) => p.actionType === 'kb' && p.stepStatus === 'failed' && p.status === 'failed')).toBe(true)
   })
@@ -1482,7 +1523,7 @@ describe('31-05 候选②：chat() 入口持久化用户消息（WR-04 option a�
 
   it('正常完成一轮——chat_history 恰 1 条 user 行（content=最后一条 message）+ assistant 行，无重复 user 行（防入口+出口双写）', async () => {
     allowCmd()
-    queueReplies('[CMD:dev1]display version[/CMD]', '执行完成总结')
+    queueReplies('[CMD:dev1]display version[/CMD]', '执行完成总结', '执行完成总结') // 末位 = GAP-2（37-05）换词轮桩
     await chat([{ role: 'user', content: '查状态和资料' }], ['dev1'], 'sess-entry-1')
     const rows = sessionRows('sess-entry-1')
     const userRows = rows.filter((r) => r.role === 'user')
@@ -1530,7 +1571,7 @@ describe('260830 quick：confirm 续跑执行段步骤卡时序', () => {
   it('缺陷①：running 卡在 SSH 连接建立前 emit（execCountAtEmit=0），done 卡在执行后（=1）', async () => {
     db.prepare("UPDATE ai_config SET exec_mode = 'confirm'").run()
     allowCmd()
-    queueReplies('[CMD:dev1]display version[/CMD]', '续跑收尾')
+    queueReplies('[CMD:dev1]display version[/CMD]', '续跑收尾', '续跑收尾') // 末位 = GAP-2（37-05）换词轮桩
     // emit 回调内同步取 FakeClient.count：pushAgentStep 的 running emit 严格先于
     // runOne 内 new Client()（beforeEach 已归零；confirm 前 chat 不产生连接；1 条命令恰 1 次连接）
     const emitted: any[] = []
@@ -1558,7 +1599,7 @@ describe('260830 quick：confirm 续跑执行段步骤卡时序', () => {
     // 关键区分：connectThrow 走「connect 阶段同步 throw → 首条 reject 整批 → confirmCommand catch」
     // 路径；FakeClient.fail 走「exec 阶段失败 → success:false 结果分支」（后者既有分支已覆盖，勿混用）
     FakeClient.connectThrow = true
-    queueReplies('[CMD:dev1]display version[/CMD]', '失败总结')
+    queueReplies('[CMD:dev1]display version[/CMD]', '失败总结', '失败总结') // 末位 = GAP-2（37-05）换词轮桩
     const emitted: any[] = []
     const out1 = await chat([{ role: 'user', content: '查版本' }], ['dev1'], null, (p) => emitted.push(p))
     expect(JSON.parse(out1).type).toBe('confirm_required')

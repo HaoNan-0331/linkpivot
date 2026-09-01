@@ -196,6 +196,8 @@ describe('EXP_SEARCH 标记协议（Phase 23 23-02）', () => {
     retrieveForAnswerMock.mockResolvedValue(EXP_HIT)
     const fetchMock = queueReplies(
       '让我查经验库 [EXP_SEARCH]ARP 异常[/EXP_SEARCH]',
+      '根据经验：先 display arp 检查表项。',
+      // GAP-2（37-05）：troubleshoot 档恒强制补查，kb 预取同词未命中 → 换词轮桩（无新标记即收尾）
       '根据经验：先 display arp 检查表项。'
     )
     const out = await chat([{ role: 'user', content: 'ARP 表异常怎么排查' }], ['dev1'], null)

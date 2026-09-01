@@ -351,13 +351,14 @@ export const PROMPT_REGISTRY: PromptRegistryEntry[] = [
   },
   {
     id: 'ai.chat.backfillSmartGuide',
-    version: 1,
+    version: 2,
     // Phase 37（37-02，D-04/D-05）：智能补查模式行为引导——补查由 AI 决策：AI 认为最终
     // 回答必须基于某数据源而本轮尚未查询时，在回答末尾输出对应补查标记，系统按标记词
     // 针对性检索并让 AI 基于结果补充作答。行为引导措辞属可编辑面（Shared Pattern 6）；
     // 本 phase 无安全语义需进 prompt 硬区（标记清洗在代码层 PROTOCOL_MARKERS，不依赖
     // AI 服从，planner_ruling 6）。由 aiChat.ts chat() 恒注入 systemPrompt（沿 resourceMap
     //「AI 不知用法就不会打标」先例）。
+    // Phase 37 GAP-2（2026-09-01）换词重查语义：v2 追加同词换词告知句。
     content:
       '补查标记用法（智能补查模式）：仅当你认为最终回答必须基于某数据源、而本轮尚未查询该源时，' +
       '在回答末尾单独一行输出对应标记（每类最多一次）：\n' +
@@ -367,18 +368,20 @@ export const PROMPT_REGISTRY: PromptRegistryEntry[] = [
       '- 检索关键词须针对问题提炼，不得直接复述用户原话\n' +
       '- 不需要的数据源不输出标记；若你已有足够把握作答，可不输出任何标记' +
       '（系统会向用户注明未查询的数据源）\n' +
-      '- 输出标记后系统将检索并让你基于结果补充作答，不要预先假设检索结果',
+      '- 输出标记后系统将检索并让你基于结果补充作答，不要预先假设检索结果\n' +
+      '若你标记的检索关键词与系统已告知的已查关键词相同，系统会要求你重新提供不同的关键词再查。',
     requiredVars: [],
     group: 'AI 对话',
     description: '智能补查模式引导：[EXP_BACKFILL]/[KB_BACKFILL] 标记用法（AI 决策补查）',
   },
   {
     id: 'ai.chat.backfillForceGuide',
-    version: 1,
+    version: 2,
     // Phase 37（37-02，D-07/D-08）：强制补查模式行为引导——系统在回答结束后自动核验本档
     // 必查数据源并补查缺席源（默认以用户问题为检索词）；AI 可用补查标记提供更针对性的
     // 检索词（系统优先采用），已查源也可换词再查。行为引导措辞属可编辑面（ruling 6）；
     // troubleshoot 档经 resolveBackfillMode 恒取本条目（D-02）。
+    // Phase 37 GAP-2（2026-09-01）换词重查语义：v2 追加同词换词告知句。
     content:
       '补查说明（强制补查模式）：系统将在你的回答结束后自动核验本档必查数据源并补查缺席源' +
       '（默认以用户问题为检索词）。\n' +
@@ -386,7 +389,8 @@ export const PROMPT_REGISTRY: PromptRegistryEntry[] = [
       '[EXP_BACKFILL]针对经验库的检索关键词[/EXP_BACKFILL]\n' +
       '[KB_BACKFILL]针对知识库的检索关键词[/KB_BACKFILL]\n' +
       '系统将优先采用你标记中的检索关键词；已查询过但希望换关键词再次检索的数据源，' +
-      '也可用同样的标记提出。',
+      '也可用同样的标记提出。\n' +
+      '若你标记的检索关键词与系统已告知的已查关键词相同，系统会要求你重新提供不同的关键词再查。',
     requiredVars: [],
     group: 'AI 对话',
     description: '强制补查模式引导：自动核验补查 + 标记词优先采用（D-07/D-08）',
