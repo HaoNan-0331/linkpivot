@@ -8,6 +8,7 @@ import {
   LAYOUT_SPACING,
   SNAP_GRID,
   GUIDE_THRESHOLD,
+  ALIGN_STAGGER_GAP,
 } from './topologyLayout'
 
 interface LNode {
@@ -323,6 +324,62 @@ describe('alignNodes', () => {
 
   it('2 节点 hDistribute → 空 Map', () => {
     expect(alignNodes(['a', 'b'], nodes, 'hDistribute').size).toBe(0)
+  })
+
+  // ---- Phase 39 / UAT-01（对齐+自动散开）----
+
+  it('UAT-01：同水平面两节点 left 对齐 → 保持对齐线沿垂直散开不堆叠', () => {
+    const pair: LNode[] = [
+      { id: 'a', x: 10, y: 100 },
+      { id: 'b', x: 500, y: 100 },
+    ]
+    const r = alignNodes(['a', 'b'], pair, 'left')
+    // 最低（同 y 取输入序前者）原位，后者下推一个身位 + 净空
+    expect(r.get('a')).toEqual({ x: 10, y: 100 })
+    expect(r.get('b')).toEqual({ x: 10, y: 100 + H + ALIGN_STAGGER_GAP })
+    expect(
+      rectsOverlap(toRect({ x: 10, y: 100 }), toRect({ x: 10, y: 100 + H + ALIGN_STAGGER_GAP }))
+    ).toBe(false)
+  })
+
+  it('UAT-01：同垂直面两节点 top 对齐 → 沿水平散开不堆叠（对称族）', () => {
+    const pair: LNode[] = [
+      { id: 'a', x: 200, y: 10 },
+      { id: 'b', x: 200, y: 300 },
+    ]
+    const r = alignNodes(['a', 'b'], pair, 'top')
+    expect(r.get('a')).toEqual({ x: 200, y: 10 })
+    expect(r.get('b')).toEqual({ x: 200 + W + ALIGN_STAGGER_GAP, y: 10 })
+  })
+
+  it('UAT-01：不重叠节点对齐后垂直原位不动（散开不误伤）', () => {
+    // 盒 y 10-70 / 80-140 本就不相交 → left 对齐后 y 保持
+    const spaced: LNode[] = [
+      { id: 'a', x: 10, y: 10 },
+      { id: 'b', x: 50, y: 80 },
+    ]
+    const r = alignNodes(['a', 'b'], spaced, 'left')
+    expect(r.get('a')!.y).toBe(10)
+    expect(r.get('b')!.y).toBe(80)
+  })
+
+  it('UAT-01：三节点同 y right 对齐 → 级联下推保持对齐线且两两不重叠', () => {
+    const trio: LNode[] = [
+      { id: 'a', x: 10, y: 50 },
+      { id: 'b', x: 300, y: 50 },
+      { id: 'c', x: 600, y: 50 },
+    ]
+    const r = alignNodes(['a', 'b', 'c'], trio, 'right')
+    for (const p of r.values()) expect(p.x).toBe(600)
+    const list = ['a', 'b', 'c'].map((id) => toRect(r.get(id)!))
+    for (let i = 0; i < list.length; i++) {
+      for (let j = i + 1; j < list.length; j++) {
+        expect(rectsOverlap(list[i], list[j])).toBe(false)
+      }
+    }
+    const ys = ['a', 'b', 'c'].map((id) => r.get(id)!.y).sort((p, q) => p - q)
+    expect(ys[1]).toBe(ys[0] + H + ALIGN_STAGGER_GAP)
+    expect(ys[2]).toBe(ys[1] + H + ALIGN_STAGGER_GAP)
   })
 
   it('不修改输入（不可变性）', () => {

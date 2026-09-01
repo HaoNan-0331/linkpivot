@@ -43,6 +43,11 @@ export const NODE_HEIGHT = 60
 export const MAX_SPREAD_ITERATIONS = 60
 /** 推挤连锁深度上限 */
 export const MAX_PUSH_CHAIN_DEPTH = 6
+/**
+ * 对齐散开最小净空（Phase 39 / UAT-01，用户裁决「对齐+自动散开」）：左/右对齐沿垂直方向、
+ * 上/下对齐沿水平方向，将重叠节点按原顺序贪心下推时两包围盒间的最小间距（2× 网格）。
+ */
+export const ALIGN_STAGGER_GAP = SNAP_GRID * 2
 /** 星型分层放射：层间半径步长（量级沿用 LAYOUT_SPACING，26-04 再工 spec ③） */
 export const RING_GAP = LAYOUT_SPACING
 /** 叶子扇区半角（±30°） */
@@ -422,9 +427,25 @@ export function alignNodes(
   else if (mode === 'top') target = Math.min(...selected.map((n) => n.y))
   else target = Math.max(...selected.map((n) => n.y)) // bottom
 
-  for (const n of selected) {
-    if (mode === 'left' || mode === 'right') result.set(n.id, { x: target, y: n.y })
-    else result.set(n.id, { x: n.x, y: target })
+  // Phase 39 / UAT-01（对齐+自动散开）：对齐轴拉齐后，仅对将重叠的节点沿垂直于对齐轴
+  // 方向按原顺序贪心散开——左/右对齐散 y、上/下对齐散 x；不重叠节点原位零扰动
+  // （26 期既有行为保持），重叠节点推至已放置链末端 + ALIGN_STAGGER_GAP（链式保证
+  // 与前序所有节点不相交，保持对齐线不破坏）。修复前：同水平面两节点左/右对齐
+  // （或同垂直面上/下对齐）后 x、y 双等 → 完全堆叠。
+  const vertical = mode === 'left' || mode === 'right'
+  const sorted = [...selected].sort((a, b) => (vertical ? a.y - b.y : a.x - b.x))
+  // 已放置节点在散开轴上的区间（对齐轴全等 → 相交判定只需散开轴区间比较）
+  const placedRanges: { start: number; end: number }[] = []
+  let prevEnd = -Infinity
+  for (const n of sorted) {
+    const origin = vertical ? n.y : n.x
+    const size = vertical ? n.height : n.width
+    const overlaps = placedRanges.some((r) => origin < r.end && origin + size > r.start)
+    const staggered = overlaps ? prevEnd + ALIGN_STAGGER_GAP : origin
+    placedRanges.push({ start: staggered, end: staggered + size })
+    prevEnd = staggered + size
+    if (vertical) result.set(n.id, { x: target, y: staggered })
+    else result.set(n.id, { x: staggered, y: target })
   }
   return result
 }
