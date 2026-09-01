@@ -237,20 +237,103 @@ describe('37-02 Task 2: runEvidenceBackfill 强制/智能双模式分流', () =>
     expect(state.unqueriedSources).toEqual(['kb']) // exp 已 attempted，仅 kb 未查
   })
 
-  it('Test 7 智能·同词守卫复用：标记词 = 预取已查词 → 零检索零卡，backfillNotes 事实告知（91e35da 守卫不回退）', async () => {
+  // ---------- Phase 37 Plan 37-05（GAP-2）：同词已查守卫改「AI 换词重查」双模式统一 ----------
+  // 2026-09-01 用户真机验收裁决：同词是换词的理由，不是不查的理由——守卫命中不再跳过，
+  // 而是 rewordPending 记入已查词 + 单轮换词请求（有界：换词后仍同词即事实告知收尾）。
+
+  it('Test 7 智能·同词标记 → 换词重查（GAP-2：同词是换词的理由不是不查的理由）', async () => {
     setBackfillMode('smart')
     const state = createAgentLoopState()
     state.steps.push({
       stepIndex: 0, actionType: 'exp', status: 'done',
       query: sanitizeUntrusted('词A', 200), outputSummary: '经验库未命中',
     } as any)
-    const fetchMock = queueReplies('未期轮')
+    retrieveForAnswerMock.mockResolvedValue(EXP_HIT) // 换词新词首查命中
+    const fetchMock = queueReplies('换词回复\n[EXP_BACKFILL]更具体的新词[/EXP_BACKFILL]', '补查后再答')
     const out = await runEvidenceBackfill(makeCtx('原话'), state, 'inspection', '结论\n[EXP_BACKFILL]词A[/EXP_BACKFILL]')
-    expect(out).toBe('结论')
+    // 原标记词被守卫拦下转 rewordPending（不检索）；仅换词新词检索恰 1 次
+    expect(retrieveForAnswerMock).toHaveBeenCalledTimes(1)
+    expect(retrieveForAnswerMock).toHaveBeenCalledWith({ userMessage: '更具体的新词', deviceIds: undefined })
+    // 恰 2 轮 callAI：换词轮 + 补查命中回注终答轮
+    expect(fetchMock.mock.calls.length).toBe(2)
+    expect(out).toBe('补查后再答')
+    // 换词新词检索照常入轨：[补查] 卡 + 新 query
+    const last = state.steps[state.steps.length - 1]
+    expect(last.actionType).toBe('exp')
+    expect(last.backfilled).toBe(true)
+    expect(last.query).toBe('更具体的新词')
+    // extra 4 条：assistant/user ×2 对——第 1 对换词请求、第 2 对补查结果回注
+    expect(state.extra).toHaveLength(4)
+    expect(state.extra[0].role).toBe('assistant')
+    expect(state.extra[0].content).toBe('结论') // 换词轮 assistant echo 已 strip 标记原文
+    expect(state.extra[1].role).toBe('user')
+    expect(state.extra[1].content).toContain('需要换词重查')
+    expect(state.extra[2].role).toBe('assistant')
+    expect(state.extra[3].role).toBe('user')
+    expect(state.extra[3].content).toContain('系统已按你的补查标记检索')
+    // 事实告知：已请求换词重查
+    expect(state.backfillNotes?.some((n) => n.includes('已请求换词重查'))).toBe(true)
+    // 出口零泄漏（T-37G5-04）
+    expect(out).not.toContain('[EXP_BACKFILL]')
+    expect(out).not.toContain('[/EXP_BACKFILL]')
+  })
+
+  it('Test 7b 智能·同词 → AI 拒绝换词直接作答（GAP-2：换词轮无新标记即以现有信息收尾）', async () => {
+    setBackfillMode('smart')
+    const state = createAgentLoopState()
+    state.steps.push({
+      stepIndex: 0, actionType: 'exp', status: 'done',
+      query: sanitizeUntrusted('词A', 200), outputSummary: '经验库未命中',
+    } as any)
+    const fetchMock = queueReplies('基于现有信息的最终回答')
+    const out = await runEvidenceBackfill(makeCtx('原话'), state, 'inspection', '结论\n[EXP_BACKFILL]词A[/EXP_BACKFILL]')
+    expect(out).toBe('基于现有信息的最终回答')
+    expect(fetchMock.mock.calls.length).toBe(1) // 仅换词轮，无终答轮（零新证据）
     expect(retrieveForAnswerMock).not.toHaveBeenCalled()
-    expect(fetchMock).not.toHaveBeenCalled()
-    expect(state.steps).toHaveLength(1) // 零新卡
-    expect(state.backfillNotes?.some((n) => n.includes('已检索过'))).toBe(true)
+    expect(state.backfillNotes?.some((n) => n.includes('已请求换词重查'))).toBe(true)
+  })
+
+  it('Test 7c 换词有界：换词后仍标同词 → 事实告知收尾，绝无第二轮换词（GAP-2）', async () => {
+    setBackfillMode('smart')
+    const state = createAgentLoopState()
+    state.steps.push({
+      stepIndex: 0, actionType: 'exp', status: 'done',
+      query: sanitizeUntrusted('词A', 200), outputSummary: '经验库未命中',
+    } as any)
+    const fetchMock = queueReplies('再标同词\n[EXP_BACKFILL]词A[/EXP_BACKFILL]')
+    const out = await runEvidenceBackfill(makeCtx('原话'), state, 'inspection', '结论\n[EXP_BACKFILL]词A[/EXP_BACKFILL]')
+    expect(out).toBe('再标同词')
+    expect(fetchMock.mock.calls.length).toBe(1) // 仅第一轮换词，无第二轮（结构性单次有界）
+    expect(retrieveForAnswerMock).not.toHaveBeenCalled()
+    expect(state.backfillNotes?.some((n) => n.includes('换词后关键词仍与已查相同'))).toBe(true)
+    // 出口零泄漏（T-37G5-04）
+    expect(out).not.toContain('[EXP_BACKFILL]')
+    expect(out).not.toContain('[/EXP_BACKFILL]')
+  })
+
+  it('Test 7d 强制·missing 源同词 → 换词重查（GAP-2 双模式统一：exp 走换词、kb 无标记原话直查）', async () => {
+    setBackfillMode('force')
+    const state = createAgentLoopState()
+    state.steps.push({
+      stepIndex: 0, actionType: 'exp', status: 'done',
+      query: sanitizeUntrusted('原话', 200), outputSummary: '经验库未命中',
+    } as any)
+    retrieveForAnswerMock.mockResolvedValue(EXP_HIT)
+    const fetchMock = queueReplies('换词\n[EXP_BACKFILL]新词D[/EXP_BACKFILL]', '终答')
+    const out = await runEvidenceBackfill(makeCtx('原话'), state, 'configQuery', '回答\n[EXP_BACKFILL]原话[/EXP_BACKFILL]')
+    // exp：missing 源标记词与已查词相同 → 守卫转 rewordPending → 换词轮新词检索
+    expect(retrieveForAnswerMock).toHaveBeenCalledTimes(1)
+    expect(retrieveForAnswerMock).toHaveBeenCalledWith({ userMessage: '新词D', deviceIds: undefined })
+    // kb：无标记 fallback 用户原话直查（kb 未查过，守卫不遮）
+    expect(kbSearchMock).toHaveBeenCalledWith('原话', undefined, 5)
+    // 换词轮 + 命中回注终答轮
+    expect(fetchMock.mock.calls.length).toBe(2)
+    expect(out).toBe('终答')
+    expect(state.backfillNotes?.some((n) => n.includes('已请求换词重查'))).toBe(true)
+    // 换词新词检索入轨：exp [补查] 卡恰 1 张且 query 为新词
+    const expBackfilled = state.steps.filter((s) => s.actionType === 'exp' && s.backfilled === true)
+    expect(expBackfilled).toHaveLength(1)
+    expect(expBackfilled[0].query).toBe('新词D')
   })
 
   it('Test 8 强制·AI 词优先（D-07）：无标记 fallback 用户原话；标记词优先；missing 空+标记在场早返不泄漏原文', async () => {
