@@ -320,7 +320,11 @@ export function buildDroppedCmdNotice(
     : ''
 }
 
-/** KB 检索结果 → 回注上下文文本 + 来源清单（[图片N] 描述替换逻辑自 chat() 原位抽取，行为不变） */
+/**
+ * KB 检索结果 → 回注上下文文本 + 来源清单（[图片N] 描述替换逻辑自 chat() 原位抽取，行为不变）。
+ * 260902 quick（37-CR-01）：出口单点 sanitizeUntrusted——KB 内容不可信文本（厂商 PDF 可夹带
+ * 伪造协议标记），四消费方经此单一出口同步中和，对齐 EXP 侧 buildExpContextText。
+ */
 export function buildKbRoundContext(rows: any[]): {
   contextText: string
   references: Array<{ docTitle: string; chunkTitle: string; docId: string }>
@@ -344,7 +348,7 @@ export function buildKbRoundContext(rows: any[]): {
     chunkTitle: r.title || '无标题',
     docId: r.document_id,
   }))
-  return { contextText, references }
+  return { contextText: sanitizeUntrusted(contextText, 8000), references }
 }
 
 /**
