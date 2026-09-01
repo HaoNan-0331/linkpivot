@@ -23,17 +23,19 @@ import type { AgentTier } from './agentRouter'
 export type AgentSourceKind = 'kb' | 'exp' | 'device' | 'mcp'
 
 /**
- * 四档 → 必查数据源组合矩阵（硬编码，无设置页可配）：
+ * 四档 → 必查数据源组合矩阵（硬编码，无设置页可配）。
+ * kb/exp 检索源不分档恒双库（Phase 37 GAP-3/4 用户真机裁决 2026-09-01：开预取则知识库 + 经验库都预取，
+ * 强制补查缺失源两库都补）；device 上下文提示维持按档（knowledge 不含——纯问答不碰设备）：
  * - troubleshoot：EXP 处置经验 + KB 手册 + 设备上下文提示
- * - configQuery：KB 手册 + 设备上下文提示
+ * - configQuery：KB 手册 + EXP 经验 + 设备上下文提示
  * - knowledge：KB 手册 + EXP 经验（不碰设备）
- * - inspection：EXP 经验 + 设备上下文提示
+ * - inspection：EXP 经验 + KB 手册 + 设备上下文提示
  */
 export const TIER_RETRIEVAL_PLAN: Record<AgentTier, AgentSourceKind[]> = {
   troubleshoot: ['exp', 'kb', 'device'],
-  configQuery: ['kb', 'device'],
+  configQuery: ['kb', 'exp', 'device'],
   knowledge: ['kb', 'exp'],
-  inspection: ['exp', 'device'],
+  inspection: ['exp', 'kb', 'device'],
 }
 
 /** KB 预取命中条数上限（照 experienceRetrieval INJECT_LIMIT 精不多的哲学）。 */
