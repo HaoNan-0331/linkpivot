@@ -59,7 +59,7 @@ const STATUS_COLORS: Record<Device['status'], string> = {
 // —— 模块级样式常量（ChannelPickerModal/35 期占位组件 先例；零色值/字号字面量） ——
 
 /** 面板根容器：16 padding 纵向 12 节奏（35 期占位组件先例档位） */
-const PANEL_STYLE: CSSProperties = {
+export const PANEL_STYLE: CSSProperties = {
   padding: 16,
   display: 'flex',
   flexDirection: 'column',
@@ -67,14 +67,14 @@ const PANEL_STYLE: CSSProperties = {
 }
 
 /** 分区容器：区内 8 节奏 */
-const SECTION_STYLE: CSSProperties = {
+export const SECTION_STYLE: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   gap: 8,
 }
 
 /** 设备名头部：base-16-strong（500 16/24）label-primary */
-const DEVICE_NAME_STYLE: CSSProperties = {
+export const DEVICE_NAME_STYLE: CSSProperties = {
   font: 'var(--nt-font-base-16-strong)',
   color: 'var(--nt-alias-label-primary)',
 }
@@ -94,14 +94,14 @@ const LAST_CHECKED_STYLE: CSSProperties = {
 }
 
 /** 字段行容器（label + value 两列，基线对齐） */
-const FIELD_ROW_STYLE: CSSProperties = {
+export const FIELD_ROW_STYLE: CSSProperties = {
   display: 'flex',
   alignItems: 'baseline',
   gap: 8,
 }
 
 /** 字段标签：xxs-12 label-caption 固定宽两列对齐 */
-const FIELD_LABEL_STYLE: CSSProperties = {
+export const FIELD_LABEL_STYLE: CSSProperties = {
   font: 'var(--nt-font-xxs-12)',
   color: 'var(--nt-alias-label-caption)',
   flex: 'none',
@@ -109,7 +109,7 @@ const FIELD_LABEL_STYLE: CSSProperties = {
 }
 
 /** 字段值：xs-13 label-primary 单行截断 */
-const FIELD_VALUE_STYLE: CSSProperties = {
+export const FIELD_VALUE_STYLE: CSSProperties = {
   font: 'var(--nt-font-xs-13)',
   color: 'var(--nt-alias-label-primary)',
   minWidth: 0,
@@ -214,13 +214,13 @@ const CONNECT_BUTTON_STYLE: CSSProperties = {
 }
 
 /** 区标题（登录通道/快捷操作）：xs-13-strong label-secondary */
-const SECTION_TITLE_STYLE: CSSProperties = {
+export const SECTION_TITLE_STYLE: CSSProperties = {
   font: 'var(--nt-font-xs-13-strong)',
   color: 'var(--nt-alias-label-secondary)',
 }
 
 /** 操作区按钮行：横向 8 间隔可换行（窄栏三按钮不溢出） */
-const ACTION_ROW_STYLE: CSSProperties = {
+export const ACTION_ROW_STYLE: CSSProperties = {
   display: 'flex',
   gap: 8,
   flexWrap: 'wrap',
@@ -253,7 +253,7 @@ export default function DeviceDetailPanel() {
     // 切设备/编辑刷新（refreshCounter bump）：清除上一台的逐通道测试结果
     setTestResults(null)
     if (selectedDeviceId === null) {
-      // 无选中（右栏被手动展开等边缘态）：复位不拉取（渲染走空态引导分支）；
+      // 无选中（右栏被手动展开等边缘态）：复位不拉取（渲染走空选 null 门控分支）；
       // 状态复位 'loading' 而非 'missing'（WR-02——见 detailState 声明处注释）
       setDevice(null)
       setDetailState('loading')
@@ -367,16 +367,11 @@ export default function DeviceDetailPanel() {
     navigate('/ai')
   }, [device, setPendingAiDevice, navigate])
 
-  // 无选中空态引导（SC2 内容切换分支之一——组件本体仍无条件挂载）
-  if (selectedDeviceId === null) {
-    return (
-      <div style={PANEL_STYLE}>
-        <div style={EMPTY_TITLE_STYLE}>在拓扑画布点选设备节点</div>
-        <div style={EMPTY_HINT_STYLE}>此处常驻显示设备详情：基础资料、登录通道与快捷操作</div>
-        <div style={EMPTY_HINT_STYLE}>双击节点直连设备、右栏不打断画布操作。</div>
-      </div>
-    )
-  }
+  // 39-01 空选门控收敛为 return null：38 期此分支渲染空态引导文案；39 期单选连线时右栏展开
+  // 而 selectedDeviceId 为 null——保留文案会与 EdgeDetailPanel 连线详情同屏叠加。return null
+  // 是内容级门控，组件实例仍由父层无条件挂载（SC2 不破——内容切换非挂载切换）；WR-02
+  // 「null→选中一帧 missing 误显」防线语义不变（null 期无任何内容，选中后 loading 在途照旧）。
+  if (selectedDeviceId === null) return null
 
   if (detailState === 'loading') {
     return (
