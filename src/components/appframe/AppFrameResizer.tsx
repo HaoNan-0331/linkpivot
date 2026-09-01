@@ -10,7 +10,10 @@ import { useDetailsResizer } from './useDetailsResizer'
  * 本组件零命中语义。
  *
  * Phase 38（38-01，D-01）把手门控：非拓扑页/无单选设备（!hasContent）时 return
- * null——右栏视觉不存在，把手随之消失。35「折叠态也在场——否则没法点开」的
+ * null——右栏视觉不存在，把手随之消失。Phase 39（39-01，CR-01 39 review）总纲对称
+ * 扩展：单选连线同为有内容态——连线详情下把手必须在场（DetailsPanel aside 内无任何
+ * 关闭按钮，appFrameStore.toggle 仅由把手触发，把手缺席 = 连线详情态无法手动收起/
+ * 调宽）。35「折叠态也在场——否则没法点开」的
  * 存在理由自 38 起变更：展开由点选设备自动驱动（SC1），把手职责收敛为
  * 「有内容时手动收起/恢复/拖宽」。把手非 DetailsPanel 子树，return null 不触
  * SC2 保挂载红线（SC2 只约束 details 子树永不条件渲染）。
@@ -22,10 +25,13 @@ export default function AppFrameResizer() {
   const { onPointerDown, onPointerMove, onPointerUp, onPointerCancel, dragging } =
     useDetailsResizer()
   const selectedDeviceId = useDeviceDetailStore((s) => s.selectedDeviceId)
+  // 39-01 对称扩展（CR-01 39 review）：单选连线同为有内容态
+  const selectedEdge = useDeviceDetailStore((s) => s.selectedEdge)
   const location = useLocation()
 
-  // 与 DetailsPanel 相同的 D-01 总纲本地判定（跨层选中 + 路由）
-  const hasContent = location.pathname === '/topology' && selectedDeviceId !== null
+  // 与 DetailsPanel 相同的 D-01 总纲本地判定（跨层选中 + 路由；39 版 = 单选设备或单选连线）
+  const hasContent =
+    location.pathname === '/topology' && (selectedDeviceId !== null || selectedEdge !== null)
   if (!hasContent) return null
 
   return (
