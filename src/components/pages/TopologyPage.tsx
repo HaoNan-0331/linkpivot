@@ -663,7 +663,7 @@ export default function TopologyPage() {
     setSelectedEdgeIds(new Set(edgeIds))
   }, [])
 
-  // —— Phase 39（39-01 接入点②）：五条跨层命令（外层右栏调用、本页执行）——
+  // —— Phase 39（39-01 接入点②）：六条跨层命令（外层右栏调用、本页执行；WR-03 39 review 增补 removeNodesByDeviceId）——
   // 结构照 toolbar 注册 effect（:446-461 先例）方向反转；消费方一律
   // getState().canvasActions 一次性取用（Pattern 3 读清即走，不订阅）。
   // 39-02（删除双动作）/39-03（纳管回写）只消费，不再改本命令层。
@@ -688,6 +688,26 @@ export default function TopologyPage() {
     (nodeId: string) => {
       setNodes((nds) => nds.filter((n) => n.id !== nodeId))
       setEdges((eds) => eds.filter((e) => e.source !== nodeId && e.target !== nodeId))
+      setSelectedNodeIds(new Set())
+      setSelectedEdgeIds(new Set())
+    },
+    [setNodes, setEdges]
+  )
+
+  // WR-03（39 review，CR-01 同族红线）：彻底删除设备的画布镜像兜底——按 data.deviceId
+  // 定位（与 device.delete 库内级联同键），不依赖 selectedNodeMeta（focusDevice 第三步
+  // 直写 selectedDeviceId 后、同步 effect 补写 meta 前的竞态帧内 meta 缺场/stale，DB 级联
+  // 删除成功而画布不镜像会被随后 1s debounce 自动保存以旧值整图覆写 data_enc 静默写回）。
+  // 正常链 meta 与 deviceId 由同一 effect 同步写难命中，红线族按「不可命中」标准设防。
+  // 命中 0 个节点 = 画布无对应物（库内已删），直接 return 不动选中。
+  const removeNodesByDeviceId = useCallback(
+    (deviceId: string) => {
+      const idSet = new Set(
+        nodesRef.current.filter((n) => n.data.deviceId === deviceId).map((n) => n.id)
+      )
+      if (idSet.size === 0) return
+      setNodes((nds) => nds.filter((n) => !idSet.has(n.id)))
+      setEdges((eds) => eds.filter((e) => !idSet.has(e.source) && !idSet.has(e.target)))
       setSelectedNodeIds(new Set())
       setSelectedEdgeIds(new Set())
     },
@@ -748,11 +768,12 @@ export default function TopologyPage() {
     [setNodes, setEdges, setSelectedDeviceId]
   )
 
-  // 命令注册 effect：mount 注册五条 useCallback 引用、卸载置 null（toolbar 注册 cleanup 先例）
+  // 命令注册 effect：mount 注册六条 useCallback 引用、卸载置 null（toolbar 注册 cleanup 先例）
   useEffect(() => {
     setCanvasActions({
       applyEdgeInterfaces,
       removeNodeFromCanvas,
+      removeNodesByDeviceId,
       removeEdgeFromCanvas,
       adoptNodeToDevice,
       focusDevice,
@@ -761,6 +782,7 @@ export default function TopologyPage() {
   }, [
     applyEdgeInterfaces,
     removeNodeFromCanvas,
+    removeNodesByDeviceId,
     removeEdgeFromCanvas,
     adoptNodeToDevice,
     focusDevice,

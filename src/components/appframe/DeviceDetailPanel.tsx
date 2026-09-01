@@ -425,22 +425,24 @@ export default function DeviceDetailPanel() {
 
   // D-06 彻底删除设备（唯一二次确认点——Popconfirm 在按钮 JSX 处，D-07）：device.delete 库内
   // 级联删资产记录 + 拓扑节点 + 悬空边（device.ts deleteDevice）。红线（CR-01 同族，T-39-06）：
-  // 成功后必须同帧 removeNodeFromCanvas 镜像画布内存态——若不镜像，随后任意画布操作的 1s
-  // debounce 自动保存将以旧值整图覆写 data_enc，把库内已删节点静默写回（静默回滚）。镜像内含
-  // 清选中 → 右栏经选中同步链自动收起。
+  // 成功后必须同帧镜像画布内存态——若不镜像，随后任意画布操作的 1s debounce 自动保存将以
+  // 旧值整图覆写 data_enc，把库内已删节点静默写回（静默回滚）。镜像内含清选中 → 右栏经
+  // 选中同步链自动收起。
+  // WR-03（39 review）：镜像键弃 selectedNodeMeta 改 data.deviceId（removeNodesByDeviceId，
+  // 与库内级联同键）——meta 缺场的竞态帧（focusDevice 第三步直写窗口/防御分支命中）下镜像
+  // 不再被跳过；按钮不设 meta 缺场 disabled（「从拓扑移除」按 meta.nodeId 定位故需防御，
+  // 本路径镜像不依赖 meta，禁用反而无谓拦截合法删除）。
   const handleDeleteDevice = useCallback(async () => {
     if (!device) return
     try {
       await window.api.device.delete(device.id)
       message.success('设备删除成功')
-      if (selectedNodeMeta) {
-        useDeviceDetailStore.getState().canvasActions?.removeNodeFromCanvas(selectedNodeMeta.nodeId)
-      }
+      useDeviceDetailStore.getState().canvasActions?.removeNodesByDeviceId(device.id)
     } catch (e: unknown) {
       // D-09：deleteDevice 事务化，失败即整体回滚
       message.error('操作失败，数据已回滚无变化：' + (e instanceof Error ? e.message : String(e)))
     }
-  }, [device, selectedNodeMeta])
+  }, [device])
 
   // D-05 测试连接（36-05 connection.test 全通道并行探测复用）：逐通道结果按 channel 键
   // 归并写入 testResults（仅含已配通道键，行内展示位在通道区已配行）；零通道设备无通道

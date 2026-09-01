@@ -85,13 +85,19 @@ const sameNodeMeta = (a: SelectedNodeMeta, b: SelectedNodeMeta): boolean =>
  * Phase 39（39-01，接入点②跨层命令通道）：Routes 外（右栏）→ Routes 内（画布）
  * 的命令契约——TopologyPage mount 注册 useCallback 引用、卸载置 null；右栏消费方
  * 一律 getState().canvasActions 一次性取用调用（不订阅，Pattern 3 读清即走）。
- * 39-02/39-03 只消费不再改 TopologyPage 命令层。
+ * 39-02/39-03 只消费不再改 TopologyPage 命令层；WR-03（39 review）增补
+ * removeNodesByDeviceId 兜底命令（彻底删除设备的镜像键弃 meta 改 deviceId）。
  */
 export interface TopologyCanvasActions {
   /** 接口回写（D-02）：setEdges 定向换 data，落库走既有 1s debounce 自动保存链 */
   applyEdgeInterfaces: (edgeId: string, sourceInterface: string, targetInterface: string) => void
   /** 从拓扑移除节点（D-06 轻删）：filter 节点 + 悬空边 + 清本地选中（右栏自动收起） */
   removeNodeFromCanvas: (nodeId: string) => void
+  /** 彻底删除设备的镜像兜底（WR-03 39 review，CR-01 同族红线）：按 data.deviceId 定位
+   *  移除全部对应节点 + 悬空边 + 清本地选中——与 deleteDevice 库内级联同键，不依赖
+   *  selectedNodeMeta 时序（focusDevice 直写窗口内 meta 可缺场/stale，镜像跳过即
+   *  1s debounce 旧值整图覆写 data_enc 静默回滚） */
+  removeNodesByDeviceId: (deviceId: string) => void
   /** 删连线（D-07 轻删）：filter 边 + 清本地选中（右栏自动收起） */
   removeEdgeFromCanvas: (edgeId: string) => void
   /** 纳管回写（D-09）：按节点 id 定向换 data.deviceId + 清 unmanaged 标志（39-03 消费） */
