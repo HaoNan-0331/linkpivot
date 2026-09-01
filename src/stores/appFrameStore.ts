@@ -37,6 +37,12 @@ interface AppFrameStore {
   setDragging: (d: boolean) => void
   /** 单击把手展开/收起（D-03），翻转后写盘 */
   toggle: () => void
+  /**
+   * Phase 38（38-01，D-02）：路由/选中驱动的瞬态折叠写入——裸 set 不落盘。
+   * 写盘契约不变：localStorage 仍仅 toggle()/commitWidth() 两时刻写入（35 D-07
+   * 宽度/折叠手动态记忆不被自动折叠污染）；自动展开（SC1 点选设备）同走此 action。
+   */
+  setCollapsedAuto: (c: boolean) => void
   /** pointerup 拖拽结束写盘（D-07 离散时刻） */
   commitWidth: () => void
   /** 窗口 resize 重 clamp（Pitfall 4 瞬态收敛），不写盘 */
@@ -54,6 +60,7 @@ export const useAppFrameStore = create<AppFrameStore>((set, get) => ({
     set({ collapsed: !get().collapsed })
     persist(get())
   },
+  setCollapsedAuto: (c) => set({ collapsed: c }),
   commitWidth: () => persist(get()),
   reclamp: (frameWidth) => set({ width: clampDetailsWidth(get().width, frameWidth) }),
 }))
