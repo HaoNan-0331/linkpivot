@@ -241,11 +241,14 @@ export default function DeviceDetailPanel() {
   const selectedNodeMeta = useDeviceDetailStore((s) => s.selectedNodeMeta)
   const navigate = useNavigate()
 
-  // getById 三态：loading（拉取中）/ ready（渲染三区）/ missing（设备已删或查询异常）。
+  // getById 四态：loading（拉取中）/ ready（渲染三区）/ missing（真未找到——仅由已完成
+  // 的本 id 拉取 d === null 到达，纳管/删节点动作只在此态提供）/ error（IPC 查询异常——
+  // WR-02 39 review 与 missing 分流：设备可能实际存在且健康，仅渲染文案 + 重试，不提供
+  // 纳管/删节点动作，防「删除节点」误删实际存在设备的画布节点）。
   // WR-02（38 review）：初始态与空选复位均为 'loading' 而非 'missing'——'missing' 只能由
   // 「已完成的本 id 拉取」到达，防 null→选中 切换的渲染帧（effect 尚未执行）闪一帧
   // 「设备不存在或已删除」错误文案（空选由 selectedDeviceId===null 早退分支接管，不误显 Spin）
-  const [detailState, setDetailState] = useState<'loading' | 'ready' | 'missing'>('loading')
+  const [detailState, setDetailState] = useState<'loading' | 'ready' | 'missing' | 'error'>('loading')
   const [device, setDevice] = useState<Device | null>(null)
   // 测试连接逐通道结果（D-05，38-02 Task 2 实装触发路径）：仅含已配通道键；
   // 切设备/编辑刷新时清除（本 effect 首行），防上一台结果错位到新选中设备行
@@ -257,6 +260,9 @@ export default function DeviceDetailPanel() {
   const [editOpen, setEditOpen] = useState(false)
   // 39-03（D-09）：纳管弹窗开合——missing 态弹 DeviceForm 新建+预填形态（presetSource）
   const [adoptOpen, setAdoptOpen] = useState(false)
+  // WR-02（39 review）：error 态重试计数——bump 触发 getById effect 重跑（fresh cancelled
+  // 守卫），不动全局 refreshCounter（那会连带 TopologyPage CR-01 镜像重拉，语义过宽）
+  const [retryCounter, setRetryCounter] = useState(0)
 
   useEffect(() => {
     // 切设备/编辑刷新（refreshCounter bump）：清除上一台的逐通道测试结果 + 纳管弹窗陈旧态
@@ -282,14 +288,16 @@ export default function DeviceDetailPanel() {
         setDevice(d)
         setDetailState(d !== null ? 'ready' : 'missing')
       } catch {
-        // getById 异常罕见，与「设备已删」共用空态文案（本地不落脏值）
+        // WR-02（39 review）：IPC 查询异常独立 error 态——设备可能实际存在且健康，与
+        // 「设备已删」混叠会在误判时提供纳管/删节点动作（「删除节点」会移除实际存在
+        // 设备的画布节点）。error 态仅文案 + 重试（本地不落脏值）
         if (cancelled) return
         setDevice(null)
-        setDetailState('missing')
+        setDetailState('error')
       }
     })()
     return () => { cancelled = true }
-  }, [selectedDeviceId, refreshCounter])
+  }, [selectedDeviceId, refreshCounter, retryCounter])
 
   // D-04 通道行内直连：统一入口 connection.open(deviceId, channel) 零弹窗（36-03 单入口）；
   // 失败带通道短标归因（TopologyPage openChannel 同款 §6.4 文案契约）
@@ -367,6 +375,10 @@ export default function DeviceDetailPanel() {
   const handleAdopt = useCallback(() => setAdoptOpen(true), [])
 
   const handleAdoptFormCancel = useCallback(() => setAdoptOpen(false), [])
+
+  // WR-02（39 review）：error 态重试——本地计数 bump 重跑上方 getById effect（重置
+  // loading 态 + fresh cancelled 守卫），见 retryCounter 声明处注释
+  const handleRetry = useCallback(() => setRetryCounter((c) => c + 1), [])
 
   // D-09 纳管保存（DevicesPage handleCreate 先例）：device.create 返回完整 Device 投影——
   // 新 id 即返回值 .id，经 adoptNodeToDevice 回写画布节点。
@@ -480,14 +492,31 @@ export default function DeviceDetailPanel() {
     )
   }
 
+  // WR-02（39 review）：error 态独立分支——IPC 查询异常与「设备已删」分流，仅错误文案 +
+  // 重试按钮，不渲染纳管/删节点动作（missing 态动作只允许由 d === null 真未找到路径到达）
+  if (detailState === 'error') {
+    return (
+      <div style={PANEL_STYLE}>
+        <div style={EMPTY_TITLE_STYLE}>设备信息加载失败</div>
+        <div style={EMPTY_HINT_STYLE}>查询设备详情时出错，设备可能仍存在，请重试。</div>
+        <div style={ACTION_ROW_STYLE}>
+          <Button size="small" onClick={handleRetry}>
+            重试
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
   if (detailState === 'missing' || device === null) {
     return (
       <div style={PANEL_STYLE}>
         <div style={EMPTY_TITLE_STYLE}>设备不存在或已删除</div>
         <div style={EMPTY_HINT_STYLE}>该节点对应的设备资料已被删除，可在设备管理页确认后清理节点。</div>
         {/* D-09 两件事并存（不区分「未知设备」vs「已删除设备」成因）：文案保留 + 纳管按钮
-            追加；D-10「删除节点」与纳管并列（一次点击直接删免确认）。selectedNodeMeta null
-            时两按钮 disabled（防御——正常单选链保证非 null） */}
+            追加；D-10「删除节点」与纳管并列（一次点击直接删免确认）。WR-02 39 review 起
+            IPC 查询异常已分流 error 态，本分支仅真未找到（d === null）路径到达。selectedNodeMeta
+            null 时两按钮 disabled（防御——正常单选链保证非 null） */}
         <div style={ACTION_ROW_STYLE}>
           <Button size="small" type="primary" disabled={selectedNodeMeta === null} onClick={handleAdopt}>
             一键添加到资产列表
