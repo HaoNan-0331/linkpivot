@@ -9,6 +9,14 @@ interface Props {
   device?: Device | null
   /** Phase 25（ASSET-01/D-01~D-03）：复制模式源设备——预填非凭证字段，凭证不继承 */
   copySource?: Device | null
+  /**
+   * Phase 39（39-03，ADOPT-01/D-09）：纳管「新建+预填」形态源——预填非凭证字段（基础
+   * 信息区），凭证四节全 off 零回填（启用即新配，与复制同款语义）；title「添加设备」
+   * （纳管语义是「添加」不是「复制」——不触发「复制自」Alert 与同 IP 硬拦 validator，
+   * 两者仅 copySource 在场触发）；名称查重 excludeId=undefined（新建语义）。与 device/
+   * copySource 互斥使用——device 优先级最高既有语义不变。
+   */
+  presetSource?: Device | null
   /** Phase 25（D-13）：IP 分层比对用的现有设备列表（警告级，非硬拦） */
   existingDevices?: Device[]
   /** Phase 36（36-04，D-02/§6.3）：零通道引导——true 时表单顶部渲染引导 Alert（36-05 拓扑双击 0 通道分支消费） */
@@ -72,12 +80,15 @@ function resolveInitialChannel(ch?: ConnectionType): ConnectionType {
   return ch && (CHANNEL_KEYS as string[]).includes(ch) ? ch : 'ssh'
 }
 
-export default function DeviceForm({ open, device, copySource, existingDevices, credentialHint, initialChannel, onOk, onCancel }: Props) {
+export default function DeviceForm({ open, device, copySource, presetSource, existingDevices, credentialHint, initialChannel, onOk, onCancel }: Props) {
   const [form] = Form.useForm()
   const [confirmLoading, setConfirmLoading] = useState(false)
   const isCopy = !!copySource
-  // 编辑或复制共用「回填源」；区别在凭证语义（编辑=已配通道回填 + 留空不修改，复制=四节全 off 零回填）
-  const fillSource = device ?? copySource
+  // 39-03（D-09）：纳管预填形态——凭证语义与复制同款（四节全 off 零回填），但非复制
+  const isPreset = !!presetSource
+  // 编辑/复制/纳管预填共用「回填源」（device 优先级最高）；区别在凭证语义
+  //（编辑=已配通道回填 + 留空不修改；复制与纳管预填=四节全 off 零回填）
+  const fillSource = device ?? copySource ?? presetSource
   // §6.3 Tabs 初始定位（36-05 消费）：每次打开按 initialChannel 重置，缺省/非法回落 'ssh'
   const [activeKey, setActiveKey] = useState<ConnectionType>(() => resolveInitialChannel(initialChannel))
   // WR-03（36 review）：编辑态明文回填快照（语义见 RefillSnapshot 注释，随打开重置）
@@ -105,10 +116,12 @@ export default function DeviceForm({ open, device, copySource, existingDevices, 
     if (fillSource) {
       // H-1（红线，按通道保留）：编辑分支不回填 password/sshKeyContent（channels 投影经 IPC
       // 递归脱敏为 ****尾4，回填会把掩码串当真实值提交覆盖凭证）——留空走「不修改」（enabled
-      // 节内空凭证字段提交时剔除，服务层字段级 !== undefined 跳过）；复制模式（D-01/§5.5）
-      // 四节全 off + 零回填——源凭证永远不出 main 进程，启用即等于新配。
+      // 节内空凭证字段提交时剔除，服务层字段级 !== undefined 跳过）；复制模式（D-01/§5.5）与
+      // 纳管预填（39-03 D-09「凭证区新配可顺手配」）四节全 off + 零回填——源凭证永远不出
+      // main 进程，启用即等于新配。isPreset 显式门控：不依赖预填对象 channels 恰好为空的
+      // 巧合（防未来预填对象携带 channels 字段时凭证区意外回填）。
       const chRow = (ch: ConnectionType) =>
-        (!isCopy ? (fillSource.channels ?? []).find((c) => c.channel === ch) : undefined)
+        (!isCopy && !isPreset ? (fillSource.channels ?? []).find((c) => c.channel === ch) : undefined)
       // WR-03（36 review）：快照 = 回填初值 = 库中已存明文（非脱敏字段投影即库值）。编辑态用户
       // 把非空初值清空 = 显式清除（提交空串/port null 哨兵）；复制/新建零快照永不触发清除。
       refillSnapshotRef.current = !isCopy && device ? {
@@ -166,7 +179,7 @@ export default function DeviceForm({ open, device, copySource, existingDevices, 
       refillSnapshotRef.current = {}
       form.resetFields()
     }
-  }, [fillSource, form, open, isCopy])
+  }, [fillSource, form, open, isCopy, isPreset])
 
   // D-09 表单内滑落镜像（§5.4）：现选默认通道不在 on 集合（含空选）→ 滑到固定序下一条 on，
   // 全部 off 置空——滑落无提示；服务层滑落为 DB 权威，此处仅保单次会话视觉一致。
@@ -375,7 +388,16 @@ export default function DeviceForm({ open, device, copySource, existingDevices, 
   }
 
   return (
-    <Modal title={device ? '编辑设备' : isCopy ? '复制设备' : '添加设备'} open={open} onOk={() => form.submit()} onCancel={onCancel} width={600} destroyOnHidden confirmLoading={confirmLoading}>
+    <Modal
+      // 39-03：presetSource 形态与全 null 共用「添加设备」（纳管语义是「添加」不是「复制」）
+      title={device ? '编辑设备' : isCopy ? '复制设备' : '添加设备'}
+      open={open}
+      onOk={() => form.submit()}
+      onCancel={onCancel}
+      width={600}
+      destroyOnHidden
+      confirmLoading={confirmLoading}
+    >
       {credentialHint && (
         <Alert type="warning" showIcon style={{ marginBottom: 16 }} message="该设备尚未配置登录通道" description="补配任一通道的凭证并保存后，即可双击连接。" />
       )}
