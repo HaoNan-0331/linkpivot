@@ -2,22 +2,24 @@ import { useCallback, useEffect, useState, type CSSProperties } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Button, Spin, message } from 'antd'
 import { useDeviceDetailStore } from '@/stores/deviceDetailStore'
-import EditNodeModal from '@/components/topology/EditNodeModal'
-import type { TopologyNodeData } from '@/types/topology'
+import DeviceForm from '@/components/DeviceForm'
 import {
   CHANNEL_LABELS,
   CHANNEL_SHORT_LABELS,
   DEVICE_TYPE_LABELS,
   type ChannelTestResult,
   type ConnectionType,
+  type CreateDeviceDTO,
   type Device,
 } from '@/types/device'
 
 /**
  * DeviceDetailPanel —— details 栏设备详情内容组件（Phase 38 / DETAIL-01 · D-07/D-08）。
  *
- * 「双击=连、编辑弹窗=改、右栏=看」的「看」半：点选拓扑节点后三区常驻展示——
- * 基础信息区（D-08）+ 登录通道区（D-07，已配行行内 [连接] 直连 D-04）+ 快捷操作区（D-05）。
+ * 「双击=连、全参数弹窗=改、右栏=看」（39 期心智，38「编辑弹窗=改」收敛）的「看」半：
+ * 点选拓扑节点后三区常驻展示——基础信息区（D-08）+ 登录通道区（D-07，已配行行内 [连接]
+ * 直连 D-04）+ 快捷操作区（D-05，「编辑」弹 DeviceForm 编辑态——39-02 D-01 与设备管理页
+ * 点资产「编辑」零能力差异）。
  * 替换 35 期预留占位组件；本组件经 DetailsPanel 无条件挂载（35 SC2 折叠保挂载
  * 红线——三态为内容切换非挂载切换，折叠再展开面板内状态不丢）。
  *
@@ -246,8 +248,9 @@ export default function DeviceDetailPanel() {
   const [testResults, setTestResults] = useState<Partial<Record<ConnectionType, ChannelTestResult>> | null>(null)
   // D-05 测试连接在途标志（按钮 loading 防重复触发，T-38-07 单用户桌面场景无放大面）
   const [testing, setTesting] = useState(false)
-  // D-05 编辑弹窗自有实例：当前 Device 投影构造的 TopologyNodeData（非 null 即开弹窗）
-  const [editData, setEditData] = useState<TopologyNodeData | null>(null)
+  // 39-02（D-01）编辑弹窗开合：弹 DeviceForm 编辑态（device prop 即当前 device state——
+  // ready 态下为当前详情设备，无需再构造 TopologyNodeData 投影）
+  const [editOpen, setEditOpen] = useState(false)
 
   useEffect(() => {
     // 切设备/编辑刷新（refreshCounter bump）：清除上一台的逐通道测试结果
@@ -289,49 +292,36 @@ export default function DeviceDetailPanel() {
     }
   }, [])
 
-  // D-05 编辑入口（右栏自有 EditNodeModal 实例，与画布侧独立）：由当前 Device 投影构造
-  // TopologyNodeData（六七字段对位，node.id ≠ deviceId——此处直接持 deviceId）开弹窗
-  const handleEdit = useCallback(() => {
-    if (!device) return
-    setEditData({
-      deviceId: device.id,
-      deviceName: device.name,
-      deviceType: device.deviceType,
-      connectionType: device.connectionType,
-      ipAddress: device.ipAddress,
-      vendor: device.vendor,
-      model: device.model,
-    })
-  }, [device])
+  // D-05 编辑入口（39-02 D-01）：弹 DeviceForm 编辑态——与设备管理页点资产「编辑」同款
+  // 全参数组件零能力差异（基础字段 + 四通道凭证区 + 默认通道），弃 38 期六字段弹窗
+  const handleEdit = useCallback(() => setEditOpen(true), [])
 
-  // 确认保存照 TopologyPage handleEditConfirm 同款：update 载荷恰五字段（WR-01——与
-  // updateDevice topoFields 级联集对齐，凭证不可经此路径写）。拓扑画布节点镜像不在此刷新：
-  // updateDevice main 侧已级联 topologies.data_enc，画布内存态沿既有设备管理页编辑同款
-  // 行为，下次载图自正确。
-  const handleEditConfirm = useCallback(
-    async (updated: TopologyNodeData) => {
+  // 39-02（D-01）编辑保存：照 TopologyPage handleCredentialFormOk 同型——device.update
+  // 全量载荷（values 含 channels）纯透传，勿双重剔除（H-1「留空=不修改」剔除已由 DeviceForm
+  // handleFinish 完成，DevicesPage :62-63 注释红线）。
+  // topoFields 级联集约束（WR-01 25.1 活文档，自 38 期退役弹窗的保存回调迁移至此）：DeviceForm 编辑态
+  // 提交的 topoFields 六字段均在 updateDevice 级联集（device.ts topoFields）内；version/channels
+  // 写 devices/device_credentials 表不经拓扑级联，节点快照本无此二字段，无分叉。
+  // 保存链零新增接线：refresh() bump 后本面板既有 getById effect 重拉（右栏即时刷新），
+  // TopologyPage 既有 CR-01 镜像 effect 把 topoFields 六字段写回画布节点。
+  const handleEditFormOk = useCallback(
+    async (values: CreateDeviceDTO) => {
+      if (!device) return
       try {
-        await window.api.device.update(updated.deviceId, {
-          name: updated.deviceName,
-          ipAddress: updated.ipAddress,
-          deviceType: updated.deviceType,
-          vendor: updated.vendor,
-          model: updated.model,
-        })
-        message.success('保存成功')
-        setEditData(null)
-        // 三写路径第三条（本入口）：refreshCounter bump → getById effect 重拉，右栏即时
-        // 反映新值（画布侧 EditNodeModal / 零通道引导 DeviceForm 两入口 38-01 已接线）
+        await window.api.device.update(device.id, values)
+        message.success('设备更新成功')
+        setEditOpen(false)
+        // 三写路径之一（本入口）：refreshCounter bump → 右栏重拉 + CR-01 画布节点镜像（38 期信号线沿用）
         refresh()
       } catch (e: unknown) {
-        // 失败不关弹窗、本地不落脏值（device 不动，重拉仍以库内为准）
-        message.error('保存失败：' + (e instanceof Error ? e.message : String(e)))
+        // D-09：updateDevice 事务化，失败即整体回滚（失败不关弹窗、本地不落脏值）
+        message.error('操作失败，数据已回滚无变化：' + (e instanceof Error ? e.message : String(e)))
       }
     },
-    [refresh]
+    [device, refresh]
   )
 
-  const handleEditCancel = useCallback(() => setEditData(null), [])
+  const handleEditFormCancel = useCallback(() => setEditOpen(false), [])
 
   // D-05 测试连接（36-05 connection.test 全通道并行探测复用）：逐通道结果按 channel 键
   // 归并写入 testResults（仅含已配通道键，行内展示位在通道区已配行）；零通道设备无通道
@@ -497,12 +487,17 @@ export default function DeviceDetailPanel() {
         </div>
       </div>
 
-      {/* D-05 编辑弹窗（右栏自有实例）：confirm 走 device.update + refresh()，见 handleEditConfirm */}
-      <EditNodeModal
-        open={editData !== null}
-        data={editData}
-        onConfirm={handleEditConfirm}
-        onCancel={handleEditCancel}
+      {/* 39-02（D-01）编辑弹窗：DeviceForm 编辑态——与设备管理页同款全参数形态。
+          credentialHint 仅零通道设备传（TopologyPage 双击零通道引导先例——「该设备尚未配置
+          登录通道」文案对已配设备不真）；不传 existingDevices（沿 TopologyPage 先例——右栏
+          无 device.list 数据在手，拉全表成本不值其收益，IP 分层 D-13 警告静默）；无引导
+          通道场景不传 initialChannel */}
+      <DeviceForm
+        open={editOpen}
+        device={device}
+        credentialHint={channels.length === 0}
+        onOk={handleEditFormOk}
+        onCancel={handleEditFormCancel}
       />
     </div>
   )
