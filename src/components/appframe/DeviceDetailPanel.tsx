@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type CSSProperties } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Button, Spin, message } from 'antd'
+import { Button, Popconfirm, Spin, message } from 'antd'
 import { useDeviceDetailStore } from '@/stores/deviceDetailStore'
 import DeviceForm from '@/components/DeviceForm'
 import {
@@ -235,6 +235,9 @@ export default function DeviceDetailPanel() {
   // Pattern 3（action 引用，TopologyPage 写侧同款）：编辑保存刷新信号 + AI 跳转中转写入
   const refresh = useDeviceDetailStore((s) => s.refresh)
   const setPendingAiDevice = useDeviceDetailStore((s) => s.setPendingAiDevice)
+  // 39-02：选中节点元信息（删除双动作的画布节点定位源——39-01 与 selectedDeviceId 同步写，
+  // 组件已在 Pattern 3 订阅者清单内，本处仅语义扩展）
+  const selectedNodeMeta = useDeviceDetailStore((s) => s.selectedNodeMeta)
   const navigate = useNavigate()
 
   // getById 三态：loading（拉取中）/ ready（渲染三区）/ missing（设备已删或查询异常）。
@@ -322,6 +325,34 @@ export default function DeviceDetailPanel() {
   )
 
   const handleEditFormCancel = useCallback(() => setEditOpen(false), [])
+
+  // D-06 从拓扑移除（轻删免确认 D-07）：经 39-01 命令通道节点出图 + 悬空边清除 + 清选中——
+  // 清选中触发选中同步 effect 上抛 null，右栏经选中同步链自动收起（无需本地善后）；设备
+  // 管理页记录保留、节点可重新添加（破坏半径完全可重做，T-39-07 accept）。selectedNodeMeta
+  // 为 null 时按钮 disabled + 此处 return 双保险（无节点定位信息不可删）。
+  const handleRemoveFromCanvas = useCallback(() => {
+    if (!selectedNodeMeta) return
+    useDeviceDetailStore.getState().canvasActions?.removeNodeFromCanvas(selectedNodeMeta.nodeId)
+  }, [selectedNodeMeta])
+
+  // D-06 彻底删除设备（唯一二次确认点——Popconfirm 在按钮 JSX 处，D-07）：device.delete 库内
+  // 级联删资产记录 + 拓扑节点 + 悬空边（device.ts deleteDevice）。红线（CR-01 同族，T-39-06）：
+  // 成功后必须同帧 removeNodeFromCanvas 镜像画布内存态——若不镜像，随后任意画布操作的 1s
+  // debounce 自动保存将以旧值整图覆写 data_enc，把库内已删节点静默写回（静默回滚）。镜像内含
+  // 清选中 → 右栏经选中同步链自动收起。
+  const handleDeleteDevice = useCallback(async () => {
+    if (!device) return
+    try {
+      await window.api.device.delete(device.id)
+      message.success('设备删除成功')
+      if (selectedNodeMeta) {
+        useDeviceDetailStore.getState().canvasActions?.removeNodeFromCanvas(selectedNodeMeta.nodeId)
+      }
+    } catch (e: unknown) {
+      // D-09：deleteDevice 事务化，失败即整体回滚
+      message.error('操作失败，数据已回滚无变化：' + (e instanceof Error ? e.message : String(e)))
+    }
+  }, [device, selectedNodeMeta])
 
   // D-05 测试连接（36-05 connection.test 全通道并行探测复用）：逐通道结果按 channel 键
   // 归并写入 testResults（仅含已配通道键，行内展示位在通道区已配行）；零通道设备无通道
@@ -471,7 +502,8 @@ export default function DeviceDetailPanel() {
         })}
       </div>
 
-      {/* 快捷操作区（D-05）：编辑 / 测试连接 / AI 对话——无删除按钮（D-06，删除属设备管理页职责） */}
+      {/* 快捷操作区（D-05）：编辑 / 测试连接 / AI 对话 + 删除分组行（39 D-06 决策变更——
+          删除双动作入右栏，撤销 38 D-06「删除不入面板」） */}
       <div style={SECTION_STYLE}>
         <div style={SECTION_TITLE_STYLE}>快捷操作</div>
         <div style={ACTION_ROW_STYLE}>
@@ -484,6 +516,19 @@ export default function DeviceDetailPanel() {
           <Button size="small" onClick={handleAiChat}>
             AI 对话
           </Button>
+        </div>
+        {/* D-06 删除分组行（与主操作行视觉区隔——section gap 8 节奏）：「从拓扑移除」轻删
+            免确认（可重做，非 danger——轻删语义）；「彻底删除设备」danger + Popconfirm
+            二次确认（D-07 唯一确认点，资产级联删除不可逆，文案沿 DevicesPage 先例逐字） */}
+        <div style={ACTION_ROW_STYLE}>
+          <Button size="small" disabled={selectedNodeMeta === null} onClick={handleRemoveFromCanvas}>
+            从拓扑移除
+          </Button>
+          <Popconfirm title="删除设备将同时从拓扑中移除，确定删除？" onConfirm={handleDeleteDevice}>
+            <Button size="small" danger>
+              彻底删除设备
+            </Button>
+          </Popconfirm>
         </div>
       </div>
 
