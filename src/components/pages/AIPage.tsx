@@ -33,21 +33,23 @@ export default function AIPage() {
       try {
         const config = await window.api.ai.getConfig()
         const ok = !!config && !!config.apiKey
+        // WR-03（38 review）：consume 必须与 cancelled 检查同处一个同步块（中间零 await）——
+        // 原顺序在 await loadData（串行多个 IPC）之后消费，期间用户点回 /topology（本页卸载）
+        // 则 consume 被跳过、pendingAiDeviceId 悬挂 store，下次手动进 /ai 误建会话注入陈旧
+        // 设备。现守卫通过即同步消费存局部变量（卸载窗口收敛为 0），值延后应用；卸载即弃，
+        // 与 !ok「消费即弃」语义对齐。StrictMode 安全性不变：首挂的 cancelled 在其首个
+        // await resolve 前已同步置 true，到不了 consume（getState 快照，不订阅——
+        // Pattern 3 订阅范围不扩散到 AIPage 渲染路径）。
         if (cancelled) return
         setHasConfig(ok)
+        const pendingId = useDeviceDetailStore.getState().consumePendingAiDevice()
         await chat.loadData(ok)
-        // Phase 38（38-02，D-05）：右栏 [AI 对话] 跳转消费——DeviceDetailPanel 先写
-        // pendingAiDeviceId 再 navigate('/ai')，在此一次性读清（getState 快照，不订阅
-        // ——Pattern 3 订阅范围不扩散到 AIPage 渲染路径；cancelled 守卫内先判再消费，
-        // StrictMode 首挂已取消不抢走真挂的中转值）。!ok（AI 未配置）时消费即弃：跳转
-        // 意图失效不悬挂，不会在下次进 /ai 时误触发。顺序：handleNewSession 仅建会话/
-        // 清消息/清 pendingConfirm，不触碰 selectedDevices——设备注入随后不被覆盖。
-        if (!cancelled) {
-          const pendingId = useDeviceDetailStore.getState().consumePendingAiDevice()
-          if (ok && pendingId) {
-            await chat.handleNewSession()
-            chat.setSelectedDevices([pendingId])
-          }
+        // Phase 38（38-02，D-05）：跳转注入应用段（consume 已提前，见上 WR-03 注释）——
+        // handleNewSession 仅建会话/清消息/清 pendingConfirm，不触碰 selectedDevices，
+        // 设备注入随后不被覆盖；!ok（AI 未配置）时 pendingId 已消费即弃，不悬挂不误触发。
+        if (!cancelled && ok && pendingId) {
+          await chat.handleNewSession()
+          chat.setSelectedDevices([pendingId])
         }
       } catch (e: unknown) {
         console.error('[ai] loadConfig 失败:', e instanceof Error ? e.message : String(e))
