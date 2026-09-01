@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Button, Popconfirm, Spin, message } from 'antd'
 import { useDeviceDetailStore } from '@/stores/deviceDetailStore'
@@ -19,7 +19,8 @@ import {
  * 「双击=连、全参数弹窗=改、右栏=看」（39 期心智，38「编辑弹窗=改」收敛）的「看」半：
  * 点选拓扑节点后三区常驻展示——基础信息区（D-08）+ 登录通道区（D-07，已配行行内 [连接]
  * 直连 D-04）+ 快捷操作区（D-05，「编辑」弹 DeviceForm 编辑态——39-02 D-01 与设备管理页
- * 点资产「编辑」零能力差异）。
+ * 点资产「编辑」零能力差异）；missing 态（39-03）文案 + 「一键添加到资产列表」纳管按钮
+ * （D-09）+「删除节点」轻删（D-10）三元素并存。
  * 替换 35 期预留占位组件；本组件经 DetailsPanel 无条件挂载（35 SC2 折叠保挂载
  * 红线——三态为内容切换非挂载切换，折叠再展开面板内状态不丢）。
  *
@@ -254,10 +255,15 @@ export default function DeviceDetailPanel() {
   // 39-02（D-01）编辑弹窗开合：弹 DeviceForm 编辑态（device prop 即当前 device state——
   // ready 态下为当前详情设备，无需再构造 TopologyNodeData 投影）
   const [editOpen, setEditOpen] = useState(false)
+  // 39-03（D-09）：纳管弹窗开合——missing 态弹 DeviceForm 新建+预填形态（presetSource）
+  const [adoptOpen, setAdoptOpen] = useState(false)
 
   useEffect(() => {
-    // 切设备/编辑刷新（refreshCounter bump）：清除上一台的逐通道测试结果
+    // 切设备/编辑刷新（refreshCounter bump）：清除上一台的逐通道测试结果 + 纳管弹窗陈旧态
+    //（38 期选中切换清理在途交互态同款义务——missing→ready/空选切换后 stale true 会使
+    // 下次进 missing 分支时纳管弹窗自动弹出，回归点⑦）
     setTestResults(null)
+    setAdoptOpen(false)
     if (selectedDeviceId === null) {
       // 无选中（右栏被手动展开等边缘态）：复位不拉取（渲染走空选 null 门控分支）；
       // 状态复位 'loading' 而非 'missing'（WR-02——见 detailState 声明处注释）
@@ -325,6 +331,76 @@ export default function DeviceDetailPanel() {
   )
 
   const handleEditFormCancel = useCallback(() => setEditOpen(false), [])
+
+  // 39-03（D-09）：纳管预填对象——按 Device 类型构造最小对象（未采集字段空串/合法空值补齐）。
+  // name 取 selectedNodeMeta.deviceName（预填唯一可靠源——discovery AI 命名）；deviceType
+  // 照传（恒 'generic' 无信息量但语义正确）；ipAddress/vendor/model 空串 = discovery 采集
+  // 现状（deviceId 是 AI 输出标识不可靠，不作 IP 推断——IP 留空用户手填，这是数据现状收敛
+  // 不是实现遗漏）。useMemo 稳定引用——DeviceForm 回填 effect 以 fillSource 为 deps，
+  // 内联构造每渲染换引用会触发 resetFields 重放。
+  const adoptPresetSource = useMemo<Device | null>(
+    () =>
+      selectedNodeMeta
+        ? {
+            id: selectedNodeMeta.deviceId,
+            topologyId: null,
+            name: selectedNodeMeta.deviceName,
+            vendor: '',
+            model: '',
+            version: '',
+            ipAddress: '',
+            deviceType: selectedNodeMeta.deviceType,
+            connectionType: null,
+            channels: [],
+            status: 'unknown',
+            lastChecked: null,
+            createdAt: '',
+            updatedAt: '',
+            capabilities: { hasSSH: false, hasTelnet: false, hasMcp: false },
+          }
+        : null,
+    [selectedNodeMeta]
+  )
+
+  // D-09 纳管入口：弹 DeviceForm 新建+预填形态（title「添加设备」、名称预填、无「复制自」
+  // Alert、无同 IP 硬拦、凭证区新配可顺手配——39-03 Task 2 presetSource 形态）
+  const handleAdopt = useCallback(() => setAdoptOpen(true), [])
+
+  const handleAdoptFormCancel = useCallback(() => setAdoptOpen(false), [])
+
+  // D-09 纳管保存（DevicesPage handleCreate 先例）：device.create 返回完整 Device 投影——
+  // 新 id 即返回值 .id，经 adoptNodeToDevice 回写画布节点。
+  // 纳管闭环链（39-01 预置，三步全链零新增接线）：
+  // adoptNodeToDevice 按节点 id 匹配换 data.deviceId + 清 unmanaged（内存镜像防 1s debounce
+  // 以旧 deviceId 整图覆写——CR-01 同族红线 T-39-10）→ nodes 引用变化触发 TopologyPage 选中
+  // 同步 effect 重跑 → setSelectedDeviceId(新 id) → 本面板 getById 重拉 → 右栏自动切该设备
+  // 正常详情 + DeviceNode 虚线徽标随 data 引用更新消失。
+  const handleAdoptOk = useCallback(
+    async (values: CreateDeviceDTO) => {
+      if (!selectedNodeMeta) return
+      try {
+        const created = await window.api.device.create(values)
+        message.success('设备添加成功')
+        useDeviceDetailStore
+          .getState()
+          .canvasActions?.adoptNodeToDevice(selectedNodeMeta.nodeId, created.id)
+        setAdoptOpen(false)
+      } catch (e: unknown) {
+        // D-09：createDevice 事务化，失败即整体回滚（失败不关弹窗、本地不落脏值）
+        message.error('操作失败，数据已回滚无变化：' + (e instanceof Error ? e.message : String(e)))
+      }
+    },
+    [selectedNodeMeta]
+  )
+
+  // D-10 未知设备一键删（免确认，与「删连线」同款轻删——D-07 框架内最轻一档）：未知设备
+  // 不在资产表，删除即纯画布移除（无资产级联、无凭证数据），重新发现可找回；onClick 直调
+  // removeNodeFromCanvas（无 Popconfirm/Modal 确认包裹），删后命令内清选中 → 右栏经选中
+  // 同步链自动收起。selectedNodeMeta null 时按钮 disabled + 此处 return 双保险。
+  const handleDeleteUnknownNode = useCallback(() => {
+    if (!selectedNodeMeta) return
+    useDeviceDetailStore.getState().canvasActions?.removeNodeFromCanvas(selectedNodeMeta.nodeId)
+  }, [selectedNodeMeta])
 
   // D-06 从拓扑移除（轻删免确认 D-07）：经 39-01 命令通道节点出图 + 悬空边清除 + 清选中——
   // 清选中触发选中同步 effect 上抛 null，右栏经选中同步链自动收起（无需本地善后）；设备
@@ -409,6 +485,26 @@ export default function DeviceDetailPanel() {
       <div style={PANEL_STYLE}>
         <div style={EMPTY_TITLE_STYLE}>设备不存在或已删除</div>
         <div style={EMPTY_HINT_STYLE}>该节点对应的设备资料已被删除，可在设备管理页确认后清理节点。</div>
+        {/* D-09 两件事并存（不区分「未知设备」vs「已删除设备」成因）：文案保留 + 纳管按钮
+            追加；D-10「删除节点」与纳管并列（一次点击直接删免确认）。selectedNodeMeta null
+            时两按钮 disabled（防御——正常单选链保证非 null） */}
+        <div style={ACTION_ROW_STYLE}>
+          <Button size="small" type="primary" disabled={selectedNodeMeta === null} onClick={handleAdopt}>
+            一键添加到资产列表
+          </Button>
+          <Button size="small" danger disabled={selectedNodeMeta === null} onClick={handleDeleteUnknownNode}>
+            删除节点
+          </Button>
+        </div>
+        {/* 39-03（D-09）：纳管 DeviceForm 新建+预填实例——与 39-02 编辑态实例互斥（missing
+            态下编辑实例必不在渲染树，两实例分属不同 return 分支天然互斥）；不传
+            existingDevices（沿 TopologyPage/39-02 先例——IP 分层 D-13 警告静默） */}
+        <DeviceForm
+          open={adoptOpen}
+          presetSource={adoptPresetSource}
+          onOk={handleAdoptOk}
+          onCancel={handleAdoptFormCancel}
+        />
       </div>
     )
   }
