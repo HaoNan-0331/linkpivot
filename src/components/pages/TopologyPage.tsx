@@ -70,6 +70,10 @@ export default function TopologyPage() {
   const setSelectedDeviceId = useDeviceDetailStore((s) => s.setSelectedDeviceId)
   const refreshDeviceDetail = useDeviceDetailStore((s) => s.refresh)
   const detailRefreshCounter = useDeviceDetailStore((s) => s.refreshCounter)
+  // Phase 39（39-01）：选中态扩展写侧 action + 跨层命令注册位（引用写完即走，Pattern 3）
+  const setSelectedEdge = useDeviceDetailStore((s) => s.setSelectedEdge)
+  const setSelectedNodeMeta = useDeviceDetailStore((s) => s.setSelectedNodeMeta)
+  const setCanvasActions = useDeviceDetailStore((s) => s.setCanvasActions)
 
   // FE-03: ref 同步 effect（O(1) 赋值，与既有 isLoadingRef/saveTimerRef 同模式，无性能影响）
   useEffect(() => {
@@ -79,26 +83,73 @@ export default function TopologyPage() {
     edgesRef.current = edges
   }, [edges])
 
-  // Phase 38（38-01，D-01/D-03 收敛点）：选中同步 effect——拓扑选中态上行 deviceDetailStore。
-  // 仅「恰好单选一台设备节点」时上抛该节点 data.deviceId（React Flow node.id ≠ deviceId，
-  // 必须经 nodesRef 换算）；无选中/框选 ≥2/单选连线一律 null（edgeIds 不参与，连线选中自然
-  // 落 null 分支）；节点不存在（loadTopology 换图后 stale id）上抛 null。
+  // Phase 38（38-01，D-01/D-03 收敛点）→ Phase 39（39-01）三分支扩展：选中同步 effect——
+  // 拓扑选中态上行 deviceDetailStore。分支一「恰好单选一台设备节点」上抛 data.deviceId +
+  // 节点元信息快照（React Flow node.id ≠ deviceId，必须经 nodesRef 换算）并互斥清空连线
+  // 快照；分支二（39 新增）「零节点选中且恰好单选一条连线」经 edgesRef/nodesRef 换算八字段
+  // 连线快照上抛（右栏零查询，端节点缺失时 deviceId null/名字空串——未纳管端不可跳转）；
+  // 分支三（零选/多选）三分支全置 null。设备/连线互斥由 RF 选中天然保证 + 写侧双清。
   // 选 effect 而非在 handleCanvasSelectionChange 回调内写：覆盖非回调选中变化路径——
   // handleDeleteSelected 本地清选中、loadTopology 换图节点替换；nodes 拖拽每帧换引用的
   // 代价仅为一次数组 find + zustand 同值 set（订阅方 Object.is 判等零重渲染）。
   // 声明位置必须在 nodesRef 同步 effect 之后：同 commit 内先刷新镜像再读。
   useEffect(() => {
-    if (selectedNodeIds.size !== 1) {
-      setSelectedDeviceId(null)
+    if (selectedNodeIds.size === 1) {
+      const nodeId = [...selectedNodeIds][0]
+      const node = nodesRef.current.find((n) => n.id === nodeId)
+      setSelectedDeviceId(node ? node.data.deviceId : null)
+      setSelectedNodeMeta(
+        node
+          ? {
+              nodeId: node.id,
+              deviceId: node.data.deviceId,
+              deviceName: node.data.deviceName,
+              deviceType: node.data.deviceType,
+            }
+          : null
+      )
+      setSelectedEdge(null)
       return
     }
-    const nodeId = [...selectedNodeIds][0]
-    const node = nodesRef.current.find((n) => n.id === nodeId)
-    setSelectedDeviceId(node ? node.data.deviceId : null)
-  }, [selectedNodeIds, nodes, setSelectedDeviceId])
+    if (selectedNodeIds.size === 0 && selectedEdgeIds.size === 1) {
+      const edgeId = [...selectedEdgeIds][0]
+      const edge = edgesRef.current.find((e) => e.id === edgeId)
+      if (edge) {
+        const sourceNode = nodesRef.current.find((n) => n.id === edge.source)
+        const targetNode = nodesRef.current.find((n) => n.id === edge.target)
+        setSelectedEdge({
+          edgeId: edge.id,
+          sourceInterface: edge.data?.sourceInterface ?? '',
+          targetInterface: edge.data?.targetInterface ?? '',
+          sourceDeviceId: sourceNode ? sourceNode.data.deviceId : null,
+          sourceDeviceName: sourceNode ? sourceNode.data.deviceName : '',
+          targetDeviceId: targetNode ? targetNode.data.deviceId : null,
+          targetDeviceName: targetNode ? targetNode.data.deviceName : '',
+        })
+      } else {
+        // stale edgeId（换图后残留）：并入清空
+        setSelectedEdge(null)
+      }
+      setSelectedDeviceId(null)
+      setSelectedNodeMeta(null)
+      return
+    }
+    // 零选/多选（含节点+连线混选）：三分支全置 null
+    setSelectedDeviceId(null)
+    setSelectedNodeMeta(null)
+    setSelectedEdge(null)
+  }, [selectedNodeIds, selectedEdgeIds, nodes, edges, setSelectedDeviceId, setSelectedNodeMeta, setSelectedEdge])
 
-  // Phase 38（38-01，D-02 双保险）：切页卸载即清空跨层选中（照 :403 toolbar cleanup 先例）
-  useEffect(() => () => setSelectedDeviceId(null), [setSelectedDeviceId])
+  // Phase 38（38-01，D-02 双保险）→ 39-01 对称扩展：切页卸载即清空跨层选中（含连线快照与
+  // 节点元信息，照 :403 toolbar cleanup 先例）
+  useEffect(
+    () => () => {
+      setSelectedDeviceId(null)
+      setSelectedNodeMeta(null)
+      setSelectedEdge(null)
+    },
+    [setSelectedDeviceId, setSelectedNodeMeta, setSelectedEdge]
+  )
 
   // Phase 38（38 review CR-01）：编辑保存后画布节点定向镜像——updateDevice 虽在库内级联刷新
   // topologies.data_enc，但画布内存 nodes 仍持旧字段值；若不镜像，随后任意画布操作触发的
@@ -602,6 +653,109 @@ export default function TopologyPage() {
     setSelectedNodeIds(new Set(nodeIds))
     setSelectedEdgeIds(new Set(edgeIds))
   }, [])
+
+  // —— Phase 39（39-01 接入点②）：五条跨层命令（外层右栏调用、本页执行）——
+  // 结构照 toolbar 注册 effect（:446-461 先例）方向反转；消费方一律
+  // getState().canvasActions 一次性取用（Pattern 3 读清即走，不订阅）。
+  // 39-02（删除双动作）/39-03（纳管回写）只消费，不再改本命令层。
+
+  // D-02 接口回写：setEdges 定向换 data（handleEditConfirm 镜像 :626-630 节点版形态改边版）。
+  // 落库链零新增：edges 引用变化自动触发既有自动保存 effect → debouncedSave 1s topology.update。
+  const applyEdgeInterfaces = useCallback(
+    (edgeId: string, sourceInterface: string, targetInterface: string) => {
+      setEdges((eds) =>
+        eds.map((e) =>
+          e.id === edgeId ? { ...e, data: { ...e.data, sourceInterface, targetInterface } } : e
+        )
+      )
+    },
+    [setEdges]
+  )
+
+  // D-06 从拓扑移除（轻删）：handleDeleteSelected :584-589 单节点版——filter 节点 + 悬空边 +
+  // 清本地选中；清选中触发选中同步 effect 上抛 null，右栏自动收起（链路自洽）。
+  const removeNodeFromCanvas = useCallback(
+    (nodeId: string) => {
+      setNodes((nds) => nds.filter((n) => n.id !== nodeId))
+      setEdges((eds) => eds.filter((e) => e.source !== nodeId && e.target !== nodeId))
+      setSelectedNodeIds(new Set())
+      setSelectedEdgeIds(new Set())
+    },
+    [setNodes, setEdges]
+  )
+
+  // D-07 删连线（轻删免确认）：filter 边 + 清本地选中（右栏自动收起）。
+  const removeEdgeFromCanvas = useCallback(
+    (edgeId: string) => {
+      setEdges((eds) => eds.filter((e) => e.id !== edgeId))
+      setSelectedNodeIds(new Set())
+      setSelectedEdgeIds(new Set())
+    },
+    [setEdges]
+  )
+
+  // D-09 纳管回写：按节点 id（非 deviceId）定向换 data.deviceId + 置 unmanaged 为 undefined
+  // （省键——JSON 持久化时字段消失即历史形态）。红线：节点 id 本身不可改（edges source/target
+  // 断链）。不动选中：nodes 引用变化触发选中同步 effect 重跑，setSelectedDeviceId 自动变为
+  // 新 deviceId，右栏从 missing 切正常详情（39-03 消费闭环）。
+  const adoptNodeToDevice = useCallback(
+    (nodeId: string, deviceId: string) => {
+      setNodes((nds) =>
+        nds.map((n) =>
+          n.id === nodeId ? { ...n, data: { ...n.data, deviceId, unmanaged: undefined } } : n
+        )
+      )
+    },
+    [setNodes]
+  )
+
+  // D-04 跳转选中设备：三步直写（不依赖 RF 受控 selected → onSelectionChange 回流可靠性，
+  // PATTERNS No Analog 表已标注该回流无先例需真机验证——直写形态全链幂等，回流有无均无害）。
+  // 前置防御：经 nodesRef.current 按 data.deviceId 严格等值定位，未命中整体 return。
+  const focusDevice = useCallback(
+    (deviceId: string) => {
+      const target = nodesRef.current.find((n) => n.data.deviceId === deviceId)
+      if (!target) return
+      // 一步画布视觉选中：节点 selected 重置（目标 true 其余 false，引用保序换引用）+ 边全清
+      setNodes((nds) =>
+        nds.map((n) => {
+          const want = n.id === target.id
+          return n.selected === want ? n : { ...n, selected: want }
+        })
+      )
+      setEdges((eds) => eds.map((e) => (e.selected ? { ...e, selected: false } : e)))
+      // 二步本地选中 state 直写——D-04 闭环关键：若 RF onSelectionChange 不回流，本地两 state
+      // 仍持旧值（如旧连线选中），而 setNodes 引起的 nodes 引用变化会触发选中同步 effect 以
+      // stale 本地选中态重跑（走分支二恢复旧 selectedEdge、清 selectedDeviceId），覆写第三步
+      // 直写值致跳转闭环断裂；直写本地后，effect 无论重跑与否均按与画布一致的选中态计算，
+      // 结果幂等。RF 回流触发时全链同值幂等无害。
+      setSelectedNodeIds(new Set([target.id]))
+      setSelectedEdgeIds(new Set())
+      // 三步 store 直写（右栏即时切换；selectedNodeMeta 与 setSelectedEdge(null) 由随后必跑的
+      // 选中同步 effect 分支一按新本地选中态补写，写侧形态对齐）
+      setSelectedDeviceId(deviceId)
+    },
+    [setNodes, setEdges, setSelectedDeviceId]
+  )
+
+  // 命令注册 effect：mount 注册五条 useCallback 引用、卸载置 null（toolbar 注册 cleanup 先例）
+  useEffect(() => {
+    setCanvasActions({
+      applyEdgeInterfaces,
+      removeNodeFromCanvas,
+      removeEdgeFromCanvas,
+      adoptNodeToDevice,
+      focusDevice,
+    })
+    return () => setCanvasActions(null)
+  }, [
+    applyEdgeInterfaces,
+    removeNodeFromCanvas,
+    removeEdgeFromCanvas,
+    adoptNodeToDevice,
+    focusDevice,
+    setCanvasActions,
+  ])
 
   // Phase 25.1（25.1-01）：设备属性编辑收敛 device:update 单一写路径——service 层 updateDevice
   // 同一事务内同步 devices 表（updated_at/name_hash/重名拦截）并级联刷新所有 topologies.data_enc，

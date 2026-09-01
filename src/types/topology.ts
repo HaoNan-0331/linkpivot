@@ -12,6 +12,11 @@ export interface TopologyNodeData {
   ipAddress: string
   vendor?: string
   model?: string
+  // Phase 39（39-01，P14 兼容先例同 TopologySummary）：未纳管标志——历史持久化 JSON
+  // 缺字段即 undefined = 已纳管语义；标志随 topology.update 整图持久化，纳管回写
+  // （adoptNodeToDevice）置 undefined 省键——JSON.stringify 丢 undefined 键，落库
+  // 即历史形态无脏数据。本 phase 仅落类型与写入点，渲染消费（虚线边框+徽标）归 39-03。
+  unmanaged?: boolean
 }
 
 export type TopologyNode = Node<TopologyNodeData>
