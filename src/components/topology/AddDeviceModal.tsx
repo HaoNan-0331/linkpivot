@@ -4,6 +4,8 @@ import type { ColumnsType } from 'antd/es/table'
 import { v4 as uuidv4 } from 'uuid'
 import { nearestFreePosition, NODE_WIDTH, NODE_HEIGHT, type LayoutNode } from '@/utils/topologyLayout'
 import type { Device, DeviceType } from '@/types/device'
+// WR-05（38 review）：设备类型中文映射迁 types/device.ts 全局唯一表（三处 map 拷贝统一 import）
+import { DEVICE_TYPE_LABELS } from '@/types/device'
 import type { TopologyNode } from '@/types/topology'
 
 interface AddDeviceModalProps {
@@ -14,14 +16,6 @@ interface AddDeviceModalProps {
   getViewportCenter?: () => { x: number; y: number }
   onConfirm: (nodes: TopologyNode[]) => void
   onCancel: () => void
-}
-
-const DEVICE_TYPE_LABELS: Record<DeviceType, string> = {
-  router: '路由器',
-  switch: '交换机',
-  firewall: '防火墙',
-  server: '服务器',
-  generic: '通用设备',
 }
 
 function AddDeviceModal({

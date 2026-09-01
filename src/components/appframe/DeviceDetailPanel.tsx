@@ -7,10 +7,10 @@ import type { TopologyNodeData } from '@/types/topology'
 import {
   CHANNEL_LABELS,
   CHANNEL_SHORT_LABELS,
+  DEVICE_TYPE_LABELS,
   type ChannelTestResult,
   type ConnectionType,
   type Device,
-  type DeviceType,
 } from '@/types/device'
 
 /**
@@ -40,15 +40,6 @@ const DEFAULT_PORTS: Record<Exclude<ConnectionType, 'web'>, number> = {
   ssh: 22,
   telnet: 23,
   rdp: 3389,
-}
-
-/** D-08 设备类型中文映射（DevicesPage deviceTypeLabels 同值先例，全局表单值域一致） */
-const DEVICE_TYPE_LABELS: Record<DeviceType, string> = {
-  router: '路由器',
-  switch: '交换机',
-  firewall: '防火墙',
-  server: '服务器',
-  generic: '通用',
 }
 
 /** D-08 在线状态中文映射 */

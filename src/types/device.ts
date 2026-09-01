@@ -24,6 +24,26 @@ export const CHANNEL_SHORT_LABELS: Record<ConnectionType, string> = {
 }
 
 /**
+ * Phase 38（38 review WR-05）：设备类型中文映射全局唯一表——DevicesPage 表格 /
+ * AddDeviceModal 表格 / appframe/DeviceDetailPanel 基础区 / DeviceForm 与 EditNodeModal
+ * 类型下拉（经 DEVICE_TYPE_OPTIONS 派生）共用，单一来源防漂移（CHANNEL_LABELS 同款契约；
+ * 原五处本地拷贝 generic 值已漂移「通用/通用设备」，裁决统一为「通用」——对齐设备管理页
+ * 表格现值，紧凑表列/字段行场景取最短形态）。
+ */
+export const DEVICE_TYPE_LABELS: Record<DeviceType, string> = {
+  router: '路由器',
+  switch: '交换机',
+  firewall: '防火墙',
+  server: '服务器',
+  generic: '通用',
+}
+
+/** 设备类型下拉 options 派生（键序即展示序，DeviceForm / EditNodeModal 共用） */
+export const DEVICE_TYPE_OPTIONS: Array<{ value: DeviceType, label: string }> = (
+  Object.keys(DEVICE_TYPE_LABELS) as DeviceType[]
+).map((value) => ({ value, label: DEVICE_TYPE_LABELS[value] }))
+
+/**
  * Phase 36（36-02，LOGIN-01）：设备通道凭证投影元素——device_credentials 子表行的 main 进程
  * 内明文形态，随 device:list / device:getById 的 channels 数组下发。
  * password/sshKeyContent 经 IPC 出口时已被 maskDeviceSecrets 递归脱敏为 ****尾4（H-1 红线，

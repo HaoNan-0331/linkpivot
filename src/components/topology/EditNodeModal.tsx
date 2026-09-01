@@ -2,6 +2,8 @@ import { memo, useEffect } from 'react'
 import { Modal, Input, Select, Form } from 'antd'
 import type { TopologyNodeData } from '@/types/topology'
 import type { DeviceType } from '@/types/device'
+// WR-05（38 review）：类型下拉 options 自 types/device.ts DEVICE_TYPE_LABELS 派生（全局唯一表）
+import { DEVICE_TYPE_OPTIONS } from '@/types/device'
 
 interface EditNodeModalProps {
   open: boolean
@@ -76,13 +78,7 @@ function EditNodeModal({
           <Input />
         </Form.Item>
         <Form.Item name="deviceType" label="设备类型" rules={[{ required: true }]}>
-          <Select options={[
-            { value: 'router', label: '路由器' },
-            { value: 'switch', label: '交换机' },
-            { value: 'firewall', label: '防火墙' },
-            { value: 'server', label: '服务器' },
-            { value: 'generic', label: '通用设备' },
-          ]} />
+          <Select options={DEVICE_TYPE_OPTIONS} />
         </Form.Item>
         <Form.Item name="vendor" label="厂商">
           <Input placeholder="华为、Cisco、H3C..." />

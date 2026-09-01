@@ -4,8 +4,8 @@ import { Table, Button, Space, Popconfirm, message, notification, Typography, Al
 import { PlusOutlined, EditOutlined, DeleteOutlined, ApiOutlined, CopyOutlined } from '@ant-design/icons'
 import DeviceForm from '../DeviceForm'
 import DuplicateNamesModal from '../DuplicateNamesModal'
-import type { Device, CreateDeviceDTO } from '../../types/device'
-import { CHANNEL_LABELS } from '../../types/device'
+import type { Device, CreateDeviceDTO, DeviceType } from '../../types/device'
+import { CHANNEL_LABELS, DEVICE_TYPE_LABELS } from '../../types/device'
 
 const { Title } = Typography
 
@@ -20,10 +20,6 @@ const PLUS_SUFFIX_STYLE: CSSProperties = {
 const CHANNEL_RESULT_LINE_STYLE: CSSProperties = {
   fontSize: 'var(--nt-font-xxs-12-font-size)',
   lineHeight: 'var(--nt-font-xxs-12-line-height)',
-}
-
-const deviceTypeLabels: Record<string, string> = {
-  router: '路由器', switch: '交换机', firewall: '防火墙', server: '服务器', generic: '通用',
 }
 
 export default function DevicesPage() {
@@ -152,7 +148,7 @@ export default function DevicesPage() {
       )}
       <Table columns={[
         { title: '设备名称', dataIndex: 'name', key: 'name' },
-        { title: '类型', dataIndex: 'deviceType', key: 'deviceType', render: (v: string) => deviceTypeLabels[v] || v },
+        { title: '类型', dataIndex: 'deviceType', key: 'deviceType', render: (v: string) => DEVICE_TYPE_LABELS[v as DeviceType] || v },
         { title: '厂商', dataIndex: 'vendor', key: 'vendor' },
         { title: '型号', dataIndex: 'model', key: 'model' },
         { title: 'IP', dataIndex: 'ipAddress', key: 'ipAddress' },

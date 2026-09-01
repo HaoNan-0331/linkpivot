@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { Form, Input, Select, InputNumber, Modal, Alert, Tabs, Switch } from 'antd'
 import type { Device, CreateDeviceDTO, DeviceChannelDTO, ConnectionType } from '../types/device'
-import { CHANNEL_LABELS } from '../types/device'
+import { CHANNEL_LABELS, DEVICE_TYPE_OPTIONS } from '../types/device'
 
 interface Props {
   open: boolean
@@ -387,13 +387,8 @@ export default function DeviceForm({ open, device, copySource, existingDevices, 
           <Input onBlur={handleNameBlur} />
         </Form.Item>
         <Form.Item name="deviceType" label="设备类型" rules={[{ required: true }]}>
-          <Select options={[
-            { value: 'router', label: '路由器' },
-            { value: 'switch', label: '交换机' },
-            { value: 'firewall', label: '防火墙' },
-            { value: 'server', label: '服务器' },
-            { value: 'generic', label: '通用设备' },
-          ]} />
+          {/* WR-05（38 review）：类型下拉 options 自 types/device.ts DEVICE_TYPE_LABELS 派生（全局唯一表） */}
+          <Select options={DEVICE_TYPE_OPTIONS} />
         </Form.Item>
         <Form.Item name="vendor" label="厂商" rules={[{ required: true, message: '请输入设备厂商' }]}>
           <Input placeholder="华为、Cisco、H3C..." />
