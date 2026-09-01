@@ -65,9 +65,11 @@ export default function TopologyPage() {
   const nodesRef = useRef<TopologyNode[]>([])
   const edgesRef = useRef<TopologyEdge[]>([])
   const setToolbarState = useTopologyToolbarStore((s) => s.setToolbar)
-  // Phase 38（38-01，DETAIL-01）：跨层选中态写侧——只取 action 引用（写完即走，store 变化零重渲染）
+  // Phase 38（38-01，DETAIL-01）：跨层选中态写侧——action 引用写完即走；另订阅 refreshCounter
+  // 单字段（38 review CR-01 镜像信号：离散 bump 才重渲染一次，非每帧宽度态，Pattern 3 语义不破）
   const setSelectedDeviceId = useDeviceDetailStore((s) => s.setSelectedDeviceId)
   const refreshDeviceDetail = useDeviceDetailStore((s) => s.refresh)
+  const detailRefreshCounter = useDeviceDetailStore((s) => s.refreshCounter)
 
   // FE-03: ref 同步 effect（O(1) 赋值，与既有 isLoadingRef/saveTimerRef 同模式，无性能影响）
   useEffect(() => {
@@ -97,6 +99,45 @@ export default function TopologyPage() {
 
   // Phase 38（38-01，D-02 双保险）：切页卸载即清空跨层选中（照 :403 toolbar cleanup 先例）
   useEffect(() => () => setSelectedDeviceId(null), [setSelectedDeviceId])
+
+  // Phase 38（38 review CR-01）：编辑保存后画布节点定向镜像——updateDevice 虽在库内级联刷新
+  // topologies.data_enc，但画布内存 nodes 仍持旧字段值；若不镜像，随后任意画布操作触发的
+  // 1s debounce 自动保存将以旧值整图覆写 data_enc（右栏改名被静默回滚）。本页三条编辑写路径
+  // （画布侧 EditNodeModal / 零通道引导 DeviceForm / 38-02 右栏编辑）均 bump refreshCounter，
+  // 后两条此前无镜像；此处按 bump 时刻选中设备重拉 getById，把 topoFields 级联六字段写回对应
+  // 节点。对画布侧自身编辑幂等无害（值与库内一致）；镜像 setNodes 会经自动保存 effect 以
+  // 已修正值再写一次 data_enc，与库内一致无冲突。失败仅 warn（库内已正确，下次载图自收敛）。
+  useEffect(() => {
+    if (detailRefreshCounter === 0) return
+    const devId = useDeviceDetailStore.getState().selectedDeviceId
+    if (!devId) return
+    void window.api.device
+      .getById(devId)
+      .then((d) => {
+        if (!d) return
+        setNodes((nds) =>
+          nds.map((n) =>
+            n.data.deviceId === devId
+              ? {
+                  ...n,
+                  data: {
+                    ...n.data,
+                    deviceName: d.name,
+                    deviceType: d.deviceType,
+                    connectionType: d.connectionType,
+                    ipAddress: d.ipAddress,
+                    vendor: d.vendor,
+                    model: d.model,
+                  },
+                }
+              : n
+          )
+        )
+      })
+      .catch((e: unknown) => {
+        console.warn('编辑保存后画布节点镜像失败', e instanceof Error ? e.message : String(e))
+      })
+  }, [detailRefreshCounter, setNodes])
 
   // Phase 26 / D-04 + D-05：位置映射应用——仅对 moves 涉及节点换引用（保持 26-01 细粒度修复，
   // 不 map 全量 {...n}），未涉及节点原引用透传（memo comparator 直接命中，无重渲染）
